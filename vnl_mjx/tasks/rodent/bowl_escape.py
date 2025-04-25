@@ -14,6 +14,9 @@ from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward
 from mujoco_playground._src.dm_control_suite import common
 
+from vnl_mjx.tasks.rodent import base as rodent_base
+
+
 import matplotlib.colors as mcolors
 
 rodent_xml_path = epath.Path(__file__) / "assets" / "rodent_only.xml"
@@ -38,16 +41,22 @@ arena_xml = """
 </mujoco>
 """
 
+
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
-      ctrl_dt=0.01,
-      sim_dt=0.01,
-      episode_length=1000,
-      action_repeat=1,
-      vision=False,
-     )
-    
-class BowlEscape(mjx_env.MjxEnv):
+        ctrl_dt=0.01,
+        sim_dt=0.01,
+        episode_length=1000,
+        action_repeat=1,
+        vision=False,
+        bowl_hsize=10,
+        bowl_vsize=4,
+        bowl_sigma=0.5,
+        bowl_amplitude=-5.0,
+    )
+
+
+class BowlEscape(rodent_base.RodentEnv):
     """Bowl escape environment."""
 
     def __init__(
@@ -55,6 +64,16 @@ class BowlEscape(mjx_env.MjxEnv):
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
     ):
+        """
+        Initialize the BowlEscape class and set up the environment.
+
+        Args:
+            config (config_dict.ConfigDict, optional): configs for the bowl escape. Defaults to default_config().
+            config_overrides (Optional[Dict[str, Union[str, int, list[Any]]]], optional): overrides for the configuration. Defaults to None.
+
+        Raises:
+            NotImplementedError: Raised if vision is enabled.
+        """
         super().__init__(config, config_overrides)
         if self._config.vision:
             raise NotImplementedError(
@@ -63,16 +82,19 @@ class BowlEscape(mjx_env.MjxEnv):
         # TODO: inject mj_spec and initialize the environment here
         self._xml_path = rodent_xml_path.as_posix()
         self._spec = mujoco.MjSpec.from_xml_string(arena_xml)
-        
-    def _initialize_noisy_bowl(self, )
-        
+
+    def _initialize_noisy_bowl(
+        self,
+    ): ...
 
 
 ### Perlin noise generator, for height field generation
 # adapted from https://github.com/pvigier/perlin-numpy
 
+
 def interpolant(t):
     return t * t * t * (t * (t * 6 - 15) + 10)
+
 
 def perlin(shape, res, tileable=(False, False), interpolant=interpolant):
     """Generate a 2D numpy array of perlin noise.
@@ -138,6 +160,7 @@ def gaussian_bowl(shape, sigma=0.5, amplitude=-5.0):
     xv, yv = np.meshgrid(x, y)
     return amplitude * np.exp(-(xv**2 + yv**2) / (2 * sigma**2))
 
+
 def add_hfield(spec=None, hsize=10, vsize=4, sigma=0.5, amplitude=-5.0):
     """Function that adds a heighfield with countours"""
 
@@ -151,7 +174,7 @@ def add_hfield(spec=None, hsize=10, vsize=4, sigma=0.5, amplitude=-5.0):
 
     # Remap noise to 0 to 1
     noise = (noise + 1) / 2
-    
+
     bowl = gaussian_bowl(noise.shape, sigma=sigma, amplitude=amplitude)
 
     # Add the Gaussian bowl to the Perlin noise height field.
