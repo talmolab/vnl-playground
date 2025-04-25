@@ -61,14 +61,14 @@ class FlatWalk(rodent_base.RodentEnv):
         data = mjx_env.init(self.mjx_model)
 
         info = {}
-        
+
         obs = self._get_obs(data)
         reward, done = jp.zeros(2)
-        
+
         metrics = {}
 
         return mjx_env.State(data, obs, reward, done, metrics, info)
-    
+
     def step(
         self,
         state: mjx_env.State,
@@ -86,7 +86,7 @@ class FlatWalk(rodent_base.RodentEnv):
         reward = self._get_reward(data)
 
         done = state.done
-        
+
         state = state.replace(
             data=data,
             obs=obs,
@@ -95,7 +95,7 @@ class FlatWalk(rodent_base.RodentEnv):
         )
 
         return state
-        
+
     def _get_obs(self, data: mjx.Data) -> jax.Array:
         # Get the position and velocity of the rodent.
         pos = data.qpos[3:6]
@@ -103,16 +103,15 @@ class FlatWalk(rodent_base.RodentEnv):
         # Concatenate all observations.
         obs = jp.concatenate([pos, vel])
         return obs
-    
+
     def _get_reward(
       self,
       data: mjx.Data,
     ) -> jp.ndarray:
         body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
         vel = jp.linalg.norm(body.subtree_linvel)
+        target_speed = self._config.reward_config.scales.target_speed
         reward_value = reward.tolerance(
-            vel,
-            bounds=(self._config.reward_config.scales.target_speed, self._config.reward_config.scales.target_speed),
-            margin=self._config.reward_config.scales.target_speed
+            vel, bounds=(target_speed, target_speed), margin=target_speed
         )
         return reward_value

@@ -77,7 +77,15 @@ class RodentEnv(mjx_env.MjxEnv):
 
     @property
     def xml_path(self) -> str:
-        return self._xml_path
+        return self._walker_xml_path
+    
+    @property
+    def walker_xml_path(self) -> str:
+        return self._walker_xml_path
+    
+    @property
+    def arena_xml_path(self) -> str:
+        return self._arena_xml_path
 
     @property
     def mj_model(self) -> mujoco.MjModel:
