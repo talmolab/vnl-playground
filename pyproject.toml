@@ -39,6 +39,7 @@ dependencies = [
     "matplotlib",
     "pandas",
     "numpy",
+    "playground",
     ]
 
 dynamic = ["version", "readme"]
