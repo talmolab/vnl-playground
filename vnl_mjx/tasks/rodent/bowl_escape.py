@@ -162,7 +162,7 @@ def gaussian_bowl(shape, sigma=0.5, amplitude=-5.0):
 
 
 def add_hfield(spec=None, hsize=10, vsize=4, sigma=0.5, amplitude=-5.0):
-    """Function that adds a heighfield with countours"""
+    """Function that adds a heightfield with contours"""
 
     # Initialize spec
     if spec is None:
