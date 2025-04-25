@@ -1,6 +1,14 @@
 # vnl-mjx
 Virtual Neural Lab (VNL) in MJX. Tasks driven deel-RL learning in JAX
 
+## Quick Start
+
+To install `vnl-mjx`, first navigate to the project directory and run:
+
+```bash
+pip install -e .[with-cuda]
+```
+
 ## Features Implemented
 
 ### `mujoco_playground`-style Environment Management
