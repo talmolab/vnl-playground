@@ -101,7 +101,7 @@ def perlin(shape, res, tileable=(False, False), interpolant=interpolant):
 
     Args:
         shape: The shape of the generated array (tuple of two ints).
-            This must be a multple of res.
+            This must be a multiple of res.
         res: The number of periods of noise to generate along each
             axis (tuple of two ints). Note shape must be a multiple of
             res.
