@@ -51,7 +51,9 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def add_rodent(self, pos=(0, 0, 0.05)) -> None:
         """Adds the rodent model to the environment."""
-        rodent = mujoco.MjSpec.from_string(epath.Path(self._walker_xml_path).read_text())
+        rodent = mujoco.MjSpec.from_string(
+            epath.Path(self._walker_xml_path).read_text()
+        )
         spawn_site = self._spec.worldbody.add_site(
             name="rodent_spawn",
             pos=list(pos),
@@ -78,11 +80,11 @@ class RodentEnv(mjx_env.MjxEnv):
     @property
     def xml_path(self) -> str:
         return self._walker_xml_path
-    
+
     @property
     def walker_xml_path(self) -> str:
         return self._walker_xml_path
-    
+
     @property
     def arena_xml_path(self) -> str:
         return self._arena_xml_path

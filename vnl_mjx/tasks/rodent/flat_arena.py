@@ -17,30 +17,30 @@ from vnl_mjx.tasks.rodent import consts
 
 
 def default_config() -> config_dict.ConfigDict:
-  return config_dict.create(
-    walker_xml_path=consts.RODENT_SPHERE_FEET_PATH,
-    arena_xml_path=consts.ARENA_XML_PATH,
-    ctrl_dt=0.02,
-    sim_dt=0.004,
-    Kp=35.0,
-    Kd=0.5,
-    episode_length=300,
-    drop_from_height_prob=0.6,
-    settle_time=0.5,
-    action_repeat=1,
-    action_scale=0.5,
-    soft_joint_pos_limit_factor=0.95,
-    energy_termination_threshold=np.inf,
-    reward_config=config_dict.create(
-        scales=config_dict.create(
-            target_speed=5.0,
-            action_rate=-0.001,
-            torques=-1e-5,
-            dof_acc=-2.5e-7,
-            dof_vel=-0.1,
+    return config_dict.create(
+        walker_xml_path=consts.RODENT_SPHERE_FEET_PATH,
+        arena_xml_path=consts.ARENA_XML_PATH,
+        ctrl_dt=0.02,
+        sim_dt=0.004,
+        Kp=35.0,
+        Kd=0.5,
+        episode_length=300,
+        drop_from_height_prob=0.6,
+        settle_time=0.5,
+        action_repeat=1,
+        action_scale=0.5,
+        soft_joint_pos_limit_factor=0.95,
+        energy_termination_threshold=np.inf,
+        reward_config=config_dict.create(
+            scales=config_dict.create(
+                target_speed=5.0,
+                action_rate=-0.001,
+                torques=-1e-5,
+                dof_acc=-2.5e-7,
+                dof_vel=-0.1,
+            ),
         ),
-    ),
-  )
+    )
 
 
 class FlatWalk(rodent_base.RodentEnv):
@@ -50,7 +50,7 @@ class FlatWalk(rodent_base.RodentEnv):
         self,
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
-    ) -> None: 
+    ) -> None:
         super().__init__(config, config_overrides)
         self.add_rodent()
         self.compile()
@@ -105,8 +105,8 @@ class FlatWalk(rodent_base.RodentEnv):
         return obs
 
     def _get_reward(
-      self,
-      data: mjx.Data,
+        self,
+        data: mjx.Data,
     ) -> jp.ndarray:
         body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
         vel = jp.linalg.norm(body.subtree_linvel)
