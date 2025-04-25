@@ -29,7 +29,6 @@ dependencies = [
     "jax",
     "flax",
     "optax",
-    "mediapy",
     "imageio[ffmpeg]",
     "hydra-core",
     "h5py",
