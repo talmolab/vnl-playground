@@ -13,29 +13,6 @@ from mujoco_playground._src import mjx_env
 from vnl_mjx.tasks.rodent import consts
 
 
-rodent_xml_path = epath.Path(__file__) / "assets" / "rodent_only.xml"
-
-ARENA_XML = """
-<mujoco>
-  <visual>
-    <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
-    <global offwidth="2048" offheight="1536"/>
-    <quality shadowsize="8192"/>
-  </visual>
-
-  <asset>
-    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="10" height="10"/>
-    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1" markrgb="0 0 0" width="400" height="400"/>
-    <material name="groundplane" texture="groundplane" texrepeat="45 45" reflectance="0"/>
-  </asset>
-
-  <worldbody>
-    <geom name="floor" size="150 150 0.1" type="plane" material="groundplane"/>
-  </worldbody>
-</mujoco>
-"""
-
-
 def get_assets() -> Dict[str, bytes]:
     assets = {}
     mjx_env.update_assets(assets, consts.RODENT_PATH / "xmls", "*.xml")
@@ -45,8 +22,8 @@ def get_assets() -> Dict[str, bytes]:
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
-        xml_path=rodent_xml_path,
-        arena_xml=ARENA_XML,
+        walker_xml_path=consts.RODENT_XML_PATH,
+        arena_xml_path=consts.ARENA_XML_PATH,
     )
 
 
@@ -67,13 +44,14 @@ class RodentEnv(mjx_env.MjxEnv):
             compile_spec (bool, optional): Whether to compile the model. Defaults to False.
         """
         super().__init__(config, config_overrides)
-        self._xml_path = str(config.xml_path)
-        self._spec = mujoco.MjSpec.from_string(config.arena_xml)
+        self._walker_xml_path = str(config.walker_xml_path)
+        self._arena_xml_path = str(config.arena_xml_path)
+        self._spec = mujoco.MjSpec.from_string(config.arena_xml_path.read_text())
         self._compiled = False
 
     def add_rodent(self, pos=(0, 0, 0.05)) -> None:
         """Adds the rodent model to the environment."""
-        rodent = mujoco.MjSpec.from_string(epath.Path(self._xml_path).read_text())
+        rodent = mujoco.MjSpec.from_string(epath.Path(self._walker_xml_path).read_text())
         spawn_site = self._spec.worldbody.add_site(
             name="rodent_spawn",
             pos=list(pos),

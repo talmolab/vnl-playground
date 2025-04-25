@@ -13,33 +13,13 @@ from mujoco_playground._src import reward
 from mujoco_playground._src.dm_control_suite import common
 
 from vnl_mjx.tasks.rodent import base as rodent_base
+from vnl_mjx.tasks.rodent import consts
 
-rodent_xml_path = epath.Path(__file__).parent / "xmls" / "rodent_sphere_feet.xml"
-
-ARENA_XML = """
-<mujoco>
-  <visual>
-    <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
-    <global offwidth="2048" offheight="2048"/>
-    <quality shadowsize="8192"/>
-  </visual>
-
-  <asset>
-    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="10" height="10"/>
-    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1" markrgb="0 0 0" width="400" height="400"/>
-    <material name="groundplane" texture="groundplane" texrepeat="45 45" reflectance="0"/>
-  </asset>
-
-  <worldbody>
-    <geom name="floor" size="10 10 0.005" type="plane" material="groundplane"/>
-  </worldbody>
-</mujoco>
-"""
 
 def default_config() -> config_dict.ConfigDict:
   return config_dict.create(
-    xml_path=rodent_xml_path,
-    arena_xml=ARENA_XML,
+    walker_xml_path=consts.RODENT_SPHERE_FEET_PATH,
+    arena_xml_path=consts.ARENA_XML_PATH,
     ctrl_dt=0.02,
     sim_dt=0.004,
     Kp=35.0,
