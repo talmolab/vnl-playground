@@ -18,7 +18,7 @@ from vnl_mjx.tasks.rodent import consts
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
-        walker_xml_path=consts.RODENT_SPHERE_FEET_PATH,
+        walker_xml_path=consts.RODENT_BOX_FEET_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
         ctrl_dt=0.02,
         sim_dt=0.004,
@@ -33,7 +33,7 @@ def default_config() -> config_dict.ConfigDict:
         energy_termination_threshold=np.inf,
         reward_config=config_dict.create(
             scales=config_dict.create(
-                target_speed=5.0,
+                target_speed=2.0,
                 action_rate=-0.001,
                 torques=-1e-5,
                 dof_acc=-2.5e-7,
@@ -83,10 +83,9 @@ class FlatWalk(rodent_base.RodentEnv):
         obs = self._get_obs(data)
 
         # Compute the reward.
-        reward = self._get_reward(data)
-
-        done = state.done
-
+        rewards = self._get_reward(data)
+        reward = rewards["speed * upright"]
+        done = self._get_termination(data)
         state = state.replace(
             data=data,
             obs=obs,
@@ -97,14 +96,22 @@ class FlatWalk(rodent_base.RodentEnv):
         return state
 
     def _get_obs(self, data: mjx.Data) -> jax.Array:
-        # Get the position and velocity of the rodent.
-        pos = data.qpos[3:6]
-        vel = data.qvel[3:6]
-        # Concatenate all observations.
-        obs = jp.concatenate([pos, vel])
+        obs = jp.concatenate([data.qpos, data.qvel])
         return obs
 
     def _get_reward(
+        self,
+        data: mjx.Data,
+    ) -> Dict[str, jax.Array]:
+        speed_reward = self._get_speed_reward(data)
+        upright_reward = self._upright_reward(data, deviation_angle=10)
+        return {
+            "speed_reward": speed_reward,
+            "upright_reward": upright_reward,
+            "speed * upright": speed_reward * upright_reward,
+        }
+
+    def _get_speed_reward(
         self,
         data: mjx.Data,
     ) -> jp.ndarray:
@@ -115,3 +122,44 @@ class FlatWalk(rodent_base.RodentEnv):
             vel, bounds=(target_speed, target_speed), margin=target_speed
         )
         return reward_value
+
+    def _upright_reward(self, data: mjx.Data, deviation_angle=0):
+        """Returns a reward proportional to how upright the torso is.
+
+        Args:
+        physics: an instance of `Physics`.
+        walker: the focal walker.
+        deviation_angle: A float, in degrees. The reward is 0 when the torso is
+            exactly upside-down and 1 when the torso's z-axis is less than
+            `deviation_angle` away from the global z-axis.
+        """
+        deviation = np.cos(np.deg2rad(deviation_angle))
+        # xmat is the 3x3 rotation matrix of the current frame
+        upright_torso = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xmat[
+            -1, -1
+        ]
+        upright = reward.tolerance(
+            upright_torso,
+            bounds=(deviation, np.inf),
+            sigmoid="linear",
+            margin=1 + deviation,
+            value_at_margin=0,
+        )
+        return np.min(upright)
+
+    def _get_termination(
+        self,
+        data: mjx.Data,
+    ) -> jax.Array:
+        """
+        Returns 1 if the rodent falls under the ground, 0 otherwise.
+
+        Args:
+            data (mjx.Data): _description_
+
+        Returns:
+            jax.Array: _description_
+        """
+        z = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos[-1]
+        fall_under_ground = jp.where(z < 0.0, 1.0, 0.0)
+        return fall_under_ground
