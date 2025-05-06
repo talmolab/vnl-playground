@@ -9,50 +9,35 @@ import numpy as np
 from ml_collections import config_dict
 import mujoco
 from mujoco import mjx
+import dm_control
 
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward
 from mujoco_playground._src.dm_control_suite import common
 
 from vnl_mjx.tasks.rodent import base as rodent_base
-
+from vnl_mjx.tasks.rodent import consts
 
 import matplotlib.colors as mcolors
-
-rodent_xml_path = epath.Path(__file__) / "assets" / "rodent_only.xml"
-
-arena_xml = """
-<mujoco>
-  <visual>
-    <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
-    <global offwidth="2048" offheight="1536"/>
-    <quality shadowsize="8192"/>
-  </visual>
-
-  <asset>
-    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="10" height="10"/>
-    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1" markrgb="0 0 0" width="400" height="400"/>
-    <material name="groundplane" texture="groundplane" texrepeat="45 45" reflectance="0"/>
-  </asset>
-
-  <worldbody>
-    <geom name="floor" size="150 150 0.1" type="plane" material="groundplane"/>
-  </worldbody>
-</mujoco>
-"""
 
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
-        ctrl_dt=0.01,
+        walker_xml_path=consts.RODENT_SPHERE_FEET_PATH,
+        arena_xml_path=consts.ARENA_XML_PATH,
+        ctrl_dt=0.02,
         sim_dt=0.01,
+        mj_model_timestep=0.01,
+        solver="cg",
+        iterations=100,
+        ls_iterations=50,
+        vision=False,
         episode_length=1000,
         action_repeat=1,
-        vision=False,
-        bowl_hsize=10,
-        bowl_vsize=4,
-        bowl_sigma=0.5,
-        bowl_amplitude=-5.0,
+        bowl_hsize=4,
+        bowl_vsize=2,
+        bowl_sigma=1,
+        bowl_amplitude=-10.0,
     )
 
 
@@ -74,18 +59,99 @@ class BowlEscape(rodent_base.RodentEnv):
         Raises:
             NotImplementedError: Raised if vision is enabled.
         """
+        # super has already init a spec with the provided arena xml path
         super().__init__(config, config_overrides)
         if self._config.vision:
             raise NotImplementedError(
                 f"Vision not implemented for {self.__class__.__name__}."
             )
-        # TODO: inject mj_spec and initialize the environment here
-        self._xml_path = rodent_xml_path.as_posix()
-        self._spec = mujoco.MjSpec.from_xml_string(arena_xml)
+        self._initialize_noisy_bowl()
+        self.add_rodent([0, 0, 0.2])
+        self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
+        self.compile()
 
-    def _initialize_noisy_bowl(
-        self,
-    ): ...
+    def _initialize_noisy_bowl(self):
+        """Initialize the noisy bowl with specified parameters."""
+        self._spec = add_bowl_hfield(
+            self._spec,
+            hsize=self._config.bowl_hsize,
+            vsize=self._config.bowl_vsize,
+            sigma=self._config.bowl_sigma,
+            amplitude=self._config.bowl_amplitude,
+        )
+
+    def reset(self, rng: jax.Array) -> mjx_env.State:
+        data = mjx_env.init(self.mjx_model)
+        obs = self._get_obs(data)
+        reward, done = jp.zeros(2)
+        metrics = {}
+        info = {}
+
+        return mjx_env.State(data, obs, reward, done, metrics, info)
+
+    def _get_obs(self, data: mjx.Data) -> jp.ndarray:
+        obs = jp.concatenate([data.qpos, data.qvel])
+        return obs
+
+    def _upright_reward(self, data: mjx.Data, deviation_angle=0):
+        """Returns a reward proportional to how upright the torso is.
+
+        Args:
+        physics: an instance of `Physics`.
+        walker: the focal walker.
+        deviation_angle: A float, in degrees. The reward is 0 when the torso is
+            exactly upside-down and 1 when the torso's z-axis is less than
+            `deviation_angle` away from the global z-axis.
+        """
+        deviation = np.cos(np.deg2rad(deviation_angle))
+        # xmat is the 3x3 rotation matrix of the current frame
+        upright_torso = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xmat[
+            -1, -1
+        ]
+        upright = reward.tolerance(
+            upright_torso,
+            bounds=(deviation, np.inf),
+            sigmoid="linear",
+            margin=1 + deviation,
+            value_at_margin=0,
+        )
+        return np.min(upright)
+
+    def _escape_reward(self, data: mjx.Data):
+        terrain_size = float(self._config.bowl_hsize)
+        torso_xpos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
+        escape_reward = reward.tolerance(
+            jp.linalg.norm(torso_xpos),
+            bounds=(terrain_size, float("inf")),
+            margin=terrain_size,
+            value_at_margin=0,
+            sigmoid="linear",
+        )
+        return escape_reward
+
+    def _get_reward(self, data: mjx.Data) -> Dict[str, jax.Array]:
+        escape_reward = self._escape_reward(data)
+        upright_reward = self._upright_reward(data, deviation_angle=10)
+        return {
+            "escape_reward": escape_reward,
+            "upright_reward": upright_reward,
+            "escape * upright": escape_reward * upright_reward,
+        }
+
+    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        # Apply the action to the model.
+        data = mjx_env.step(self.mjx_model, state.data, action)
+        # Get the new observation.
+        obs = self._get_obs(data)
+        # Compute the reward.
+        rewards = self._get_reward(data)
+        reward = rewards["escape * upright"]
+        state = state.replace(
+            data=data,
+            obs=obs,
+            reward=reward,
+        )
+        return state
 
 
 ### Perlin noise generator, for height field generation
@@ -161,8 +227,20 @@ def gaussian_bowl(shape, sigma=0.5, amplitude=-5.0):
     return amplitude * np.exp(-(xv**2 + yv**2) / (2 * sigma**2))
 
 
-def add_hfield(spec=None, hsize=10, vsize=4, sigma=0.5, amplitude=-5.0):
-    """Function that adds a heightfield with contours"""
+def add_bowl_hfield(spec=None, hsize=10, vsize=4, sigma=0.5, amplitude=-5.0):
+    """
+    add height field with noise
+
+    Args:
+        spec (_type_, optional): mj_spec that we attach the bowl to. Defaults to None.
+        hsize (int, optional): horizontal size of the bowl. Defaults to 10.
+        vsize (int, optional): vertical depth of the bowl. Defaults to 4.
+        sigma (float, optional): standard deviation of the Gaussian of the noise. Defaults to 0.5.
+        amplitude (float, optional): amplitude of the Gaussian. Defaults to -5.0.
+
+    Returns:
+        mj_spec: spec with the height bowl
+    """
 
     # Initialize spec
     if spec is None:

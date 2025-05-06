@@ -32,7 +32,7 @@ from tqdm import tqdm
 from mujoco_playground import locomotion, wrapper
 from mujoco_playground.config import locomotion_params
 
-from vnl_mjx.tasks.rodent import flat_arena
+from vnl_mjx.tasks.rodent import flat_arena, bowl_escape
 
 
 # Enable persistent compilation cache.
@@ -45,7 +45,7 @@ env_name = "Go1JoystickFlatTerrain"
 env_cfg = locomotion.get_default_config(env_name)
 ppo_params = locomotion_params.brax_ppo_config(env_name)
 
-env_name = "rodent-flat"
+env_name = "rodent-bowl-escape"
 
 
 from pprint import pprint
@@ -55,8 +55,8 @@ ppo_params.num_envs = 2048
 ppo_params.episode_length = 1000
 ppo_params.num_timesteps = int(5e8)
 pprint(ppo_params)
-    
-    
+
+
 SUFFIX = None
 FINETUNE_PATH = None
 
@@ -87,18 +87,20 @@ print(f"{ckpt_path}")
 
 with open(ckpt_path / "config.json", "w") as fp:
     json.dump(env_cfg.to_dict(), fp, indent=4)
-    
+
 # Setup wandb logging.
 USE_WANDB = True
 
 if USE_WANDB:
-    wandb.init(project="vnl-mjx-rl", config=env_cfg, id=f"rodent-flat-{exp_name}")
+    wandb.init(
+        project="vnl-mjx-rl", config=env_cfg, id=f"rodent-bowl-escape-{exp_name}"
+    )
     wandb.config.update(
         {
             "env_name": env_name,
         }
     )
-    
+
 x_data, y_data, y_dataerr = [], [], []
 times = [datetime.now()]
 
@@ -132,8 +134,8 @@ train_fn = functools.partial(
     policy_params_fn=policy_params_fn,
 )
 
-env = flat_arena.FlatWalk()
-eval_env = flat_arena.FlatWalk()
+env = bowl_escape.BowlEscape()
+eval_env = bowl_escape.BowlEscape()
 
 make_inference_fn, params, _ = train_fn(environment=env, eval_env=eval_env)
 if len(times) > 1:
