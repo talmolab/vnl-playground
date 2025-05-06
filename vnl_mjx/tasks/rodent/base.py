@@ -24,6 +24,10 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.RODENT_XML_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
+        mj_model_timestep=0.002,
+        solver="cg",
+        iterations=4,
+        ls_iterations=4,
     )
 
 
@@ -70,6 +74,10 @@ class RodentEnv(mjx_env.MjxEnv):
             # Increase offscreen framebuffer size to render at higher resolutions.
             self._mj_model.vis.global_.offwidth = 3840
             self._mj_model.vis.global_.offheight = 2160
+            self._mj_model.opt.iterations = self._config.iterations
+            self._mj_model.opt.ls_iterations = self._config.ls_iterations
+            self._mj_model.opt.timestep = self._config.mj_model_timestep
+            self._mj_model.opt.jacobian = 0
             self._mjx_model = mjx.put_model(self._mj_model)
             self._compiled = True
 
