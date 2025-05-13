@@ -53,15 +53,15 @@ class RodentEnv(mjx_env.MjxEnv):
         self._spec = mujoco.MjSpec.from_string(config.arena_xml_path.read_text())
         self._compiled = False
 
-    def add_rodent(self, pos=(0, 0, 0.05)) -> None:
+    def add_rodent(self, pos=(0, 0, 0.05), quat=(1, 0, 0, 0)) -> None:
         """Adds the rodent model to the environment."""
         rodent = mujoco.MjSpec.from_string(
             epath.Path(self._walker_xml_path).read_text()
         )
         spawn_site = self._spec.worldbody.add_site(
             name="rodent_spawn",
-            pos=list(pos),
-            quat=[1, 0, 0, 0],
+            pos=pos,
+            quat=quat,
         )
         spawn_body = spawn_site.attach_body(rodent.worldbody, "", "-rodent")
         spawn_body.add_freejoint()
@@ -76,8 +76,6 @@ class RodentEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
-            self._mj_model.opt.timestep = self._config.mj_model_timestep
-            self._mj_model.opt.jacobian = 0
             self._mjx_model = mjx.put_model(self._mj_model)
             self._compiled = True
 
