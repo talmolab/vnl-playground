@@ -1,6 +1,8 @@
 # Bowl escape definition, reflecting the mujoco playgrounds.
 
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, Tuple, Callable
+import numpy as np
+from scipy.spatial.transform import Rotation
 
 from etils import epath
 import jax
@@ -9,48 +11,53 @@ import numpy as np
 from ml_collections import config_dict
 import mujoco
 from mujoco import mjx
+import dm_control
 
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward
 from mujoco_playground._src.dm_control_suite import common
 
 from vnl_mjx.tasks.rodent import base as rodent_base
-
+from vnl_mjx.tasks.rodent import consts
 
 import matplotlib.colors as mcolors
 
-rodent_xml_path = epath.Path(__file__) / "assets" / "rodent_only.xml"
-
-arena_xml = """
-<mujoco>
-  <visual>
-    <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
-    <global offwidth="2048" offheight="1536"/>
-    <quality shadowsize="8192"/>
-  </visual>
-
-  <asset>
-    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="10" height="10"/>
-    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1" markrgb="0 0 0" width="400" height="400"/>
-    <material name="groundplane" texture="groundplane" texrepeat="45 45" reflectance="0"/>
-  </asset>
-
-  <worldbody>
-    <geom name="floor" size="150 150 0.1" type="plane" material="groundplane"/>
-  </worldbody>
-</mujoco>
-"""
-
 
 def default_config() -> config_dict.ConfigDict:
+    """Returns the default configuration for the BowlEscape environment.
+
+    The configuration dictionary contains the following keys:
+        walker_xml_path (str): Path to the XML file for the rodent walker.
+        arena_xml_path (str): Path to the XML file for the arena.
+        ctrl_dt (float): Control timestep.
+        sim_dt (float): Simulation timestep.
+        solver (str): Solver type.
+        iterations (int): Number of solver iterations.
+        ls_iterations (int): Number of line search iterations.
+        vision (bool): Whether to enable vision.
+        episode_length (int): Length of an episode.
+        action_repeat (int): Number of times to repeat an action.
+        bowl_hsize (int): Horizontal size of the bowl.
+        bowl_vsize (int): Vertical size (depth) of the bowl.
+        bowl_sigma (float): Standard deviation of the Gaussian bump on bowl.
+        bowl_amplitude (float): Amplitude of the Gaussian bump on bowl.
+
+    Returns:
+        config_dict.ConfigDict: The default configuration dictionary.
+    """
     return config_dict.create(
+        walker_xml_path=consts.RODENT_SPHERE_FEET_PATH,
+        arena_xml_path=consts.ARENA_XML_PATH,
         ctrl_dt=0.01,
-        sim_dt=0.01,
-        episode_length=1000,
-        action_repeat=1,
+        sim_dt=0.002,
+        solver="cg",
+        iterations=500,
+        ls_iterations=100,
         vision=False,
+        episode_length=2000,
+        action_repeat=5,
         bowl_hsize=10,
-        bowl_vsize=4,
+        bowl_vsize=2,
         bowl_sigma=0.5,
         bowl_amplitude=-5.0,
     )
@@ -63,7 +70,7 @@ class BowlEscape(rodent_base.RodentEnv):
         self,
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
-    ):
+    ) -> None:
         """
         Initialize the BowlEscape class and set up the environment.
 
@@ -74,44 +81,284 @@ class BowlEscape(rodent_base.RodentEnv):
         Raises:
             NotImplementedError: Raised if vision is enabled.
         """
+        # super has already init a spec with the provided arena xml path
         super().__init__(config, config_overrides)
         if self._config.vision:
             raise NotImplementedError(
                 f"Vision not implemented for {self.__class__.__name__}."
             )
-        # TODO: inject mj_spec and initialize the environment here
-        self._xml_path = rodent_xml_path.as_posix()
-        self._spec = mujoco.MjSpec.from_xml_string(arena_xml)
+        self._initialize_noisy_bowl()
+        # Compute rodent initial pose on bowl
+        init_x, init_y = 0.0, 0.0
+        init_z = self._interpolate_bowl_height(init_x, init_y) + 0.05
+        init_quat = self._surface_quaternion(init_x, init_y)
+        print(f"Initial position: {init_x}, {init_y}, {init_z}")
+        print(f"Initial quaternion: {init_quat}")
+        self.add_rodent([init_x, init_y, init_z], init_quat)
+        self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
+        self.compile()
 
-    def _initialize_noisy_bowl(
-        self,
-    ): ...
+    def _initialize_noisy_bowl(self) -> None:
+        """Initialize the noisy bowl heightfield and store it in the environment."""
+        self._spec, bowl_noise = add_bowl_hfield(
+            self._spec,
+            hsize=self._config.bowl_hsize,
+            vsize=self._config.bowl_vsize,
+            sigma=self._config.bowl_sigma,
+            amplitude=self._config.bowl_amplitude,
+        )
+        # Store as JAX array for fast indexing in termination check
+        self._bowl_noise = jp.array(bowl_noise)
+        self._bowl_noise_np = bowl_noise
+
+    def reset(self, rng: jax.Array) -> mjx_env.State:
+        """Reset the environment state.
+
+        Args:
+            rng (jax.Array): Random number generator state.
+
+        Returns:
+            mjx_env.State: The initial environment state after reset.
+        """
+        data = mjx_env.init(self.mjx_model)
+        obs = self._get_obs(data)
+        reward, done = jp.zeros(2)
+        metrics = {}
+        # info = self._get_reward(data)
+        info = {}
+        return mjx_env.State(data, obs, reward, done, metrics, info)
+
+    def _get_obs(self, data: mjx.Data) -> jp.ndarray:
+        """Get the current observation from the simulation data.
+
+        Args:
+            data (mjx.Data): The simulation data.
+
+        Returns:
+            jp.ndarray: The concatenated position and velocity observations.
+        """
+        obs = jp.concatenate([data.qpos, data.qvel])
+        return obs
+
+    def _upright_reward(self, data: mjx.Data, deviation_angle: float = 0) -> float:
+        """Returns a reward proportional to how upright the torso is.
+
+        Args:
+            data (mjx.Data): The simulation data.
+            deviation_angle (float, optional): Angle in degrees. Reward is 0 when torso is exactly upside-down,
+                and 1 when torso's z-axis is within this angle from global z-axis. Defaults to 0.
+
+        Returns:
+            float: Upright reward value.
+        """
+        deviation = np.cos(np.deg2rad(deviation_angle))
+        # xmat is the 3x3 rotation matrix of the current frame
+        upright_torso = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xmat[
+            -1, -1
+        ]
+        upright = reward.tolerance(
+            upright_torso,
+            bounds=(deviation, np.inf),
+            sigmoid="linear",
+            margin=1 + deviation,
+            value_at_margin=0,
+        )
+        return np.min(upright)
+
+    def _escape_reward(self, data: mjx.Data) -> float:
+        """Calculate escape reward based on torso position relative to terrain size.
+
+        Args:
+            data (mjx.Data): The simulation data.
+
+        Returns:
+            float: Escape reward value.
+        """
+        terrain_size = float(self._config.bowl_hsize)
+        torso_xpos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
+        escape_reward = reward.tolerance(
+            jp.linalg.norm(torso_xpos),
+            bounds=(terrain_size, float("inf")),
+            margin=terrain_size,
+            value_at_margin=0,
+            sigmoid="linear",
+        )
+        return escape_reward
+
+    def _get_reward(self, data: mjx.Data) -> Dict[str, jax.Array]:
+        """Calculate and return a dictionary of rewards.
+
+        Args:
+            data (mjx.Data): The simulation data.
+
+        Returns:
+            Dict[str, jax.Array]: Dictionary containing 'escape_reward', 'upright_reward', and their product.
+        """
+        escape_reward = self._escape_reward(data)
+        upright_reward = self._upright_reward(data, deviation_angle=10)
+        return {
+            "escape_reward": escape_reward,
+            "upright_reward": upright_reward,
+            "escape * upright": escape_reward * upright_reward,
+        }
+
+    def _interpolate_bowl_height(self, x: float, y: float) -> float:
+        """Interpolate the bowl surface height at world coordinates (x, y).
+
+        Args:
+            x (float): x-coordinate in world frame.
+            y (float): y-coordinate in world frame.
+
+        Returns:
+            float: z-height of the bowl surface at (x, y) based on the noisy height field.
+        """
+        hsize = float(self._config.bowl_hsize)
+        vsize = float(self._config.bowl_vsize)
+        noise = self._bowl_noise_np
+        size = noise.shape[0]
+        # normalized texture coords in [0,1)
+        u = (x + hsize) / (2 * hsize)
+        v = (y + hsize) / (2 * hsize)
+        # Use JAX floor and astype for col, row
+        col = jp.floor(u * (size - 1)).astype(jp.int32)
+        row = jp.floor(v * (size - 1)).astype(jp.int32)
+        height_norm = noise[row, col]
+        return height_norm * vsize
+
+    def _compute_surface_normal(self, x: float, y: float) -> np.ndarray:
+        """Compute the surface normal of the bowl heightfield at (x, y).
+
+        Args:
+            x (float): x-coordinate in world frame.
+            y (float): y-coordinate in world frame.
+
+        Returns:
+            np.ndarray: The normalized surface normal vector at (x, y).
+        """
+        noise = self._bowl_noise_np
+        hsize = float(self._config.bowl_hsize)
+        size = noise.shape[0]
+        # world-to-grid spacing
+        dx = (2 * hsize) / (size - 1)
+        # texture coords
+        u = (x + hsize) / (2 * hsize)
+        v = (y + hsize) / (2 * hsize)
+        i = int(np.clip(v * (size - 1), 0, size - 1))
+        j = int(np.clip(u * (size - 1), 0, size - 1))
+
+        # finite differences
+        def get(i_, j_):
+            return noise[np.clip(i_, 0, size - 1), np.clip(j_, 0, size - 1)]
+
+        dzdx = (get(i, j + 1) - get(i, j - 1)) / (2 * dx)
+        dzdy = (get(i + 1, j) - get(i - 1, j)) / (2 * dx)
+        # tangents and normal
+        tx = np.array([1.0, 0.0, dzdx])
+        ty = np.array([0.0, 1.0, dzdy])
+        normal = np.cross(tx, ty)
+        return normal / np.linalg.norm(normal)
+
+    def _surface_quaternion(self, x: float, y: float) -> list[float]:
+        """Return a quaternion [w, x, y, z] aligning +z to the surface normal.
+
+        Args:
+            x (float): x-coordinate in world frame.
+            y (float): y-coordinate in world frame.
+
+        Returns:
+            list[float]: Quaternion representing rotation aligning +z axis to surface normal.
+        """
+        normal = self._compute_surface_normal(x, y)
+        up = np.array([0.0, 0.0, 1.0])
+        # axis-angle rotation from up to normal
+        axis = np.cross(up, normal)
+        axis_norm = np.linalg.norm(axis)
+        if axis_norm < 1e-6:
+            # aligned or opposite
+            return [1.0, 0.0, 0.0, 0.0] if normal[2] > 0 else [0.0, 1.0, 0.0, 0.0]
+        axis /= axis_norm
+        angle = np.arccos(np.clip(np.dot(up, normal), -1.0, 1.0))
+        rot = Rotation.from_rotvec(axis * angle)
+        q = rot.as_quat()  # [x, y, z, w]
+        # convert to [w, x, y, z]
+        return [float(q[3]), float(q[0]), float(q[1]), float(q[2])]
+
+    def _get_termination(self, data: mjx.Data) -> jp.ndarray:
+        """Check if the episode should terminate based on torso position relative to bowl surface.
+
+        Args:
+            data (mjx.Data): The simulation data.
+
+        Returns:
+            jp.ndarray: 1.0 if torso is below the bowl surface height, else 0.0.
+        """
+        # Torso (root) position
+        torso_pos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
+        x, y, z = torso_pos
+
+        # fetch bowl surface height at torso (x, y)
+        height_z = self._interpolate_bowl_height(x, y)
+        return jp.where(z <= height_z, 1.0, 0.0)
+
+    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        """Step the environment forward by one timestep.
+
+        Args:
+            state (mjx_env.State): Current environment state.
+            action (jax.Array): Action to apply.
+
+        Returns:
+            mjx_env.State: The new environment state after stepping.
+        """
+        # Apply the action to the model.
+        data = mjx_env.step(self.mjx_model, state.data, action)
+        # Get the new observation.
+        obs = self._get_obs(data)
+        # Compute the reward.
+        rewards = self._get_reward(data)
+        reward = rewards["escape * upright"]
+        done = self._get_termination(data)
+        state = state.replace(
+            data=data,
+            obs=obs,
+            reward=reward,
+            done=done,
+        )
+        return state
 
 
 ### Perlin noise generator, for height field generation
 # adapted from https://github.com/pvigier/perlin-numpy
 
 
-def interpolant(t):
+def interpolant(t: jp.ndarray) -> jp.ndarray:
+    """Interpolation function used in Perlin noise generation.
+
+    Args:
+        t (jp.ndarray): Input array.
+
+    Returns:
+        jp.ndarray: Interpolated output.
+    """
     return t * t * t * (t * (t * 6 - 15) + 10)
 
 
-def perlin(shape, res, tileable=(False, False), interpolant=interpolant):
-    """Generate a 2D numpy array of perlin noise.
+def perlin(
+    shape: Tuple[int, int],
+    res: Tuple[int, int],
+    tileable: Tuple[bool, bool] = (False, False),
+    interpolant: Callable[[jp.ndarray], jp.ndarray] = interpolant,
+) -> np.ndarray:
+    """Generate a 2D numpy array of Perlin noise.
 
     Args:
-        shape: The shape of the generated array (tuple of two ints).
-            This must be a multiple of res.
-        res: The number of periods of noise to generate along each
-            axis (tuple of two ints). Note shape must be a multiple of
-            res.
-        tileable: If the noise should be tileable along each axis
-            (tuple of two bools). Defaults to (False, False).
-        interpolant: The interpolation function, defaults to
-            t*t*t*(t*(t*6 - 15) + 10).
+        shape (Tuple[int, int]): The shape of the generated array. Must be a multiple of res.
+        res (Tuple[int, int]): Number of periods of noise along each axis.
+        tileable (Tuple[bool, bool], optional): Whether noise should be tileable along each axis. Defaults to (False, False).
+        interpolant (Callable[[jp.ndarray], jp.ndarray], optional): Interpolation function. Defaults to the default interpolant.
 
     Returns:
-        A numpy array of shape shape with the generated noise.
+        np.ndarray: Generated 2D Perlin noise array.
 
     Raises:
         ValueError: If shape is not a multiple of res.
@@ -143,17 +390,18 @@ def perlin(shape, res, tileable=(False, False), interpolant=interpolant):
     return np.sqrt(2) * ((1 - t[:, :, 1]) * n0 + t[:, :, 1] * n1)
 
 
-def gaussian_bowl(shape, sigma=0.5, amplitude=-5.0):
-    """
-    Generate a Gaussian bowl shape.
+def gaussian_bowl(
+    shape: Tuple[int, int], sigma: float = 0.5, amplitude: float = -5.0
+) -> np.ndarray:
+    """Generate a Gaussian bowl shape.
 
     Args:
-        shape: Tuple of two ints representing the shape of the generated array.
-        sigma: Standard deviation of the Gaussian.
-        amplitude: Amplitude of the Gaussian.
+        shape (Tuple[int, int]): Shape of the generated array.
+        sigma (float, optional): Standard deviation of the Gaussian. Defaults to 0.5.
+        amplitude (float, optional): Amplitude of the Gaussian. Defaults to -5.0.
 
     Returns:
-        A numpy array of shape `shape` with the Gaussian bowl.
+        np.ndarray: Gaussian bowl array of given shape.
     """
     y = np.linspace(-1, 1, shape[0])
     x = np.linspace(-1, 1, shape[1])
@@ -161,8 +409,25 @@ def gaussian_bowl(shape, sigma=0.5, amplitude=-5.0):
     return amplitude * np.exp(-(xv**2 + yv**2) / (2 * sigma**2))
 
 
-def add_hfield(spec=None, hsize=10, vsize=4, sigma=0.5, amplitude=-5.0):
-    """Function that adds a heightfield with contours"""
+def add_bowl_hfield(
+    spec: Optional[mujoco.MjSpec] = None,
+    hsize: float = 10,
+    vsize: float = 4,
+    sigma: float = 0.5,
+    amplitude: float = -5.0,
+) -> Tuple[mujoco.MjSpec, np.ndarray]:
+    """Add a noisy bowl height field to the Mujoco spec.
+
+    Args:
+        spec (Optional[mujoco.MjSpec], optional): Mujoco specification to modify. If None, a new spec is created. Defaults to None.
+        hsize (float, optional): Horizontal size of the bowl. Defaults to 10.
+        vsize (float, optional): Vertical depth of the bowl. Defaults to 4.
+        sigma (float, optional): Standard deviation of the Gaussian bump. Defaults to 0.5.
+        amplitude (float, optional): Amplitude of the Gaussian bump. Defaults to -5.0.
+
+    Returns:
+        Tuple[mujoco.MjSpec, np.ndarray]: The modified spec and the height-field noise array.
+    """
 
     # Initialize spec
     if spec is None:
@@ -211,4 +476,4 @@ def add_hfield(spec=None, hsize=10, vsize=4, sigma=0.5, amplitude=-5.0):
     grid.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "contours"
     spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_HFIELD, hfieldname="hfield")
 
-    return spec
+    return spec, noise
