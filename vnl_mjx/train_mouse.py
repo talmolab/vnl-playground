@@ -46,10 +46,10 @@ env_name = "Go1JoystickFlatTerrain"
 env_cfg = locomotion.get_default_config(env_name)
 
 ppo_params = config_dict.create(
-    num_timesteps=100_000_000,
-    num_evals=10,
+    num_timesteps=1_000_000_000,
+    num_evals=150,
     reward_scaling=1.0,
-    episode_length=1000,
+    episode_length=300,
     normalize_observations=True,
     action_repeat=1,
     unroll_length=20,
@@ -58,28 +58,18 @@ ppo_params = config_dict.create(
     discounting=0.97,
     learning_rate=1e-4,
     entropy_cost=1e-4,
-    num_envs=8192,
+    num_envs=2048,
     batch_size=256,
     max_grad_norm=1.0,
     network_factory=config_dict.create(
-        policy_hidden_layer_sizes=(128, 128, 128, 128),
-        value_hidden_layer_sizes=(256, 256, 256, 256, 256),
+        policy_hidden_layer_sizes=(512, 512, 512),
+        value_hidden_layer_sizes=(512, 512, 512),
         policy_obs_key="state",
         value_obs_key="state",
     ),
 )
 
 env_name = "mouse-reach"
-
-
-from pprint import pprint
-
-ppo_params.num_evals = 150
-ppo_params.num_envs = 2048
-ppo_params.episode_length = 1000
-ppo_params.num_timesteps = int(5e8)
-pprint(ppo_params)
-
 
 SUFFIX = None
 FINETUNE_PATH = None
