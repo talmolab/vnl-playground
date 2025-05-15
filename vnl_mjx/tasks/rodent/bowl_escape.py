@@ -46,15 +46,15 @@ def default_config() -> config_dict.ConfigDict:
         config_dict.ConfigDict: The default configuration dictionary.
     """
     return config_dict.create(
-        walker_xml_path=consts.RODENT_SPHERE_FEET_PATH,
+        walker_xml_path=consts.RODENT_BOX_FEET_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
         ctrl_dt=0.01,
         sim_dt=0.002,
         solver="cg",
-        iterations=500,
-        ls_iterations=100,
+        iterations=10,
+        ls_iterations=10,
         vision=False,
-        episode_length=2000,
+        episode_length=1000,
         action_repeat=5,
         bowl_hsize=10,
         bowl_vsize=2,
@@ -90,7 +90,7 @@ class BowlEscape(rodent_base.RodentEnv):
         self._initialize_noisy_bowl()
         # Compute rodent initial pose on bowl
         init_x, init_y = 0.0, 0.0
-        init_z = self._interpolate_bowl_height(init_x, init_y) + 0.05
+        init_z = self._interpolate_bowl_height(init_x, init_y) + 0.02
         init_quat = self._surface_quaternion(init_x, init_y)
         print(f"Initial position: {init_x}, {init_y}, {init_z}")
         print(f"Initial quaternion: {init_quat}")
@@ -125,8 +125,34 @@ class BowlEscape(rodent_base.RodentEnv):
         reward, done = jp.zeros(2)
         metrics = {}
         # info = self._get_reward(data)
-        info = {}
+        info = {"reference_obs_size": 3}
         return mjx_env.State(data, obs, reward, done, metrics, info)
+
+    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        """Step the environment forward by one timestep.
+
+        Args:
+            state (mjx_env.State): Current environment state.
+            action (jax.Array): Action to apply.
+
+        Returns:
+            mjx_env.State: The new environment state after stepping.
+        """
+        # Apply the action to the model.
+        data = mjx_env.step(self.mjx_model, state.data, action)
+        # Get the new observation.
+        obs = self._get_obs(data)
+        # Compute the reward.
+        rewards = self._get_reward(data)
+        reward = rewards["escape * upright"]  # + rewards["aliveness"]
+        done = self._get_termination(data)
+        state = state.replace(
+            data=data,
+            obs=obs,
+            reward=reward,
+            done=done,
+        )
+        return state
 
     def _get_obs(self, data: mjx.Data) -> jp.ndarray:
         """Get the current observation from the simulation data.
@@ -137,7 +163,13 @@ class BowlEscape(rodent_base.RodentEnv):
         Returns:
             jp.ndarray: The concatenated position and velocity observations.
         """
-        obs = jp.concatenate([data.qpos, data.qvel])
+        obs = jp.concatenate(
+            [
+                data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos,
+                data.qpos,
+                data.qvel,
+            ]
+        )
         return obs
 
     def _upright_reward(self, data: mjx.Data, deviation_angle: float = 0) -> float:
@@ -200,6 +232,7 @@ class BowlEscape(rodent_base.RodentEnv):
             "escape_reward": escape_reward,
             "upright_reward": upright_reward,
             "escape * upright": escape_reward * upright_reward,
+            "aliveness": -0.05,
         }
 
     def _interpolate_bowl_height(self, x: float, y: float) -> float:
@@ -284,47 +317,29 @@ class BowlEscape(rodent_base.RodentEnv):
         return [float(q[3]), float(q[0]), float(q[1]), float(q[2])]
 
     def _get_termination(self, data: mjx.Data) -> jp.ndarray:
-        """Check if the episode should terminate based on torso position relative to bowl surface.
+        """Check if the episode should terminate based on torso position relative to bowl surface or excessive tilt.
 
         Args:
             data (mjx.Data): The simulation data.
 
         Returns:
-            jp.ndarray: 1.0 if torso is below the bowl surface height, else 0.0.
+            jp.ndarray: 1.0 if torso is below the bowl surface height or tilt > 60°, else 0.0.
         """
         # Torso (root) position
         torso_pos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
         x, y, z = torso_pos
 
+        # also check torso tilt: terminate if tilt > 60 degrees
+        torso_mat = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xmat
+        upright_cos = torso_mat[-1, -1]
+        # cosine threshold for 60°
+        tilt_thresh = float(np.cos(np.deg2rad(60.0)))
+        done_tilt = jp.where(upright_cos <= tilt_thresh, 1.0, 0.0)
+
         # fetch bowl surface height at torso (x, y)
         height_z = self._interpolate_bowl_height(x, y)
-        return jp.where(z <= height_z, 1.0, 0.0)
-
-    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
-        """Step the environment forward by one timestep.
-
-        Args:
-            state (mjx_env.State): Current environment state.
-            action (jax.Array): Action to apply.
-
-        Returns:
-            mjx_env.State: The new environment state after stepping.
-        """
-        # Apply the action to the model.
-        data = mjx_env.step(self.mjx_model, state.data, action)
-        # Get the new observation.
-        obs = self._get_obs(data)
-        # Compute the reward.
-        rewards = self._get_reward(data)
-        reward = rewards["escape * upright"]
-        done = self._get_termination(data)
-        state = state.replace(
-            data=data,
-            obs=obs,
-            reward=reward,
-            done=done,
-        )
-        return state
+        done_bowl = jp.where(z <= height_z, 1.0, 0.0)
+        return jp.maximum(done_bowl, done_tilt)
 
 
 ### Perlin noise generator, for height field generation
