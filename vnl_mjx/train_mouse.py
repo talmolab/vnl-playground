@@ -62,8 +62,8 @@ ppo_params = config_dict.create(
     batch_size=256,
     max_grad_norm=1.0,
     network_factory=config_dict.create(
-        policy_hidden_layer_sizes=(512, 512, 512),
-        value_hidden_layer_sizes=(512, 512, 512),
+        policy_hidden_layer_sizes=(128, 128, 128, 128),
+        value_hidden_layer_sizes=(256, 256, 256, 256, 256),
         policy_obs_key="state",
         value_obs_key="state",
     ),
