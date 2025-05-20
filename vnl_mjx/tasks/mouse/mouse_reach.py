@@ -55,6 +55,9 @@ class MouseEnv(mjx_env.MjxEnv):
         self._target_size = 0.001  # Size of target for the reaching task
         self._compiled = False
 
+        # Spawn a random target for this env instance
+        # self.add_target(random_target=True)
+
     @staticmethod
     def get_target_positions():
         """Return predefined target positions for reaching task."""
@@ -71,7 +74,7 @@ class MouseEnv(mjx_env.MjxEnv):
             ]
         )
 
-    def add_target(self, pos=None, random_target=False) -> None:
+    def add_target(self, pos=None, random_target=False, rng=None) -> None:
         """
         Adds the target to the environment.
 
@@ -79,50 +82,120 @@ class MouseEnv(mjx_env.MjxEnv):
             pos: Optional position for the target. If None and random_target is True,
                  a random position from the predefined list will be used.
             random_target: If True, select a random target position.
+            rng: Optional JAX random key. If provided, uses this for randomization,
+                 which enables proper vectorization in JAX.
         """
-        # If random_target is True, select a random position
-        if random_target or pos is None:
-            target_positions = self.get_target_positions()
-            key = jax.random.PRNGKey(int(time.time() * 1e3))
-            idx = jax.random.randint(key, (), 0, target_positions.shape[0])
-            pos = target_positions[idx]
+        # ---------------------------------------------------------------------
+        # Choose a target position without Python‑level branching
+        # ---------------------------------------------------------------------
+        target_positions = self.get_target_positions()  # (N, 3)
+        rng_fallback = jax.random.PRNGKey(int(time.time() * 1e3))
+        rng = rng if rng is not None else rng_fallback
 
-        # Store the target position
-        self._target_position = jp.array(pos) if not isinstance(pos, jax.Array) else pos
+        # Sample index once; will be ignored when not used
+        idx = jax.random.randint(rng, (), 0, target_positions.shape[0], jp.int32)
+        sampled_pos = target_positions[idx]  # (3,)
 
-        # Check if a target site already exists
-        try:
-            # If target exists, update its position
-            target_site = self._spec.site("target")
-            target_site.pos = list(pos)
-        except (KeyError, AttributeError):
-            # If target doesn't exist, create a new one
-            self._spec.worldbody.add_site(
-                name="target",
-                pos=list(pos),
-                size=[0.001, 0.001, 0.001],  # 1mm radius in all dimensions
-                rgba=[0, 1, 0, 0.5],  # Green, semi-transparent
-            )
+        # Convert user‑provided pos (may be None) to a JAX array without Python branching
+        pos_is_none = pos is None  # Python bool, treated as static
+        provided_pos = jax.lax.cond(
+            pos_is_none,
+            lambda _: jp.zeros(3, dtype=jp.float32),
+            lambda p: jp.asarray(p, dtype=jp.float32),
+            operand=pos if pos is not None else jp.zeros(3),
+        )
+
+        # Use lax.cond to pick between sampled_pos and provided_pos
+        pos = jax.lax.cond(
+            random_target | (pos is None),
+            lambda _: sampled_pos,
+            lambda _: provided_pos,
+            operand=None,
+        )
+
+        self._spec.worldbody.add_site(
+            name="target",
+            pos=pos,  # Use Python floats
+            size=[0.001, 0.001, 0.001],
+            rgba=[0, 1, 0, 0.5],
+        )
 
         self.compile()
+        self._compiled = True
 
     def compile(self) -> None:
         """Compiles the model from the mj_spec and put models to mjx"""
         if not self._compiled:
             self._mj_model = self._spec.compile()
             self._mj_model.opt.timestep = self._config.sim_dt
-            # Increase offscreen framebuffer size to render at higher resolutions.
             self._mj_model.vis.global_.offwidth = 3840
             self._mj_model.vis.global_.offheight = 2160
             self._mjx_model = mjx.put_model(self._mj_model)
+
+            # Store the wrist body ID for faster access
+            self._wrist_body_id = self._mj_model.body("wrist_body").id
+
             self._compiled = True
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
+        """
+        Reset the environment state for a new episode with a new random target.
+        """
+        # Get a new random target position
+        target_positions = self.get_target_positions()
+        idx = jax.random.randint(rng, (), 0, target_positions.shape[0], jp.int32)
+        target_position = target_positions[idx]
+
+        # --- Host-only: Update target site to match the reward target position ---
+        if not isinstance(target_position, jax.core.Tracer):
+            # Safe conversion to Python floats
+            pos_list = [float(x) for x in target_position]
+
+            # First check if target site exists
+            target_site_id = -1
+            if hasattr(self, "_mj_model"):
+                try:
+                    target_site_id = mujoco.mj_name2id(
+                        self._mj_model, mujoco.mjtObj.mjOBJ_SITE, "target"
+                    )
+                except Exception:
+                    pass
+
+            if target_site_id >= 0:
+                # Target site exists in compiled model, update it
+                # First update the spec
+                for i, site in enumerate(self._spec.worldbody.site):
+                    if site.name == "target":
+                        self._spec.worldbody.site[i].pos = pos_list
+                        break
+                # Recompile to update visual
+                self._mj_model = self._spec.compile()
+                self._mjx_model = mjx.put_model(self._mj_model)
+            else:
+                # No target site, create one
+                self._spec.worldbody.site = [
+                    site for site in self._spec.worldbody.site if site.name != "target"
+                ]
+                self._spec.worldbody.add_site(
+                    name="target",
+                    pos=pos_list,
+                    size=[0.001, 0.001, 0.001],
+                    rgba=[0, 1, 0, 0.5],
+                )
+                # Compile to update model
+                self.compile()
+
+        # --- End host-only update ---
+
+        # Initialize data with the model
         data = mjx_env.init(self.mjx_model)
-        info = {}
-        obs = self._get_obs(data)
-        reward, done = jp.zeros(2)  # Match the style in flat_arena.py
+
+        # Create observation and state - target flows through state.info
+        obs = self._get_obs(data, target_position)
+        reward, done = jp.zeros(2)
         metrics = {}
+        info = {"target_position": target_position}
+
         return mjx_env.State(data, obs, reward, done, metrics, info)
 
     def step(
@@ -133,11 +206,10 @@ class MouseEnv(mjx_env.MjxEnv):
         # Apply the action to the model
         data = mjx_env.step(self.mjx_model, state.data, action)
 
-        # Get the new observation
-        obs = self._get_obs(data)
-
-        # Compute the reward
-        reward = jp.asarray(self._get_reward(data), dtype=jp.float32)
+        # Get the new observation and reward using target from info
+        target_position = state.info["target_position"]
+        obs = self._get_obs(data, target_position)
+        reward = jp.asarray(self._get_reward(data, target_position), dtype=jp.float32)
 
         # Check termination condition
         done = self._get_termination(data)
@@ -152,49 +224,36 @@ class MouseEnv(mjx_env.MjxEnv):
 
         return state
 
-    def _get_obs(self, data: mjx.Data) -> jax.Array:
-        # Get the position and velocity of the rodent
+    def _get_obs(self, data: mjx.Data, target_position: jp.ndarray) -> jax.Array:
+        # Get joint positions and velocities
         pos = data.qpos
         vel = data.qvel
 
-        # Calculate target relative position (to_target observable)
-        wrist_body = data.bind(self.mjx_model, self._spec.body("wrist_body"))
-        wrist_pos = wrist_body.xpos
+        # Use the stored body ID instead of looking it up via spec
+        wrist_pos = data.xpos[self._wrist_body_id]
 
-        # Get target position
-        target_site = data.bind(self.mjx_model, self._spec.site("target"))
-        target_pos = target_site.xpos
+        # Target position passed in from reset/step
+        to_target = target_position - wrist_pos
 
-        # Vector from wrist to target
-        to_target = target_pos - wrist_pos
-
-        # Concatenate all observations
+        # Concatenate all observation components
         obs = jp.concatenate([pos, vel, to_target])
+
         return obs
 
     def _get_reward(
         self,
         data: mjx.Data,
+        target_position: jp.ndarray,
     ) -> jp.ndarray:
-        # Get the wrist position
-        wrist_body = data.bind(self.mjx_model, self._spec.body("wrist_body"))
-        wrist_pos = wrist_body.xpos
+        # Get the wrist position using the stored ID
+        wrist_pos = data.xpos[self._wrist_body_id]
 
-        # Get target position directly from the site in the model
-        try:
-            # Get target position directly from the site
-            target_site = data.bind(self.mjx_model, self._spec.site("target"))
-            target_pos = target_site.xpos
-        except (KeyError, AttributeError):
-            # Fallback to stored position if site doesn't exist
-            target_pos = getattr(
-                self, "_target_position", jp.array([0.004, 0.012, -0.006])
-            )
+        # Target position passed in from reset/step
+        target_pos = target_position
 
         # Calculate distance between wrist and target
         to_target_dist = jp.linalg.norm(wrist_pos - target_pos)
 
-        # Calculate reward based on distance - ensure proper float32 type
         radii = self._target_size
         reward_value = reward.tolerance(
             to_target_dist, bounds=(0, radii), margin=0.006, sigmoid="hyperbolic"
