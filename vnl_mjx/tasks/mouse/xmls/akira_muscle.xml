@@ -142,9 +142,9 @@
 									<!--Biceps Long Head-->
 									<site name="Biceps_Long_Insertion" pos="-0.0002 0.0001 0.0001" rgba=".1 .2 .6 .5" size="0.0002"/>
 									<body name="wrist_body" pos="-0.002 0.0065 0.0005" euler="0 0 0">
-										<geom name="wrist_marker" type="sphere" size="0.0003" pos="0 0 0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8"/>
-										<!-- <geom name="hand_mesh_geom" type="mesh" mesh="Bone_Segments_Hand_fixed" pos="0 0 0"/>					
-										<inertial pos="-0.0048 0.0019 0.012" mass=" 0.00071" diaginertia="7e-08 7e-08 7e-08"/>  -->
+										<geom name="wrist_marker" type="sphere" size="0.0003" pos="0.0 0.003 0.0" contype="0" conaffinity="0" rgba="0.3 0.8 0.3 0.8"/>
+										<geom name="hand_mesh_geom" type="mesh" mesh="Bone_Segments_Hand_fixed" pos="0 0 0"/>					
+										<inertial pos="0.0 0.0 0.0" mass=" 0.00071" diaginertia="7e-08 7e-08 7e-08"/> 
 									</body>
 								</body>
 						</body>
@@ -231,7 +231,7 @@
 		<!--Elbow muscles-->
 		<muscle name="Triceps_Lateral" tendon="Triceps_Lateral" force=".1" vmax="15" range="0.82 1.05"/>
 		<muscle name="Triceps_Long" tendon="Triceps_Long" force=".1" vmax="15" range="0.7 1.1"/>
-		<muscle name="Brachialis" tendon="Brachialis" force=".6" vmax="15" range="0.6 1.2"/>
+		<muscle name="Brachialis" tendon="Brachialis" force=".4" vmax="15" range="0.6 1.2"/>
 		<muscle name="Biceps_Long" tendon="Biceps_Long" force=".1" vmax="15" range="0.7 1.05"/>
 	</actuator>
 </mujoco>
