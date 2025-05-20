@@ -55,6 +55,9 @@ class MouseEnv(mjx_env.MjxEnv):
         self._target_size = 0.001  # Size of target for the reaching task
         self._compiled = False
 
+        # Spawn a random target for this env instance
+        self.add_target(random_target=True)
+
     @staticmethod
     def get_target_positions():
         """Return predefined target positions for reaching task."""
@@ -71,7 +74,7 @@ class MouseEnv(mjx_env.MjxEnv):
             ]
         )
 
-    def add_target(self, pos=None, random_target=False) -> None:
+    def add_target(self, pos=None, random_target=False, rng=None) -> None:
         """
         Adds the target to the environment.
 
@@ -79,32 +82,56 @@ class MouseEnv(mjx_env.MjxEnv):
             pos: Optional position for the target. If None and random_target is True,
                  a random position from the predefined list will be used.
             random_target: If True, select a random target position.
+            rng: Optional JAX random key. If provided, uses this for randomization,
+                 which enables proper vectorization in JAX.
         """
-        # If random_target is True, select a random position
-        if random_target or pos is None:
-            target_positions = self.get_target_positions()
-            key = jax.random.PRNGKey(int(time.time() * 1e3))
-            idx = jax.random.randint(key, (), 0, target_positions.shape[0])
-            pos = target_positions[idx]
+        # ---------------------------------------------------------------------
+        # Choose a target position without Python‑level branching
+        # ---------------------------------------------------------------------
+        target_positions = self.get_target_positions()  # (N, 3)
+        rng_fallback = jax.random.PRNGKey(int(time.time() * 1e3))
+        rng = rng if rng is not None else rng_fallback
+
+        # Sample index once; will be ignored when not used
+        idx = jax.random.randint(rng, (), 0, target_positions.shape[0], jp.int32)
+        sampled_pos = target_positions[idx]  # (3,)
+
+        # Convert user‑provided pos (may be None) to a JAX array without Python branching
+        pos_is_none = pos is None  # Python bool, treated as static
+        provided_pos = jax.lax.cond(
+            pos_is_none,
+            lambda _: jp.zeros(3, dtype=jp.float32),
+            lambda p: jp.asarray(p, dtype=jp.float32),
+            operand=pos if pos is not None else jp.zeros(3),
+        )
+
+        # Use lax.cond to pick between sampled_pos and provided_pos
+        pos = jax.lax.cond(
+            random_target | (pos is None),
+            lambda _: sampled_pos,
+            lambda _: provided_pos,
+            operand=None,
+        )
 
         # Store the target position
-        self._target_position = jp.array(pos) if not isinstance(pos, jax.Array) else pos
+        self._target_position = jp.asarray(pos, dtype=jp.float32)
 
         # Check if a target site already exists
         try:
             # If target exists, update its position
             target_site = self._spec.site("target")
-            target_site.pos = list(pos)
+            target_site.pos = jp.asarray(pos, dtype=jp.float32)
         except (KeyError, AttributeError):
             # If target doesn't exist, create a new one
             self._spec.worldbody.add_site(
                 name="target",
-                pos=list(pos),
+                pos=[float(p) for p in pos],  # Use Python floats
                 size=[0.001, 0.001, 0.001],  # 1mm radius in all dimensions
                 rgba=[0, 1, 0, 0.5],  # Green, semi-transparent
             )
 
         self.compile()
+        self._compiled = True
 
     def compile(self) -> None:
         """Compiles the model from the mj_spec and put models to mjx"""
@@ -118,11 +145,15 @@ class MouseEnv(mjx_env.MjxEnv):
             self._compiled = True
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
+        """
+        Reset the environment state for a new episode.
+        """
+        # Simply initialize data with the model (which already has a target)
         data = mjx_env.init(self.mjx_model)
-        info = {}
         obs = self._get_obs(data)
-        reward, done = jp.zeros(2)  # Match the style in flat_arena.py
+        reward, done = jp.zeros(2)
         metrics = {}
+        info = {}
         return mjx_env.State(data, obs, reward, done, metrics, info)
 
     def step(
@@ -161,9 +192,8 @@ class MouseEnv(mjx_env.MjxEnv):
         wrist_body = data.bind(self.mjx_model, self._spec.body("wrist_body"))
         wrist_pos = wrist_body.xpos
 
-        # Get target position
-        target_site = data.bind(self.mjx_model, self._spec.site("target"))
-        target_pos = target_site.xpos
+        # Target position stored when add_target() was called
+        target_pos = self._target_position
 
         # Vector from wrist to target
         to_target = target_pos - wrist_pos
@@ -180,16 +210,8 @@ class MouseEnv(mjx_env.MjxEnv):
         wrist_body = data.bind(self.mjx_model, self._spec.body("wrist_body"))
         wrist_pos = wrist_body.xpos
 
-        # Get target position directly from the site in the model
-        try:
-            # Get target position directly from the site
-            target_site = data.bind(self.mjx_model, self._spec.site("target"))
-            target_pos = target_site.xpos
-        except (KeyError, AttributeError):
-            # Fallback to stored position if site doesn't exist
-            target_pos = getattr(
-                self, "_target_position", jp.array([0.004, 0.012, -0.006])
-            )
+        # Target position stored when add_target() was called
+        target_pos = self._target_position
 
         # Calculate distance between wrist and target
         to_target_dist = jp.linalg.norm(wrist_pos - target_pos)
@@ -197,7 +219,7 @@ class MouseEnv(mjx_env.MjxEnv):
         # Calculate reward based on distance - ensure proper float32 type
         radii = self._target_size
         reward_value = reward.tolerance(
-            to_target_dist, bounds=(0, radii), margin=0.006, sigmoid="hyperbolic"
+            to_target_dist, bounds=(0, radii), margin=0.008, sigmoid="hyperbolic"
         )
         return jp.asarray(reward_value, dtype=jp.float32)
 
