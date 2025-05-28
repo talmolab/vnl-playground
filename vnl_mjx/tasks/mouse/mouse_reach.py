@@ -63,14 +63,14 @@ class MouseEnv(mjx_env.MjxEnv):
         """Return predefined target positions for reaching task."""
         return jp.array(
             [
-                [0.004, 0.012, -0.006],
-                [0.0025355, 0.012, -0.0024645],
-                [-0.001, 0.012, -0.001],
-                [-0.0045355, 0.012, -0.0024645],
-                [-0.006, 0.012, -0.006],
-                [-0.0045355, 0.012, -0.0095355],
-                [-0.001, 0.012, -0.011],
-                [0.0025355, 0.012, -0.0095355],
+                [0.007, 0.010, -0.006],
+                [0.0055355, 0.010, -0.0024645],
+                [0.002, 0.010, -0.001],
+                [-0.0015355, 0.010, -0.0024645],
+                [-0.003, 0.010, -0.006],
+                [-0.0015355, 0.010, -0.0095355],
+                [0.002, 0.010, -0.011],
+                [0.0055355, 0.010, -0.0095355],
             ]
         )
 
@@ -134,6 +134,9 @@ class MouseEnv(mjx_env.MjxEnv):
 
             # Store the wrist body ID for faster access
             self._wrist_body_id = self._mj_model.body("wrist_body").id
+
+            # Store the wrist_marker geom ID for reward calculation
+            self._wrist_marker_geom_id = self._mj_model.geom("wrist_marker").id
 
             self._compiled = True
 
@@ -245,14 +248,14 @@ class MouseEnv(mjx_env.MjxEnv):
         data: mjx.Data,
         target_position: jp.ndarray,
     ) -> jp.ndarray:
-        # Get the wrist position using the stored ID
-        wrist_pos = data.xpos[self._wrist_body_id]
+        # Get the wrist_marker geom position using the stored ID
+        wrist_marker_pos = data.geom_xpos[self._wrist_marker_geom_id]
 
         # Target position passed in from reset/step
         target_pos = target_position
 
-        # Calculate distance between wrist and target
-        to_target_dist = jp.linalg.norm(wrist_pos - target_pos)
+        # Calculate distance between wrist_marker and target
+        to_target_dist = jp.linalg.norm(wrist_marker_pos - target_pos)
 
         radii = self._target_size
         reward_value = reward.tolerance(
