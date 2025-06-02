@@ -11,11 +11,10 @@ import numpy as np
 from ml_collections import config_dict
 import mujoco
 from mujoco import mjx
-import dm_control
+import warnings
 
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward
-from mujoco_playground._src.dm_control_suite import common
 
 from vnl_mjx.tasks.rodent import base as rodent_base
 from vnl_mjx.tasks.rodent import consts
@@ -23,8 +22,23 @@ from vnl_mjx.tasks.rodent import consts
 import matplotlib.colors as mcolors
 
 
+def default_vision_config() -> config_dict.ConfigDict:
+    return config_dict.create(
+        gpu_id=0,
+        render_batch_size=512,
+        render_width=64,
+        render_height=64,
+        enabled_geom_groups=[0, 1, 2],
+        use_rasterizer=False,
+        history=3,
+    )
+
+
 def default_config() -> config_dict.ConfigDict:
     """Returns the default configuration for the BowlEscape environment.
+    
+    Since the resulting noise will be normalized by the bowl_vsize, the amplitude 
+    and the sigma interacting with each other.
 
     The configuration dictionary contains the following keys:
         walker_xml_path (str): Path to the XML file for the rodent walker.
@@ -39,14 +53,14 @@ def default_config() -> config_dict.ConfigDict:
         action_repeat (int): Number of times to repeat an action.
         bowl_hsize (int): Horizontal size of the bowl.
         bowl_vsize (int): Vertical size (depth) of the bowl.
-        bowl_sigma (float): Standard deviation of the Gaussian bump on bowl.
-        bowl_amplitude (float): Amplitude of the Gaussian bump on bowl.
+        bowl_sigma (float): Standard deviation of the Gaussian bump on bowl, usually is the bowl_hsize / 4.
+        bowl_amplitude (float): Amplitude of the Gaussian bump on bowl, 
 
     Returns:
         config_dict.ConfigDict: The default configuration dictionary.
     """
     return config_dict.create(
-        walker_xml_path=consts.RODENT_SPHERE_FEET_PATH,
+        walker_xml_path=consts.RODENT_BOX_FEET_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
         ctrl_dt=0.01,
         sim_dt=0.002,
@@ -54,13 +68,24 @@ def default_config() -> config_dict.ConfigDict:
         iterations=500,
         ls_iterations=100,
         vision=False,
-        episode_length=2000,
+        vision_config=default_vision_config(),
+        episode_length=1000,
         action_repeat=5,
-        bowl_hsize=10,
+        bowl_hsize=5,
         bowl_vsize=2,
-        bowl_sigma=0.5,
-        bowl_amplitude=-5.0,
+        bowl_sigma=1.25,
+        bowl_amplitude=-20,
     )
+
+
+def _rgba_to_grayscale(rgba: jax.Array) -> jax.Array:
+    """
+    Intensity-weigh the colors.
+    This expects the input to have the channels in the last dim.
+    """
+    r, g, b = rgba[..., 0], rgba[..., 1], rgba[..., 2]
+    gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
+    return gray
 
 
 class BowlEscape(rodent_base.RodentEnv):
@@ -83,20 +108,49 @@ class BowlEscape(rodent_base.RodentEnv):
         """
         # super has already init a spec with the provided arena xml path
         super().__init__(config, config_overrides)
-        if self._config.vision:
-            raise NotImplementedError(
-                f"Vision not implemented for {self.__class__.__name__}."
-            )
+        # if self._config.vision:
+        #     raise NotImplementedError(
+        #         f"Vision not implemented for {self.__class__.__name__}."
+        #     )
+        self._vision = self._config.vision
         self._initialize_noisy_bowl()
         # Compute rodent initial pose on bowl
         init_x, init_y = 0.0, 0.0
-        init_z = self._interpolate_bowl_height(init_x, init_y) + 0.05
+        init_z = self._interpolate_bowl_height(init_x, init_y) + 0.03
         init_quat = self._surface_quaternion(init_x, init_y)
         print(f"Initial position: {init_x}, {init_y}, {init_z}")
         print(f"Initial quaternion: {init_quat}")
         self.add_rodent([init_x, init_y, init_z], init_quat)
         self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
         self.compile()
+
+        if self._vision:
+            try:
+                # pylint: disable=import-outside-toplevel
+                from madrona_mjx.renderer import (
+                    BatchRenderer,
+                )  # pytype: disable=import-error
+            except ImportError:
+                warnings.warn("Madrona MJX not installed. Cannot use vision with.")
+                return
+            self.renderer = BatchRenderer(
+                m=self._mjx_model,
+                gpu_id=self._config.vision_config.gpu_id,
+                num_worlds=self._config.vision_config.render_batch_size,
+                batch_render_view_width=self._config.vision_config.render_width,
+                batch_render_view_height=self._config.vision_config.render_height,
+                enabled_geom_groups=np.asarray(
+                    self._config.vision_config.enabled_geom_groups
+                ),
+                enabled_cameras=np.asarray(
+                    [
+                        0,
+                    ]
+                ),
+                add_cam_debug_geo=False,
+                use_rasterizer=self._config.vision_config.use_rasterizer,
+                viz_gpu_hdls=None,
+            )
 
     def _initialize_noisy_bowl(self) -> None:
         """Initialize the noisy bowl heightfield and store it in the environment."""
@@ -124,9 +178,52 @@ class BowlEscape(rodent_base.RodentEnv):
         obs = self._get_obs(data)
         reward, done = jp.zeros(2)
         metrics = {}
-        # info = self._get_reward(data)
-        info = {}
+        info = {"reference_obs_size": 3}
+        if self._vision:
+            # if vision, the observation is the rendered image
+            render_token, rgb, _ = self.renderer.init(data, self._mjx_model)
+            info.update({"render_token": render_token})
+            obs = _rgba_to_grayscale(rgb[0].astype(jp.float32)) / 255.0
+            obs_history = jp.tile(obs, (self._config.vision_config.history, 1, 1))
+            info.update({"obs_history": obs_history})
+            obs = {"pixels/view_0": obs_history.transpose(1, 2, 0)}
         return mjx_env.State(data, obs, reward, done, metrics, info)
+
+    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        """Step the environment forward by one timestep.
+
+        Args:
+            state (mjx_env.State): Current environment state.
+            action (jax.Array): Action to apply.
+
+        Returns:
+            mjx_env.State: The new environment state after stepping.
+        """
+        # Apply the action to the model.
+        data = mjx_env.step(self.mjx_model, state.data, action)
+        # Get the new observation.
+        obs = self._get_obs(data)
+        # Compute the reward.
+        rewards = self._get_reward(data)
+        reward = rewards["escape * upright"]  # + rewards["aliveness"]
+        if self._vision:
+            _, rgb, _ = self.renderer.render(state.info["render_token"], data)
+            # Update observation buffer
+            obs_history = state.info["obs_history"]
+            obs_history = jp.roll(obs_history, 1, axis=0)
+            obs_history = obs_history.at[0].set(
+                _rgba_to_grayscale(rgb[0].astype(jp.float32)) / 255.0
+            )
+            state.info["obs_history"] = obs_history
+            obs = {"pixels/view_0": obs_history.transpose(1, 2, 0)}
+        done = self._get_termination(data)
+        state = state.replace(
+            data=data,
+            obs=obs,
+            reward=reward,
+            done=done,
+        )
+        return state
 
     def _get_obs(self, data: mjx.Data) -> jp.ndarray:
         """Get the current observation from the simulation data.
@@ -137,7 +234,8 @@ class BowlEscape(rodent_base.RodentEnv):
         Returns:
             jp.ndarray: The concatenated position and velocity observations.
         """
-        obs = jp.concatenate([data.qpos, data.qvel])
+        torso_xpos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
+        obs = jp.concatenate([torso_xpos, data.qpos, data.qvel])
         return obs
 
     def _upright_reward(self, data: mjx.Data, deviation_angle: float = 0) -> float:
@@ -295,36 +393,11 @@ class BowlEscape(rodent_base.RodentEnv):
         # Torso (root) position
         torso_pos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
         x, y, z = torso_pos
-
+        
         # fetch bowl surface height at torso (x, y)
         height_z = self._interpolate_bowl_height(x, y)
-        return jp.where(z <= height_z, 1.0, 0.0)
-
-    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
-        """Step the environment forward by one timestep.
-
-        Args:
-            state (mjx_env.State): Current environment state.
-            action (jax.Array): Action to apply.
-
-        Returns:
-            mjx_env.State: The new environment state after stepping.
-        """
-        # Apply the action to the model.
-        data = mjx_env.step(self.mjx_model, state.data, action)
-        # Get the new observation.
-        obs = self._get_obs(data)
-        # Compute the reward.
-        rewards = self._get_reward(data)
-        reward = rewards["escape * upright"]
-        done = self._get_termination(data)
-        state = state.replace(
-            data=data,
-            obs=obs,
-            reward=reward,
-            done=done,
-        )
-        return state
+        done_bowl = jp.where(z <= height_z, 1.0, 0.0)
+        return done_bowl
 
 
 ### Perlin noise generator, for height field generation

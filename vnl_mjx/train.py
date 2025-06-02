@@ -27,6 +27,7 @@ from etils import epath
 from flax.training import orbax_utils
 from IPython.display import clear_output, display
 from orbax import checkpoint as ocp
+from ml_collections import config_dict
 from tqdm import tqdm
 
 from mujoco_playground import locomotion, wrapper
@@ -40,20 +41,36 @@ jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
+env_cfg = bowl_escape.default_config()
 
-env_name = "Go1JoystickFlatTerrain"
-env_cfg = locomotion.get_default_config(env_name)
-ppo_params = locomotion_params.brax_ppo_config(env_name)
+
+ppo_params = config_dict.create(
+    num_timesteps=int(6e9),
+    num_evals=300,
+    reward_scaling=1.0,
+    episode_length=1500,
+    normalize_observations=True,
+    action_repeat=5,
+    unroll_length=20,
+    num_minibatches=8,
+    num_updates_per_batch=4,
+    discounting=0.97,
+    learning_rate=1e-4,
+    entropy_cost=5e-4,
+    num_envs=4096,
+    batch_size=1024,
+    max_grad_norm=1.0,
+    network_factory=config_dict.create(
+        policy_hidden_layer_sizes=(512, 512, 512, 256, 256, 256),
+        value_hidden_layer_sizes=(512, 512, 512, 512, 512, 256, 256, 256),
+    ),
+)
 
 env_name = "rodent-bowl-escape"
 
 
 from pprint import pprint
 
-ppo_params.num_evals = 150
-ppo_params.num_envs = 2048
-ppo_params.episode_length = 1000
-ppo_params.num_timesteps = int(5e8)
 pprint(ppo_params)
 
 
@@ -86,7 +103,7 @@ ckpt_path.mkdir(parents=True, exist_ok=True)
 print(f"{ckpt_path}")
 
 with open(ckpt_path / "config.json", "w") as fp:
-    json.dump(env_cfg.to_dict(), fp, indent=4)
+    json.dump(env_cfg.to_dict(), fp, indent=4, default=lambda o: str(o))
 
 # Setup wandb logging.
 USE_WANDB = True
@@ -134,10 +151,12 @@ train_fn = functools.partial(
     policy_params_fn=policy_params_fn,
 )
 
-env = bowl_escape.BowlEscape()
-eval_env = bowl_escape.BowlEscape()
 
-make_inference_fn, params, _ = train_fn(environment=env, eval_env=eval_env)
-if len(times) > 1:
-    print(f"time to jit: {times[1] - times[0]}")
-    print(f"time to train: {times[-1] - times[1]}")
+if __name__ == "__main__":
+    env = bowl_escape.BowlEscape()
+    eval_env = bowl_escape.BowlEscape()
+    # only run the training if this file is run as a script
+    make_inference_fn, params, _ = train_fn(environment=env, eval_env=eval_env)
+    if len(times) > 1:
+        print(f"time to jit: {times[1] - times[0]}")
+        print(f"time to train: {times[-1] - times[1]}")

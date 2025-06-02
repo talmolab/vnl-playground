@@ -11,6 +11,7 @@ from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
 from vnl_mjx.tasks.rodent import consts
+from vnl_mjx.tasks.utils import _scale_body_tree, _recolour_tree
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -23,8 +24,9 @@ def get_assets() -> Dict[str, bytes]:
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.RODENT_XML_PATH,
-        arena_xml_path=consts.ARENA_XML_PATH,
-        mj_model_timestep=0.002,
+        arena_xml_path=consts.WHITE_ARENA_XML_PATH,
+        sim_dt=0.002,
+        ctrl_dt=0.01,
         solver="cg",
         iterations=4,
         ls_iterations=4,
@@ -53,17 +55,21 @@ class RodentEnv(mjx_env.MjxEnv):
         self._spec = mujoco.MjSpec.from_string(config.arena_xml_path.read_text())
         self._compiled = False
 
-    def add_rodent(self, pos=(0, 0, 0.05), quat=(1, 0, 0, 0)) -> None:
+    def add_rodent(self, pos=(0, 0, 0.05), quat=(1, 0, 0, 0), suffix="-rodent") -> None:
         """Adds the rodent model to the environment."""
         rodent = mujoco.MjSpec.from_string(
             epath.Path(self._walker_xml_path).read_text()
         )
-        spawn_site = self._spec.worldbody.add_site(
-            name="rodent_spawn",
+        for top in rodent.worldbody.bodies:
+            _scale_body_tree(top, 1.2)
+            # _recolour_tree(top, [0, 0.6, 0.7, 0.8])
+            # _recolour_tree(top, [0.8, 0.8, 0.8, 0.5])
+
+        spawn_site = self._spec.worldbody.add_frame(
             pos=pos,
             quat=quat,
         )
-        spawn_body = spawn_site.attach_body(rodent.worldbody, "", "-rodent")
+        spawn_body = spawn_site.attach_body(rodent.worldbody, "", suffix=suffix)
         spawn_body.add_freejoint()
 
     def compile(self) -> None:
