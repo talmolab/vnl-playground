@@ -1,6 +1,7 @@
-"""Utility functions for scaling and recoloring geometries in a MuJoCo model."""
+"""Utility functions for scaling and recoloring geometries in a MuJoCo model, and rendering rollouts."""
 
 import numpy as np
+from typing import Any, Tuple
 
 def _scale_vec(vec: list[float] | np.ndarray, s: float) -> None:
     """Scale a vector in-place by a scalar.

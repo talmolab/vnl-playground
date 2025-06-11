@@ -65,16 +65,17 @@ def default_config() -> config_dict.ConfigDict:
         ctrl_dt=0.01,
         sim_dt=0.002,
         solver="cg",
-        iterations=500,
-        ls_iterations=100,
+        iterations=50,
+        ls_iterations=10,
         vision=False,
         vision_config=default_vision_config(),
+        torque_actuators=True,
         episode_length=1000,
-        action_repeat=5,
-        bowl_hsize=5,
-        bowl_vsize=2,
+        action_repeat=1,  # is this action repeat based on sim dit or control dt?
+        bowl_hsize=2,
+        bowl_vsize=0.5,
         bowl_sigma=1.25,
-        bowl_amplitude=-20,
+        bowl_amplitude=-10,
     )
 
 
@@ -108,10 +109,10 @@ class BowlEscape(rodent_base.RodentEnv):
         """
         # super has already init a spec with the provided arena xml path
         super().__init__(config, config_overrides)
-        # if self._config.vision:
-        #     raise NotImplementedError(
-        #         f"Vision not implemented for {self.__class__.__name__}."
-        #     )
+        if self._config.vision:
+            raise NotImplementedError(
+                f"Vision not implemented for {self.__class__.__name__}."
+            )
         self._vision = self._config.vision
         self._initialize_noisy_bowl()
         # Compute rodent initial pose on bowl
@@ -119,8 +120,8 @@ class BowlEscape(rodent_base.RodentEnv):
         init_z = self._interpolate_bowl_height(init_x, init_y) + 0.03
         init_quat = self._surface_quaternion(init_x, init_y)
         print(f"Initial position: {init_x}, {init_y}, {init_z}")
-        print(f"Initial quaternion: {init_quat}")
-        self.add_rodent([init_x, init_y, init_z], init_quat)
+        # print(f"Initial quaternion: {init_quat}")
+        self.add_rodent(self._config.torque_actuators, [init_x, init_y, init_z])
         self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
         self.compile()
 
@@ -175,10 +176,18 @@ class BowlEscape(rodent_base.RodentEnv):
             mjx_env.State: The initial environment state after reset.
         """
         data = mjx_env.init(self.mjx_model)
-        obs = self._get_obs(data)
+        task_obs, proprioceptive_obs = self._get_obs(data)
+        obs = jp.concatenate([task_obs, proprioceptive_obs])
         reward, done = jp.zeros(2)
         metrics = {}
-        info = {"reference_obs_size": 3}
+        # TODO: currently, this denotes the task specific inputs
+        task_obs_size = task_obs.shape[0]
+        proprioceptive_obs_size = proprioceptive_obs.shape[0]
+        info = {
+            # need to use this name for compatibility with track-mjx training scripts
+            "reference_obs_size": task_obs_size, # TODO: change name to task obs size
+            "proprioceptive_obs_size": proprioceptive_obs_size,
+        }
         if self._vision:
             # if vision, the observation is the rendered image
             render_token, rgb, _ = self.renderer.init(data, self._mjx_model)
@@ -202,7 +211,8 @@ class BowlEscape(rodent_base.RodentEnv):
         # Apply the action to the model.
         data = mjx_env.step(self.mjx_model, state.data, action)
         # Get the new observation.
-        obs = self._get_obs(data)
+        task_obs, proprioceptive_obs = self._get_obs(data)
+        obs = jp.concatenate([task_obs, proprioceptive_obs])
         # Compute the reward.
         rewards = self._get_reward(data)
         reward = rewards["escape * upright"]  # + rewards["aliveness"]
@@ -225,7 +235,7 @@ class BowlEscape(rodent_base.RodentEnv):
         )
         return state
 
-    def _get_obs(self, data: mjx.Data) -> jp.ndarray:
+    def _get_obs(self, data: mjx.Data) -> Tuple[jp.ndarray, jp.ndarray]:
         """Get the current observation from the simulation data.
 
         Args:
@@ -234,9 +244,20 @@ class BowlEscape(rodent_base.RodentEnv):
         Returns:
             jp.ndarray: The concatenated position and velocity observations.
         """
-        torso_xpos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
-        obs = jp.concatenate([torso_xpos, data.qpos, data.qvel])
-        return obs
+        proprioception = self._get_proprioception(data)
+        kinematic_sensors = self._get_kinematic_sensors(data)
+        touch_sensors = self._get_touch_sensors(data)
+        origin = self._get_origin(data)
+        task_obs = jp.concatenate(
+            [
+                proprioception,
+                kinematic_sensors,
+                touch_sensors,
+                origin,
+            ]
+        )
+        proprioceptive_obs = jp.concatenate([data.qpos, data.qvel])
+        return task_obs, proprioceptive_obs
 
     def _upright_reward(self, data: mjx.Data, deviation_angle: float = 0) -> float:
         """Returns a reward proportional to how upright the torso is.
@@ -393,7 +414,7 @@ class BowlEscape(rodent_base.RodentEnv):
         # Torso (root) position
         torso_pos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
         x, y, z = torso_pos
-        
+
         # fetch bowl surface height at torso (x, y)
         height_z = self._interpolate_bowl_height(x, y)
         done_bowl = jp.where(z <= height_z, 1.0, 0.0)
