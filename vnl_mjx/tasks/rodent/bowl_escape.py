@@ -67,17 +67,17 @@ def default_config() -> config_dict.ConfigDict:
         sim_dt=0.002,
         solver="cg",
         iterations=10,
-        ls_iterations=10,
+        ls_iterations=5,
         noslip_iterations=0,
         vision=False,
         vision_config=default_vision_config(),
         torque_actuators=True,
         rescale_factor=0.9,
-        target_speed=1,
+        target_speed=0.75,
         episode_length=1500,
         action_repeat=1,  # is this action repeat based on sim dit or control dt?
         bowl_hsize=2,
-        bowl_vsize=0.5,
+        bowl_vsize=0.2,
         bowl_sigma=1.25,
         bowl_amplitude=-10,
     )
@@ -309,8 +309,11 @@ class BowlEscape(rodent_base.RodentEnv):
         upright_torso = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xmat[
             -1, -1
         ]
+        upright_head = data.bind(self.mjx_model, self._spec.body("skull-rodent")).xmat[
+            -1, -1
+        ]
         upright = reward.tolerance(
-            upright_torso,
+            jp.stack([upright_torso, upright_head]),
             bounds=(deviation, np.inf),
             sigmoid="linear",
             margin=1 + deviation,
