@@ -12,7 +12,7 @@ from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
 from vnl_mjx.tasks.rodent import consts
-from vnl_mjx.tasks.utils import _scale_body_tree, _recolour_tree
+from vnl_mjx.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -31,6 +31,7 @@ def default_config() -> config_dict.ConfigDict:
         solver="cg",
         iterations=4,
         ls_iterations=4,
+        noslip_iterations=0,
     )
 
 END_EFFECTORS = ["lower_arm_R", "lower_arm_L", "foot_R", "foot_L", "skull"]
@@ -61,18 +62,17 @@ class RodentEnv(mjx_env.MjxEnv):
     def add_rodent(
         self,
         torque_actuators: bool,
+        rescale_factor: float = 1.0,
         pos=(0, 0, 0.05),
         quat=(1, 0, 0, 0),
         suffix="-rodent",
+        
     ) -> None:
         """Adds the rodent model to the environment."""
         rodent = mujoco.MjSpec.from_string(
             epath.Path(self._walker_xml_path).read_text()
         )
-        for top in rodent.worldbody.bodies:
-            _scale_body_tree(top, 1.2)
-            # _recolour_tree(top, [0, 0.6, 0.7, 0.8])
-            # _recolour_tree(top, [0.8, 0.8, 0.8, 0.5])
+        
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(rodent, "actuator"):
             print("Converting to torque actuators")
@@ -83,6 +83,10 @@ class RodentEnv(mjx_env.MjxEnv):
                 # reset custom bias terms
                 actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
                 actuator.biasprm = np.zeros((10, 1))
+                
+        if rescale_factor != 1.0:
+            print(f"Rescaling body tree with scale factor {rescale_factor}")
+            rodent = dm_scale_spec(rodent, rescale_factor)
 
         spawn_site = self._spec.worldbody.add_frame(
             pos=pos,
@@ -95,6 +99,7 @@ class RodentEnv(mjx_env.MjxEnv):
     def compile(self) -> None:
         """Compiles the model from the mj_spec and put models to mjx"""
         if not self._compiled:
+            self._spec.option.noslip_iterations = self._config.noslip_iterations
             self._mj_model = self._spec.compile()
             self._mj_model.opt.timestep = self._config.sim_dt
             # Increase offscreen framebuffer size to render at higher resolutions.

@@ -1,6 +1,7 @@
 # Bowl escape definition, reflecting the mujoco playgrounds.
 
 from typing import Any, Dict, Optional, Union, Tuple, Callable
+import jax.flatten_util
 import numpy as np
 from scipy.spatial.transform import Rotation
 
@@ -65,12 +66,15 @@ def default_config() -> config_dict.ConfigDict:
         ctrl_dt=0.01,
         sim_dt=0.002,
         solver="cg",
-        iterations=50,
+        iterations=10,
         ls_iterations=10,
+        noslip_iterations=0,
         vision=False,
         vision_config=default_vision_config(),
         torque_actuators=True,
-        episode_length=1000,
+        rescale_factor=0.9,
+        target_speed=1,
+        episode_length=1500,
         action_repeat=1,  # is this action repeat based on sim dit or control dt?
         bowl_hsize=2,
         bowl_vsize=0.5,
@@ -118,10 +122,14 @@ class BowlEscape(rodent_base.RodentEnv):
         # Compute rodent initial pose on bowl
         init_x, init_y = 0.0, 0.0
         init_z = self._interpolate_bowl_height(init_x, init_y) + 0.03
-        init_quat = self._surface_quaternion(init_x, init_y)
-        print(f"Initial position: {init_x}, {init_y}, {init_z}")
+        # init_quat = self._surface_quaternion(init_x, init_y)
+        # print(f"Initial position: {init_x}, {init_y}, {init_z}")
         # print(f"Initial quaternion: {init_quat}")
-        self.add_rodent(self._config.torque_actuators, [init_x, init_y, init_z])
+        self.add_rodent(
+            self._config.torque_actuators,
+            self._config.rescale_factor,
+            [init_x, init_y, init_z],
+        )
         self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
         self.compile()
 
@@ -175,19 +183,22 @@ class BowlEscape(rodent_base.RodentEnv):
         Returns:
             mjx_env.State: The initial environment state after reset.
         """
+        info = {
+            # need to use this name for compatibility with track-mjx training scripts
+            "last_act": jp.zeros(self.mjx_model.nu),
+            "last_last_act": jp.zeros(self.mjx_model.nu),
+        }
         data = mjx_env.init(self.mjx_model)
-        task_obs, proprioceptive_obs = self._get_obs(data)
+        task_obs, proprioceptive_obs = self._get_obs(data, info)
+        task_obs_size = task_obs.shape[0]
+        proprioceptive_obs_size = proprioceptive_obs.shape[0]
+        info["reference_obs_size"] = task_obs_size
+        info["proprioceptive_obs_size"] = proprioceptive_obs_size
         obs = jp.concatenate([task_obs, proprioceptive_obs])
         reward, done = jp.zeros(2)
         metrics = {}
         # TODO: currently, this denotes the task specific inputs
-        task_obs_size = task_obs.shape[0]
-        proprioceptive_obs_size = proprioceptive_obs.shape[0]
-        info = {
-            # need to use this name for compatibility with track-mjx training scripts
-            "reference_obs_size": task_obs_size, # TODO: change name to task obs size
-            "proprioceptive_obs_size": proprioceptive_obs_size,
-        }
+
         if self._vision:
             # if vision, the observation is the rendered image
             render_token, rgb, _ = self.renderer.init(data, self._mjx_model)
@@ -211,22 +222,31 @@ class BowlEscape(rodent_base.RodentEnv):
         # Apply the action to the model.
         data = mjx_env.step(self.mjx_model, state.data, action)
         # Get the new observation.
-        task_obs, proprioceptive_obs = self._get_obs(data)
+        task_obs, proprioceptive_obs = self._get_obs(data, state.info)
         obs = jp.concatenate([task_obs, proprioceptive_obs])
         # Compute the reward.
         rewards = self._get_reward(data)
-        reward = rewards["escape * upright"]  # + rewards["aliveness"]
-        if self._vision:
-            _, rgb, _ = self.renderer.render(state.info["render_token"], data)
-            # Update observation buffer
-            obs_history = state.info["obs_history"]
-            obs_history = jp.roll(obs_history, 1, axis=0)
-            obs_history = obs_history.at[0].set(
-                _rgba_to_grayscale(rgb[0].astype(jp.float32)) / 255.0
-            )
-            state.info["obs_history"] = obs_history
-            obs = {"pixels/view_0": obs_history.transpose(1, 2, 0)}
+        state.info["last_last_act"] = state.info["last_act"]
+        state.info["last_act"] = action
+        reward = rewards["escape * upright"] + rewards["speed_reward"]
+        # if self._vision:
+        #     _, rgb, _ = self.renderer.render(state.info["render_token"], data)
+        #     # Update observation buffer
+        #     obs_history = state.info["obs_history"]
+        #     obs_history = jp.roll(obs_history, 1, axis=0)
+        #     obs_history = obs_history.at[0].set(
+        #         _rgba_to_grayscale(rgb[0].astype(jp.float32)) / 255.0
+        #     )
+        #     state.info["obs_history"] = obs_history
+        #     obs = {"pixels/view_0": obs_history.transpose(1, 2, 0)}
         done = self._get_termination(data)
+        # Handle nans during sim by resetting env
+        reward = jp.nan_to_num(reward)
+        obs = jp.nan_to_num(obs)
+        flattened_vals, _ = jax.flatten_util.ravel_pytree(data)
+        num_nans = jp.sum(jp.isnan(flattened_vals))
+        nan = jp.where(num_nans > 0, 1.0, 0.0)
+        done = jp.max(jp.array([nan, done]))
         state = state.replace(
             data=data,
             obs=obs,
@@ -235,7 +255,9 @@ class BowlEscape(rodent_base.RodentEnv):
         )
         return state
 
-    def _get_obs(self, data: mjx.Data) -> Tuple[jp.ndarray, jp.ndarray]:
+    def _get_obs(
+        self, data: mjx.Data, info: dict[str, Any]
+    ) -> Tuple[jp.ndarray, jp.ndarray]:
         """Get the current observation from the simulation data.
 
         Args:
@@ -247,16 +269,28 @@ class BowlEscape(rodent_base.RodentEnv):
         proprioception = self._get_proprioception(data)
         kinematic_sensors = self._get_kinematic_sensors(data)
         touch_sensors = self._get_touch_sensors(data)
+        appendages_pos = self._get_appendages_pos(data)
         origin = self._get_origin(data)
         task_obs = jp.concatenate(
             [
+                info["last_act"],
                 proprioception,
                 kinematic_sensors,
                 touch_sensors,
                 origin,
             ]
         )
-        proprioceptive_obs = jp.concatenate([data.qpos, data.qvel])
+
+        proprioceptive_obs = jp.concatenate(
+            [
+                # align with the most recent checkpoint
+                data.qpos[7:],
+                data.qvel[6:],
+                data.qfrc_actuator,
+                appendages_pos,
+                kinematic_sensors,
+            ]
+        )
         return task_obs, proprioceptive_obs
 
     def _upright_reward(self, data: mjx.Data, deviation_angle: float = 0) -> float:
@@ -314,10 +348,12 @@ class BowlEscape(rodent_base.RodentEnv):
             Dict[str, jax.Array]: Dictionary containing 'escape_reward', 'upright_reward', and their product.
         """
         escape_reward = self._escape_reward(data)
-        upright_reward = self._upright_reward(data, deviation_angle=10)
+        upright_reward = self._upright_reward(data, deviation_angle=0)
+        speed_reward = self._get_speed_reward(data)
         return {
             "escape_reward": escape_reward,
             "upright_reward": upright_reward,
+            "speed_reward": speed_reward,
             "escape * upright": escape_reward * upright_reward,
         }
 
@@ -343,6 +379,18 @@ class BowlEscape(rodent_base.RodentEnv):
         row = jp.floor(v * (size - 1)).astype(jp.int32)
         height_norm = noise[row, col]
         return height_norm * vsize
+    
+    def _get_speed_reward(
+        self,
+        data: mjx.Data,
+    ) -> jp.ndarray:
+        body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        vel = jp.linalg.norm(body.subtree_linvel)
+        target_speed = self._config.target_speed
+        reward_value = reward.tolerance(
+            vel, bounds=(target_speed, target_speed), margin=target_speed, sigmoid="linear", value_at_margin=0.0
+        )
+        return reward_value
 
     def _compute_surface_normal(self, x: float, y: float) -> np.ndarray:
         """Compute the surface normal of the bowl heightfield at (x, y).
@@ -417,7 +465,8 @@ class BowlEscape(rodent_base.RodentEnv):
 
         # fetch bowl surface height at torso (x, y)
         height_z = self._interpolate_bowl_height(x, y)
-        done_bowl = jp.where(z <= height_z, 1.0, 0.0)
+        # make stricter by adding a small threshold
+        done_bowl = jp.where(z <= height_z + 0.03, 1.0, 0.0)
         return done_bowl
 
 

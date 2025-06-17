@@ -7,8 +7,9 @@ env_config:
   env_args:
     # this will be passed to the env constructor as config overrides
     torque_actuators: True
-    bowl_vsize: 0.01 # make less bumpy bowl
-    iterations: 25
+    rescale_factor: 0.9
+    bowl_vsize: 0.2 # make less bumpy bowl
+    iterations: 10
 
 network_config:
   arch_name: intention
@@ -16,13 +17,13 @@ network_config:
   decoder_layer_sizes: [0]  # loaded from checkpoint
   critic_layer_sizes: [512, 512, 512, 256, 256]
   intention_size: 16 # recover from the checkpoint 
-  kl_schedule: True # Whether to use a ramping KL schedule
-  kl_weight: 1e-3 # The maximum weight if schedule is True
+  kl_schedule: False # Whether to use a ramping KL schedule
+  kl_weight: 0 # The maximum weight if schedule is True
 
 train_setup:
   agent_name: rodent
   run_name: bowl_escape
-  checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/250521_200910
+  checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
   freeze_decoder: True
   checkpoint_max_to_keep:
   checkpoint_keep_period:
@@ -35,9 +36,9 @@ train_setup:
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4
-    learning_rate: 1e-4
+    learning_rate: 5e-5
     clipping_epsilon: 0.2
-    discounting: 0.96
+    discounting: 0.98
     action_repeat: 1
     entropy_cost: 1e-4
     reward_scaling: 1
@@ -49,13 +50,14 @@ logging_config:
   project_name: vnl_playground
   group_name:
   model_path: model_checkpoints
-  notes: "Fixed the transfer optimizer bug, with a smaller bowl height and size."
+  notes: ""
   algo_name: ppo
+  exp_name: t_lower_lr
   rollout_metrics:
 
 walker_config:
   torque_actuators: True
-  rescale_factor: 1
+  rescale_factor: 0.9
   joint_names:
     - vertebra_1_extend
     - hip_L_supinate
