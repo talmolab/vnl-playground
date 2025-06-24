@@ -74,7 +74,7 @@ class MouseEnv(mjx_env.MjxEnv):
             ]
         )
 
-    def add_target(self, pos=None, random_target=False, rng=None) -> None:
+    def add_target(self, pos=None, random_target=False, rng=None, amazing_coding=False) -> None:
         """
         Adds the target to the environment.
 
@@ -96,6 +96,7 @@ class MouseEnv(mjx_env.MjxEnv):
         idx = jax.random.randint(rng, (), 0, target_positions.shape[0], jp.int32)
         sampled_pos = target_positions[idx]  # (3,)
 
+
         # Convert user‑provided pos (may be None) to a JAX array without Python branching
         pos_is_none = pos is None  # Python bool, treated as static
         provided_pos = jax.lax.cond(
@@ -113,15 +114,28 @@ class MouseEnv(mjx_env.MjxEnv):
             operand=None,
         )
 
-        self._spec.worldbody.add_site(
-            name="target",
-            pos=pos,  # Use Python floats
-            size=[0.001, 0.001, 0.001],
-            rgba=[0, 1, 0, 0.5],
-        )
+        if amazing_coding:
+            for i, target in enumerate(self.get_target_positions()):
+                self._spec.worldbody.add_site(
+                    name=f"target{i}",
+                    pos = target,
+                    size=[0.001, 0.001, 0.001],
+                    rgba=[0, 1, 0, 0.5],
+                )
+            print(f"targets were added to sites;  {len(self._spec.worldbody.sites)}")
+        else:    
+            self._spec.worldbody.add_site(
+                name="target",
+                pos=pos,  # Use Python floats
+                size=[0.001, 0.001, 0.001],
+                rgba=[0, 1, 0, 0.5],
+            )
 
         self.compile()
         self._compiled = True
+
+
+
 
     def compile(self) -> None:
         """Compiles the model from the mj_spec and put models to mjx"""
@@ -137,7 +151,7 @@ class MouseEnv(mjx_env.MjxEnv):
 
             self._compiled = True
 
-    def reset(self, rng: jax.Array) -> mjx_env.State:
+    def reset(self, rng: jax.Array, amazing_index=None) -> mjx_env.State:
         """
         Reset the environment state for a new episode with a new random target.
         """
@@ -146,10 +160,20 @@ class MouseEnv(mjx_env.MjxEnv):
         idx = jax.random.randint(rng, (), 0, target_positions.shape[0], jp.int32)
         target_position = target_positions[idx]
 
+        if amazing_index is not None:
+
+            # target_position = self._spec.worldbody.sites[amazing_index].pos
+
+            # site = jax.lax.switch(amazing_index, self._spec.worldbody.sites)
+            sites = self._spec.worldbody.sites
+            get_pos_fn = [lambda i=i: sites[i].pos for i in range(len(sites))]
+            target_position = jax.lax.switch(amazing_index, get_pos_fn)
+            jax.debug.print("found target position at {}", target_position)
+
         # --- Host-only: Update target site to match the reward target position ---
         if not isinstance(target_position, jax.core.Tracer):
             # Safe conversion to Python floats
-            pos_list = [float(x) for x in target_position]
+            # pos_list = [float(x) for x in target_position]
 
             # First check if target site exists
             target_site_id = -1
@@ -164,13 +188,19 @@ class MouseEnv(mjx_env.MjxEnv):
             if target_site_id >= 0:
                 # Target site exists in compiled model, update it
                 # First update the spec
-                for i, site in enumerate(self._spec.worldbody.site):
+                """
+                for i, site in enumerate(self._spec.worldbody.sites):
                     if site.name == "target":
-                        self._spec.worldbody.site[i].pos = pos_list
+                        # self._spec.worldbody.site[i].pos = pos_list
+                        target_position = self._spec.worldbody.sites[i].pos
                         break
+                """
                 # Recompile to update visual
-                self._mj_model = self._spec.compile()
-                self._mjx_model = mjx.put_model(self._mj_model)
+                # these two lines cause jax leak in step????
+                """
+                    # self._mj_model = self._spec.compile()
+                    # self._mjx_model = mjx.put_model(self._mj_model)
+                """
             else:
                 # No target site, create one
                 self._spec.worldbody.site = [
@@ -178,7 +208,7 @@ class MouseEnv(mjx_env.MjxEnv):
                 ]
                 self._spec.worldbody.add_site(
                     name="target",
-                    pos=pos_list,
+                    pos=target_position,
                     size=[0.001, 0.001, 0.001],
                     rgba=[0, 1, 0, 0.5],
                 )
@@ -196,6 +226,8 @@ class MouseEnv(mjx_env.MjxEnv):
         metrics = {}
         info = {"target_position": target_position}
 
+        # jax.debug.print(f"currently in reset with target pos {target_position}")
+
         return mjx_env.State(data, obs, reward, done, metrics, info)
 
     def step(
@@ -208,6 +240,10 @@ class MouseEnv(mjx_env.MjxEnv):
 
         # Get the new observation and reward using target from info
         target_position = state.info["target_position"]
+
+        # jax.debug.print("IN STEP, target position is {}", target_position)
+        # print("ASDLKASJLDKJASLDAJSHGDKJHASGD")
+
         obs = self._get_obs(data, target_position)
         reward = jp.asarray(self._get_reward(data, target_position), dtype=jp.float32)
 

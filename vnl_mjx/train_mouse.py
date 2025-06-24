@@ -106,7 +106,11 @@ with open(ckpt_path / "config.json", "w") as fp:
 USE_WANDB = True
 
 if USE_WANDB:
-    wandb.init(project="vnl-mjx-rl", config=env_cfg, id=f"rodent-flat-{exp_name}")
+    wandb.init(
+        project="vnl-mjx-rl",
+        config=env_cfg,
+        entity="salk",
+        id=f"rodent-flat-{exp_name}")
     wandb.config.update(
         {
             "env_name": env_name,
