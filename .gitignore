@@ -177,3 +177,7 @@ cython_debug/
 # Other files
 wandb/
 checkpoints/
+model_checkpoints/
+outputs/
+*.mp4
+.DS_Store
