@@ -1,3 +1,8 @@
+# josh added files
+outputs/
+notebooks/
+videos/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
