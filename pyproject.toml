@@ -76,7 +76,7 @@ with-cuda = [
 Repository = "https://github.com/talmolab/vnl-mjx"
 
 [tool.setuptools.packages.find]
-exclude = ["site", "model_checkpoints*"]
+exclude = ["site", "model_checkpoints*", "checkpoints*", "wandb*", "outputs"]
 
 [tool.black]
 line-length = 88

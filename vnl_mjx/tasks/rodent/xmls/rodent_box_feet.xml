@@ -267,7 +267,7 @@
                                 size="0.002383208424149982 0.002383208424149982 0.007253243030021683"
                                 pos="0.006797324896706034 0.005522826478573654 0"
                                 euler="1.570796326794897 -1.221730476396031 0" />
-                              <site name="sole_L" class="sensor" type="box" size="0.006 0.004 0.002"
+                              <site name="sole_L" class="sensor" type="box" size="0.01 0.01 0.008"
                                 pos="0.008200000000000001 0.00246 -0.00164"
                                 euler="0 0 0.3490658503988659" />
                             </body>
@@ -331,7 +331,7 @@
                                 size="0.002383208424149982 0.002383208424149982 0.007253243030021683"
                                 pos="0.006797324896706034 -0.005522826478573654 0"
                                 euler="1.570796326794897 1.221730476396031 0" />
-                              <site name="sole_R" class="sensor" type="box" size="0.006 0.004 0.002"
+                              <site name="sole_R" class="sensor" type="box" size="0.01 0.01 0.008"
                                 pos="0.008200000000000001 -0.00246 -0.00164"
                                 euler="0 0 -0.3490658503988659" />
                             </body>
@@ -940,7 +940,7 @@
                     pos="0.002652778551359534 0.003789683644799335 0"
                     euler="1.570796326794897 -0.9599310885968813 0" />
                   <site name="palm_L" class="sensor" type="box"
-                    size="0.004 0.004 0.002" pos="0.00492 0.00246 -0.00164"
+                    size="0.1 0.1 0.01" pos="0.00492 0.00246 -0.00164"
                     euler="0 0 0.4886921905584123" />
                 </body>
               </body>
@@ -1016,7 +1016,7 @@
                     pos="0.002652778551359534 -0.003789683644799335 0"
                     euler="1.570796326794897 0.9599310885968813 0" />
                   <site name="palm_R" class="sensor" type="box"
-                    size="0.004 0.004 0.002" pos="0.00492 -0.00246 -0.00164"
+                    size="0.01 0.01 0.008" pos="0.00492 -0.00246 -0.00164"
                     euler="0 0 -0.4886921905584123" />
                 </body>
               </body>
@@ -1226,10 +1226,10 @@
     <accelerometer name="accelerometer" site="head" />
     <velocimeter name="velocimeter" site="head" />
     <gyro name="gyro" site="head" />
-    <!-- <touch name="palm_L" site="palm_L"/>
+    <touch name="palm_L" site="palm_L" />
     <touch name="palm_R" site="palm_R"/>
     <touch name="sole_L" site="sole_L"/>
-    <touch name="sole_R" site="sole_R"/> -->
+    <touch name="sole_R" site="sole_R" />
     <subtreelinvel name="torso" body="torso" />
   </sensor>
   <!-- <compiler meshdir="./"/> -->
