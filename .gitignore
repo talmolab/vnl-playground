@@ -180,4 +180,4 @@ checkpoints/
 .DS_Store
 model_checkpoints/
 outputs/
-
+*.mp4

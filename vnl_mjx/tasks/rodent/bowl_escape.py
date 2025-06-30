@@ -121,14 +121,15 @@ class BowlEscape(rodent_base.RodentEnv):
         self._initialize_noisy_bowl()
         # Compute rodent initial pose on bowl
         init_x, init_y = 0.0, 0.0
-        init_z = self._interpolate_bowl_height(init_x, init_y) + 0.03
+        init_z = self._interpolate_bowl_height(init_x, init_y) + 0.01
         # init_quat = self._surface_quaternion(init_x, init_y)
-        # print(f"Initial position: {init_x}, {init_y}, {init_z}")
+        print(f"Initial position: {init_x}, {init_y}, {init_z}")
         # print(f"Initial quaternion: {init_quat}")
         self.add_rodent(
             self._config.torque_actuators,
             self._config.rescale_factor,
             [init_x, init_y, init_z],
+            # init_quat
         )
         self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
         self.compile()
@@ -175,7 +176,8 @@ class BowlEscape(rodent_base.RodentEnv):
         self._bowl_noise_np = bowl_noise
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
-        """Reset the environment state.
+        """Reset the environment state, with the already constructed
+        mj_model, which persists the same bowl shape.
 
         Args:
             rng (jax.Array): Random number generator state.
@@ -382,7 +384,7 @@ class BowlEscape(rodent_base.RodentEnv):
         row = jp.floor(v * (size - 1)).astype(jp.int32)
         height_norm = noise[row, col]
         return height_norm * vsize
-    
+
     def _get_speed_reward(
         self,
         data: mjx.Data,
@@ -590,6 +592,20 @@ def add_bowl_hfield(
 
     # Add the Gaussian bowl to the Perlin noise height field.
     noise = noise + bowl
+    
+    # Smoothly blend central region to avoid bumps
+    inner_radius = 0.05 * size   # fraction of grid for fully smooth bowl
+    outer_radius = 0.1 * size    # fraction of grid where noise resumes
+    center = size // 2
+    y, x = np.ogrid[:size, :size]
+    # distance from center in grid units
+    dist = np.sqrt((x - center)**2 + (y - center)**2)
+    # blend weight: 0 inside inner, 1 outside outer, smoothstep between
+    w = np.clip((dist - inner_radius) / (outer_radius - inner_radius), 0.0, 1.0)
+    w = w * w * (3.0 - 2.0 * w)
+    # combine pure Gaussian bowl and noisy bowl heights
+    noise = bowl * (1.0 - w) + noise * w
+
 
     noise -= np.min(noise)
     noise /= np.max(noise)
