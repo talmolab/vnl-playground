@@ -54,25 +54,30 @@ class MouseEnv(mjx_env.MjxEnv):
         )
         self._target_size = 0.001  # Size of target for the reaching task
         self._compiled = False
+        self.targets = None
 
         # Spawn a random target for this env instance
         # self.add_target(random_target=True)
 
-    @staticmethod
-    def get_target_positions():
+    # @staticmethod
+    def get_target_positions(self):
         """Return predefined target positions for reaching task."""
-        return jp.array(
-            [
-                [0.004, 0.012, -0.006],
-                [0.0025355, 0.012, -0.0024645],
-                [-0.001, 0.012, -0.001],
-                [-0.0045355, 0.012, -0.0024645],
-                [-0.006, 0.012, -0.006],
-                [-0.0045355, 0.012, -0.0095355],
-                [-0.001, 0.012, -0.011],
-                [0.0025355, 0.012, -0.0095355],
-            ]
-        )
+        # return jp.array(
+        #     [
+        #         [0.004, 0.012, -0.006],
+        #         [0.0025355, 0.012, -0.0024645],
+        #         [-0.001, 0.012, -0.001],
+        #         [-0.0045355, 0.012, -0.0024645],
+        #         [-0.006, 0.012, -0.006],
+        #         [-0.0045355, 0.012, -0.0095355],
+        #         [-0.001, 0.012, -0.011],
+        #         [0.0025355, 0.012, -0.0095355],
+        #     ]
+        # )
+        if self.targets is None:
+            raise AssertionError
+        return self.targets
+        
 
     def add_target(self, pos=None, random_target=False, rng=None, amazing_coding=False) -> None:
         """
@@ -88,16 +93,20 @@ class MouseEnv(mjx_env.MjxEnv):
         # ---------------------------------------------------------------------
         # Choose a target position without Python‑level branching
         # ---------------------------------------------------------------------
-        target_positions = self.get_target_positions()  # (N, 3)
+        # target_positions = self.get_target_positions()  # (N, 3)
+        if pos is not None:
+            self.targets = pos
         rng_fallback = jax.random.PRNGKey(int(time.time() * 1e3))
         rng = rng if rng is not None else rng_fallback
 
         # Sample index once; will be ignored when not used
-        idx = jax.random.randint(rng, (), 0, target_positions.shape[0], jp.int32)
-        sampled_pos = target_positions[idx]  # (3,)
+        if random_target:
+            idx = jax.random.randint(rng, (), 0, target_positions.shape[0], jp.int32)
+            sampled_pos = target_positions[idx]  # (3,)
 
 
         # Convert user‑provided pos (may be None) to a JAX array without Python branching
+        """
         pos_is_none = pos is None  # Python bool, treated as static
         provided_pos = jax.lax.cond(
             pos_is_none,
@@ -113,6 +122,7 @@ class MouseEnv(mjx_env.MjxEnv):
             lambda _: provided_pos,
             operand=None,
         )
+        """
 
         if amazing_coding:
             for i, target in enumerate(self.get_target_positions()):
@@ -156,9 +166,10 @@ class MouseEnv(mjx_env.MjxEnv):
         Reset the environment state for a new episode with a new random target.
         """
         # Get a new random target position
-        target_positions = self.get_target_positions()
-        idx = jax.random.randint(rng, (), 0, target_positions.shape[0], jp.int32)
-        target_position = target_positions[idx]
+        target_position = self.get_target_positions()
+        jax.debug.print("got target position, {}", target_position)
+        # idx = jax.random.randint(rng, (), 0, target_positions.shape[0], jp.int32)
+        # target_position = target_positions[idx]
 
         if amazing_index is not None:
 

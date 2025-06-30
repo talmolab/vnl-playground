@@ -1,0 +1,75 @@
+env_config:
+  env_name: mouse
+  task_name: arm-reach
+  walker_name: mouse
+  render_camera_name: my_camera
+
+  env_args:
+  #   # this will be passed to the env constructor as config overrides
+  #   torque_actuators: True
+  #   rescale_factor: 0.9
+  #   bowl_vsize: 0.2 # make less bumpy bowl
+  #   iterations: 10
+
+network_config: 
+  arch_name: intention
+  encoder_layer_sizes: [512, 512, 512]
+  decoder_layer_sizes: [0]  # loaded from checkpoint
+  critic_layer_sizes: [512, 512, 512]
+  intention_size: 3 # recover from the checkpoint 
+  kl_schedule: False # Whether to use a ramping KL schedule
+  kl_weight: 0 # The maximum weight if schedule is True
+
+train_setup:
+  agent_name: mouse
+  run_name: arm-reach
+  # checkpoint_to_restore: /root/vast/joshua/vnl-playground/checkpoints/mouse-reach-20250613-180853/1000898560
+  checkpoint_to_restore:
+  freeze_decoder: True
+  checkpoint_max_to_keep:
+  checkpoint_keep_period:
+  eval_every: 20_000_000
+  reset_every: 50_000_000
+  train_config:
+    episode_length: 1000
+    num_envs: 8192
+    num_timesteps: 100_000_000
+    batch_size: 256
+    num_minibatches: 32
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
+    clipping_epsilon: 0.2
+    discounting: 0.97
+    action_repeat: 1
+    entropy_cost: 1e-4
+    reward_scaling: 1
+    normalize_observations: True
+    unroll_length: 20
+    seed: 0
+
+logging_config:
+  project_name: vnl-mjx-rl
+  entity: salk
+  group_name:
+  model_path: model_checkpoints
+  notes: ""
+  algo_name: ppo
+  exp_name: t_lower_lr
+  rollout_metrics:
+
+walker_config:
+  torque_actuators: True
+  rescale_factor: 0.9
+  joint_names:
+    - sh_elv
+    - sh_extension
+    - sh_rotation
+    - elbow_joint
+  body_names:
+    - clavicle
+    - scapula
+    - humerus
+    - ulna
+    - elbow
+    - radius
+    - wrist_body

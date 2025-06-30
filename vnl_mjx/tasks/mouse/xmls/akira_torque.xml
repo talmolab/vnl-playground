@@ -10,12 +10,11 @@
 		<texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
 		<material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
 		<mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Scapula_right_v3.stl"/>
-        <mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Humerus_right_v3.stl"/>
-        <mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Clavicle_right_v3.stl"/>
-        <mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Ulna_right_v3.stl"/>
-        <mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Radius_right_v3.stl"/>
-        <mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Segments_Hand_fixed.stl"/>
-
+    <mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Humerus_right_v3.stl"/>
+    <mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Clavicle_right_v3.stl"/>
+    <mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Ulna_right_v3.stl"/>
+    <mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Radius_right_v3.stl"/>
+    <mesh file="/root/vast/eric/stac-mjx/meshes/stl/Bone_Segments_Hand_fixed.stl"/>
 	</asset>
 	<!--This stuff can all be left alone-->
 	<worldbody>
@@ -27,19 +26,19 @@
 			<!--SOB Clavicle-->
 			<body name="clavicle" pos="0 0 0" euler="0 0 0">
 				<!--Mesh Geom-->
-				<geom type="mesh" mesh="Bone_Clavicle_right_v3" pos="0 0 0.0005" contype="1" conaffinity="0"/>
+				<geom name="clavicle_mesh" type="mesh" mesh="Bone_Clavicle_right_v3" pos="0 0 0.0005" contype="1" conaffinity="0"/>
 						
 				<!--SOB Scapula-->
 				<body name="scapula" pos="-0.0001 -0.0001 0.0005" euler="-30 -15 0">
 					<!--Mesh Geom-->
-					<geom type="mesh" mesh="Bone_Scapula_right_v3" pos="0.0 0.0 0.0" contype="1" conaffinity="0"/>
+					<geom name="scapula_mesh" type="mesh" mesh="Bone_Scapula_right_v3" pos="0.0 0.0 0.0" contype="1" conaffinity="0"/>
 					
 					<!--SOB Humerus-->
 					<body name="humerus" pos="0 0.0007 -0.0002" euler="-15 0 0">						
 						<!-- Glenohumeral (aka shoulder) Joint-->					
 						<inertial pos="-0.0005 0.0003 -0.004" mass="0.0001258" diaginertia="3e-8 3e-8 3e-8"/>
 												<!--Mesh Geom-->
-						<geom type="mesh" mesh="Bone_Humerus_right_v3" pos="0.0 0.0 0.0" contype="1" conaffinity="0"/>
+						<geom name="humerus_mesh" type="mesh" mesh="Bone_Humerus_right_v3" pos="0.0 0.0 0.0" contype="1" conaffinity="0"/>
 
 						<joint name="sh_elv" type="hinge" pos="0 0 0" axis="0 1 0" range="-70 0" limited="true"/>
 						<!-- Extension Joint: Yaw around Z-axis -->
@@ -50,7 +49,7 @@
 						<!--SOB Ulna-->
 						<body name="ulna" pos="-0.0005 0.0003 -0.0068" euler="-15 0 0">
 							<!--Mesh Geom-->
-							<geom type="mesh" mesh="Bone_Ulna_right_v3" pos="0.0 0.0 0.0" contype="1" conaffinity="0"/>
+							<geom name="ulna_mesh" type="mesh" mesh="Bone_Ulna_right_v3" pos="0.0 0.0 0.0" contype="1" conaffinity="0"/>
 							
 							<!-- Elbow Joint -->
 							<joint name="elbow_joint" pos="0 0 0" axis="1 0 0" range="-80 90" limited="true"/>
@@ -62,7 +61,7 @@
 								<!--SOB Radius--> 
 								<body name="radius" pos="0.00035 0.0002 0.0002" euler="0 0 0">
 									<!--Mesh Geom-->
-									<geom type="mesh" mesh="Bone_Radius_right_v3" pos="0.0 0.0 0.0" contype="1" conaffinity="0"/>
+									<geom name="radius_mesh" type="mesh" mesh="Bone_Radius_right_v3" pos="0.0 0.0 0.0" contype="1" conaffinity="0"/>
 									<!--Biceps Long Head-->
 									<site name="Biceps_Long_Insertion" pos="-0.0002 0.0001 0.0001" rgba=".1 .2 .6 .5" size="0.0002"/>
 									<body name="wrist_body" pos="-0.002 0.0065 0.0005" euler="0 0 0">

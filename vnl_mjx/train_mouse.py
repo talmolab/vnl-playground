@@ -152,9 +152,12 @@ train_fn = functools.partial(
 
 env = mouse_reach.MouseEnv()
 # Ensure a target site exists before PPO reset()
-env.add_target(random_target=True)
+# env.add_target(random_target=True)
+env.add_target(pos=jp.array([0.004, 0.012, -0.006]))
+
 eval_env = mouse_reach.MouseEnv()
-eval_env.add_target(random_target=True)
+# eval_env.add_target(random_target=True)
+eval_env.add_target(pos=jp.array([0.004, 0.012, -0.006]))
 
 make_inference_fn, params, _ = train_fn(environment=env, eval_env=eval_env)
 if len(times) > 1:
