@@ -17,10 +17,9 @@ classifiers = [
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12"]
+    "Programming Language :: Python :: 3.11",]
 dependencies = [
-    "brax",
+    "brax==0.12.1",
     "wandb",
     "mujoco",
     "dm_control",
@@ -44,7 +43,7 @@ dependencies = [
 dynamic = ["version", "readme"]
 
 [tool.setuptools.dynamic]
-version = {attr = "track_mjx.version.__version__"}
+version = {attr = "vnl_mjx.version.__version__"}
 readme = {file = ["README.md"], content-type="text/markdown"}
 
 [project.optional-dependencies]
@@ -77,11 +76,11 @@ with-cuda = [
 Repository = "https://github.com/talmolab/vnl-mjx"
 
 [tool.setuptools.packages.find]
-exclude = ["site", "model_checkpoints*"]
+exclude = ["site", "model_checkpoints*", "checkpoints*", "wandb*", "outputs"]
 
 [tool.black]
 line-length = 88
 
 [pydocstyle]
 convention = "google"
-match-dir = "track_mjx"
+match-dir = "vnl_mjx"

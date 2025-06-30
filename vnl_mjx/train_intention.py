@@ -45,6 +45,7 @@ import mujoco
 
 # from vnl_mjx.tasks.rodent import flat_arena, bowl_escape
 from vnl_mjx.tasks.mouse import mouse_reach
+from vnl_mjx.tasks.rodent import flat_arena, bowl_escape
 
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
@@ -146,7 +147,7 @@ def main(cfg: DictConfig):
         ),
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
-        # freeze_decoder=cfg.train_setup.freeze_decoder,
+        freeze_decoder=cfg.train_setup.freeze_decoder,
         config_dict=OmegaConf.to_container(cfg, resolve=True),  # finalize config here
         use_kl_schedule=cfg.network_config.kl_schedule,
     )

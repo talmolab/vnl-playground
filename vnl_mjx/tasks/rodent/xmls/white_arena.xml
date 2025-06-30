@@ -6,12 +6,12 @@
   </visual>
 
   <asset>
-    <!-- <skin name="skin" file="rodent_walker_skin.skn"/> -->
-    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1="1 1 1" rgb2="1 1 1"/>
     <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+    <texture name="skybox" type="skybox" builtin="flat" rgb1="1 1 1" rgb2="1 1 1"
+               width="800" height="800" mark="random" markrgb="1 1 1"/>
   </asset>
 
   <worldbody>
-    <geom name="floor" pos="0 0 -0.005" size="10 10 0.005" type="plane" material="grid"/>
   </worldbody>
 </mujoco>

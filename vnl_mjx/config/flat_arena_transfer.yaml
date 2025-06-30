@@ -1,6 +1,6 @@
 env_config:
   env_name: rodent
-  task_name: bowl_escape
+  task_name: flat_run
   walker_name: rodent
   render_camera_name: close_profile
 
@@ -8,23 +8,20 @@ env_config:
     # this will be passed to the env constructor as config overrides
     torque_actuators: True
     rescale_factor: 0.9
-    bowl_vsize: 0.6
-    bowl_amplitude: -20
-    target_speed: 1
-    iterations: 10
+    target_speed: 0.5
 
 network_config:
   arch_name: intention
-  encoder_layer_sizes: [512, 512, 256, 256]
-  decoder_layer_sizes: [1024, 1024, 512]  # loaded from checkpoint
+  encoder_layer_sizes: [512, 512, 512, 256, 128]
+  decoder_layer_sizes: [0]  # loaded from checkpoint
   critic_layer_sizes: [512, 512, 512, 256, 256]
   intention_size: 16 # recover from the checkpoint 
-  kl_schedule: False # Whether to use a ramping KL schedule
-  kl_weight: 0 # The maximum weight if schedule is True
+  kl_schedule: True # Whether to use a ramping KL schedule
+  kl_weight: 1e-3 # The maximum weight if schedule is True
 
 train_setup:
   agent_name: rodent
-  run_name: bowl_escape
+  run_name: flat_run
   checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
   freeze_decoder: True
   checkpoint_max_to_keep:
@@ -32,15 +29,15 @@ train_setup:
   eval_every: 20_000_000
   reset_every: 50_000_000
   train_config:
-    episode_length: 1500
+    episode_length: 1000
     num_envs: 4096
     num_timesteps: 5_000_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4
     learning_rate: 1e-4
-    clipping_epsilon: 0.1
-    discounting: 0.99
+    clipping_epsilon: 0.2
+    discounting: 0.96
     action_repeat: 1
     entropy_cost: 1e-4
     reward_scaling: 1
@@ -52,9 +49,9 @@ logging_config:
   project_name: vnl_playground
   group_name:
   model_path: model_checkpoints
-  notes: "the origin is flatten to ensure robustness"
+  notes: ""
   algo_name: ppo
-  exp_name: transfer_flat_origin
+  exp_name: t_new_ego_walk
   rollout_metrics:
 
 walker_config:

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, Tuple
 
 from etils import epath
 import jax
@@ -18,28 +18,19 @@ from vnl_mjx.tasks.rodent import consts
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
-        walker_xml_path=consts.RODENT_BOX_FEET_PATH,
+        walker_xml_path=consts.RODENT_XML_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
-        ctrl_dt=0.02,
-        sim_dt=0.004,
-        Kp=35.0,
-        Kd=0.5,
-        episode_length=300,
-        drop_from_height_prob=0.6,
-        settle_time=0.5,
+        ctrl_dt=0.01,
+        sim_dt=0.002,
+        iterations=4,
+        ls_iterations=4,
+        torque_actuators=True,
+        rescale_factor=0.9,
+        episode_length=1000,
         action_repeat=1,
-        action_scale=0.5,
-        soft_joint_pos_limit_factor=0.95,
+        action_scale=1,
         energy_termination_threshold=np.inf,
-        reward_config=config_dict.create(
-            scales=config_dict.create(
-                target_speed=2.0,
-                action_rate=-0.001,
-                torques=-1e-5,
-                dof_acc=-2.5e-7,
-                dof_vel=-0.1,
-            ),
-        ),
+        target_speed=0.5,
     )
 
 
@@ -52,7 +43,10 @@ class FlatWalk(rodent_base.RodentEnv):
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
     ) -> None:
         super().__init__(config, config_overrides)
-        self.add_rodent()
+        self.add_rodent(
+            rescale_factor=self._config.rescale_factor,
+            torque_actuators=self._config.torque_actuators,
+        )
         self.compile()
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
@@ -60,12 +54,18 @@ class FlatWalk(rodent_base.RodentEnv):
 
         data = mjx_env.init(self.mjx_model)
 
-        info = {}
-
-        obs = self._get_obs(data)
+        task_obs, proprioceptive_obs = self._get_obs(data)
+        obs = jp.concatenate([task_obs, proprioceptive_obs])
         reward, done = jp.zeros(2)
-
         metrics = {}
+        # TODO: currently, this denotes the task specific inputs
+        task_obs_size = task_obs.shape[0]
+        proprioceptive_obs_size = proprioceptive_obs.shape[0]
+        info = {
+            # need to use this name for compatibility with track-mjx training scripts
+            "reference_obs_size": task_obs_size,  # TODO: change name to task obs size
+            "proprioceptive_obs_size": proprioceptive_obs_size,
+        }
 
         return mjx_env.State(data, obs, reward, done, metrics, info)
 
@@ -80,7 +80,8 @@ class FlatWalk(rodent_base.RodentEnv):
         data = mjx_env.step(self.mjx_model, state.data, action)
 
         # Get the new observation.
-        obs = self._get_obs(data)
+        task_obs, proprioceptive_obs = self._get_obs(data)
+        obs = jp.concatenate([task_obs, proprioceptive_obs])
 
         # Compute the reward.
         rewards = self._get_reward(data)
@@ -95,9 +96,38 @@ class FlatWalk(rodent_base.RodentEnv):
 
         return state
 
-    def _get_obs(self, data: mjx.Data) -> jax.Array:
-        obs = jp.concatenate([data.qpos, data.qvel])
-        return obs
+    def _get_obs(self, data: mjx.Data) -> Tuple[jp.ndarray, jp.ndarray]:
+        """Get the current observation from the simulation data.
+
+        Args:
+            data (mjx.Data): The simulation data.
+
+        Returns:
+            jp.ndarray: The concatenated position and velocity observations.
+        """
+        proprioception = self._get_proprioception(data)
+        kinematic_sensors = self._get_kinematic_sensors(data)
+        touch_sensors = self._get_touch_sensors(data)
+        task_obs = jp.concatenate(
+            [
+                data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos,
+                proprioception,
+                kinematic_sensors,
+                touch_sensors,
+            ]
+        )
+
+        proprioceptive_obs = jp.concatenate(
+            [
+                # align with the most recent checkpoint
+                data.qpos[7:],
+                data.qvel[6:],
+                data.qfrc_actuator,
+                self._get_appendages_pos(data),
+                self._get_kinematic_sensors(data),
+            ]
+        )
+        return task_obs, proprioceptive_obs
 
     def _get_reward(
         self,
@@ -117,7 +147,7 @@ class FlatWalk(rodent_base.RodentEnv):
     ) -> jp.ndarray:
         body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
         vel = jp.linalg.norm(body.subtree_linvel)
-        target_speed = self._config.reward_config.scales.target_speed
+        target_speed = self._config.target_speed
         reward_value = reward.tolerance(
             vel, bounds=(target_speed, target_speed), margin=target_speed
         )
