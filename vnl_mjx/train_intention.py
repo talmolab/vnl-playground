@@ -44,7 +44,10 @@ import logging
 import mujoco
 
 # from vnl_mjx.tasks.rodent import flat_arena, bowl_escape
-from vnl_mjx.tasks.mouse import mouse_reach
+# from vnl_mjx.tasks.mouse import mouse_reach
+
+import vnl_mjx.tasks.mouse.mouse_reach_josh as mouse_reach
+
 from vnl_mjx.tasks.rodent import flat_arena, bowl_escape
 
 from track_mjx.agent import checkpointing
@@ -54,7 +57,7 @@ from track_mjx.analysis import render
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="arm_reach.yaml")
+@hydra.main(version_base=None, config_path="config", config_name="arm_reach")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
@@ -105,7 +108,6 @@ def main(cfg: DictConfig):
         cfg.walker_config.rescale_factor = cfg_loaded.walker_config.rescale_factor
         cfg.env_config.env_args.rescale_factor = cfg_loaded.walker_config.rescale_factor
 
-
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
         create=True,
@@ -121,15 +123,15 @@ def main(cfg: DictConfig):
     print(cfg)
     ppo_params = cfg.train_setup.train_config
 
-    env_config = cfg.env_config.env_args
-
     env = mouse_reach.MouseEnv()
     evaluator_env = mouse_reach.MouseEnv()
+    env.reset(jax.random.PRNGKey(0))
+    evaluator_env.reset(jax.random.PRNGKey(0))
 
-    env.add_target(pos=jp.array([0.004, 0.012, -0.006]))
-    evaluator_env.add_target(pos=jp.array([0.004, 0.012, -0.006]))
+    # env.add_target(pos=jp.array([0.004, 0.012, -0.006]))
+    # evaluator_env.add_target(pos=jp.array([0.004, 0.012, -0.006]))
 
-
+    
     train_fn = functools.partial(
         ppo.train,
         **ppo_params,

@@ -22,12 +22,6 @@ os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 
 import jax
 # Enable persistent compilation cache.
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-# jax.config.update(
-#     "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
-# )
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -119,44 +113,11 @@ def main(cfg: DictConfig):
 
     env_config = cfg.env_config.env_args
 
-    # env = bowl_escape.BowlEscape(config_overrides=env_config)
-    # evaluator_env = bowl_escape.BowlEscape(config_overrides=env_config)
-
-    env = flat_arena.FlatWalk(config_overrides=env_config)
-    evaluator_env = flat_arena.FlatWalk(config_overrides=env_config)
-
-    # --------- josh debug --------- #
-    # from mujoco_playground import wrapper as mp_wrapper
-    # import jax.numpy as jnp
-    # local_devices_to_use = jax.local_device_count()
-    # key = jax.random.PRNGKey(0)
-    # global_key, local_key = jax.random.split(key)
-    # del key
-    # process_count = jax.process_count()
-    # process_id = jax.process_index()
-    # local_key = jax.random.fold_in(local_key, process_id)
-    # local_key, key_env, eval_key = jax.random.split(local_key, 3)
-    # num_envs = 1
-
-    # wrap_for_training = mp_wrapper.wrap_for_brax_training
-    # wrap_env = wrap_for_training(
-    #         env,
-    #         episode_length=10,
-    #         action_repeat=1,
-    #         randomization_fn=None,
-    #         # use_lstm=use_lstm,
-    #     )
-
-    # reset_fn = jax.jit(jax.vmap(wrap_env.reset))
-    # key_envs = jax.random.split(key_env, num_envs // process_count)
-    # key_envs = jnp.reshape(key_envs, (local_devices_to_use, -1) + key_envs.shape[1:])
-    # env_state = reset_fn(key_envs)
-
-    # print(env_state.keys())
-    # print(env_state.obs.shape[-1])
-    # print(env_state.info["reference_obs_size"])
-    # return
+    env = bowl_escape.BowlEscape(config_overrides=env_config)
+    evaluator_env = bowl_escape.BowlEscape(config_overrides=env_config)
     
+    # env = flat_arena.FlatWalk(config_overrides=env_config)
+    # evaluator_env = flat_arena.FlatWalk(config_overrides=env_config)
 
     train_fn = functools.partial(
         ppo.train,
@@ -183,7 +144,6 @@ def main(cfg: DictConfig):
     run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.exp_name}_{run_id}"
     wandb.init(
         project=cfg.logging_config.project_name,
-        entity=cfg.logging_config.entity,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
         notes=f"{cfg.logging_config.notes}",
         id=run_id,
