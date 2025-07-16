@@ -129,7 +129,7 @@ class BowlEscape(rodent_base.RodentEnv):
             self._config.torque_actuators,
             self._config.rescale_factor,
             [init_x, init_y, init_z],
-            # init_quat
+            # init_quat,
         )
         self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
         self.compile()
@@ -475,6 +475,47 @@ class BowlEscape(rodent_base.RodentEnv):
         return done_bowl
 
 
+class BowlEscapeRender(BowlEscape):
+    """Bowl escape environment with rendering capabilities."""
+
+    def __init__(
+        self,
+        num_rodents: int = 1,
+        config: config_dict.ConfigDict = default_config(),
+        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+    ) -> None:
+        """Initialize the BowlEscapeRender class with rendering capabilities.
+
+        Args:
+            config (config_dict.ConfigDict, optional): Configuration for the environment. Defaults to default_config().
+            config_overrides (Optional[Dict[str, Union[str, int, list[Any]]]], optional): Overrides for the configuration. Defaults to None.
+        """
+        # super has already init a spec with the provided arena xml path
+        rodent_base.RodentEnv.__init__(self, config, config_overrides)
+        if self._config.vision:
+            raise NotImplementedError(
+                f"Vision not implemented for {self.__class__.__name__}."
+            )
+        self._vision = self._config.vision
+        self._initialize_noisy_bowl()
+        init_x, init_y = 0.0, 0.0
+        for i in range(num_rodents):
+            init_z = self._interpolate_bowl_height(init_x, init_y) + 0.01
+            print(f"Initial position: {init_x}, {init_y}, {init_z}")
+            self.add_rodent(
+                self._config.torque_actuators,
+                self._config.rescale_factor,
+                [init_x, init_y, init_z],
+                # init_quat,
+                suffix=f"-rodent-{i}",
+            )
+            init_x += 0.1  # offset each rodent slightly in x direction
+            init_y += 0.1  # offset each rodent slightly in y direction
+
+        self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
+        self.compile()
+
+
 ### Perlin noise generator, for height field generation
 # adapted from https://github.com/pvigier/perlin-numpy
 
@@ -592,10 +633,10 @@ def add_bowl_hfield(
 
     # Add the Gaussian bowl to the Perlin noise height field.
     noise = noise + bowl
-    
+
     # Smoothly blend central region to avoid bumps
     inner_radius = 0.05 * size   # fraction of grid for fully smooth bowl
-    outer_radius = 0.1 * size    # fraction of grid where noise resumes
+    outer_radius = 0.25 * size  # fraction of grid where noise resumes
     center = size // 2
     y, x = np.ogrid[:size, :size]
     # distance from center in grid units
@@ -605,7 +646,6 @@ def add_bowl_hfield(
     w = w * w * (3.0 - 2.0 * w)
     # combine pure Gaussian bowl and noisy bowl heights
     noise = bowl * (1.0 - w) + noise * w
-
 
     noise -= np.min(noise)
     noise /= np.max(noise)
