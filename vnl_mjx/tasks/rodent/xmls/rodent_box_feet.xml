@@ -155,7 +155,8 @@
   </visual>
   <statistic meansize="0.003" />
   <asset>
-    <!-- <skin name="skin" file="rodent_walker_skin.skn"/> -->
+    <!-- <skin name="skin"
+      file="/root/vast/scott-yang/vnl-mjx/vnl_mjx/tasks/rodent/xmls/rodent_walker_skin.skn" /> -->
     <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3"
       rgb2=".2 .3 .4" />
     <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2" />
@@ -940,7 +941,7 @@
                     pos="0.002652778551359534 0.003789683644799335 0"
                     euler="1.570796326794897 -0.9599310885968813 0" />
                   <site name="palm_L" class="sensor" type="box"
-                    size="0.1 0.1 0.01" pos="0.00492 0.00246 -0.00164"
+                    size="0.01 0.01 0.008" pos="0.00492 0.00246 -0.00164"
                     euler="0 0 0.4886921905584123" />
                 </body>
               </body>
