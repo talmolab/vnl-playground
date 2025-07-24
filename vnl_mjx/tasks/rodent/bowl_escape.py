@@ -98,6 +98,7 @@ class BowlEscape(rodent_base.RodentEnv):
 
     def __init__(
         self,
+        rng: jax.Array = jax.random.PRNGKey(0),
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
     ) -> None:
@@ -105,6 +106,7 @@ class BowlEscape(rodent_base.RodentEnv):
         Initialize the BowlEscape class and set up the environment.
 
         Args:
+            rng (jax.Array, optional): Random number generator key for reproducible randomness.
             config (config_dict.ConfigDict, optional): configs for the bowl escape. Defaults to default_config().
             config_overrides (Optional[Dict[str, Union[str, int, list[Any]]]], optional): overrides for the configuration. Defaults to None.
 
@@ -113,12 +115,13 @@ class BowlEscape(rodent_base.RodentEnv):
         """
         # super has already init a spec with the provided arena xml path
         super().__init__(config, config_overrides)
+        self._rng = rng
         if self._config.vision:
             raise NotImplementedError(
                 f"Vision not implemented for {self.__class__.__name__}."
             )
         self._vision = self._config.vision
-        self._initialize_noisy_bowl()
+        self._initialize_noisy_bowl(self._rng)
         # Compute rodent initial pose on bowl
         init_x, init_y = 0.0, 0.0
         init_z = self._interpolate_bowl_height(init_x, init_y) + 0.01
@@ -162,9 +165,11 @@ class BowlEscape(rodent_base.RodentEnv):
                 viz_gpu_hdls=None,
             )
 
-    def _initialize_noisy_bowl(self) -> None:
+    def _initialize_noisy_bowl(self, rng: jax.Array) -> None:
         """Initialize the noisy bowl heightfield and store it in the environment."""
+        self._rng, bowl_rng = jax.random.split(rng)
         self._spec, bowl_noise = add_bowl_hfield(
+            bowl_rng,
             self._spec,
             hsize=self._config.bowl_hsize,
             vsize=self._config.bowl_vsize,
@@ -481,23 +486,40 @@ class BowlEscapeRender(BowlEscape):
     def __init__(
         self,
         num_rodents: int = 1,
+        rng: jax.Array = jax.random.PRNGKey(0),
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        line_coords: Optional[list[tuple[float, float, float]]] = None,
+        line_radius: float = 0.002,
     ) -> None:
         """Initialize the BowlEscapeRender class with rendering capabilities.
 
         Args:
+            num_rodents (int, optional): Number of rodents. Defaults to 1.
+            rng (jax.Array, optional): Random number generator key for reproducible randomness.
             config (config_dict.ConfigDict, optional): Configuration for the environment. Defaults to default_config().
             config_overrides (Optional[Dict[str, Union[str, int, list[Any]]]], optional): Overrides for the configuration. Defaults to None.
+            line_coords (Optional[list[tuple[float, float, float]]], optional): List of 3D coordinates for line plotting. Defaults to None.
+            line_radius (float, optional): Radius for plotted line spheres. Defaults to 0.02.
         """
         # super has already init a spec with the provided arena xml path
         rodent_base.RodentEnv.__init__(self, config, config_overrides)
+        # Save init parameters for later reinitialization
+        self._init_num_rodents = num_rodents
+        self._init_rng = rng
+        self._init_config = config
+        self._init_config_overrides = config_overrides
+        self._init_line_coords = line_coords
+        self._init_line_radius = line_radius
+        self._rng = rng
+        self.line_coords = line_coords
+        self.line_radius = line_radius
         if self._config.vision:
             raise NotImplementedError(
                 f"Vision not implemented for {self.__class__.__name__}."
             )
         self._vision = self._config.vision
-        self._initialize_noisy_bowl()
+        self._initialize_noisy_bowl(self._rng)
         init_x, init_y = 0.0, 0.0
         for i in range(num_rodents):
             init_z = self._interpolate_bowl_height(init_x, init_y) + 0.01
@@ -514,6 +536,45 @@ class BowlEscapeRender(BowlEscape):
 
         self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
         self.compile()
+        # record baseline geom count before adding line geoms
+        self._base_geom_count = len(self._spec.worldbody.geoms)
+
+    def add_line_geoms(
+        self, line_coords: Optional[list[tuple[float, float, float]]] = None
+    ) -> None:
+        """Add sphere geoms for each coordinate in self.line_coords."""
+        if line_coords is None:
+            line_coords = self.line_coords
+        for i, (x, y, z) in enumerate(line_coords):
+            self._spec.worldbody.add_geom(
+                name=f"line_sphere_{i}",
+                type=mujoco.mjtGeom.mjGEOM_SPHERE,
+                size=[self.line_radius, self.line_radius, self.line_radius],
+                pos=[x, y, z],
+                rgba=[0.0, 0.0, 1.0, 0.5],
+                contype=0,
+                conaffinity=0,
+            )
+        # recompile to register new geoms
+        self.compile(force=True)
+
+    def remove_line_geoms(self) -> None:
+        """Remove all geoms added after initialization by reinitializing with saved parameters."""
+        # Reinitialize environment to reset spec and remove line geoms
+        self.__init__(
+            num_rodents=self._init_num_rodents,
+            rng=self._init_rng,
+            config=self._init_config,
+            config_overrides=self._init_config_overrides,
+            line_coords=self._init_line_coords,
+            line_radius=self._init_line_radius,
+        )
+
+    def update_line_geoms(self, new_coords: list[tuple[float, float, float]]) -> None:
+        """Remove old geoms and add spheres at new coordinates."""
+        self.remove_line_geoms()
+        self.line_coords = new_coords
+        self.add_line_geoms()
 
 
 ### Perlin noise generator, for height field generation
@@ -533,6 +594,7 @@ def interpolant(t: jp.ndarray) -> jp.ndarray:
 
 
 def perlin(
+    rng: jax.Array,
     shape: Tuple[int, int],
     res: Tuple[int, int],
     tileable: Tuple[bool, bool] = (False, False),
@@ -541,6 +603,7 @@ def perlin(
     """Generate a 2D numpy array of Perlin noise.
 
     Args:
+        rng (jax.Array): JAX random number generator key.
         shape (Tuple[int, int]): The shape of the generated array. Must be a multiple of res.
         res (Tuple[int, int]): Number of periods of noise along each axis.
         tileable (Tuple[bool, bool], optional): Whether noise should be tileable along each axis. Defaults to (False, False).
@@ -556,7 +619,7 @@ def perlin(
     d = (shape[0] // res[0], shape[1] // res[1])
     grid = jp.mgrid[0 : res[0] : delta[0], 0 : res[1] : delta[1]].transpose(1, 2, 0) % 1
     # Gradients
-    angles = 2 * np.pi * np.random.rand(res[0] + 1, res[1] + 1)
+    angles = 2 * np.pi * np.array(jax.random.uniform(rng, (res[0] + 1, res[1] + 1)))
     gradients = np.dstack((np.cos(angles), np.sin(angles)))
     if tileable[0]:
         gradients[-1, :] = gradients[0, :]
@@ -599,6 +662,7 @@ def gaussian_bowl(
 
 
 def add_bowl_hfield(
+    rng: jax.Array,
     spec: Optional[mujoco.MjSpec] = None,
     hsize: float = 10,
     vsize: float = 4,
@@ -608,6 +672,7 @@ def add_bowl_hfield(
     """Add a noisy bowl height field to the Mujoco spec.
 
     Args:
+        rng (jax.Array): JAX random number generator key.
         spec (Optional[mujoco.MjSpec], optional): Mujoco specification to modify. If None, a new spec is created. Defaults to None.
         hsize (float, optional): Horizontal size of the bowl. Defaults to 10.
         vsize (float, optional): Vertical depth of the bowl. Defaults to 4.
@@ -624,7 +689,8 @@ def add_bowl_hfield(
 
     # Generate Perlin noise
     size = 128
-    noise = perlin((size, size), (8, 8)) * 2
+    rng, perlin_rng = jax.random.split(rng)
+    noise = perlin(perlin_rng, (size, size), (8, 8)) * 2
 
     # Remap noise to 0 to 1
     noise = (noise + 1) / 2
