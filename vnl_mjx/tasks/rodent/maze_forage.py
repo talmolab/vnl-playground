@@ -1,5 +1,3 @@
-
-
 """Maze Forage Task for Rodent."""
 
 from mujoco_playground._src import reward
@@ -7,6 +5,7 @@ from mujoco_playground._src import reward
 from typing import Any, Dict, Optional, Tuple, Union
 import jax
 import jax.numpy as jp
+import jax.lax as lax
 import numpy as np
 from ml_collections import config_dict
 import mujoco
@@ -70,6 +69,9 @@ def default_config() -> config_dict.ConfigDict:
         target_radius=0.2,
         reward_scale=1.0,
         target_speed=1.0,     # for speed-based reward
+        vision_num_rays=16,      # number of rays for rodent vision
+        vision_fov=np.pi,        # field of view in radians
+        vision_max_dist=6.0,     # maximum ray distance in metres
         maze_hsize=3,          # horizontal half-size of the maze world
         maze_vsize=0.4,       # wall height
         maze_grid_size=6,      # number of *cells* along one edge (perfect maze will be 2*N+1)
@@ -127,9 +129,40 @@ class MazeForage(rodent_base.RodentEnv):
         height_norm = height_array[row, col]
         return float(height_norm * vsize)
 
+    def _raycast_lengths(self, agent_xy: jp.ndarray, forward_xy: jp.ndarray) -> jp.ndarray:
+        """Return array of ray lengths to first wall for each vision ray."""
+        maze = jp.array(self._maze_array)
+        size = maze.shape[0]
+        hsize = self._config.maze_hsize
+        cell = 2 * hsize / (size - 1)
+        max_d = self._config.vision_max_dist
+        n_rays = self._config.vision_num_rays
+        fov = self._config.vision_fov
+        base_ang = jp.arctan2(forward_xy[1], forward_xy[0])
+        rels = jp.linspace(-fov/2, fov/2, n_rays)
+        angles = base_ang + rels
+
+        def ray_fn(angle):
+            def cond_fn(state):
+                dist, hit = state
+                return jp.logical_and(dist < max_d, jp.logical_not(hit))
+            def body_fn(state):
+                dist, hit = state
+                dist = dist + cell * 0.25
+                x = agent_xy[0] + jp.cos(angle) * dist
+                y = agent_xy[1] + jp.sin(angle) * dist
+                gx = jp.clip(jp.round((x + hsize) / cell).astype(jp.int32), 0, size - 1)
+                gy = jp.clip(jp.round((y + hsize) / cell).astype(jp.int32), 0, size - 1)
+                hit_wall = maze[gy, gx] > 0.5
+                return dist, hit_wall
+            dist, hit = lax.while_loop(cond_fn, body_fn, (0.0, False))
+            return jp.minimum(dist, max_d)
+        print(angles)
+        return jax.vmap(ray_fn)(angles)
+
     def __init__(
         self,
-        rng: jax.Array = jax.random.PRNGKey(0),
+        rng: jax.Array = jax.random.PRNGKey(1),
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
     ) -> None:
@@ -217,6 +250,11 @@ class MazeForage(rodent_base.RodentEnv):
         target_pos = jp.array(self._config.target_pos)
         agent_pos = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xpos[:2]
         rel_goal = target_pos - agent_pos
+        # Vision: ray lengths to nearest wall
+        torso_mat = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xmat
+        agent_pos = jp.array(agent_pos)
+        forward_vec = jp.array(torso_mat[0, :2])
+        ray_lengths = self._raycast_lengths(agent_pos, forward_vec)
         obs = jp.concatenate(
             [
                 info["last_act"],
@@ -225,6 +263,7 @@ class MazeForage(rodent_base.RodentEnv):
                 touch_sensors,
                 origin,
                 rel_goal,
+                ray_lengths,
             ]
         )
         return obs
