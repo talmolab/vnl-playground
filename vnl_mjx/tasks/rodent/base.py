@@ -72,7 +72,7 @@ class RodentEnv(mjx_env.MjxEnv):
         rodent = mujoco.MjSpec.from_string(
             epath.Path(self._walker_xml_path).read_text()
         )
-        
+
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(rodent, "actuator"):
             print("Converting to torque actuators")
@@ -83,7 +83,7 @@ class RodentEnv(mjx_env.MjxEnv):
                 # reset custom bias terms
                 actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
                 actuator.biasprm = np.zeros((10, 1))
-                
+
         if rescale_factor != 1.0:
             print(f"Rescaling body tree with scale factor {rescale_factor}")
             rodent = dm_scale_spec(rodent, rescale_factor)
@@ -96,9 +96,9 @@ class RodentEnv(mjx_env.MjxEnv):
         self._suffix = suffix
         spawn_body.add_freejoint()
 
-    def compile(self) -> None:
+    def compile(self, force=False) -> None:
         """Compiles the model from the mj_spec and put models to mjx"""
-        if not self._compiled:
+        if not self._compiled or force:
             self._spec.option.noslip_iterations = self._config.noslip_iterations
             self._mj_model = self._spec.compile()
             self._mj_model.opt.timestep = self._config.sim_dt
@@ -109,7 +109,7 @@ class RodentEnv(mjx_env.MjxEnv):
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
             self._mjx_model = mjx.put_model(self._mj_model)
             self._compiled = True
-            
+
     def _get_appendages_pos(self, data: mjx.Data) -> jp.ndarray:
         """Get appendages positions from the environment."""
         torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
@@ -142,7 +142,7 @@ class RodentEnv(mjx_env.MjxEnv):
             ]
         )
         return proprioception
-    
+
     def _get_kinematic_sensors(self, data: mjx.Data) -> jp.ndarray:
         """Get kinematic sensors data from the environment."""
         accelerometer = data.bind(self.mjx_model, self._spec.sensor("accelerometer-rodent")).sensordata
@@ -161,7 +161,7 @@ class RodentEnv(mjx_env.MjxEnv):
         """Get touch sensors data from the environment."""
         touches = [data.bind(self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")).sensordata for name in TOUCH_SENSORS]
         return jp.array(touches)
-    
+
     def _get_origin(self, data: mjx.Data) -> jp.ndarray:
         """Get origin position in the torso frame."""
         torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
