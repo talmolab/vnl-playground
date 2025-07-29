@@ -1,0 +1,103 @@
+env_config:
+  physics_steps_per_control_step: 5
+  random_init_range: 50
+
+teacher_config:
+  checkpoint_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/model_checkpoints/250723_182438_178219
+  reference_data_path: /home/mila/a/aidan.sirbu/scratch/track-mjx/data/transform_snips.h5  # Path to reference trajectory data
+  freeze_params: True
+
+vae_config:
+  latent_dim: 32
+  encoder_hidden_sizes: [2048, 2048, 1024]
+  decoder_hidden_sizes: [2048, 2048, 1024]  
+  prior_hidden_sizes: [2048, 2048, 1024]
+  activation: tanh
+
+training_config:
+  num_envs: 1024  # Reduced from PPO due to memory constraints
+  batch_size: 512
+  num_steps: 1_000_000
+  episode_length: 250  # Length of distillation episodes
+  learning_rate: 3e-4
+  kl_weight: 0.001
+  action_weight: 1.0
+  
+  # Evaluation and checkpointing
+  eval_every: 10_000
+  checkpoint_every: 50_000
+  log_every: 100
+  
+  # Checkpointing
+  checkpoint_dir: /home/mila/a/aidan.sirbu/scratch/vnl-playground/model_checkpoints
+  
+  # Random seed
+  seed: 42
+
+wandb_config:
+  project: vnl_distill
+  group_name: vae_distillation
+  exp_name:
+
+walker_config:
+  torque_actuators: False 
+  rescale_factor: 0.9
+  joint_names:
+    - vertebra_1_extend
+    - hip_L_supinate
+    - hip_L_abduct
+    - hip_L_extend
+    - knee_L
+    - ankle_L
+    - toe_L
+    - hip_R_supinate
+    - hip_R_abduct
+    - hip_R_extend
+    - knee_R
+    - ankle_R
+    - toe_R
+    - vertebra_C11_extend
+    - vertebra_cervical_1_bend
+    - vertebra_axis_twist
+    - atlas
+    - mandible
+    - scapula_L_supinate
+    - scapula_L_abduct
+    - scapula_L_extend
+    - shoulder_L
+    - shoulder_sup_L
+    - elbow_L
+    - wrist_L
+    - scapula_R_supinate
+    - scapula_R_abduct
+    - scapula_R_extend
+    - shoulder_R
+    - shoulder_sup_R
+    - elbow_R
+    - wrist_R
+    - finger_R
+  body_names:
+    - torso
+    - pelvis
+    - upper_leg_L
+    - lower_leg_L
+    - foot_L
+    - upper_leg_R
+    - lower_leg_R
+    - foot_R
+    - skull
+    - jaw
+    - scapula_L
+    - upper_arm_L
+    - lower_arm_L
+    - finger_L
+    - scapula_R
+    - upper_arm_R
+    - lower_arm_R
+    - finger_R
+  end_eff_names:
+    - foot_L
+    - foot_R
+    - hand_L
+    - hand_R
+    - skull
