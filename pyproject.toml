@@ -68,8 +68,8 @@ dev = [
 with-cuda = [
     "vnl-mjx[dev]",
     "flax[all]",
-    "optax[all]",
-    "jax[cuda12]",
+    "optax[all]==0.2.5",
+    "jax[cuda12]==0.6.2",
 ]
 
 [project.urls]
