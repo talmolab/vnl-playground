@@ -1,32 +1,29 @@
 env_config:
   env_name: rodent
-  task_name: bowl_escape
+  task_name: maze_forage
   walker_name: rodent
   render_camera_name: close_profile
 
   env_args:
     # this will be passed to the env constructor as config overrides
-    torque_actuators: False
+    torque_actuators: True
     rescale_factor: 0.9
-    bowl_vsize: 0.3
-    bowl_amplitude: -20
     target_speed: 1
-    iterations: 10
 
 network_config:
   arch_name: intention
-  encoder_layer_sizes: [512, 512]
-  decoder_layer_sizes: [512, 512, 512]
-  critic_layer_sizes: [512, 512, 512]
-  intention_size: 256
+  encoder_layer_sizes: [1024, 512, 512, 512, 512]
+  decoder_layer_sizes: [1024, 1024, 512]  # loaded from checkpoint
+  critic_layer_sizes: [512, 512, 512, 256, 256]
+  intention_size: 16 # recover from the checkpoint 
   kl_schedule: False # Whether to use a ramping KL schedule
   kl_weight: 0 # The maximum weight if schedule is True
 
 train_setup:
   agent_name: rodent
-  run_name: bowl_escape
-  checkpoint_to_restore: 
-  freeze_decoder: False
+  run_name: maze_forage
+  checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
+  freeze_decoder: True
   checkpoint_max_to_keep:
   checkpoint_keep_period:
   eval_every: 20_000_000
@@ -40,7 +37,7 @@ train_setup:
     num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.1
-    discounting: 0.95
+    discounting: 0.99
     action_repeat: 1
     entropy_cost: 1e-4
     reward_scaling: 1
@@ -50,11 +47,11 @@ train_setup:
 
 logging_config:
   project_name: vnl_playground
-  group_name: performance_baseline
+  group_name: maze_forage
   model_path: model_checkpoints
-  notes: "random init, pos act smaller network"
+  notes: "init maze forage run"
   algo_name: ppo
-  exp_name: random_init_smaller_NN_pos_act
+  exp_name: maze_forage_transfer
   rollout_metrics:
   
 walker_config:

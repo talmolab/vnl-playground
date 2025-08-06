@@ -10,7 +10,7 @@ env_config:
     rescale_factor: 0.9
     bowl_vsize: 0.6
     bowl_amplitude: -20
-    target_speed: 1
+    target_speed: 2
     iterations: 10
 
 network_config:
@@ -26,21 +26,22 @@ train_setup:
   agent_name: rodent
   run_name: bowl_escape
   checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
+  # NEW: /root/vast/scott-yang/track-mjx/model_checkpoints/250725_181216_794171 # OLD: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
   freeze_decoder: True
   checkpoint_max_to_keep:
   checkpoint_keep_period:
-  eval_every: 20_000_000
+  eval_every: 15_000_000
   reset_every: 50_000_000
   train_config:
-    episode_length: 1500
+    episode_length: 2000
     num_envs: 4096
-    num_timesteps: 5_000_000_000
+    num_timesteps: 2_000_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.1
-    discounting: 0.99
+    discounting: 0.98
     action_repeat: 1
     entropy_cost: 1e-4
     reward_scaling: 1
@@ -50,13 +51,13 @@ train_setup:
 
 logging_config:
   project_name: vnl_playground
-  group_name:
+  group_name: new_checkpoint
   model_path: model_checkpoints
-  notes: "the origin is flatten to ensure robustness"
+  notes: "higher target speed"
   algo_name: ppo
-  exp_name: transfer_flat_origin
+  exp_name: higher_speed
   rollout_metrics:
-
+  
 walker_config:
   torque_actuators: True
   rescale_factor: 0.9

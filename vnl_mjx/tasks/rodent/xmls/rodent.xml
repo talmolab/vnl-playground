@@ -161,8 +161,26 @@
     <body name="torso" pos="0.03099526054578288 2.058524937651458e-07 0.06508957263119967">
       <!-- <light name="tracking_light" mode="trackcom" pos="0 0 3"/> -->
       <camera name="close_profile" mode="trackcom" pos=".5 -.5 0.5" xyaxes="1 1 0 -1 1 2"/>
-      <camera name="back" mode="trackcom" pos="-1 0 0.5" xyaxes="0 -1 0 1 0 2"/>
+      <!-- <camera name="back" mode="trackcom" pos="-1 0 0.5" xyaxes="0 -1 0 1 0 2"/> -->
       <camera name="side" mode="trackcom" pos="0 -1 0.5" xyaxes="1 0 0 0 1 2"/>
+      <!-- <camera name="front" mode="trackcom" pos="1 0 0.3" xyaxes="0 1 0 0 0 1"/> -->
+      <camera name="above" mode="trackcom" pos="0 0 1.5" xyaxes="1 0 0 0 1 0"/>
+      <camera name="below" mode="trackcom" pos="0 0 -0.5" xyaxes="1 0 0 0 -1 0"/>
+      <camera name="diagonal" mode="trackcom" pos="0.7 -0.7 0.7" xyaxes="1 1 0 -1 1 2"/>
+      <camera name="close_front" mode="trackcom" pos="0.3 0 0.2" xyaxes="0 1 0 0 0 1"/>
+      <camera name="wide_view" mode="trackcom" fovy="120.0" pos="0 -2 1" xyaxes="1 0 0 0 1 2"/>
+      <camera name="head_follow" mode="track" target="skull" pos="0.2 0 0.1" xyaxes="0 1 0 0 0 1"/>
+      <camera name="tail_view" mode="trackcom" pos="-0.8 0 0.3" xyaxes="0 1 0 0 0 1"/>
+      <camera name="paw_focus" mode="track" target="foot_L" pos="0.1 -0.2 0.05" xyaxes="1 0 0 0 1 2"/>
+      <camera name="overhead_wide" mode="trackcom" fovy="90.0" pos="0 0 2" xyaxes="1 0 0 0 1 0"/>
+      <camera name="front" mode="trackcom" pos="1 0 0" xyaxes="0 1 0 0 0 1"/>
+      <camera name="front_left" mode="trackcom" pos="0.707 0.707 0" xyaxes="-0.707 0.707 0 0 0 1"/>
+      <camera name="left" mode="trackcom" pos="0 1 0" xyaxes="-1 0 0 0 0 1"/>
+      <camera name="back_left" mode="trackcom" pos="-0.707 0.707 0" xyaxes="-0.707 -0.707 0 0 0 1"/>
+      <camera name="back" mode="trackcom" pos="-1 0 0" xyaxes="0 -1 0 0 0 1"/>
+      <camera name="back_right" mode="trackcom" pos="-0.707 -0.707 0" xyaxes="0.707 -0.707 0 0 0 1"/>
+      <camera name="right" mode="trackcom" pos="0 -1 0" xyaxes="1 0 0 0 0 1"/>
+      <camera name="front_right" mode="trackcom" pos="0.707 -0.707 0" xyaxes="0.707 0.707 0 0 0 1"/>
       <camera name="side_alt" mode="trackcom" pos="0.5 -0.561 0.199" xyaxes="0.766 0.643 0.000 -0.162 0.192 0.968"/>
       <camera name="top" mode="trackcom" fovy="100.0" pos="0 0 1" zaxis="0 -0.2 1"/>
       <geom name="collision_torso" class="no_collision" type="ellipsoid" size="0.05 0.024 0.026" density="468.251260009" pos="-0.008200000000000001 0 0" euler="0 0.1745329251994329 0"/>
