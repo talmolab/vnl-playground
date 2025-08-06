@@ -3,7 +3,7 @@
 from typing import Any, Dict, Optional, Union
 
 from etils import epath
-import jax
+import logging
 import jax.numpy as jp
 import numpy as np
 from ml_collections import config_dict
@@ -63,19 +63,27 @@ class RodentEnv(mjx_env.MjxEnv):
         self,
         torque_actuators: bool,
         rescale_factor: float = 1.0,
-        pos=(0, 0, 0.05),
-        quat=(1, 0, 0, 0),
-        suffix="-rodent",
-        
+        pos: tuple[float, float, float] = (0, 0, 0.05),
+        quat: tuple[float, float, float, float] = (1, 0, 0, 0),
+        rgba: Optional[tuple[float, float, float, float]] = None,
+        suffix: str = "-rodent",
     ) -> None:
-        """Adds the rodent model to the environment."""
-        rodent = mujoco.MjSpec.from_string(
-            epath.Path(self._walker_xml_path).read_text()
-        )
+        """Adds the rodent model to the environment.
+        
+        Args:
+            torque_actuators: Whether to convert motors to torque-mode actuators.
+            rescale_factor: Factor to rescale the rodent body. Defaults to 1.0.
+            pos: Position (x, y, z) to spawn the rodent. Defaults to (0, 0, 0.05).
+            quat: Quaternion (w, x, y, z) for rodent orientation. Defaults to (1, 0, 0, 0).
+            rgba: RGBA color values (red, green, blue, alpha) for recoloring the body.
+                If None, no recoloring is applied. Defaults to None.
+            suffix: Suffix to append to body names. Defaults to "-rodent".
+        """
+        rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
 
         # a) Convert motors to torque‑mode if requested
         if torque_actuators and hasattr(rodent, "actuator"):
-            print("Converting to torque actuators")
+            logging.info("Converting to torque actuators")
             for actuator in rodent.actuators:  # type: ignore[attr-defined]
                 # Set gain to max force; remove bias terms if present
                 if actuator.forcerange.size >= 2:
@@ -85,8 +93,13 @@ class RodentEnv(mjx_env.MjxEnv):
                 actuator.biasprm = np.zeros((10, 1))
 
         if rescale_factor != 1.0:
-            print(f"Rescaling body tree with scale factor {rescale_factor}")
+            logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
             rodent = dm_scale_spec(rodent, rescale_factor)
+
+        # Recolor the body if rgba is specified
+        if rgba is not None:
+            for body in rodent.worldbody.bodies:
+                _recolour_tree(body, rgba=rgba)
 
         spawn_site = self._spec.worldbody.add_frame(
             pos=pos,
@@ -94,6 +107,26 @@ class RodentEnv(mjx_env.MjxEnv):
         )
         spawn_body = spawn_site.attach_body(rodent.worldbody, "", suffix=suffix)
         self._suffix = suffix
+        spawn_body.add_freejoint()
+
+    def add_ghost_rodent(
+        self,
+        rescale_factor: float = 1.0,
+        pos=(0, 0, 0.05),
+        ghost_rgba=(0.8, 0.8, 0.8, 0.3),
+        suffix="-ghost",
+    ):
+        """Adds a ghost rodent model to the environment."""
+        walker_spec = mujoco.MjSpec.from_string(
+            epath.Path(self._walker_xml_path).read_text()
+        )
+        # Scale and recolor the ghost body
+        for body in walker_spec.worldbody.bodies:
+            _scale_body_tree(body, rescale_factor)
+            _recolour_tree(body, rgba=ghost_rgba)
+        # Attach as ghost at the offset frame
+        frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
+        spawn_body = frame.attach_body(walker_spec.body("walker"), "", suffix=suffix)
         spawn_body.add_freejoint()
 
     def compile(self, force=False) -> None:

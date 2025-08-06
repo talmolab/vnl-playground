@@ -41,7 +41,7 @@ from datetime import datetime
 import logging
 import mujoco
 
-from vnl_mjx.tasks.rodent import flat_arena, bowl_escape
+from vnl_mjx.tasks.rodent import flat_arena, bowl_escape, maze_forage
 
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
@@ -101,7 +101,6 @@ def main(cfg: DictConfig):
         cfg.walker_config.rescale_factor = cfg_loaded.walker_config.rescale_factor
         cfg.env_config.env_args.rescale_factor = cfg_loaded.walker_config.rescale_factor
 
-
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
         create=True,
@@ -116,14 +115,23 @@ def main(cfg: DictConfig):
     logging.info(f"Training checkpoint path: {checkpoint_path}")
     print(cfg)
     ppo_params = cfg.train_setup.train_config
-
     env_config = cfg.env_config.env_args
 
-    env = bowl_escape.BowlEscape(config_overrides=env_config)
-    evaluator_env = bowl_escape.BowlEscape(config_overrides=env_config)
-    
-    # env = flat_arena.FlatWalk(config_overrides=env_config)
-    # evaluator_env = flat_arena.FlatWalk(config_overrides=env_config)
+    # Create environment based on task_name
+    task_name = cfg.env_config.task_name
+    if task_name == "maze_forage":
+        env = maze_forage.MazeForage(config_overrides=env_config)
+        evaluator_env = maze_forage.MazeForage(config_overrides=env_config)
+    elif task_name == "bowl_escape":
+        env = bowl_escape.BowlEscape(config_overrides=env_config)
+        evaluator_env = bowl_escape.BowlEscape(config_overrides=env_config)
+    elif task_name == "flat_arena":
+        env = flat_arena.FlatWalk(config_overrides=env_config)
+        evaluator_env = flat_arena.FlatWalk(config_overrides=env_config)
+    else:
+        raise ValueError(
+            f"Unknown task_name: {task_name}. Must be one of: maze_forage, bowl_escape, flat_arena"
+        )
 
     train_fn = functools.partial(
         ppo.train,
@@ -147,7 +155,7 @@ def main(cfg: DictConfig):
         use_kl_schedule=cfg.network_config.kl_schedule,
     )
 
-    run_id = f"{cfg.env_config.env_name}_{cfg.env_config.task_name}_{cfg.logging_config.exp_name}_{run_id}"
+    run_id = f"{cfg.logging_config.exp_name}_{cfg.env_config.env_name}_{cfg.env_config.task_name}_{run_id}"
     wandb.init(
         project=cfg.logging_config.project_name,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
