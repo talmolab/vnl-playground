@@ -556,7 +556,7 @@ class BowlEscapeRender(BowlEscape):
                 conaffinity=0,
             )
         # recompile to register new geoms
-        self.compile(force=True)
+        self.compile(forced=True)
 
     def remove_line_geoms(self) -> None:
         """Remove all geoms added after initialization by reinitializing with saved parameters."""

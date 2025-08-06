@@ -181,3 +181,4 @@ checkpoints/
 model_checkpoints/
 outputs/
 *.mp4
+*.png

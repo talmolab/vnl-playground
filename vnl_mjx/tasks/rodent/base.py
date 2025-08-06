@@ -56,7 +56,7 @@ class RodentEnv(mjx_env.MjxEnv):
         super().__init__(config, config_overrides)
         self._walker_xml_path = str(config.walker_xml_path)
         self._arena_xml_path = str(config.arena_xml_path)
-        self._spec = mujoco.MjSpec.from_string(config.arena_xml_path.read_text())
+        self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
         self._compiled = False
 
     def add_rodent(
@@ -129,9 +129,9 @@ class RodentEnv(mjx_env.MjxEnv):
         spawn_body = frame.attach_body(walker_spec.body("walker"), "", suffix=suffix)
         spawn_body.add_freejoint()
 
-    def compile(self, force=False) -> None:
+    def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and put models to mjx"""
-        if not self._compiled or force:
+        if not self._compiled or forced:
             self._spec.option.noslip_iterations = self._config.noslip_iterations
             self._mj_model = self._spec.compile()
             self._mj_model.opt.timestep = self._config.sim_dt
