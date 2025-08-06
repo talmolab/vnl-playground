@@ -16,4 +16,3 @@ class RodentRender(rodent_base.RodentEnv):
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
         return state
-        
