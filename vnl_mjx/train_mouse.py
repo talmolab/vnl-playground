@@ -35,6 +35,9 @@ from mujoco_playground.config import locomotion_params
 
 from vnl_mjx.tasks.mouse import mouse_reach
 
+from brax.envs.wrappers import training as brax_training
+from mujoco_playground import mjx_env, locomotion, wrapper
+
 
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
@@ -44,6 +47,46 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_name = "Go1JoystickFlatTerrain"
 env_cfg = locomotion.get_default_config(env_name)
+
+
+def wrap_for_brax_training(
+    env: mjx_env.MjxEnv,
+    vision: bool = False,
+    num_vision_envs: int = 1,
+    episode_length: int = 1000,
+    action_repeat: int = 1,
+    randomization_fn: Optional[
+        Callable[[mjx.Model], Tuple[mjx.Model, mjx.Model]]
+    ] = None,
+) -> Wrapper:
+    """Common wrapper pattern for all brax training agents.
+
+    Args:
+      env: environment to be wrapped
+      vision: whether the environment will be vision based
+      num_vision_envs: number of environments the renderer should generate,
+        should equal the number of batched envs
+      episode_length: length of episode
+      action_repeat: how many repeated actions to take per step
+      randomization_fn: randomization function that produces a vectorized model
+        and in_axes to vmap over
+
+    Returns:
+      An environment that is wrapped with Episode and AutoReset wrappers.  If the
+      environment did not already have batch dimensions, it is additional Vmap
+      wrapped.
+    """
+    if vision:
+        return False
+        # env = MadronaWrapper(env, num_vision_envs, randomization_fn)
+    elif randomization_fn is None:
+        env = brax_training.VmapWrapper(env)  # pytype: disable=wrong-arg-types
+    else:
+        env = BraxDomainRandomizationVmapWrapper(env, randomization_fn)
+    env = brax_training.EpisodeWrapper(env, episode_length, action_repeat)
+    env = BraxAutoResetWrapper(env)
+    return env
+
 
 ppo_params = config_dict.create(
     num_timesteps=1_000_000_000,
