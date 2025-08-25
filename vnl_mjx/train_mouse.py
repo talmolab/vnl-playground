@@ -1,0 +1,201 @@
+"""
+Temporary train script for quick-start training
+"""
+
+import os
+
+xla_flags = os.environ.get("XLA_FLAGS", "")
+xla_flags += " --xla_gpu_triton_gemm_any=True"
+os.environ["XLA_FLAGS"] = xla_flags
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["MUJOCO_GL"] = "egl"
+os.environ["PYOPENGL_PLATFORM"] = "egl"
+
+import functools
+import json
+from datetime import datetime
+
+import jax
+import jax.numpy as jp
+import matplotlib.pyplot as plt
+import mediapy as media
+import mujoco
+import wandb
+from brax.training.agents.ppo import networks as ppo_networks
+from brax.training.agents.ppo import train as ppo
+from etils import epath
+from flax.training import orbax_utils
+from IPython.display import clear_output, display
+from orbax import checkpoint as ocp
+from tqdm import tqdm
+from ml_collections import config_dict
+
+from mujoco_playground import locomotion, wrapper
+from mujoco_playground.config import locomotion_params
+
+from vnl_mjx.tasks.mouse import mouse_reach
+
+from brax.envs.wrappers import training as brax_training
+from mujoco_playground import mjx_env, locomotion, wrapper
+
+
+# Enable persistent compilation cache.
+jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+
+
+env_name = "Go1JoystickFlatTerrain"
+env_cfg = locomotion.get_default_config(env_name)
+
+
+def wrap_for_brax_training(
+    env: mjx_env.MjxEnv,
+    vision: bool = False,
+    num_vision_envs: int = 1,
+    episode_length: int = 1000,
+    action_repeat: int = 1,
+    randomization_fn: Optional[
+        Callable[[mjx.Model], Tuple[mjx.Model, mjx.Model]]
+    ] = None,
+) -> Wrapper:
+    """Common wrapper pattern for all brax training agents.
+
+    Args:
+      env: environment to be wrapped
+      vision: whether the environment will be vision based
+      num_vision_envs: number of environments the renderer should generate,
+        should equal the number of batched envs
+      episode_length: length of episode
+      action_repeat: how many repeated actions to take per step
+      randomization_fn: randomization function that produces a vectorized model
+        and in_axes to vmap over
+
+    Returns:
+      An environment that is wrapped with Episode and AutoReset wrappers.  If the
+      environment did not already have batch dimensions, it is additional Vmap
+      wrapped.
+    """
+    if vision:
+        return False
+        # env = MadronaWrapper(env, num_vision_envs, randomization_fn)
+    elif randomization_fn is None:
+        env = brax_training.VmapWrapper(env)  # pytype: disable=wrong-arg-types
+    else:
+        env = BraxDomainRandomizationVmapWrapper(env, randomization_fn)
+    env = brax_training.EpisodeWrapper(env, episode_length, action_repeat)
+    env = BraxAutoResetWrapper(env)
+    return env
+
+
+ppo_params = config_dict.create(
+    num_timesteps=1_000_000_000,
+    num_evals=150,
+    reward_scaling=1.0,
+    episode_length=300,
+    normalize_observations=True,
+    action_repeat=1,
+    unroll_length=20,
+    num_minibatches=32,
+    num_updates_per_batch=4,
+    discounting=0.97,
+    learning_rate=1e-4,
+    entropy_cost=1e-4,
+    num_envs=2048,
+    batch_size=256,
+    max_grad_norm=1.0,
+    network_factory=config_dict.create(
+        policy_hidden_layer_sizes=(512, 512, 512),
+        value_hidden_layer_sizes=(512, 512, 512),
+        policy_obs_key="state",
+        value_obs_key="state",
+    ),
+)
+
+env_name = "mouse-reach"
+
+SUFFIX = None
+FINETUNE_PATH = None
+
+# Generate unique experiment name.
+now = datetime.now()
+timestamp = now.strftime("%Y%m%d-%H%M%S")
+exp_name = f"{env_name}-{timestamp}"
+if SUFFIX is not None:
+    exp_name += f"-{SUFFIX}"
+print(f"Experiment name: {exp_name}")
+
+# Possibly restore from the latest checkpoint.
+if FINETUNE_PATH is not None:
+    FINETUNE_PATH = epath.Path(FINETUNE_PATH)
+    latest_ckpts = list(FINETUNE_PATH.glob("*"))
+    latest_ckpts = [ckpt for ckpt in latest_ckpts if ckpt.is_dir()]
+    latest_ckpts.sort(key=lambda x: int(x.name))
+    latest_ckpt = latest_ckpts[-1]
+    restore_checkpoint_path = latest_ckpt
+    print(f"Restoring from: {restore_checkpoint_path}")
+else:
+    restore_checkpoint_path = None
+
+
+ckpt_path = epath.Path("checkpoints").resolve() / exp_name
+ckpt_path.mkdir(parents=True, exist_ok=True)
+print(f"{ckpt_path}")
+
+with open(ckpt_path / "config.json", "w") as fp:
+    json.dump(env_cfg.to_dict(), fp, indent=4)
+
+# Setup wandb logging.
+USE_WANDB = True
+
+if USE_WANDB:
+    wandb.init(project="vnl-mjx-rl", config=env_cfg, id=f"rodent-flat-{exp_name}")
+    wandb.config.update(
+        {
+            "env_name": env_name,
+        }
+    )
+
+x_data, y_data, y_dataerr = [], [], []
+times = [datetime.now()]
+
+
+def progress(num_steps, metrics):
+    # Log to wandb.
+    if USE_WANDB:
+        wandb.log(metrics, step=num_steps)
+
+
+def policy_params_fn(current_step, make_policy, params):
+    del make_policy  # Unused.
+    orbax_checkpointer = ocp.PyTreeCheckpointer()
+    save_args = orbax_utils.save_args_from_target(params)
+    path = ckpt_path / f"{current_step}"
+    orbax_checkpointer.save(path, params, force=True, save_args=save_args)
+
+
+training_params = dict(ppo_params)
+del training_params["network_factory"]
+
+train_fn = functools.partial(
+    ppo.train,
+    **training_params,
+    network_factory=functools.partial(
+        ppo_networks.make_ppo_networks, **ppo_params.network_factory
+    ),
+    restore_checkpoint_path=restore_checkpoint_path,
+    progress_fn=progress,
+    wrap_env_fn=wrapper.wrap_for_brax_training,
+    policy_params_fn=policy_params_fn,
+)
+
+env = mouse_reach.MouseEnv()
+# Ensure a target site exists before PPO reset()
+env.add_target(random_target=True)
+eval_env = mouse_reach.MouseEnv()
+eval_env.add_target(random_target=True)
+
+make_inference_fn, params, _ = train_fn(environment=env, eval_env=eval_env)
+if len(times) > 1:
+    print(f"time to jit: {times[1] - times[0]}")
+    print(f"time to train: {times[-1] - times[1]}")
