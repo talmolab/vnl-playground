@@ -55,9 +55,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         self._arena_xml_path = str(config.arena_xml_path)
 
         # Build an arena-only spec; walker gets attached on demand.
-        self._spec = mujoco.MjSpec.from_string(
-            epath.Path(self._arena_xml_path).read_text()
-        )
+        self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
         self._compiled = False
 
     def add_mouse(
