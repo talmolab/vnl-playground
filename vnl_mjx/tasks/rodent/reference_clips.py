@@ -1,0 +1,79 @@
+import copy
+import h5py
+
+import jax.numpy as jp
+
+class ReferenceClips:
+
+    _DATA_ARRAYS = ["qpos", "qvel", "xpos", "xquat"]
+
+    def __init__(self, data_path, n_frames_per_clip):
+        self._load_from_disk(data_path, n_frames_per_clip)
+
+    def __getitem__(self, inds):
+        if (isinstance(inds, tuple) and len(inds) >= self.qpos.ndim) or\
+           (isinstance(inds, int) and self.qpos.ndim <= 1):
+            raise IndexError("Cannot slice the last index of ReferenceClip.")
+        subslice = copy.copy(self)
+        subslice._data_arrays = {k: subslice._data_arrays[k][inds] for k in self._DATA_ARRAYS}
+        return subslice
+
+    def _load_from_disk(self, data_path: str, n_frames_per_clip: int):
+        self._data_arrays = {}
+        with h5py.File(data_path, "r") as fid:
+            for k in self._DATA_ARRAYS:
+                arr = fid[k][()]
+                n_clips = arr.shape[0] // n_frames_per_clip
+                arr = arr.reshape(n_clips, n_frames_per_clip, *arr.shape[1:])
+                self._data_arrays[k] = jp.array(arr)
+            self._names_qpos = fid["names_qpos"][()].astype(str)
+            self._names_xpos = fid["names_xpos"][()].astype(str)
+            self._qpos_names = {n: i for (i, n) in enumerate(self._names_qpos)}
+            self._xpos_names = {n: i for (i, n) in enumerate(self._names_xpos)}
+
+    @property
+    def qpos(self) -> jp.ndarray:
+        return self._data_arrays["qpos"]
+    
+    @property
+    def qvel(self) -> jp.ndarray:
+        return self._data_arrays["qvel"]
+    
+    @property
+    def xpos(self) -> jp.ndarray:
+        return self._data_arrays["xpos"]
+    
+    @property
+    def xquat(self) -> jp.ndarray:
+        return self._data_arrays["xquat"]
+    
+    @property
+    def root_position(self) -> jp.ndarray:
+        return self.qpos[..., :3]
+    
+    @property
+    def root_quaternion(self) -> jp.ndarray:
+        return self.qpos[..., 3:7]
+    
+    @property
+    def joints(self) -> jp.ndarray:
+        return self.qpos[..., 7:]
+    
+    @property
+    def joints_velocity(self) -> jp.ndarray:
+        return self.qvel[..., 6:]
+    
+    @property
+    def joint_names(self):
+        return self._names_qpos[7:]
+    
+    @property
+    def body_names(self):
+        return self._names_xpos
+    
+    def body_xpos(self, name: str) -> jp.ndarray:
+        return self.xpos[..., self._xpos_names[name], :]
+    
+    def body_xquat(self, name: str) -> jp.ndarray:
+        return self.xquat[..., self._xpos_names[name], :]
+    
