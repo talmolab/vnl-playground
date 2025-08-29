@@ -7,6 +7,7 @@ from etils import epath
 import logging
 import jax
 import jax.numpy as jp
+import mujoco_playground
 import numpy as np
 from ml_collections import config_dict
 import mujoco
@@ -34,6 +35,7 @@ def default_config() -> config_dict.ConfigDict:
         iterations=4,
         ls_iterations=4,
         noslip_iterations=0,
+        mujoco_impl="mjx"
     )
 
 
@@ -140,7 +142,7 @@ class RodentEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
-            self._mjx_model = mjx.put_model(self._mj_model)
+            self._mjx_model = mjx.put_model(self._mj_model)#, impl=self._config.mujoco_impl)
             self._compiled = True
 
     def _get_appendages_pos(self, data: mjx.Data, flatten: bool = True) -> Union[dict[str, jp.ndarray], jp.ndarray]:
