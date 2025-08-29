@@ -1,21 +1,35 @@
+from calendar import c
 import copy
 import h5py
 
+import jax
 import jax.numpy as jp
 
 class ReferenceClips:
 
     _DATA_ARRAYS = ["qpos", "qvel", "xpos", "xquat"]
 
-    def __init__(self, data_path, n_frames_per_clip):
+    def __init__(self, data_path: str, n_frames_per_clip: int):
         self._load_from_disk(data_path, n_frames_per_clip)
 
-    def __getitem__(self, inds):
-        if (isinstance(inds, tuple) and len(inds) >= self.qpos.ndim) or\
-           (isinstance(inds, int) and self.qpos.ndim <= 1):
-            raise IndexError("Cannot slice the last index of ReferenceClip.")
+    def at(self, clip: int, frame: int) -> "ReferenceClips":
+        if self.qpos.ndim < 3:
+            raise IndexError("Trying to slice already sliced ReferenceClip.")
         subslice = copy.copy(self)
-        subslice._data_arrays = {k: subslice._data_arrays[k][inds] for k in self._DATA_ARRAYS}
+        subslice._data_arrays = {k: subslice._data_arrays[k][clip, frame] for k in self._DATA_ARRAYS}
+        return subslice
+    
+    def slice(self, clip: int, start_frame: int, length: int) -> "ReferenceClips":
+        if self.qpos.ndim < 3:
+            raise IndexError("Trying to slice already sliced ReferenceClip.")
+        subslice = copy.copy(self)
+        subslice._data_arrays = copy.copy(self._data_arrays)
+        for key in subslice._DATA_ARRAYS:
+            clip_array = subslice._data_arrays[key][clip]
+            slice = jax.lax.dynamic_slice(clip_array,
+                                          (start_frame, *jp.zeros(clip_array.ndim - 1, dtype=int)),
+                                          (length, *clip_array.shape[1:]))
+            subslice._data_arrays[key] = slice
         return subslice
 
     def _load_from_disk(self, data_path: str, n_frames_per_clip: int):

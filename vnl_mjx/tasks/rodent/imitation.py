@@ -1,15 +1,14 @@
+import collections
 from typing import Any, Dict, Optional, Union, Tuple, Mapping, Callable, List
 import jax
 import jax.flatten_util
 import jax.numpy as jp
-import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 import brax.math
 from vnl_mjx.tasks.rodent.reference_clips import ReferenceClips
 
 from mujoco_playground._src import mjx_env
-#from track_mjx.io.load import ReferenceClip
 
 from . import base as rodent_base
 from . import consts
@@ -18,11 +17,12 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path = consts.RODENT_XML_PATH,
         arena_xml_path = consts.ARENA_XML_PATH,
-        sim_dt = 0.002,
-        ctrl_dt = 0.01,
+        mujoco_impl = "mjx",
+        sim_dt  = 0.002,
+        ctrl_dt = 0.02,
         solver = "cg",
-        iterations = 4,
-        ls_iterations = 4,
+        iterations = 5,
+        ls_iterations = 5,
         noslip_iterations = 0,
         torque_actuators = False,
         rescale_factor = 0.9,
@@ -32,19 +32,27 @@ def default_config() -> config_dict.ConfigDict:
         reference_data_path = "../registered_snips.h5",
         clip_set = "all",
         reference_length = 5,
+        start_frame_range = (0, 44),
         qvel_init = "zeros",
         reward_terms = {
-            "root_pos":      {"exp_scale":  1.0, "weight": 1.0},
-            "root_quat":     {"exp_scale": 30.0, "weight": 1.0},
-            "joints":        {"exp_scale":  1.0, "weight": 1.0},
-            "joints_vel":    {"exp_scale":  1.0, "weight": 1.0},
-            "bodies_pos":    {"exp_scale":  1.0, "weight": 1.0},
-            "end_eff":       {"exp_scale":  1.0, "weight": 1.0},
+            # Imitation rewards
+            "root_pos":      {"exp_scale":  0.05,  "weight": 1.0}, #Meters
+            "root_quat":     {"exp_scale": 30.0,   "weight": 1.0}, #Degrees
+            "joints":        {"exp_scale":  2.0,   "weight": 1.0}, #Joint-space L2 distance
+            "joints_vel":    {"exp_scale":  1.4,   "weight": 1.0}, #Joint velocity-space L2 distance
+            "bodies_pos":    {"exp_scale":  0.35,  "weight": 1.0}, #Distance in concatenated euclidean space
+            "end_eff":       {"exp_scale":  0.045, "weight": 1.0}, #Distance in concatenated euclidean space
+
+            # Costs / regularizers
+            "torso_z_range":      {"healthy_z_range": (0.0325, 0.5), "weight": 1.0},
+            "control_cost":       {"weight": 0.02},
+            "control_diff_cost":  {"weight": 0.02},
+            "energy_cost":        {"max_value":  50.0, "weight": 0.01},
         },
         termination_criteria = {
-            "root_too_far":     {"max_distance":  0.05}, #Meters
-            "root_too_rotated": {"max_degrees":  30.0},  #Degrees
-            "pose_error":       {"max_l2_error":  0.5},  #Joint-space L2 distance
+            "root_too_far":     {"max_distance": 0.1},  #Meters
+            "root_too_rotated": {"max_degrees":  60.0}, #Degrees
+            "pose_error":       {"max_l2_error": 4.5},  #Joint-space L2 distance
         },
     )
 
@@ -72,31 +80,29 @@ class Imitation(rodent_base.RodentEnv):
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
         start_rng, clip_rng = jax.random.split(rng)
-        info = {
-            "reference_clip": jax.random.choice(clip_rng, self._num_clips()),
-            "start_frame": jax.random.choice(start_rng, 44),
+        clip_idx = jax.random.choice(clip_rng, self._num_clips())
+        start_frame = jax.random.randint(start_rng, (), *self._config.start_frame_range)
+        data = self._reset_data(clip_idx, start_frame)
+        info : dict[str, Any] = {
+            "start_frame": start_frame,
+            "reference_clip": clip_idx,
         }
-        reference = self.reference_clips[info["reference_clip"], info["start_frame"]]
+        last_valid_frame = self._clip_length() - self._config.reference_length - 1
+        info["truncated"] = jp.astype(self._get_cur_frame(data, info) > last_valid_frame, float)
+        info["prev_action"] = self.null_action()
+        info["action"] = self.null_action()
 
-        data = mjx.make_data(self.mjx_model)
-        data = data.replace(qpos = reference.qpos)
-        if self._config.qvel_init == "default":
-            pass
-        elif self._config.qvel_init == "zeros":
-            data = data.replace(qvel = jp.zeros(self.mjx_model.nv))
-        elif self._config.qvel_init == "reference":
-            data = data.replace(qvel = reference.qvel)
-        data = mjx.forward(self.mjx_model, data)
 
-        info = self._get_info(data, info)
         obs = self._get_obs(data, info)
         rewards = self._get_rewards(data, info)
         reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
         done = self._is_done(data, info)
-        info["reward_terms"] = rewards
-        info["current_frame"] = self._get_cur_frame(data, info)
-        metrics = {}
-        return mjx_env.State(data, obs, reward, done, metrics, info)
+
+        metrics = {
+            "reward_terms": rewards,
+            "current_frame": jp.astype(self._get_cur_frame(data, info), float),
+        }
+        return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
 
     def step(
         self,
@@ -106,32 +112,33 @@ class Imitation(rodent_base.RodentEnv):
         n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
-        info = self._get_info(data, state.info)
+        info = state.info
+        last_valid_frame = self._clip_length() - self._config.reference_length - 1
+        info["truncated"] = jp.astype(self._get_cur_frame(data, info) > last_valid_frame, float)
+        info["prev_action"] = state.info["action"]
+        info["action"] = action
+
         obs = self._get_obs(data, info)
         done = jp.logical_or(self._is_done(data, info), info["truncated"])
         rewards = self._get_rewards(data, info)
-        info["reward_terms"] = rewards
+        
         total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
         state = state.replace(
             data=data,
             obs=obs,
             info=info,
             reward=total_reward,
-            done=done,
+            done=done.astype(float),
         )
-
+        state.metrics["reward_terms"] = rewards
+        state.metrics["current_frame"] = jp.astype(self._get_cur_frame(data, info), float)
         return state
 
-    def _get_info(self, data: mjx.Data, prev_info: dict[str, Any]):
-        truncated = self._get_cur_frame(data, prev_info) >= self._clip_length() - self._config.reference_length
-        info = prev_info | dict(truncated=truncated, current_frame = self._get_cur_frame(data, prev_info))
-        return info
-
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
-        return {
-            "proprioception": self._get_proprioception(data, flatten=False),
-            "imitation_target": self._get_imitation_target(data, info),
-        }
+        return collections.OrderedDict(
+            proprioception=self._get_proprioception(data, flatten=False),
+            imitation_target=self._get_imitation_target(data, info),
+        )
 
     def _get_rewards(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, float]:
         rewards = dict()
@@ -142,11 +149,27 @@ class Imitation(rodent_base.RodentEnv):
     def _is_done(self, data: mjx.Data, info: Mapping[str, Any]) -> bool:
         termination_reasons = dict()
         for name, kwargs in self._config.termination_criteria.items():
-            termination_reasons[name] = _TERMINATION_FCN_REGISTRY[name](self, data, info, **kwargs)
+            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
+            termination_reasons[name] = termination_fcn(self, data, info, **kwargs)
         return jp.any(jax.flatten_util.ravel_pytree(termination_reasons)[0])
     
-    def _load_reference_clips(self):
-        raise NotImplementedError()
+    def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
+        data = mjx.make_data(self.mjx_model)#, impl=self._config.mujoco_impl)
+        reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
+        data = data.replace(qpos = reference.qpos)
+        if self._config.qvel_init == "default":
+            pass
+        elif self._config.qvel_init == "zeros":
+            data = data.replace(qvel = jp.zeros(self.mjx_model.nv))
+        elif self._config.qvel_init == "noise":
+            raise NotImplementedError("qvel_init='noise' is not yet implemented.")
+        elif self._config.qvel_init == "reference":
+            data = data.replace(qvel = reference.qvel)
+        data = mjx.forward(self.mjx_model, data)
+        return data
+    
+    def null_action(self) -> jp.ndarray:
+        return jp.zeros(self.action_size)
 
     def _num_clips(self):
         return self.reference_clips.qpos.shape[0]
@@ -158,15 +181,13 @@ class Imitation(rodent_base.RodentEnv):
         return jp.floor(data.time * self._config.mocap_hz + info["start_frame"]).astype(int)
     
     def _get_current_target(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
-        current_frame = self._get_cur_frame(data, info)
-        current_clip = info["reference_clip"]
-        return self.reference_clips[current_clip, current_frame]
+        return self.reference_clips.at(clip = self._get_cur_frame(data, info),
+                                       frame = self._get_cur_frame(data, info))
 
     def _get_imitation_reference(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
-        current_frame = self._get_cur_frame(data, info)
-        target_slice = slice(current_frame+1, current_frame + self._config.reference_length + 1)
-        current_clip = info["reference_clip"]
-        return self.reference_clips[current_clip, target_slice]
+        return self.reference_clips.slice(clip = info["reference_clip"],
+                                          start_frame = self._get_cur_frame(data, info)+1,
+                                          length = self._config.reference_length)
 
     def _get_imitation_target(self,
                               data: mjx.Data,
@@ -176,9 +197,7 @@ class Imitation(rodent_base.RodentEnv):
 
         root_pos  = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
-
-        root_targets  = jax.vmap(lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat))(reference.root_position)
-
+        root_targets = jax.vmap(lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat))(reference.root_position)
         quat_targets = jax.vmap(lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat))(reference.root_quaternion)
         
         _assert_all_are_prefix(reference.joint_names, self.get_joint_names(), "reference joints", "model joints")
@@ -188,12 +207,13 @@ class Imitation(rodent_base.RodentEnv):
         body_rel_pos = jp.array([reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos])
         to_egocentric = jax.vmap(lambda diff_vec: brax.math.rotate(diff_vec, root_quat))
         body_targets = jax.vmap(to_egocentric)(body_rel_pos)
-        return {
-            "root": root_targets,
-            "quat": quat_targets,
-            "joint": joint_targets,
-            "body": body_targets,
-        }
+
+        return collections.OrderedDict(
+            root = root_targets,
+            quat = quat_targets,
+            joint = joint_targets,
+            body = body_targets,
+        )
 
     # Rewards
     def _named_reward(name: str):
@@ -217,7 +237,6 @@ class Imitation(rodent_base.RodentEnv):
         quat_dist = 2.0*jp.dot(root_quat, target.root_quaternion)**2 - 1.0
         ang_dist = 0.5*jp.arccos(jp.minimum(1.0, quat_dist))
         exp_scale = jp.deg2rad(exp_scale)
-        #brax.math.quat_diff(root_quat, target.quaternion) #TODO: doesn't exist, figure out easiest replacement
         reward = weight * jp.exp(-(ang_dist/exp_scale)**2)
         return reward
     
@@ -295,7 +314,7 @@ class Imitation(rodent_base.RodentEnv):
     @_named_termination_criterion("root_too_rotated")
     def _root_too_rotated(self, data, info, max_degrees) -> bool:
         target = self._get_current_target(data, info)
-        root_quat  = self.root_body(data).xquat
+        root_quat = self.root_body(data).xquat
         quat_dist = 2.0*jp.dot(root_quat, target.root_quaternion)**2 - 1.0
         ang_dist = 0.5*jp.arccos(jp.minimum(1.0, quat_dist))
         return ang_dist > jp.deg2rad(max_degrees)
@@ -303,7 +322,7 @@ class Imitation(rodent_base.RodentEnv):
     @_named_termination_criterion("pose_error")
     def _bad_pose(self, data, info, max_l2_error) -> bool:
         target = self._get_current_target(data, info)
-        joints  = self._get_joint_angles(data)
+        joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
 
