@@ -2,12 +2,7 @@
 Testing the rodent imitation environment. Based on train.py.
 """
 
-from hmac import new
 import os
-import re
-
-import jax.flatten_util
-import mujoco_playground
 xla_flags = os.environ.get("XLA_FLAGS", "")
 xla_flags += " --xla_gpu_triton_gemm_any=True"
 os.environ["XLA_FLAGS"] = xla_flags
@@ -83,7 +78,12 @@ with open(ckpt_path / "config.json", "w") as fp:
 USE_WANDB = True
 
 if USE_WANDB:
-    wandb.init(project="test-playground-refactor", config=env_cfg, name=exp_name)
+    wanb_config ={
+        "env_name": env_name,
+        "ppo_params": ppo_params.to_dict(),
+        "env_config": env_cfg.to_dict(),
+    }
+    wandb.init(project="test-playground-refactor", config=wanb_config, name=exp_name)
     wandb.config.update({"env_name": env_name})
 
 def progress(num_steps, metrics):
@@ -154,5 +154,5 @@ class FlattenObsWrapper(wrapper.Wrapper):
         return obs_size
 
 env = FlattenObsWrapper(vnl_mjx.tasks.rodent.imitation.Imitation())
-eval_env = FlattenObsWrapper(vnl_mjx.tasks.rodent.imitation.Imitation())
+eval_env = env#FlattenObsWrapper(vnl_mjx.tasks.rodent.imitation.Imitation())
 make_inference_fn, params, _ = train_fn(environment=env, eval_env=eval_env)

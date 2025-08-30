@@ -181,7 +181,7 @@ class Imitation(rodent_base.RodentEnv):
         return jp.floor(data.time * self._config.mocap_hz + info["start_frame"]).astype(int)
     
     def _get_current_target(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
-        return self.reference_clips.at(clip = self._get_cur_frame(data, info),
+        return self.reference_clips.at(clip = info["reference_clip"],
                                        frame = self._get_cur_frame(data, info))
 
     def _get_imitation_reference(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
@@ -276,7 +276,7 @@ class Imitation(rodent_base.RodentEnv):
     
     @_named_reward("torso_z_range")
     def _torso_z_range_reward(self, data, info, weight, healthy_z_range) -> float:
-        torso_z = self.root_body(data).xpos[2]
+        torso_z = self._get_body_height(data)#root_body(data).xpos[2]
         min_z, max_z = healthy_z_range
         in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
         return weight * in_range.astype(float)
