@@ -177,8 +177,9 @@ class RodentEnv(mjx_env.MjxEnv):
         return data.qfrc_actuator
 
     def _get_body_height(self, data: mjx.Data) -> jp.ndarray:
-        #NOTE: Is this correct? Isn't z in the third index?
-        return self.root_body(data).xpos[1]
+        torso_pos = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xpos
+        torso_z = torso_pos[2]
+        return torso_z#self.root_body(data).xpos[1]
     
     def _get_world_zaxis(self, data: mjx.Data) -> jp.ndarray:
         return self.root_body(data).xmat.flatten()[6:]
@@ -233,7 +234,8 @@ class RodentEnv(mjx_env.MjxEnv):
         return map(lambda j: j.name, self._spec.joints[1:])
 
     def root_body(self, data):
-        return data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
+        #TODO: Double-check which body should be considered the root (walker or torso)
+        return data.bind(self.mjx_model, self._spec.body(f"walker{self._suffix}"))
 
     @property
     def action_size(self) -> int:
