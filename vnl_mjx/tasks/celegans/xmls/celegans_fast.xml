@@ -62,7 +62,7 @@
       <camera name="side_alt" mode="trackcom" pos="0.208286 -0.233697 0.0828978" xyaxes="0.766 0.643 0.000 -0.162 0.192 0.968" />
       <camera name="top" mode="trackcom" fovy="100.0" pos="0 0 0.416572" zaxis="0 -0.2 1" />
       <geom class="mesh" rgba="0.8 0.2 0.1 1" name="torso1" mesh="ellipsoid1" quat="0.99267578125 0.0 0.11907958984375 0.0" />
-      <freejoint name="root" />
+      <!-- <freejoint name="root" /> -->
       <geom name="geom1" pos="-0.0148 0  0.0027" size="0.0084887" type="sphere" density="0"/>
       <!-- <geom class="collision" name="torso1_collision" pos="-0.02 0 0.005" size="0.018 0.013 0.009" quat="0.99267578125 0.0 0.11907958984375 0.0" /> -->
       <site name="sidesite1_central" pos="0 0 0" size="0.00416572" rgba="0.8 0.2 0.1 1.0" />
