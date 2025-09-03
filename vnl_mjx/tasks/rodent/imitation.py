@@ -1,5 +1,7 @@
 import collections
 from typing import Any, Dict, Optional, Union, Tuple, Mapping, Callable, List
+import warnings
+
 import jax
 import jax.flatten_util
 import jax.numpy as jp
@@ -86,6 +88,9 @@ class Imitation(rodent_base.RodentEnv):
             self._clip_set, = jp.where(self._config.clip_set == self.reference_clips.clip_names)
         else:
             raise ValueError(f"config.clip_set must be 'all', a list of clip indices, or a behavior name. Got {self._config.clip_set}.")
+        
+        if self._config.rescale_factor != self.reference_clips._config["model"]["SCALE_FACTOR"]:
+            warnings.warn(f"Environment scale_factor ({self._config.rescale_factor}) does not match the reference data scale_factor ({self.reference_clips._config['model']['SCALE_FACTOR']}).")
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
         start_rng, clip_rng = jax.random.split(rng)
@@ -332,6 +337,50 @@ class Imitation(rodent_base.RodentEnv):
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
+    
+    def verify_reference_data(self, atol: float = 5e-3) -> bool:
+        #TODO: Check why this fails for lower atol values.
+        def test_frame(clip_idx: int, frame: int) -> dict[str, bool]:
+            data = self._reset_data(clip_idx, frame)
+            reference = self.reference_clips.at(clip=clip_idx, frame=frame)
+            checks = collections.OrderedDict()
+            checks["root_pos"]  = jp.allclose(self.root_body(data).xpos,  reference.root_position, atol=atol)
+            checks["root_quat"] = jp.allclose(self.root_body(data).xquat, reference.root_quaternion, atol=atol)
+            checks["joints"]    = jp.allclose(self._get_joint_angles(data), reference.joints, atol=atol)
+            body_pos  = self._get_bodies_pos(data, flatten=False)
+            for body_name, body_pos in body_pos.items():
+                checks[f"body_xpos/{body_name}"] = jp.allclose(body_pos, reference.body_xpos(body_name), atol=atol)
+            if self._config.qvel_init == "reference":
+                checks["joints_ang_vel"] = jp.allclose(self._get_joint_ang_vels(data), reference.joints, atol=atol)
+            return checks
+
+        @jax.jit
+        def test_clip(clip_idx: int):
+            return jax.vmap(test_frame, in_axes=(None, 0))(clip_idx, jp.arange(self._clip_length()))
+        
+        _assert_all_are_prefix(self.reference_clips.joint_names, self.get_joint_names(),
+                               "reference joints", "model joints")
+        if isinstance(self._clip_set, int):
+            clip_idxs = jp.arange(self._clip_set)
+        else:
+            clip_idxs = self._clip_set
+
+        any_failed = False
+        for clip in clip_idxs:
+            if clip < 0 or clip >= self.reference_clips.qpos.shape[0]:
+                raise ValueError(f"Clip index {clip} is out of range. Reference data has {self.reference_clips.qpos.shape[0]} clips.")
+            test_result = test_clip(clip)
+            
+            for name, result in test_result.items():
+                n_failed = jp.sum(result == False)
+                if n_failed > 0:
+                    first_failed_frame = jp.argmax(result == False)
+                    clip_label = self.reference_clips.clip_names[clip]
+                    msg = f"Reference data verification failed for {n_failed} frames for check '{name}' for clip {clip} ({clip_label})."
+                    msg += f" First failure at frame {first_failed_frame}."
+                    warnings.warn(msg)
+                    any_failed = True
+        return not any_failed
 
 def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
     if isinstance(a, map):
