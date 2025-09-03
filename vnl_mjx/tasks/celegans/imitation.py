@@ -32,8 +32,9 @@ def default_config() -> config_dict.ConfigDict:
         reference_data_path = "../registered_snips.h5",
         clip_set = "all",
         reference_length = 5,
-        start_frame_range = (0, 44),
+        start_frame_range = [0, 44],
         qvel_init = "zeros",
+        with_ghost = False,
         reward_terms = {
             # Imitation rewards
             "root_pos":      {"exp_scale":  0.05,  "weight": 1.0}, #Meters
@@ -72,6 +73,9 @@ class Imitation(worm_base.CelegansEnv):
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
         )
+        if self._config.with_ghost:
+            self.add_ghost_worm(rescale_factor=self._config.rescale_factor)
+
         self.compile()
         self.reference_clips = ReferenceClips(self._config.reference_data_path,
                                               self._config.clip_length)
@@ -86,7 +90,9 @@ class Imitation(worm_base.CelegansEnv):
         info : dict[str, Any] = {
             "start_frame": start_frame,
             "reference_clip": clip_idx,
+            "prev_ctrl": jp.zeros((self.action_size,))
         }
+
         last_valid_frame = self._clip_length() - self._config.reference_length - 1
         info["truncated"] = jp.astype(self._get_cur_frame(data, info) > last_valid_frame, float)
         info["prev_action"] = self.null_action()
@@ -94,12 +100,21 @@ class Imitation(worm_base.CelegansEnv):
 
 
         obs = self._get_obs(data, info)
+        # Used to initialize our intention network
+        info["reference_obs_size"] = jax.flatten_util.ravel_pytree(obs["imitation_target"])[0].shape[-1]
+        info["proprioceptive_obs_size"] = jax.flatten_util.ravel_pytree(obs["proprioception"])[0].shape[-1]
+
+        obs = jax.flatten_util.ravel_pytree(obs)[0]
+        
         rewards = self._get_rewards(data, info)
         reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
-        done = self._is_done(data, info)
+
+        termination_conditions = self._is_done(data, info)
+        done = jp.any(jax.flatten_util.ravel_pytree(termination_conditions)[0])
 
         metrics = {
-            "reward_terms": rewards,
+            **rewards,
+            **{n: jp.astype(t, float) for n, t in termination_conditions.items()},
             "current_frame": jp.astype(self._get_cur_frame(data, info), float),
         }
         return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
@@ -119,7 +134,12 @@ class Imitation(worm_base.CelegansEnv):
         info["action"] = action
 
         obs = self._get_obs(data, info)
-        done = jp.logical_or(self._is_done(data, info), info["truncated"])
+        obs = jax.flatten_util.ravel_pytree(obs)[0]
+
+        termination_conditions = self._is_done(data, info)
+        terminated = jp.any(jax.flatten_util.ravel_pytree(termination_conditions)[0])
+        done = jp.logical_or(terminated, info["truncated"])
+        
         rewards = self._get_rewards(data, info)
         
         total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
@@ -128,9 +148,14 @@ class Imitation(worm_base.CelegansEnv):
             obs=obs,
             info=info,
             reward=total_reward,
-            done=done.astype(float),
+            done=jp.astype(done, float),
         )
-        state.metrics["reward_terms"] = rewards
+
+        for n, r in rewards.items():
+            state.metrics[n] = r
+        for n, t in termination_conditions.items():
+            state.metrics[n] = jp.astype(t, float)
+
         state.metrics["current_frame"] = jp.astype(self._get_cur_frame(data, info), float)
         return state
 
@@ -151,7 +176,7 @@ class Imitation(worm_base.CelegansEnv):
         for name, kwargs in self._config.termination_criteria.items():
             termination_fcn = _TERMINATION_FCN_REGISTRY[name]
             termination_reasons[name] = termination_fcn(self, data, info, **kwargs)
-        return jp.any(jax.flatten_util.ravel_pytree(termination_reasons)[0])
+        return termination_reasons
     
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         data = mjx.make_data(self.mjx_model)#, impl=self._config.mujoco_impl)
