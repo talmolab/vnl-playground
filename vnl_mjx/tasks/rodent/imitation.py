@@ -20,7 +20,7 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path = consts.RODENT_XML_PATH,
         arena_xml_path = consts.ARENA_XML_PATH,
-        mujoco_impl = "mjx",
+        mujoco_impl = "jax",
         sim_dt  = 0.002,
         ctrl_dt = 0.02,
         solver = "cg",
@@ -168,7 +168,10 @@ class Imitation(rodent_base.RodentEnv):
         return jp.any(jax.flatten_util.ravel_pytree(termination_reasons)[0])
     
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
-        data = mjx.make_data(self.mjx_model)#, impl=self._config.mujoco_impl)
+        if self._config.mujoco_impl == "jax":
+            data = mjx.make_data(self.mjx_model, impl=self._config.mujoco_impl)
+        elif self._config.mujoco_impl == "warp":
+            data = mjx.make_data(self.mj_model, impl=self._config.mujoco_impl)
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         _assert_all_are_prefix(reference.joint_names, self.get_joint_names(), "reference joints", "model joints")
         data = data.replace(qpos = reference.qpos)
