@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional, Union, Tuple, Mapping, Callable, List
 import jax
 import jax.flatten_util
 import jax.numpy as jp
+import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 import brax.math
@@ -27,9 +28,9 @@ def default_config() -> config_dict.ConfigDict:
         torque_actuators = False,
         rescale_factor = 0.9,
 
+        reference_data_path = consts.IMITATION_REFERENCE_PATH,
         mocap_hz = 50,
         clip_length = 250,
-        reference_data_path = "../registered_snips.h5",
         clip_set = "all",
         reference_length = 5,
         start_frame_range = (0, 44),
@@ -75,12 +76,20 @@ class Imitation(rodent_base.RodentEnv):
         self.compile()
         self.reference_clips = ReferenceClips(self._config.reference_data_path,
                                               self._config.clip_length)
-        if self._config.clip_set != "all":
-            raise NotImplementedError("'all' is the only implemented set of clips.")
+        max_n_clips = self.reference_clips.qpos.shape[0]
+        if self._config.clip_set == "all":
+            self._clip_set = max_n_clips
+        elif isinstance(self._config.clip_set, (list, tuple, jp.ndarray, np.ndarray)):
+            self._clip_set = jp.array(self._config.clip_set)
+        elif self._config.clip_set in self.reference_clips.clip_names:
+            # Only use clips whose types match the specified set of clips (e.g. "Walk", "LGroom")
+            self._clip_set, = jp.where(self._config.clip_set == self.reference_clips.clip_names)
+        else:
+            raise ValueError(f"config.clip_set must be 'all', a list of clip indices, or a behavior name. Got {self._config.clip_set}.")
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
         start_rng, clip_rng = jax.random.split(rng)
-        clip_idx = jax.random.choice(clip_rng, self._num_clips())
+        clip_idx = jax.random.choice(clip_rng, self._clip_set)
         start_frame = jax.random.randint(start_rng, (), *self._config.start_frame_range)
         data = self._reset_data(clip_idx, start_frame)
         info : dict[str, Any] = {
@@ -156,6 +165,7 @@ class Imitation(rodent_base.RodentEnv):
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         data = mjx.make_data(self.mjx_model)#, impl=self._config.mujoco_impl)
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
+        _assert_all_are_prefix(reference.joint_names, self.get_joint_names(), "reference joints", "model joints")
         data = data.replace(qpos = reference.qpos)
         if self._config.qvel_init == "default":
             pass
@@ -170,9 +180,6 @@ class Imitation(rodent_base.RodentEnv):
     
     def null_action(self) -> jp.ndarray:
         return jp.zeros(self.action_size)
-
-    def _num_clips(self):
-        return self.reference_clips.qpos.shape[0]
     
     def _clip_length(self):
         return self.reference_clips.qpos.shape[1]

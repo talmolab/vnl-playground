@@ -1,9 +1,11 @@
-from calendar import c
 import copy
 import h5py
+import yaml
+import re
 
 import jax
 import jax.numpy as jp
+import numpy as np
 
 class ReferenceClips:
 
@@ -35,6 +37,8 @@ class ReferenceClips:
     def _load_from_disk(self, data_path: str, n_frames_per_clip: int):
         self._data_arrays = {}
         with h5py.File(data_path, "r") as fid:
+            self._config = yaml.safe_load(fid["config"][()])
+            self.clip_names = self._extract_clip_names(self._config)
             for k in self._DATA_ARRAYS:
                 arr = fid[k][()]
                 n_clips = arr.shape[0] // n_frames_per_clip
@@ -44,7 +48,18 @@ class ReferenceClips:
             self._names_xpos = fid["names_xpos"][()].astype(str)
             self._qpos_names = {n: i for (i, n) in enumerate(self._names_qpos)}
             self._xpos_names = {n: i for (i, n) in enumerate(self._names_xpos)}
-
+    
+    def _extract_clip_names(self, config) -> np.ndarray:
+        original_filenames = config["model"]["snips_order"]
+        pattern = r'([A-Za-z]+)_\d+\.p'
+        clip_names = []
+        for fn in original_filenames:
+            m = re.search(pattern, fn)
+            if m is None:
+                raise ValueError(f"Original name of clip {fn} does not match expected pattern {pattern}.")
+            clip_names.append(m.group(1))
+        return np.array(clip_names)
+    
     @property
     def qpos(self) -> jp.ndarray:
         return self._data_arrays["qpos"]

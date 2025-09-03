@@ -38,6 +38,7 @@ dependencies = [
     "pandas",
     "numpy",
     "playground",
+    "dvc",
     ]
 
 dynamic = ["version", "readme"]
