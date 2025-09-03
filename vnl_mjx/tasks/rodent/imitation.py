@@ -35,16 +35,16 @@ def default_config() -> config_dict.ConfigDict:
         clip_length = 250,
         clip_set = "all",
         reference_length = 5,
-        start_frame_range = (0, 44),
+        start_frame_range = [0, 44],
         qvel_init = "zeros",
         reward_terms = {
             # Imitation rewards
-            "root_pos":      {"exp_scale":  0.05,  "weight": 1.0}, #Meters
-            "root_quat":     {"exp_scale": 30.0,   "weight": 1.0}, #Degrees
-            "joints":        {"exp_scale":  2.0,   "weight": 1.0}, #Joint-space L2 distance
-            "joints_vel":    {"exp_scale":  1.4,   "weight": 1.0}, #Joint velocity-space L2 distance
-            "bodies_pos":    {"exp_scale":  0.35,  "weight": 1.0}, #Distance in concatenated euclidean space
-            "end_eff":       {"exp_scale":  0.045, "weight": 1.0}, #Distance in concatenated euclidean space
+            "root_pos":   {"exp_scale":  0.035, "weight": 1.0}, #Meters
+            "root_quat":  {"exp_scale": 20.0,   "weight": 1.0}, #Degrees
+            "joints":     {"exp_scale":  1.4,   "weight": 1.0}, #Joint-space L2 distance
+            "joints_vel": {"exp_scale":  1.0,   "weight": 1.0}, #Joint velocity-space L2 distance
+            "bodies_pos": {"exp_scale":  0.25,  "weight": 1.0}, #Distance in concatenated euclidean space
+            "end_eff":    {"exp_scale":  0.032, "weight": 1.0}, #Distance in concatenated euclidean space
 
             # Costs / regularizers
             "torso_z_range":      {"healthy_z_range": (0.0325, 0.5), "weight": 1.0},
@@ -239,7 +239,7 @@ class Imitation(rodent_base.RodentEnv):
         target = self._get_current_target(data, info)
         root_pos = self.root_body(data).xpos
         distance = jp.linalg.norm(target.root_position - root_pos)
-        reward = weight * jp.exp(-(distance/exp_scale)**2)
+        reward = weight * jp.exp(-(distance/exp_scale)**2 / 2)
         return reward
     
     @_named_reward("root_quat")
@@ -249,7 +249,7 @@ class Imitation(rodent_base.RodentEnv):
         quat_dist = 2.0*jp.dot(root_quat, target.root_quaternion)**2 - 1.0
         ang_dist = 0.5*jp.arccos(jp.minimum(1.0, quat_dist))
         exp_scale = jp.deg2rad(exp_scale)
-        reward = weight * jp.exp(-(ang_dist/exp_scale)**2)
+        reward = weight * jp.exp(-(ang_dist/exp_scale)**2 / 2)
         return reward
     
     @_named_reward("joints")
@@ -257,7 +257,7 @@ class Imitation(rodent_base.RodentEnv):
         target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
         distance = jp.linalg.norm(target.joints - joints)
-        reward = weight * jp.exp(-(distance/exp_scale)**2)
+        reward = weight * jp.exp(-(distance/exp_scale)**2 / 2)
         return reward
     
     @_named_reward("joints_vel")
@@ -265,7 +265,7 @@ class Imitation(rodent_base.RodentEnv):
         target = self._get_current_target(data, info)
         joint_vels  = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
-        reward = weight * jp.exp(-(distance/exp_scale)**2)
+        reward = weight * jp.exp(-(distance/exp_scale)**2 / 2)
         return reward
     
     @_named_reward("bodies_pos")
@@ -273,8 +273,10 @@ class Imitation(rodent_base.RodentEnv):
         target = self._get_current_target(data, info)
         body_pos  = self._get_bodies_pos(data, flatten=False)
         dists = jp.array([bp - target.body_xpos(k) for k, bp in body_pos.items()])
+        #`dists` is a (`len(bodies)`, 3) array. We want to sum the squared norm
+        #of each distance. This is equivalent to summing all the squared elements.
         distance_sqr = jp.sum(dists**2)
-        reward = weight * jp.exp(-distance_sqr/(exp_scale**2))
+        reward = weight * jp.exp(-distance_sqr/(exp_scale**2) / 2)
         return reward
     
     @_named_reward("end_eff")
@@ -283,7 +285,7 @@ class Imitation(rodent_base.RodentEnv):
         body_pos  = self._get_bodies_pos(data, flatten=False)
         dists = jp.array([body_pos[ef] - target.body_xpos(ef) for ef in consts.END_EFFECTORS])
         distance_sqr = jp.sum(dists**2)
-        reward = weight * jp.exp(-distance_sqr/(exp_scale**2))
+        reward = weight * jp.exp(-distance_sqr/(exp_scale**2) / 2)
         return reward
     
     @_named_reward("torso_z_range")
