@@ -5,6 +5,7 @@ import h5py
 import jax
 import jax.numpy as jp
 
+from vnl_mjx.tasks.celegans.consts import JOINTS
 
 class ReferenceClips:
 
@@ -72,7 +73,8 @@ class ReferenceClips:
     
     @property
     def joints(self) -> jp.ndarray:
-        return self.qpos[..., [idx for name, idx in self._qpos_names.items() if name in consts.JOINTS]]
+        joint_idx = [idx for name, idx in self._qpos_names.items() if name in JOINTS]
+        return self.qpos[..., joint_idx]
     
     @property
     def joints_velocity(self) -> jp.ndarray:
