@@ -104,7 +104,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             pos=pos,
             quat=quat,
         )
-        spawn_body = spawn_site.attach_body(worm.worldbody, "f"{consts.ROOT}"", suffix=suffix)
+        spawn_body = spawn_site.attach_body(worm.worldbody,"", suffix=suffix)
         self._suffix = suffix
         spawn_body.add_freejoint()
 
@@ -125,7 +125,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             _recolour_tree(body, rgba=ghost_rgba)
         # Attach as ghost at the offset frame
         frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
-        spawn_body = frame.attach_body(walker_spec.body("f"{consts.ROOT}""), "", suffix=suffix)
+        spawn_body = frame.attach_body(walker_spec.body(f"{consts.ROOT}"), "", suffix=suffix)
         spawn_body.add_freejoint()
 
     def compile(self, forced=False) -> None:
@@ -152,11 +152,11 @@ class CelegansEnv(mjx_env.MjxEnv):
         
     def _get_appendages_pos(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
         """Get appendages positions from the environment."""
-        torso = data.bind(self.mjx_model, self._spec.body(f"{consts.ROOT}{self._suffix}"))
+        root = data.bind(self.mjx_model, self._spec.body(f"{consts.ROOT}{self._suffix}"))
         appendages_pos = collections.OrderedDict()
         for apppendage_name in consts.END_EFFECTORS:
             global_xpos = data.bind(self.mjx_model, self._spec.body(f"{apppendage_name}{self._suffix}")).xpos
-            egocentric_xpos = jp.dot(global_xpos - torso.xpos, torso.xmat)
+            egocentric_xpos = jp.dot(global_xpos - root.xpos, root.xmat)
             appendages_pos[apppendage_name] = egocentric_xpos
         if flatten:
             appendages_pos, _ = jax.flatten_util.ravel_pytree(appendages_pos)
@@ -176,12 +176,15 @@ class CelegansEnv(mjx_env.MjxEnv):
         """Get joint angles of the body parts."""
         joint_angles = collections.OrderedDict()
         for joint_name in consts.JOINTS:
-            joint_angles[joint_name] = data.bind(self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")).qpos
+            try:
+                joint_angles[joint_name] = data.bind(self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")).qpos
+            except:
+                raise ValueError(f"Joint {joint_name} not found in the environment. Available joints: {[joint.name for joint in self._spec.joints]}")
         if flatten:
             joint_angles, _ = jax.flatten_util.ravel_pytree(joint_angles)
         return joint_angles
     
-    def _get_joint_ang_vels(self, data: mjx.Data) -> jp.ndarray:
+    def _get_joint_ang_vels(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
         """Get joint angular velocities of the body parts."""
         joint_ang_vels = collections.OrderedDict()
         for joint_name in consts.JOINTS:
