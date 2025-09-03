@@ -1,158 +1,208 @@
 """
-Testing the rodent imitation environment. Based on train.py.
+Entry point for track-mjx. Load the config file, create environments, initialize network, and start training.
 """
 
 import os
-xla_flags = os.environ.get("XLA_FLAGS", "")
-xla_flags += " --xla_gpu_triton_gemm_any=True"
-os.environ["XLA_FLAGS"] = xla_flags
-os.environ["MUJOCO_GL"] = "egl"
-os.environ["PYOPENGL_PLATFORM"] = "egl"
+import sys
 
-import functools
-import json
-from datetime import datetime
+# set default env variable if not set
+# os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
+#     "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.6"
+# )
+
+# # limit to 1 GPU
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # visible GPU masks
+
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
+os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
+# os.environ["XLA_FLAGS"] = (
+#     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True --xla_dump_to=/tmp/foo"
+# )
 
 import jax
-import jax.numpy as jp
-import wandb
-from brax.training.agents.ppo import networks as ppo_networks
-from brax.training.agents.ppo import train as ppo
-from etils import epath
-from flax.training import orbax_utils
-from orbax import checkpoint as ocp
-from ml_collections import config_dict
-from mujoco_playground import wrapper
-
-import vnl_mjx.tasks.rodent.imitation
-
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-
-env_cfg = vnl_mjx.tasks.rodent.imitation.default_config()
-
-ppo_params = config_dict.create(
-    num_timesteps=int(1.5e9),
-    num_evals=300,
-    reward_scaling=1.0,
-    episode_length=200,
-    normalize_observations=True,
-    action_repeat=1,
-    unroll_length=20,
-    num_minibatches=16,
-    num_updates_per_batch=4,
-    discounting=0.98,
-    learning_rate=1e-4,
-    entropy_cost=1e-2,
-    num_envs=4096,
-    batch_size=1024,
-    max_grad_norm=1.0,
-    network_factory=config_dict.create(
-        policy_hidden_layer_sizes=(1024, 512, 512, 512, 512, 512, 512, 512, 256, 256),
-        value_hidden_layer_sizes=(512, 512, 512, 512, 512, 256),
-    ),
+jax.config.update(
+    "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
 )
 
-env_name = "rodent-imitation"
+import hydra
+from omegaconf import DictConfig, OmegaConf
+import functools
+import wandb
+import orbax.checkpoint as ocp
+from track_mjx.agent.mlp_ppo import ppo, ppo_networks
+import warnings
+from pathlib import Path
+from datetime import datetime
+import logging
+import mujoco
 
-from pprint import pprint
-pprint(ppo_params)
+from vnl_mjx.tasks.celegans import imitation
 
-# Generate unique experiment name.
-now = datetime.now()
-timestamp = now.strftime("%Y%m%d-%H%M%S")
-exp_name = f"{env_name}-{timestamp}"
-print(f"Experiment name: {exp_name}")
+from track_mjx.agent import checkpointing
+from track_mjx.agent import wandb_logging
+from track_mjx.analysis import render
 
-
-ckpt_path = epath.Path("checkpoints").resolve() / exp_name
-ckpt_path.mkdir(parents=True, exist_ok=True)
-print(f"{ckpt_path}")
-
-with open(ckpt_path / "config.json", "w") as fp:
-    json.dump(env_cfg.to_dict(), fp, indent=4, default=lambda o: str(o))
-
-# Setup wandb logging.
-USE_WANDB = True
-
-if USE_WANDB:
-    wanb_config ={
-        "env_name": env_name,
-        "ppo_params": ppo_params.to_dict(),
-        "env_config": env_cfg.to_dict(),
-    }
-    wandb.init(project="test-playground-refactor", config=wanb_config, name=exp_name)
-    wandb.config.update({"env_name": env_name})
-
-def progress(num_steps, metrics):
-    # Log to wandb.
-    if USE_WANDB:
-        wandb.log(metrics, step=num_steps)
-
-def policy_params_fn(current_step, make_policy, params):
-    del make_policy  # Unused.
-    orbax_checkpointer = ocp.PyTreeCheckpointer()
-    save_args = orbax_utils.save_args_from_target(params)
-    path = ckpt_path / f"{current_step}"
-    orbax_checkpointer.save(path, params, force=True, save_args=save_args)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-training_params = dict(ppo_params)
-del training_params["network_factory"]
+@hydra.main(version_base=None, config_path="config", config_name="bowl_escape_transfer")
+def main(cfg: DictConfig):
+    """Main function using Hydra configs"""
+    try:
+        n_devices = jax.device_count(backend="gpu")
+        logging.info(f"Using {n_devices} GPUs")
+    except:
+        n_devices = 1
+        logging.info("Not using GPUs")
 
-train_fn = functools.partial(
-    ppo.train,
-    **training_params,
-    network_factory=functools.partial(
-        ppo_networks.make_ppo_networks, **ppo_params.network_factory
-    ),
-    #restore_checkpoint_path=restore_checkpoint_path,
-    progress_fn=progress,
-    wrap_env_fn=wrapper.wrap_for_brax_training,
-    policy_params_fn=policy_params_fn,
-)
+    logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
 
+    # Generate a new run_id and associated checkpoint path
+    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
+    # TODO: Use a base path given by the config
+    checkpoint_path = hydra.utils.to_absolute_path(
+        f"./{cfg.logging_config.model_path}/{run_id}"
+    )
 
-class FlattenObsWrapper(wrapper.Wrapper):
-
-    def __init__(self, env: wrapper.mjx_env.MjxEnv):
-        super().__init__(env)
-
-    def reset(self, rng: jax.Array) -> wrapper.mjx_env.State:
-        state = self.env.reset(rng)
-        return self._flatten(state)
-    
-    def step(self, state: wrapper.mjx_env.State, action: jax.Array) -> wrapper.mjx_env.State:
-        state = self.env.step(state, action)
-        return self._flatten(state)
-    
-    def _flatten(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
-        state = state.replace(
-            obs =jax.flatten_util.ravel_pytree(state.obs)[0],
-            metrics = self._flatten_metrics(state.metrics),
+    # Load the checkpoint's config
+    if cfg.train_setup["checkpoint_to_restore"] is not None:
+        # TODO: We set the restored config's checkpoint_to_restore to itself
+        # Because that restored config is used from now on. This is a hack.
+        checkpoint_to_restore = cfg.train_setup["checkpoint_to_restore"]
+        # Load the checkpoint's config and update the run_id and checkpoint path
+        cfg_loaded = OmegaConf.create(
+            checkpointing.load_config_from_checkpoint(checkpoint_to_restore)
         )
-        return state
-    
-    def _flatten_metrics(self, metrics: dict) -> dict:
-        new_metrics = {}
-        def rec(d: dict, prefix=''):
-            for k, v in d.items():
-                if isinstance(v, dict):
-                    rec(v, prefix + k + '/')
-                else:
-                    new_metrics[prefix + k] = v
-        rec(metrics)
-        return new_metrics
-    
-    @property
-    def observation_size(self) -> int:
-        rng_shape = jax.eval_shape(jax.random.key, 0)
-        flat_obs = lambda rng: self._flatten(self.env.reset(rng).obs)
-        obs_size = len(jax.eval_shape(flat_obs, rng_shape))
-        return obs_size
+        print(
+            "Overwriting decoder layer sizes from checkpoint from {} to {}".format(
+                cfg.network_config.decoder_layer_sizes,
+                cfg_loaded.network_config.decoder_layer_sizes,
+            )
+        )
+        cfg.network_config.decoder_layer_sizes = cfg_loaded.network_config.decoder_layer_sizes
+        print(
+            "Overwriting intention size from checkpoint from {} to {}".format(
+                cfg.network_config.intention_size,
+                cfg_loaded.network_config.intention_size,
+            )
+        )
+        cfg.network_config.intention_size = cfg_loaded.network_config.intention_size
+        print(
+            "Overwriting rescale factor from checkpoint from {} to {}".format(
+                cfg.walker_config.rescale_factor,
+                cfg_loaded.walker_config.rescale_factor,
+            )
+        )
+        cfg.walker_config.rescale_factor = cfg_loaded.walker_config.rescale_factor
+        cfg.env_config.env_args.rescale_factor = cfg_loaded.walker_config.rescale_factor
 
-env = FlattenObsWrapper(vnl_mjx.tasks.rodent.imitation.Imitation())
-eval_env = env#FlattenObsWrapper(vnl_mjx.tasks.rodent.imitation.Imitation())
-make_inference_fn, params, _ = train_fn(environment=env, eval_env=eval_env)
+    # Initialize checkpoint manager
+    mgr_options = ocp.CheckpointManagerOptions(
+        create=True,
+        max_to_keep=cfg.train_setup["checkpoint_max_to_keep"],
+        keep_period=cfg.train_setup["checkpoint_keep_period"],
+        step_prefix="PPONetwork",
+    )
+
+    ckpt_mgr = ocp.CheckpointManager(checkpoint_path, options=mgr_options)
+
+    logging.info(f"run_id: {run_id}")
+    logging.info(f"Training checkpoint path: {checkpoint_path}")
+    print(cfg)
+    ppo_params = cfg.train_setup.train_config
+    env_config = cfg.env_config.env_args
+
+    episode_length = (
+        env_config.clip_length
+        - int(env_config.start_frame_range[1])
+        - env_config.reference_length
+    ) * (1/(env_config.mocap_hz * env_config.ctrl_dt))
+    print(f"episode_length {episode_length}")
+    logging.info(f"episode_length {episode_length}")
+
+    # Create environment based on task_name
+    task_name = cfg.env_config.task_name
+    if task_name == "imitation":
+        env = imitation.Imitation(config_overrides=OmegaConf.to_container(env_config, resolve=True))
+        evaluator_env = imitation.Imitation(config_overrides=OmegaConf.to_container(env_config, resolve=True).copy().update({"with_ghost": True}))
+    elif task_name == "imitation_2d":
+        env = imitation.Imitation2D(config_overrides=OmegaConf.to_container(env_config, resolve=True))
+        evaluator_env = imitation.Imitation2D(config_overrides=OmegaConf.to_container(env_config, resolve=True).copy().update({"with_ghost": True}))
+    else:
+        raise ValueError(
+            f"Unknown task_name: {task_name}. Must be one of: imitation, imitation_2d"
+        )
+    evaluator_env.add_ghost_worm(rescale_factor=env_config.rescale_factor)
+
+    train_fn = functools.partial(
+        ppo.train,
+        **ppo_params,
+        num_evals=int(
+            cfg.train_setup.train_config.num_timesteps / cfg.train_setup.eval_every
+        ),
+        num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
+        episode_length=episode_length,
+        kl_weight=cfg.network_config.kl_weight,
+        network_factory=functools.partial(
+            ppo_networks.make_intention_ppo_networks,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            intention_latent_size=cfg.network_config.intention_size,
+        ),
+        ckpt_mgr=ckpt_mgr,
+        checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
+        freeze_decoder=cfg.train_setup.freeze_decoder,
+        config_dict=OmegaConf.to_container(cfg, resolve=True),  # finalize config here
+        use_kl_schedule=cfg.network_config.kl_schedule,
+    )
+
+    run_id = f"{cfg.logging_config.exp_name}_{cfg.env_config.env_name}_{cfg.env_config.task_name}_{run_id}"
+    wandb.init(
+        project=cfg.logging_config.project_name,
+        config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
+        notes=f"{cfg.logging_config.notes}",
+        id=run_id,
+        resume="allow",
+        group=cfg.logging_config.group_name,
+    )
+
+    def wandb_progress(num_steps, metrics):
+        metrics["num_steps_thousands"] = num_steps
+        wandb.log(metrics, commit=False)
+
+    # # define the jit reset/step functions
+    jit_reset = jax.jit(evaluator_env.reset)
+    jit_step = jax.jit(evaluator_env.step)
+    mj_model = evaluator_env.mj_model
+    mj_data = mujoco.MjData(mj_model)
+    scene_option = mujoco.MjvOption()
+    scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
+    renderer = mujoco.Renderer(mj_model, height=512, width=512)
+    policy_params_fn = functools.partial(
+        wandb_logging.rollout_logging_fn,
+        evaluator_env,
+        jit_reset,
+        jit_step,
+        cfg,
+        checkpoint_path,
+        renderer,
+        mj_model,
+        mj_data,
+        scene_option,
+    )
+
+    make_inference_fn, params, _ = train_fn(
+        environment=env,
+        progress_fn=wandb_progress,
+        policy_params_fn=policy_params_fn,
+    )
+
+
+if __name__ == "__main__":
+    main()
