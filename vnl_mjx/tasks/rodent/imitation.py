@@ -26,6 +26,8 @@ def default_config() -> config_dict.ConfigDict:
         solver = "cg",
         iterations = 5,
         ls_iterations = 5,
+        nconmax = 256,
+        njmax = 128,
         noslip_iterations = 0,
         torque_actuators = False,
         rescale_factor = 0.9,
@@ -171,7 +173,9 @@ class Imitation(rodent_base.RodentEnv):
         if self._config.mujoco_impl == "jax":
             data = mjx.make_data(self.mjx_model, impl=self._config.mujoco_impl)
         elif self._config.mujoco_impl == "warp":
-            data = mjx.make_data(self.mj_model, impl=self._config.mujoco_impl)
+            data = mjx.make_data(self.mj_model, impl=self._config.mujoco_impl,
+                                 nconmax=self._config.nconmax,
+                                 njmax=self._config.njmax)
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         _assert_all_are_prefix(reference.joint_names, self.get_joint_names(), "reference joints", "model joints")
         data = data.replace(qpos = reference.qpos)

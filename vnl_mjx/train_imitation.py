@@ -32,12 +32,13 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = vnl_mjx.tasks.rodent.imitation.default_config()
+env_cfg.mujoco_impl = "warp"
 
 ppo_params = config_dict.create(
     num_timesteps=int(1.5e9),
     num_evals=300,
     reward_scaling=1.0,
-    episode_length=200,
+    episode_length=250,
     normalize_observations=True,
     action_repeat=1,
     unroll_length=20,
@@ -46,7 +47,7 @@ ppo_params = config_dict.create(
     discounting=0.98,
     learning_rate=1e-4,
     entropy_cost=1e-2,
-    num_envs=4096,
+    num_envs=512,
     batch_size=1024,
     max_grad_norm=1.0,
     network_factory=config_dict.create(
@@ -54,6 +55,9 @@ ppo_params = config_dict.create(
         value_hidden_layer_sizes=(512, 512, 512, 512, 512, 256),
     ),
 )
+
+#This feels hacky, but seems to be how nconmax is supposed to be set?
+env_cfg.nconmax *= ppo_params.num_envs
 
 env_name = "rodent-imitation"
 
@@ -83,7 +87,9 @@ if USE_WANDB:
         "ppo_params": ppo_params.to_dict(),
         "env_config": env_cfg.to_dict(),
     }
-    wandb.init(project="test-playground-refactor", config=wanb_config, name=exp_name)
+    run = wandb.init(project="test-playground-refactor", config=wanb_config, name=exp_name)
+    if env_cfg.mujoco_impl == "warp":
+        run.tags += ("warp",)
     wandb.config.update({"env_name": env_name})
 
 def progress(num_steps, metrics):
@@ -110,7 +116,7 @@ train_fn = functools.partial(
     ),
     #restore_checkpoint_path=restore_checkpoint_path,
     progress_fn=progress,
-    wrap_env_fn=wrapper.wrap_for_brax_training,
+    wrap_env_fn=functools.partial(wrapper.wrap_for_brax_training, full_reset=True),
     policy_params_fn=policy_params_fn,
 )
 
@@ -149,10 +155,12 @@ class FlattenObsWrapper(wrapper.Wrapper):
     @property
     def observation_size(self) -> int:
         rng_shape = jax.eval_shape(jax.random.key, 0)
-        flat_obs = lambda rng: self._flatten(self.env.reset(rng).obs)
-        obs_size = len(jax.eval_shape(flat_obs, rng_shape))
+        #flat_obs = lambda rng: self._flatten(self.env.reset(rng).obs)
+        obs_size = len(jax.eval_shape(self.reset, rng_shape))
         return obs_size
 
-env = FlattenObsWrapper(vnl_mjx.tasks.rodent.imitation.Imitation())
+env = FlattenObsWrapper(vnl_mjx.tasks.rodent.imitation.Imitation(config=env_cfg))
 eval_env = env#FlattenObsWrapper(vnl_mjx.tasks.rodent.imitation.Imitation())
 make_inference_fn, params, _ = train_fn(environment=env, eval_env=eval_env)
+
+
