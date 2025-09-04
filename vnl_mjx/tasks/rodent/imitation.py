@@ -1,68 +1,77 @@
 import collections
-from typing import Any, Dict, Optional, Union, Tuple, Mapping, Callable, List
 import warnings
+from typing import Any, Callable, Dict, Mapping, Optional, Union
 
+import brax.math
 import jax
 import jax.flatten_util
 import jax.numpy as jp
 import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
-import brax.math
-from vnl_mjx.tasks.rodent.reference_clips import ReferenceClips
-
 from mujoco_playground._src import mjx_env
 
 from . import base as rodent_base
 from . import consts
+from .reference_clips import ReferenceClips
+
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
-        walker_xml_path = consts.RODENT_XML_PATH,
-        arena_xml_path = consts.ARENA_XML_PATH,
-        mujoco_impl = "jax",
-        sim_dt  = 0.002,
-        ctrl_dt = 0.02,
-        solver = "cg",
-        iterations = 5,
-        ls_iterations = 5,
-        nconmax = 256,
-        njmax = 128,
-        noslip_iterations = 0,
-        torque_actuators = False,
-        rescale_factor = 0.9,
-
-        reference_data_path = consts.IMITATION_REFERENCE_PATH,
-        mocap_hz = 50,
-        clip_length = 250,
-        clip_set = "all",
-        reference_length = 5,
-        start_frame_range = [0, 44],
-        qvel_init = "zeros",
-        reward_terms = {
+        walker_xml_path=consts.RODENT_XML_PATH,
+        arena_xml_path=consts.ARENA_XML_PATH,
+        mujoco_impl="jax",
+        sim_dt=0.002,
+        ctrl_dt=0.02,
+        solver="cg",
+        iterations=5,
+        ls_iterations=5,
+        nconmax=256,
+        njmax=128,
+        noslip_iterations=0,
+        torque_actuators=False,
+        rescale_factor=0.9,
+        reference_data_path=consts.IMITATION_REFERENCE_PATH,
+        mocap_hz=50,
+        clip_length=250,
+        clip_set="all",
+        reference_length=5,
+        start_frame_range=[0, 44],
+        qvel_init="zeros",
+        reward_terms={
             # Imitation rewards
-            "root_pos":   {"exp_scale":  0.035, "weight": 1.0}, #Meters
-            "root_quat":  {"exp_scale": 20.0,   "weight": 1.0}, #Degrees
-            "joints":     {"exp_scale":  1.4,   "weight": 1.0}, #Joint-space L2 distance
-            "joints_vel": {"exp_scale":  1.0,   "weight": 1.0}, #Joint velocity-space L2 distance
-            "bodies_pos": {"exp_scale":  0.25,  "weight": 1.0}, #Distance in concatenated euclidean space
-            "end_eff":    {"exp_scale":  0.032, "weight": 1.0}, #Distance in concatenated euclidean space
-
+            "root_pos": {"exp_scale": 0.035, "weight": 1.0},  # Meters
+            "root_quat": {"exp_scale": 20.0, "weight": 1.0},  # Degrees
+            "joints": {"exp_scale": 1.4, "weight": 1.0},  # Joint-space L2 distance
+            "joints_vel": {
+                "exp_scale": 1.0,
+                "weight": 1.0,
+            },  # Joint velocity-space L2 distance
+            "bodies_pos": {
+                "exp_scale": 0.25,
+                "weight": 1.0,
+            },  # Distance in concatenated euclidean space
+            "end_eff": {
+                "exp_scale": 0.032,
+                "weight": 1.0,
+            },  # Distance in concatenated euclidean space
             # Costs / regularizers
-            "torso_z_range":      {"healthy_z_range": (0.0325, 0.5), "weight": 1.0},
-            "control_cost":       {"weight": 0.02},
-            "control_diff_cost":  {"weight": 0.02},
-            "energy_cost":        {"max_value":  50.0, "weight": 0.01},
+            "torso_z_range": {"healthy_z_range": (0.0325, 0.5), "weight": 1.0},
+            "control_cost": {"weight": 0.02},
+            "control_diff_cost": {"weight": 0.02},
+            "energy_cost": {"max_value": 50.0, "weight": 0.01},
         },
-        termination_criteria = {
-            "root_too_far":     {"max_distance": 0.1},  #Meters
-            "root_too_rotated": {"max_degrees":  60.0}, #Degrees
-            "pose_error":       {"max_l2_error": 4.5},  #Joint-space L2 distance
+        termination_criteria={
+            "root_too_far": {"max_distance": 0.1},  # Meters
+            "root_too_rotated": {"max_degrees": 60.0},  # Degrees
+            "pose_error": {"max_l2_error": 4.5},  # Joint-space L2 distance
         },
     )
 
+
 _REWARD_FCN_REGISTRY: dict[str, Callable] = {}
 _TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
+
 
 class Imitation(rodent_base.RodentEnv):
     """Multi-clip imitation environment."""
@@ -72,42 +81,72 @@ class Imitation(rodent_base.RodentEnv):
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
     ) -> None:
+        """
+        Initialize the rodent imitation environment.
+        Args:
+            config (config_dict.ConfigDict, optional): Configuration dictionary for the environment.
+                Defaults to `default_config()`.
+            config_overrides (optional):
+                Dictionary of configuration overrides.
+        """
         super().__init__(config, config_overrides)
         self.add_rodent(
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
         )
         self.compile()
-        self.reference_clips = ReferenceClips(self._config.reference_data_path,
-                                              self._config.clip_length)
+        self.reference_clips = ReferenceClips(
+            self._config.reference_data_path, self._config.clip_length
+        )
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
         elif isinstance(self._config.clip_set, (list, tuple, jp.ndarray, np.ndarray)):
             self._clip_set = jp.array(self._config.clip_set)
         elif self._config.clip_set in self.reference_clips.clip_names:
-            # Only use clips whose types match the specified set of clips (e.g. "Walk", "LGroom")
-            self._clip_set, = jp.where(self._config.clip_set == self.reference_clips.clip_names)
+            # Only use clips whose types match the specified set of
+            # clips (e.g. "Walk", "LGroom")
+            (self._clip_set,) = jp.where(
+                self._config.clip_set == self.reference_clips.clip_names
+            )
         else:
-            raise ValueError(f"config.clip_set must be 'all', a list of clip indices, or a behavior name. Got {self._config.clip_set}.")
-        
-        if self._config.rescale_factor != self.reference_clips._config["model"]["SCALE_FACTOR"]:
-            warnings.warn(f"Environment scale_factor ({self._config.rescale_factor}) does not match the reference data scale_factor ({self.reference_clips._config['model']['SCALE_FACTOR']}).")
+            raise ValueError(
+                "config.clip_set must be 'all', a list of clip indices"
+                f" or a behavior name. Got {self._config.clip_set}."
+            )
+
+        if (
+            self._config.rescale_factor
+            != self.reference_clips._config["model"]["SCALE_FACTOR"]
+        ):
+            warnings.warn(
+                f"Environment `rescale_factor` ({self._config.rescale_factor})"
+                f" does not match the reference data `SCALE_FACTOR`"
+                f" ({self.reference_clips._config['model']['SCALE_FACTOR']})."
+            )
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
+        """
+        Resets the environment state: draws a new reference clip and initializes the rodent's pose to match.
+        Args:
+            rng (jax.Array): JAX random number generator stare.
+        Returns:
+            mjx_env.State: The initial state of the environment after reset.
+        """
+
         start_rng, clip_rng = jax.random.split(rng)
         clip_idx = jax.random.choice(clip_rng, self._clip_set)
         start_frame = jax.random.randint(start_rng, (), *self._config.start_frame_range)
         data = self._reset_data(clip_idx, start_frame)
-        info : dict[str, Any] = {
+        info: dict[str, Any] = {
             "start_frame": start_frame,
             "reference_clip": clip_idx,
         }
         last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        info["truncated"] = jp.astype(self._get_cur_frame(data, info) > last_valid_frame, float)
+        truncated = self._get_cur_frame(data, info) > last_valid_frame
+        info["truncated"] = jp.astype(truncated, float)
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
-
 
         obs = self._get_obs(data, info)
         rewards = self._get_rewards(data, info)
@@ -125,19 +164,26 @@ class Imitation(rodent_base.RodentEnv):
         state: mjx_env.State,
         action: jax.Array,
     ) -> mjx_env.State:
+        """Step the environment forward.
+        Args:
+            state (mjx_env.State): Current environment state.
+            action (jax.Array): Action to apply.
+        Returns:
+            mjx_env.State: The new state of the environment.
+        """
         n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
         last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        info["truncated"] = jp.astype(self._get_cur_frame(data, info) > last_valid_frame, float)
+        truncated = self._get_cur_frame(data, info) > last_valid_frame
+        info["truncated"] = jp.astype(truncated, float)
         info["prev_action"] = state.info["action"]
         info["action"] = action
 
         obs = self._get_obs(data, info)
         done = jp.logical_or(self._is_done(data, info), info["truncated"])
         rewards = self._get_rewards(data, info)
-        
         total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
         state = state.replace(
             data=data,
@@ -147,7 +193,8 @@ class Imitation(rodent_base.RodentEnv):
             done=done.astype(float),
         )
         state.metrics["reward_terms"] = rewards
-        state.metrics["current_frame"] = jp.astype(self._get_cur_frame(data, info), float)
+        current_frame = self._get_cur_frame(data, info)
+        state.metrics["current_frame"] = jp.astype(current_frame, float)
         return state
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -156,7 +203,9 @@ class Imitation(rodent_base.RodentEnv):
             imitation_target=self._get_imitation_target(data, info),
         )
 
-    def _get_rewards(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, float]:
+    def _get_rewards(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> Mapping[str, float]:
         rewards = dict()
         for name, kwargs in self._config.reward_terms.items():
             rewards[name] = _REWARD_FCN_REGISTRY[name](self, data, info, **kwargs)
@@ -168,70 +217,97 @@ class Imitation(rodent_base.RodentEnv):
             termination_fcn = _TERMINATION_FCN_REGISTRY[name]
             termination_reasons[name] = termination_fcn(self, data, info, **kwargs)
         return jp.any(jax.flatten_util.ravel_pytree(termination_reasons)[0])
-    
+
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
-        if self._config.mujoco_impl == "jax":
-            data = mjx.make_data(self.mjx_model, impl=self._config.mujoco_impl)
-        elif self._config.mujoco_impl == "warp":
-            data = mjx.make_data(self.mj_model, impl=self._config.mujoco_impl,
-                                 nconmax=self._config.nconmax,
-                                 njmax=self._config.njmax)
+        data = mjx.make_data(
+            self.mj_model,
+            impl=self._config.mujoco_impl,
+            nconmax=self._config.nconmax,
+            njmax=self._config.njmax,
+        )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
-        _assert_all_are_prefix(reference.joint_names, self.get_joint_names(), "reference joints", "model joints")
-        data = data.replace(qpos = reference.qpos)
+        _assert_all_are_prefix(
+            reference.joint_names,
+            self.get_joint_names(),
+            "reference joints",
+            "model joints",
+        )
+        data = data.replace(qpos=reference.qpos)
         if self._config.qvel_init == "default":
             pass
         elif self._config.qvel_init == "zeros":
-            data = data.replace(qvel = jp.zeros(self.mjx_model.nv))
+            data = data.replace(qvel=jp.zeros(self.mjx_model.nv))
         elif self._config.qvel_init == "noise":
             raise NotImplementedError("qvel_init='noise' is not yet implemented.")
         elif self._config.qvel_init == "reference":
-            data = data.replace(qvel = reference.qvel)
+            data = data.replace(qvel=reference.qvel)
         data = mjx.forward(self.mjx_model, data)
         return data
-    
+
     def null_action(self) -> jp.ndarray:
         return jp.zeros(self.action_size)
-    
+
     def _clip_length(self):
         return self.reference_clips.qpos.shape[1]
-    
+
     def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
-        return jp.floor(data.time * self._config.mocap_hz + info["start_frame"]).astype(int)
-    
-    def _get_current_target(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
-        return self.reference_clips.at(clip = info["reference_clip"],
-                                       frame = self._get_cur_frame(data, info))
+        time_in_frames = data.time * self._config.mocap_hz
+        return jp.floor(time_in_frames + info["start_frame"]).astype(int)
 
-    def _get_imitation_reference(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
-        return self.reference_clips.slice(clip = info["reference_clip"],
-                                          start_frame = self._get_cur_frame(data, info)+1,
-                                          length = self._config.reference_length)
+    def _get_current_target(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> ReferenceClips:
+        """Get the reference data at the current frame."""
+        return self.reference_clips.at(
+            clip=info["reference_clip"], frame=self._get_cur_frame(data, info)
+        )
 
-    def _get_imitation_target(self,
-                              data: mjx.Data,
-                              info: Mapping[str, Any]
+    def _get_imitation_reference(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> ReferenceClips:
+        """Get the reference slice that is to be part of the observation."""
+        return self.reference_clips.slice(
+            clip=info["reference_clip"],
+            start_frame=self._get_cur_frame(data, info) + 1,
+            length=self._config.reference_length,
+        )
+
+    def _get_imitation_target(
+        self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Mapping[str, jp.ndarray]:
+        """Get the imitation target, i.e. the imitation reference transformed to
+        egocentric coordinates."""
         reference = self._get_imitation_reference(data, info)
 
-        root_pos  = self.root_body(data).xpos
+        root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
-        root_targets = jax.vmap(lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat))(reference.root_position)
-        quat_targets = jax.vmap(lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat))(reference.root_quaternion)
-        
-        _assert_all_are_prefix(reference.joint_names, self.get_joint_names(), "reference joints", "model joints")
+        root_targets = jax.vmap(
+            lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat)
+        )(reference.root_position)
+        quat_targets = jax.vmap(
+            lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat)
+        )(reference.root_quaternion)
+
+        _assert_all_are_prefix(
+            reference.joint_names,
+            self.get_joint_names(),
+            "reference joints",
+            "model joints",
+        )
         joint_targets = reference.joints - self._get_joint_angles(data)
 
         bodies_pos = self._get_bodies_pos(data, flatten=False)
-        body_rel_pos = jp.array([reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos])
+        body_rel_pos = jp.array(
+            [reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos]
+        )
         to_egocentric = jax.vmap(lambda diff_vec: brax.math.rotate(diff_vec, root_quat))
         body_targets = jax.vmap(to_egocentric)(body_rel_pos)
 
         return collections.OrderedDict(
-            root = root_targets,
-            quat = quat_targets,
-            joint = joint_targets,
-            body = body_targets,
+            root=root_targets,
+            quat=quat_targets,
+            joint=joint_targets,
+            body=body_targets,
         )
 
     # Rewards
@@ -239,65 +315,66 @@ class Imitation(rodent_base.RodentEnv):
         def decorator(reward_fcn: Callable):
             _REWARD_FCN_REGISTRY[name] = reward_fcn
             return reward_fcn
+
         return decorator
-    
+
     @_named_reward("root_pos")
     def _root_pos_reward(self, data, info, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         root_pos = self.root_body(data).xpos
         distance = jp.linalg.norm(target.root_position - root_pos)
-        reward = weight * jp.exp(-(distance/exp_scale)**2 / 2)
+        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         return reward
-    
+
     @_named_reward("root_quat")
     def _root_quat_reward(self, data, info, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
-        quat_dist = 2.0*jp.dot(root_quat, target.root_quaternion)**2 - 1.0
-        ang_dist = 0.5*jp.arccos(jp.minimum(1.0, quat_dist))
+        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
+        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
         exp_scale = jp.deg2rad(exp_scale)
-        reward = weight * jp.exp(-(ang_dist/exp_scale)**2 / 2)
+        reward = weight * jp.exp(-((ang_dist / exp_scale) ** 2) / 2)
         return reward
-    
+
     @_named_reward("joints")
     def _joints_reward(self, data, info, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
         distance = jp.linalg.norm(target.joints - joints)
-        reward = weight * jp.exp(-(distance/exp_scale)**2 / 2)
+        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         return reward
-    
+
     @_named_reward("joints_vel")
     def _joint_vels_reward(self, data, info, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
-        joint_vels  = self._get_joint_ang_vels(data)
+        joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
-        reward = weight * jp.exp(-(distance/exp_scale)**2 / 2)
+        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         return reward
-    
+
     @_named_reward("bodies_pos")
     def _body_pos_reward(self, data, info, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
-        body_pos  = self._get_bodies_pos(data, flatten=False)
-        dists = jp.array([bp - target.body_xpos(k) for k, bp in body_pos.items()])
-        #`dists` is a (`len(bodies)`, 3) array. We want to sum the squared norm
-        #of each distance. This is equivalent to summing all the squared elements.
-        distance_sqr = jp.sum(dists**2)
-        reward = weight * jp.exp(-distance_sqr/(exp_scale**2) / 2)
+        body_pos = self._get_bodies_pos(data, flatten=False)
+        dists = [bp - target.body_xpos(k) for k, bp in body_pos.items()]
+        # Note: `dists` is a (`len(bodies)`, 3) array. We want to sum the squared norm
+        # of each distance. This is equivalent to summing all the squared elements.
+        distance_sqr = jp.sum(jp.array(dists) ** 2)
+        reward = weight * jp.exp(-distance_sqr / (exp_scale**2) / 2)
         return reward
-    
+
     @_named_reward("end_eff")
     def _end_eff_reward(self, data, info, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
-        body_pos  = self._get_bodies_pos(data, flatten=False)
-        dists = jp.array([body_pos[ef] - target.body_xpos(ef) for ef in consts.END_EFFECTORS])
-        distance_sqr = jp.sum(dists**2)
-        reward = weight * jp.exp(-distance_sqr/(exp_scale**2) / 2)
+        body_pos = self._get_bodies_pos(data, flatten=False)
+        dists = [body_pos[ef] - target.body_xpos(ef) for ef in consts.END_EFFECTORS]
+        distance_sqr = jp.sum(jp.array(dists) ** 2)
+        reward = weight * jp.exp(-distance_sqr / (exp_scale**2) / 2)
         return reward
-    
+
     @_named_reward("torso_z_range")
     def _torso_z_range_reward(self, data, info, weight, healthy_z_range) -> float:
-        torso_z = self._get_body_height(data)#root_body(data).xpos[2]
+        torso_z = self._get_body_height(data)  # root_body(data).xpos[2]
         min_z, max_z = healthy_z_range
         in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
         return weight * in_range.astype(float)
@@ -305,39 +382,41 @@ class Imitation(rodent_base.RodentEnv):
     @_named_reward("control_cost")
     def _control_cost(self, data, info, weight) -> float:
         return weight * jp.sum(jp.square(info["action"]))
-    
+
     @_named_reward("control_diff_cost")
     def _control_diff_cost(self, data, info, weight) -> float:
         return weight * jp.sum(jp.square(info["action"] - info["prev_action"]))
-    
+
     @_named_reward("energy_cost")
     def _energy_cost(self, data, info, weight, max_value) -> float:
-        return weight * jp.minimum(jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator)), max_value)
-    
+        energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
+        return weight * jp.minimum(energy_use, max_value)
+
     @_named_reward("jerk_cost")
     def _jerk_cost(self, data, info, weight, window_len) -> float:
         raise NotImplementedError("jerk_cost is not implemented")
-    
+
     # Termination
     def _named_termination_criterion(name: str):
         def decorator(termination_fcn: Callable):
             _TERMINATION_FCN_REGISTRY[name] = termination_fcn
             return termination_fcn
+
         return decorator
-    
+
     @_named_termination_criterion("root_too_far")
     def _root_too_far(self, data, info, max_distance) -> bool:
         target = self._get_current_target(data, info)
-        root_pos  = self.root_body(data).xpos
+        root_pos = self.root_body(data).xpos
         distance = jp.linalg.norm(target.root_position - root_pos)
         return distance > max_distance
-    
+
     @_named_termination_criterion("root_too_rotated")
     def _root_too_rotated(self, data, info, max_degrees) -> bool:
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
-        quat_dist = 2.0*jp.dot(root_quat, target.root_quaternion)**2 - 1.0
-        ang_dist = 0.5*jp.arccos(jp.minimum(1.0, quat_dist))
+        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
+        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
         return ang_dist > jp.deg2rad(max_degrees)
 
     @_named_termination_criterion("pose_error")
@@ -346,29 +425,63 @@ class Imitation(rodent_base.RodentEnv):
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
-    
+
     def verify_reference_data(self, atol: float = 5e-3) -> bool:
-        #TODO: Check why this fails for lower atol values.
+        """A set of non-exhaustive sanity checks that the reference data found in
+        `config.REFERENCE_DATA_PATH` matches the environment's model. Most
+        importantly, it verifies that the global coordinates of the
+        body parts (xpos) match those the model produces when initialized to
+        the corresponding qpos from the file. This can catch issues with nested
+        free joints, mismatched joint orders, and incorrect scaling of the model
+        but it's not exhaustive). This current implementation tests all
+        frames of all clips in the reference data, and so is rather slow and
+        does not have to be run every time.
+
+        Args:
+            atol (float): Absolute floating-point tolerance for the checks.
+                          Defaults to 5e-3, because this seems to be the precision
+                          of the reference data (TODO: why are there several mm
+                          of error?).
+        Returns:
+            bool: True if all checks passed, False if any check failed.
+        """
+
         def test_frame(clip_idx: int, frame: int) -> dict[str, bool]:
             data = self._reset_data(clip_idx, frame)
             reference = self.reference_clips.at(clip=clip_idx, frame=frame)
             checks = collections.OrderedDict()
-            checks["root_pos"]  = jp.allclose(self.root_body(data).xpos,  reference.root_position, atol=atol)
-            checks["root_quat"] = jp.allclose(self.root_body(data).xquat, reference.root_quaternion, atol=atol)
-            checks["joints"]    = jp.allclose(self._get_joint_angles(data), reference.joints, atol=atol)
-            body_pos  = self._get_bodies_pos(data, flatten=False)
+            checks["root_pos"] = jp.allclose(
+                self.root_body(data).xpos, reference.root_position, atol=atol
+            )
+            checks["root_quat"] = jp.allclose(
+                self.root_body(data).xquat, reference.root_quaternion, atol=atol
+            )
+            checks["joints"] = jp.allclose(
+                self._get_joint_angles(data), reference.joints, atol=atol
+            )
+            body_pos = self._get_bodies_pos(data, flatten=False)
             for body_name, body_pos in body_pos.items():
-                checks[f"body_xpos/{body_name}"] = jp.allclose(body_pos, reference.body_xpos(body_name), atol=atol)
+                checks[f"body_xpos/{body_name}"] = jp.allclose(
+                    body_pos, reference.body_xpos(body_name), atol=atol
+                )
             if self._config.qvel_init == "reference":
-                checks["joints_ang_vel"] = jp.allclose(self._get_joint_ang_vels(data), reference.joints, atol=atol)
+                checks["joints_ang_vel"] = jp.allclose(
+                    self._get_joint_ang_vels(data), reference.joints, atol=atol
+                )
             return checks
 
         @jax.jit
         def test_clip(clip_idx: int):
-            return jax.vmap(test_frame, in_axes=(None, 0))(clip_idx, jp.arange(self._clip_length()))
-        
-        _assert_all_are_prefix(self.reference_clips.joint_names, self.get_joint_names(),
-                               "reference joints", "model joints")
+            return jax.vmap(test_frame, in_axes=(None, 0))(
+                clip_idx, jp.arange(self._clip_length())
+            )
+
+        _assert_all_are_prefix(
+            self.reference_clips.joint_names,
+            self.get_joint_names(),
+            "reference joints",
+            "model joints",
+        )
         if isinstance(self._clip_set, int):
             clip_idxs = jp.arange(self._clip_set)
         else:
@@ -377,19 +490,25 @@ class Imitation(rodent_base.RodentEnv):
         any_failed = False
         for clip in clip_idxs:
             if clip < 0 or clip >= self.reference_clips.qpos.shape[0]:
-                raise ValueError(f"Clip index {clip} is out of range. Reference data has {self.reference_clips.qpos.shape[0]} clips.")
+                raise ValueError(
+                    f"Clip index {clip} is out of range. Reference"
+                    f"data has {self.reference_clips.qpos.shape[0]} clips."
+                )
             test_result = test_clip(clip)
-            
+
             for name, result in test_result.items():
-                n_failed = jp.sum(result == False)
+                n_failed = jp.sum(np.logical_not(result))
                 if n_failed > 0:
-                    first_failed_frame = jp.argmax(result == False)
+                    first_failed_frame = jp.argmax(np.logical_not(result))
                     clip_label = self.reference_clips.clip_names[clip]
-                    msg = f"Reference data verification failed for {n_failed} frames for check '{name}' for clip {clip} ({clip_label})."
-                    msg += f" First failure at frame {first_failed_frame}."
-                    warnings.warn(msg)
+                    warnings.warn(
+                        f"Reference data verification failed for {n_failed} frames"
+                        f" for check '{name}' for clip {clip} ({clip_label})."
+                        f" First failure at frame {first_failed_frame}."
+                    )
                     any_failed = True
         return not any_failed
+
 
 def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
     if isinstance(a, map):
@@ -397,7 +516,11 @@ def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
     if isinstance(b, map):
         b = list(b)
     if len(a) != len(b):
-        raise AssertionError(f"{a_name} has length {len(a)}, but {b_name} has length {len(b)}.")
+        raise AssertionError(
+            f"{a_name} has length {len(a)} but {b_name} has length {len(b)}."
+        )
     for a_el, b_el in zip(a, b):
         if not b_el.startswith(a_el):
-            raise AssertionError(f"Comparing {a_name} and {b_name}. Expected {a_el} to match {b_el}.")
+            raise AssertionError(
+                f"Comparing {a_name} and {b_name}. Expected {a_el} to match {b_el}."
+            )
