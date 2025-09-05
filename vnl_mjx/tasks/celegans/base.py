@@ -57,6 +57,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         self._arena_xml_path = str(config.arena_xml_path)
         self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
         self._compiled = False
+        
 
     def add_worm(
         self,
@@ -179,7 +180,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             try:
                 joint_angles[joint_name] = data.bind(self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")).qpos
             except:
-                raise ValueError(f"Joint {joint_name} not found in the environment. Available joints: {[joint.name for joint in self._spec.joints]}")
+                raise ValueError(f"Joint {joint_name}{self._suffix} not found in the environment.\nAvailable joints: {[joint.name for joint in self._spec.joints]}")
         if flatten:
             joint_angles, _ = jax.flatten_util.ravel_pytree(joint_angles)
         return joint_angles
