@@ -43,14 +43,17 @@ def default_config() -> config_dict.ConfigDict:
             "joints_vel":    {"exp_scale":  0.02,   "weight": 1.0}, #Joint velocity-space L2 distance
             "bodies_pos":    {"exp_scale":  0.125,  "weight": 1.0}, #Distance in concatenated euclidean space
             "end_eff":       {"exp_scale":  0.002, "weight": 1.0}, #Distance in concatenated euclidean space
-
-            # Costs / regularizers
-            "torso_z_range":      {"healthy_z_range": (0.0, 1.0), "weight": 1.0},
-            "control_cost":       {"weight": 0.02},
-            "control_diff_cost":  {"weight": 0.02},
-            "energy_cost":        {"max_value":  50.0, "weight": 0.0},
+            "upright":      {"healthy_z_range": (0.0, 1.0), "weight": 0.0},
+            
+        },
+        # Costs / regularizers
+        cost_terms = {
+            "control":       {"weight": 0.02},
+            "control_diff":  {"weight": 0.02},
+            "energy":        {"max_value":  50.0, "weight": 0.0},
         },
         termination_criteria = {
+            "fall":             {"healthy_z_range": (0.0, 1.0)},
             "root_too_far":     {"max_distance": 0.01},  #Meters
             "root_too_rotated": {"max_degrees":  60.0}, #Degrees
             "pose_error":       {"max_l2_error": 4.5},  #Joint-space L2 distance
@@ -59,6 +62,7 @@ def default_config() -> config_dict.ConfigDict:
 
 _REWARD_FCN_REGISTRY: dict[str, Callable] = {}
 _TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
+_COST_FCN_REGISTRY: dict[str, Callable] = {}
 
 class Imitation(worm_base.CelegansEnv):
     """Multi-clip imitation environment."""
@@ -81,6 +85,7 @@ class Imitation(worm_base.CelegansEnv):
                                               self._config.clip_length)
         if self._config.clip_set != "all":
             raise NotImplementedError("'all' is the only implemented set of clips.")
+        self._steps_per_curr_frame = 1/(self._config.mocap_hz * self._config.ctrl_dt)
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
         start_rng, clip_rng = jax.random.split(rng)
@@ -101,23 +106,29 @@ class Imitation(worm_base.CelegansEnv):
 
         obs = self._get_obs(data, info)
         # Used to initialize our intention network
-        info["reference_obs_size"] = jax.flatten_util.ravel_pytree(obs["imitation_target"])[0].shape[-1]
-        info["proprioceptive_obs_size"] = jax.flatten_util.ravel_pytree(obs["proprioception"])[0].shape[-1]
+        info["reference_obs_size"] = jax.flatten_util.ravel_pytree(obs["imitation_target"])[0].shape[-1] #TODO: use getter functions
+        info["proprioceptive_obs_size"] = jax.flatten_util.ravel_pytree(obs["proprioception"])[0].shape[-1] #TODO: use getter functions
 
-        obs = jax.flatten_util.ravel_pytree(obs)[0]
+        obs = jax.flatten_util.ravel_pytree(obs)[0] #TODO: Use wrapper instead.
         
-        rewards = self._get_rewards(data, info)
+        rewards, dists = self._get_rewards(data, info)
         reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
+        costs, magnitudes = self._get_costs(data, info)
+        cost = jp.sum(jax.flatten_util.ravel_pytree(costs)[0])
+        total_reward = reward - cost
 
-        termination_conditions = self._is_done(data, info)
+        termination_conditions = self._get_termination_conditions(data, info)
         done = jp.any(jax.flatten_util.ravel_pytree(termination_conditions)[0])
 
         metrics = {
             **rewards,
+            **costs,
             **{n: jp.astype(t, float) for n, t in termination_conditions.items()},
+            **dists,
+            **magnitudes,
             "current_frame": jp.astype(self._get_cur_frame(data, info), float),
         }
-        return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
+        return mjx_env.State(data, obs, total_reward, jp.astype(done, float), metrics, info)
 
     def step(
         self,
@@ -136,13 +147,14 @@ class Imitation(worm_base.CelegansEnv):
         obs = self._get_obs(data, info)
         obs = jax.flatten_util.ravel_pytree(obs)[0]
 
-        termination_conditions = self._is_done(data, info)
+        termination_conditions = self._get_termination_conditions(data, info)
         terminated = jp.any(jax.flatten_util.ravel_pytree(termination_conditions)[0])
         done = jp.logical_or(terminated, info["truncated"])
         
-        rewards = self._get_rewards(data, info)
+        rewards, dists = self._get_rewards(data, info)
+        costs, magnitudes = self._get_costs(data, info)
         
-        total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
+        total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0]) - jp.sum(jax.flatten_util.ravel_pytree(costs)[0])
         state = state.replace(
             data=data,
             obs=obs,
@@ -151,12 +163,16 @@ class Imitation(worm_base.CelegansEnv):
             done=jp.astype(done, float),
         )
 
-        for n, r in rewards.items():
-            state.metrics[n] = r
-        for n, t in termination_conditions.items():
-            state.metrics[n] = jp.astype(t, float)
+        metrics = {
+            **rewards,
+            **costs,
+            **{n: jp.astype(t, float) for n, t in termination_conditions.items()},
+            **dists,
+            **magnitudes,
+            "current_frame": jp.astype(self._get_cur_frame(data, info), float),
+        }
+        state.metrics.update(metrics)
 
-        state.metrics["current_frame"] = jp.astype(self._get_cur_frame(data, info), float)
         return state
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -165,18 +181,28 @@ class Imitation(worm_base.CelegansEnv):
             imitation_target=self._get_imitation_target(data, info),
         )
 
-    def _get_rewards(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, float]:
-        rewards = dict()
+    def _get_rewards(self, data: mjx.Data, info: Mapping[str, Any]) -> Tuple[Mapping[str, float], Mapping[str, float]]:
+        rewards, dists = dict(), dict()
         for name, kwargs in self._config.reward_terms.items():
-            rewards[name] = _REWARD_FCN_REGISTRY[name](self, data, info, **kwargs)
-        return rewards
+            r, d = _REWARD_FCN_REGISTRY[name](self, data, info, **kwargs)
+            rewards[name] = r
+            dists[f"{name}_dist"] = d
+        return rewards, dists
 
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any]) -> bool:
+    def _get_termination_conditions(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, bool]:
         termination_reasons = dict()
         for name, kwargs in self._config.termination_criteria.items():
             termination_fcn = _TERMINATION_FCN_REGISTRY[name]
             termination_reasons[name] = termination_fcn(self, data, info, **kwargs)
         return termination_reasons
+
+    def _get_costs(self, data: mjx.Data, info: Mapping[str, Any]) -> Tuple[Mapping[str, float], Mapping[str, float]]:
+        costs, magnitudes = dict(), dict()
+        for name, kwargs in self._config.cost_terms.items():
+            c, m = _COST_FCN_REGISTRY[name](self, data, info, **kwargs)
+            costs[f"{name}_cost"] = c
+            magnitudes[name] = m
+        return costs, magnitudes
     
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         data = mjx.make_data(self.mjx_model)#, impl=self._config.mujoco_impl)
@@ -208,7 +234,11 @@ class Imitation(worm_base.CelegansEnv):
     def _get_current_target(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
         return self.reference_clips.at(clip = info["reference_clip"],
                                        frame = self._get_cur_frame(data, info))
-
+    def _get_reference_clip(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
+        return self.reference_clips.slice(clip = info["reference_clip"],
+                                          start_frame = 0,
+                                          length = self._config.clip_length)
+    
     def _get_imitation_reference(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
         return self.reference_clips.slice(clip = info["reference_clip"],
                                           start_frame = self._get_cur_frame(data, info)+1,
@@ -248,78 +278,88 @@ class Imitation(worm_base.CelegansEnv):
         return decorator
     
     @_named_reward("root_pos")
-    def _root_pos_reward(self, data, info, weight, exp_scale) -> float:
+    def _root_pos_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
         target = self._get_current_target(data, info)
         root_pos = self._get_root_pos(data)
         distance = jp.linalg.norm(target.root_position - root_pos)
-        reward = weight * jp.exp(-(distance/exp_scale)**2)
-        return reward
+        reward = weight * jp.exp(-((distance/exp_scale)**2)/2)
+        return reward, distance
     
     @_named_reward("root_quat")
-    def _root_quat_reward(self, data, info, weight, exp_scale) -> float:
+    def _root_quat_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
         target = self._get_current_target(data, info)
         root_quat = self._get_root_quat(data)
         quat_dist = 2.0*jp.dot(root_quat, target.root_quaternion)**2 - 1.0
         ang_dist = 0.5*jp.arccos(jp.minimum(1.0, quat_dist))
         exp_scale = jp.deg2rad(exp_scale)
-        reward = weight * jp.exp(-(ang_dist/exp_scale)**2)
-        return reward
+        reward = weight * jp.exp(-((ang_dist/exp_scale)**2)/2)
+        return reward, ang_dist
     
     @_named_reward("joints")
-    def _joints_reward(self, data, info, weight, exp_scale) -> float:
+    def _joints_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
         target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
         distance = jp.linalg.norm(target.joints - joints)
-        reward = weight * jp.exp(-(distance/exp_scale)**2)
-        return reward
+        reward = weight * jp.exp(-((distance/exp_scale)**2)/2)
+        return reward, distance
     
     @_named_reward("joints_vel")
-    def _joint_vels_reward(self, data, info, weight, exp_scale) -> float:
+    def _joint_vels_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
         target = self._get_current_target(data, info)
         joint_vels  = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
-        reward = weight * jp.exp(-(distance/exp_scale)**2)
-        return reward
+        reward = weight * jp.exp(-((distance/exp_scale)**2)/2)
+        return reward, distance
     
     @_named_reward("bodies_pos")
-    def _body_pos_reward(self, data, info, weight, exp_scale) -> float:
+    def _body_pos_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
         target = self._get_current_target(data, info)
         body_pos  = self._get_bodies_pos(data, flatten=False)
         dists = jp.array([bp - target.body_xpos(k) for k, bp in body_pos.items()])
         distance_sqr = jp.sum(dists**2)
-        reward = weight * jp.exp(-distance_sqr/(exp_scale)**2)
-        return reward
+        reward = weight * jp.exp(-(distance_sqr/(exp_scale)**2)/2)
+        return reward, distance_sqr
     
     @_named_reward("end_eff")
-    def _end_eff_reward(self, data, info, weight, exp_scale) -> float:
+    def _end_eff_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
         target = self._get_current_target(data, info)
         body_pos  = self._get_bodies_pos(data, flatten=False)
         dists = jp.array([body_pos[ef] - target.body_xpos(ef) for ef in consts.END_EFFECTORS])
         distance_sqr = jp.sum(dists**2)
-        reward = weight * jp.exp(-distance_sqr/(exp_scale)**2)
-        return reward
+        reward = weight * jp.exp(-(distance_sqr/(exp_scale)**2)/2)
+        return reward, distance_sqr
     
-    @_named_reward("torso_z_range")
-    def _torso_z_range_reward(self, data, info, weight, healthy_z_range) -> float:
+    @_named_reward("upright")
+    def _upright_reward(self, data, info, weight, healthy_z_range) -> Tuple[float, float]:
         torso_z = self._get_body_height(data)#root_body(data).xpos[2]
         min_z, max_z = healthy_z_range
         in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
-        return weight * in_range.astype(float)
+        return weight * in_range.astype(float), torso_z
 
-    @_named_reward("control_cost")
-    def _control_cost(self, data, info, weight) -> float:
-        return weight * jp.sum(jp.square(info["action"]))
+    # Costs
+    def _named_cost(name: str):
+        def decorator(cost_fcn: Callable):
+            _COST_FCN_REGISTRY[name] = cost_fcn
+            return cost_fcn
+        return decorator
+
+    @_named_cost("control")
+    def _control_cost(self, data, info, weight) -> Tuple[float, float]:
+        ctrl_magnitude = jp.sum(jp.square(info["action"]))
+        return weight * ctrl_magnitude, ctrl_magnitude
     
-    @_named_reward("control_diff_cost")
-    def _control_diff_cost(self, data, info, weight) -> float:
-        return weight * jp.sum(jp.square(info["action"] - info["prev_action"]))
+    @_named_cost("control_diff")
+    def _control_diff_cost(self, data, info, weight) -> Tuple[float, float]:
+        ctrl_diff = jp.sum(jp.square(info["action"] - info["prev_action"]))
+        return weight * ctrl_diff, ctrl_diff
     
-    @_named_reward("energy_cost")
-    def _energy_cost(self, data, info, weight, max_value) -> float:
-        return weight * jp.minimum(jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator)), max_value)
+    @_named_cost("energy")
+    def _energy_cost(self, data, info, weight, max_value) -> Tuple[float, float]:
+        energy = jp.minimum(jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator)), max_value)
+        return weight * energy, energy
     
-    @_named_reward("jerk_cost")
-    def _jerk_cost(self, data, info, weight, window_len) -> float:
+    @_named_cost("jerk")
+    def _jerk_cost(self, data, info, weight, window_len) -> Tuple[float, float]:
         raise NotImplementedError("jerk_cost is not implemented")
     
     # Termination
@@ -328,7 +368,13 @@ class Imitation(worm_base.CelegansEnv):
             _TERMINATION_FCN_REGISTRY[name] = termination_fcn
             return termination_fcn
         return decorator
-    
+
+    @_named_termination_criterion("fall")
+    def _fall(self, data, info, healthy_z_range) -> float:
+        torso_z = self._get_body_height(data)#root_body(data).xpos[2]
+        min_z, max_z = healthy_z_range
+        return jp.logical_or(torso_z < min_z, torso_z > max_z)
+
     @_named_termination_criterion("root_too_far")
     def _root_too_far(self, data, info, max_distance) -> bool:
         target = self._get_current_target(data, info)
