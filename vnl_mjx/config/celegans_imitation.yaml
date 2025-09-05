@@ -1,0 +1,210 @@
+env_config:
+  env_name: celegans
+  task_name: imitation
+  walker_name: celegans
+  render_camera_name: track
+  render_fps: 20
+  backend: playground
+
+  env_args:
+    torque_actuators: False  # Changed from False for better performance
+    rescale_factor: 1.0
+
+    solver: "cg"
+    iterations: 4
+    ls_iterations: 4
+    ctrl_dt: 0.05
+    sim_dt: 0.005
+    mocap_hz: 20
+
+    reference_data_path:
+    clip_length: 250
+    reference_length: 5
+    start_frame_range: [0, 50]
+
+    reward_terms:
+      upright: 
+        healthy_z_range: [0.0, 1.0]
+        weight: 0.0
+      root_pos:
+        exp_scale: 0.05
+        weight: 1.0
+      root_quat:
+        exp_scale: 0.0625
+        weight: 1.0
+      joints:
+        exp_scale: 16
+        weight: 1.0
+      joints_vel:
+        exp_scale: 0.02
+        weight: 1.0
+      bodies_pos:
+        exp_scale: 0.125
+        weight: 1.0
+      end_eff:
+        exp_scale: 0.002
+        weight: 1.0
+    cost_terms:
+      control:
+        weight: 0.02
+      control_diff:
+        weight: 0.02
+      energy:
+        max_value: 50.0
+        weight: 0.0
+
+    termination_criteria:
+      fall:
+        healthy_z_range: [0.0, 1.0]
+      root_too_far:
+        max_distance: 0.1
+      root_too_rotated:
+        max_degrees: 60.0
+      pose_error:
+        max_l2_error: 4.5
+      
+  
+
+network_config:
+  arch_name: intention
+  encoder_layer_sizes: [512,512,512]
+  decoder_layer_sizes: [512,512,512]
+  critic_layer_sizes: [512,512,512]
+  intention_size: 8
+  kl_schedule: True # Whether to use a ramping KL schedule
+  kl_weight: 1e-4 # The maximum weight if schedule is True
+  hidden_state_size: 512
+  hidden_layer_num: 3
+
+train_setup:
+  agent_name: celegans
+  run_name: imitation_init_run
+  checkpoint_to_restore:
+  train_test_split_info: # "data/train_test_split_rodent.json" # Path to the train/test split file, records the index
+  # Ratio of training data of the whole training dataset. Needs to be in the train_test_split_info["train_subset"] key. 
+  # If not, please run the `notebooks/sample_efficiency_dev.ipynb` notebook to generate the train/test split file.
+  train_subset_ratio: 0.5
+  checkpoint_max_to_keep: 
+  checkpoint_keep_period: 
+  eval_every: 50_000_000
+  episode_length: 200
+  reset_every: 50_000_000
+  freeze_decoder: False
+  train_config:
+    num_envs: 2048
+    num_timesteps: 15_000_000_000
+    batch_size: 1024
+    num_minibatches: 8
+    num_updates_per_batch: 4
+    learning_rate: 1e-4
+    clipping_epsilon: 0.2     
+    discounting: 0.95
+    action_repeat: 1
+    entropy_cost: 2e-3
+    reward_scaling: 1
+    normalize_observations: True
+    unroll_length: 20
+    seed: 0
+    get_activation: False
+    use_lstm: False
+    deterministic_eval: False
+
+logging_config:
+  project_name: con3trol
+  group_name: misc
+  model_path: model_checkpoints
+  notes: "test vnl playground implementation"
+  algo_name: ppo
+  exp_name: test_vnl_playground
+  rollout_metrics:
+    - root_pos
+    - root_quat
+    - joints
+    - joints_vel
+    - bodies_pos
+    - end_eff
+    - upright
+    - control_cost
+    - control_diff_cost
+    - energy_cost
+    - fall
+    - root_too_far
+    - pose_error
+    - root_too_rotated
+    - root_pos_dist
+    - root_quat_dist
+    - joints_dist
+    - joints_vel_dist
+    - bodies_pos_dist
+    - end_eff_dist
+    - upright_dist
+    - control
+    - control_diff
+    - energy
+  
+walker_config:
+  xml_path: /home/aaprasad/mnt/projects/con3trol/src/track-mjx/track_mjx/environment/walker/assets/celegans/celegans_fast.xml
+  torque_actuators: False  # Changed from False for better performance
+  rescale_factor: 1.0
+  joint_names:
+    - motor1_rot 
+    - motor2_rot 
+    - rot4
+    - rot5
+    - rot6
+    - rot7
+    - rot8
+    - rot9
+    - rot10 
+    - rot11
+    - rot12
+    - rot13
+    - rot14
+    - rot15
+    - rot16
+    - rot17
+    - rot18
+    - rot19
+    - rot20
+    - rot21
+    - rot22
+    - rot23
+    - rot24
+    - rot25
+  body_names:
+    - torso1_body
+    - torso2_body
+    - torso3_body
+    - torso4_body
+    - torso5_body
+    - torso6_body
+    - torso7_body 
+    - torso8_body
+    - torso9_body
+    - torso10_body
+    - torso11_body
+    - torso12_body
+    - torso13_body
+    - torso14_body
+    - torso15_body
+    - torso16_body
+    - torso17_body
+    - torso18_body
+    - torso19_body
+    - torso20_body
+    - torso21_body
+    - torso22_body
+    - torso23_body
+    - torso24_body
+    - torso25_body
+  end_eff_names:
+    - torso1_body
+    - torso2_body
+    - torso3_body
+    - torso4_body
+    - torso5_body
+    - torso21_body
+    - torso22_body
+    - torso23_body
+    - torso24_body
+    - torso25_body
