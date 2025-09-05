@@ -1,11 +1,11 @@
-<?xml version='1.0' encoding='utf-8'?>
+  <?xml version='1.0' encoding='utf-8'?>
 <mujoco model="celegans">
   <visual>
     <quality shadowsize="2048" />
     <global offwidth="1920" offheight="1200" elevation="-20" azimuth="120" />
   </visual>
   <compiler angle="degree" coordinate="local" inertiafromgeom="true" meshdir="/home/aaprasad/projects/con3trol/src/track-mjx/track_mjx/environment/walker/assets/celegans/meshes" />
-  <option density="1000" solver="CG" iterations="6" ls_iterations="6" timestep="0.002" viscosity="1000" cone="pyramidal" />
+  <option density="1000" solver="CG" iterations="6" ls_iterations="6" timestep="0.002" viscosity="0.1" cone="pyramidal" />
   <default>
     <geom conaffinity="1" condim="3" contype="1" material="geom" rgba="0.8 0.6 .4 1" />
     <joint armature="0.1" />
@@ -481,31 +481,31 @@
     </body>
   </worldbody>
   <contact>
-    <pair geom1="floor" geom2="geom1" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom2" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom3" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom4" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom5" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom6" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom7" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom8" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom9" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom10" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom11" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom12" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom13" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom14" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom15" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom16" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom17" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom18" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom19" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom20" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom21" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom22" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom23" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom24" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
-    <pair geom1="floor" geom2="geom25" condim="3" friction="1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom1" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom2" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom3" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom4" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom5" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom6" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom7" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom8" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom9" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom10" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom11" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom12" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom13" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom14" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom15" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom16" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom17" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom18" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom19" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom20" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom21" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom22" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom23" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom24" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
+    <pair geom1="floor" geom2="geom25" condim="3" friction="0.1 1 0.005 0.0001 0.0001" solimp="0 0.95 0.001 0.5 2" />
 
     <exclude name="torso1_torso2" body1="torso1_body" body2="torso2_body"/>
     <exclude name="torso2_torso3" body1="torso2_body" body2="torso3_body"/>
