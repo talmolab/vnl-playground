@@ -4,7 +4,6 @@ from typing import Any, Callable, Dict, Mapping, Optional, Union
 
 import brax.math
 import jax
-import jax.flatten_util
 import jax.numpy as jp
 import numpy as np
 from ml_collections import config_dict
@@ -148,15 +147,14 @@ class Imitation(rodent_base.RodentEnv):
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
 
-        obs = self._get_obs(data, info)
-        rewards = self._get_rewards(data, info)
-        reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
-        done = self._is_done(data, info)
-
         metrics = {
-            "reward_terms": rewards,
             "current_frame": jp.astype(self._get_cur_frame(data, info), float),
         }
+        obs = self._get_obs(data, info)
+        reward = self._get_reward(data, info, metrics)
+        done = self._is_done(data, info, metrics)
+
+        
         return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
 
     def step(
@@ -182,17 +180,16 @@ class Imitation(rodent_base.RodentEnv):
         info["action"] = action
 
         obs = self._get_obs(data, info)
-        done = jp.logical_or(self._is_done(data, info), info["truncated"])
-        rewards = self._get_rewards(data, info)
-        total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
+        terminated = self._is_done(data, info, state.metrics)
+        done = jp.logical_or(terminated, info["truncated"])
+        reward = self._get_reward(data, info, state.metrics)
         state = state.replace(
             data=data,
             obs=obs,
             info=info,
-            reward=total_reward,
+            reward=reward,
             done=done.astype(float),
         )
-        state.metrics["reward_terms"] = rewards
         current_frame = self._get_cur_frame(data, info)
         state.metrics["current_frame"] = jp.astype(current_frame, float)
         return state
@@ -203,21 +200,25 @@ class Imitation(rodent_base.RodentEnv):
             imitation_target=self._get_imitation_target(data, info),
         )
 
-    def _get_rewards(
-        self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> Mapping[str, float]:
-        rewards = dict()
+    def _get_reward(
+        self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
+    ) -> float:
+        net_reward = 0.0
         for name, kwargs in self._config.reward_terms.items():
-            rewards[name] = _REWARD_FCN_REGISTRY[name](self, data, info, **kwargs)
-        return rewards
+            net_reward += _REWARD_FCN_REGISTRY[name](self, data, info, metrics, **kwargs)
+        return net_reward
 
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any]) -> bool:
-        termination_reasons = dict()
+    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
+        any_terminated = False
         for name, kwargs in self._config.termination_criteria.items():
             termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-            termination_reasons[name] = termination_fcn(self, data, info, **kwargs)
-        return jp.any(jax.flatten_util.ravel_pytree(termination_reasons)[0])
-
+            terminated = termination_fcn(self, data, info, **kwargs)
+            any_terminated = jp.logical_or(any_terminated, terminated)
+            #Also log terminations as floats so averaging -> hazard rate
+            metrics["terminations/" + name] = jp.astype(terminated, float)
+        metrics["terminations/any"] = jp.astype(any_terminated, float)
+        return any_terminated
+    
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         data = mjx.make_data(
             self.mj_model,
@@ -319,81 +320,109 @@ class Imitation(rodent_base.RodentEnv):
         return decorator
 
     @_named_reward("root_pos")
-    def _root_pos_reward(self, data, info, weight, exp_scale) -> float:
+    def _root_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         root_pos = self.root_body(data).xpos
         distance = jp.linalg.norm(target.root_position - root_pos)
+        metrics["root_pos_distance"] = distance
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        metrics["rewards/root_pos"] = reward
         return reward
 
     @_named_reward("root_quat")
-    def _root_quat_reward(self, data, info, weight, exp_scale) -> float:
+    def _root_quat_reward(self, data, info, metrics, weight, exp_scale) -> float:
+        """`exp_scale` is in degrees."""
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
         quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
-        exp_scale = jp.deg2rad(exp_scale)
-        reward = weight * jp.exp(-((ang_dist / exp_scale) ** 2) / 2)
+        rot_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
+        ang_dist_degrees = jp.rad2deg(rot_dist)
+        metrics["root_angular_error"] = ang_dist_degrees
+        reward = weight * jp.exp(-((ang_dist_degrees / exp_scale) ** 2) / 2)
+        metrics["rewards/root_quat"] = reward
         return reward
 
     @_named_reward("joints")
-    def _joints_reward(self, data, info, weight, exp_scale) -> float:
+    def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
         distance = jp.linalg.norm(target.joints - joints)
+        metrics["joint_l2_error"] = distance
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        metrics["rewards/joints"] = reward
         return reward
 
     @_named_reward("joints_vel")
-    def _joint_vels_reward(self, data, info, weight, exp_scale) -> float:
+    def _joint_vels_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
+        metrics["joint_vel_l2_error"] = distance
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        metrics["rewards/joints_vel"] = reward
         return reward
 
-    @_named_reward("bodies_pos")
-    def _body_pos_reward(self, data, info, weight, exp_scale) -> float:
+    def _get_bodies_dist(self, data, info, metrics, bodies = consts.BODIES) -> float:
         target = self._get_current_target(data, info)
         body_pos = self._get_bodies_pos(data, flatten=False)
-        dists = [bp - target.body_xpos(k) for k, bp in body_pos.items()]
-        # Note: `dists` is a (`len(bodies)`, 3) array. We want to sum the squared norm
-        # of each distance. This is equivalent to summing all the squared elements.
-        distance_sqr = jp.sum(jp.array(dists) ** 2)
-        reward = weight * jp.exp(-distance_sqr / (exp_scale**2) / 2)
+        total_dist_sqr = 0.0
+        for body_name in bodies:
+            dist_sqr = jp.sum((body_pos[body_name] - target.body_xpos(body_name))**2)
+            metrics["body_errors/" + body_name] = jp.sqrt(dist_sqr)
+            total_dist_sqr += dist_sqr
+        return jp.sqrt(total_dist_sqr)
+
+    @_named_reward("bodies_pos")
+    def _body_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
+        total_dist = self._get_bodies_dist(data, info, metrics, consts.BODIES)
+        metrics["body_errors/total"] = total_dist
+        reward = weight * jp.exp(-((total_dist / exp_scale))**2 / 2)
+        metrics["rewards/bodies_pos"] = reward
         return reward
 
     @_named_reward("end_eff")
-    def _end_eff_reward(self, data, info, weight, exp_scale) -> float:
-        target = self._get_current_target(data, info)
-        body_pos = self._get_bodies_pos(data, flatten=False)
-        dists = [body_pos[ef] - target.body_xpos(ef) for ef in consts.END_EFFECTORS]
-        distance_sqr = jp.sum(jp.array(dists) ** 2)
-        reward = weight * jp.exp(-distance_sqr / (exp_scale**2) / 2)
+    def _end_eff_reward(self, data, info, metrics, weight, exp_scale) -> float:
+        total_dist = self._get_bodies_dist(data, info, metrics, consts.END_EFFECTORS)
+        metrics["body_errors/end_eff_total"] = total_dist
+        reward = weight * jp.exp(-((total_dist / exp_scale))**2 / 2)
+        metrics["rewards/end_eff"] = reward
         return reward
 
     @_named_reward("torso_z_range")
-    def _torso_z_range_reward(self, data, info, weight, healthy_z_range) -> float:
-        torso_z = self._get_body_height(data)  # root_body(data).xpos[2]
+    def _torso_z_range_reward(self, data, info, metrics, weight,
+                              healthy_z_range) -> float:
+        metrics["torso_z"] = torso_z = self._get_body_height(data)
         min_z, max_z = healthy_z_range
         in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
-        return weight * in_range.astype(float)
+        metrics["in_range"] = in_range.astype(float)
+        reward = weight * in_range
+        metrics["rewards/torso_z_range"] = reward
+        return reward
 
     @_named_reward("control_cost")
-    def _control_cost(self, data, info, weight) -> float:
-        return weight * jp.sum(jp.square(info["action"]))
+    def _control_cost(self, data, info, metrics, weight) -> float:
+        metrics["ctrl_sqr"] = ctrl_sqr = jp.sum(jp.square(info["action"]))
+        cost = weight * ctrl_sqr
+        metrics["costs/control"] = cost
+        return -cost
 
     @_named_reward("control_diff_cost")
-    def _control_diff_cost(self, data, info, weight) -> float:
-        return weight * jp.sum(jp.square(info["action"] - info["prev_action"]))
+    def _control_diff_cost(self, data, info, metrics, weight) -> float:
+        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(jp.square(info["action"]))
+        cost = weight * ctrl_diff_sqr
+        metrics["costs/control_diff"] = cost
+        return -cost
 
     @_named_reward("energy_cost")
-    def _energy_cost(self, data, info, weight, max_value) -> float:
+    def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
         energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
-        return weight * jp.minimum(energy_use, max_value)
+        metrics["energy_use"] = energy_use
+        cost = weight * jp.minimum(energy_use, max_value)
+        metrics["costs/energy"] = cost
+        return -cost
 
     @_named_reward("jerk_cost")
-    def _jerk_cost(self, data, info, weight, window_len) -> float:
+    def _jerk_cost(self, data, info, weight, metrics, window_len) -> float:
         raise NotImplementedError("jerk_cost is not implemented")
 
     # Termination
