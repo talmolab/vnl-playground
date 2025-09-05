@@ -129,15 +129,14 @@ def main(cfg: DictConfig):
     task_name = cfg.env_config.task_name
     if task_name == "imitation":
         env = imitation.Imitation(config_overrides=OmegaConf.to_container(env_config, resolve=True))
-        evaluator_env = imitation.Imitation(config_overrides=OmegaConf.to_container(env_config, resolve=True).copy().update({"with_ghost": True}))
+        evaluator_env = imitation.Imitation(config_overrides=OmegaConf.to_container(env_config, resolve=True))
     elif task_name == "imitation_2d":
         env = imitation.Imitation2D(config_overrides=OmegaConf.to_container(env_config, resolve=True))
-        evaluator_env = imitation.Imitation2D(config_overrides=OmegaConf.to_container(env_config, resolve=True).copy().update({"with_ghost": True}))
+        evaluator_env = imitation.Imitation2D(config_overrides=OmegaConf.to_container(env_config, resolve=True))
     else:
         raise ValueError(
             f"Unknown task_name: {task_name}. Must be one of: imitation, imitation_2d"
         )
-    evaluator_env.add_ghost_worm(rescale_factor=env_config.rescale_factor)
 
     train_fn = functools.partial(
         ppo.train,
@@ -179,11 +178,7 @@ def main(cfg: DictConfig):
     # # define the jit reset/step functions
     jit_reset = jax.jit(evaluator_env.reset)
     jit_step = jax.jit(evaluator_env.step)
-    mj_model = evaluator_env.mj_model
-    mj_data = mujoco.MjData(mj_model)
-    scene_option = mujoco.MjvOption()
-    scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
-    renderer = mujoco.Renderer(mj_model, height=512, width=512)
+    renderer, mj_model, mj_data, scene_option = render.make_rollout_renderer(cfg, render_ghost=True)
     policy_params_fn = functools.partial(
         wandb_logging.rollout_logging_fn,
         evaluator_env,
