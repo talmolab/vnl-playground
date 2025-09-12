@@ -150,7 +150,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             _recolour_tree(body, rgba=ghost_rgba)
         # Attach as ghost at the offset frame
         frame = spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
-        spawn_body = frame.attach_body(walker_spec.body(f"{consts.ROOT}"), "", suffix=suffix)
+        spawn_body = frame.attach_body(walker_spec.body(f"{self._config.root_body}"), "", suffix=suffix)
 
         if dim == 3:
             spawn_body.add_freejoint()
@@ -183,13 +183,13 @@ class CelegansEnv(mjx_env.MjxEnv):
     
     def _get_root_quat(self, data: mjx.Data) -> jp.ndarray:
         """Get root quaternion from the environment."""
-        return data.bind(self.mjx_model, self._spec.body(f"{consts.ROOT}{self._suffix}")).xquat
+        return data.bind(self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")).xquat
         
     def _get_appendages_pos(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
         """Get appendages positions from the environment."""
-        root = data.bind(self.mjx_model, self._spec.body(f"{consts.ROOT}{self._suffix}"))
+        root = data.bind(self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}"))
         appendages_pos = collections.OrderedDict()
-        for apppendage_name in consts.END_EFFECTORS:
+        for apppendage_name in self._config.end_effectors:
             global_xpos = data.bind(self.mjx_model, self._spec.body(f"{apppendage_name}{self._suffix}")).xpos
             egocentric_xpos = jp.dot(global_xpos - root.xpos, root.xmat)
             appendages_pos[apppendage_name] = egocentric_xpos
@@ -200,7 +200,7 @@ class CelegansEnv(mjx_env.MjxEnv):
     def _get_bodies_pos(self, data: mjx.Data, flatten: bool = True) -> Union[dict[str, jp.ndarray], jp.ndarray]:
         """Get _global_ positions of the body parts."""
         bodies_pos = collections.OrderedDict()
-        for body_name in consts.BODIES:
+        for body_name in self._config.bodies:
             global_xpos = data.bind(self.mjx_model, self._spec.body(f"{body_name}{self._suffix}")).xpos
             bodies_pos[body_name] = global_xpos
         if flatten:
@@ -210,7 +210,7 @@ class CelegansEnv(mjx_env.MjxEnv):
     def _get_joint_angles(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
         """Get joint angles of the body parts."""
         joint_angles = collections.OrderedDict()
-        for joint_name in consts.JOINTS:
+        for joint_name in self._config.joints:
             try:
                 joint_angles[joint_name] = data.bind(self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")).qpos
             except:
@@ -222,7 +222,7 @@ class CelegansEnv(mjx_env.MjxEnv):
     def _get_joint_ang_vels(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
         """Get joint angular velocities of the body parts."""
         joint_ang_vels = collections.OrderedDict()
-        for joint_name in consts.JOINTS:
+        for joint_name in self._config.joints:
             joint_ang_vels[joint_name] = data.bind(self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")).qvel
         if flatten:
             joint_ang_vels, _ = jax.flatten_util.ravel_pytree(joint_ang_vels)
@@ -232,7 +232,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         return data.qfrc_actuator
 
     def _get_body_height(self, data: mjx.Data) -> jp.ndarray:
-        torso_pos = data.bind(self.mjx_model, self._spec.body(f"{consts.ROOT}{self._suffix}")).xpos
+        torso_pos = data.bind(self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")).xpos
         torso_z = torso_pos[2]
         return torso_z#self.root_body(data).xpos[1]
     
@@ -275,7 +275,7 @@ class CelegansEnv(mjx_env.MjxEnv):
 
     def _get_touch_sensors(self, data: mjx.Data) -> jp.ndarray:
         """Get touch sensors data from the environment."""
-        touches = [data.bind(self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")).sensordata for name in consts.TOUCH_SENSORS]
+        touches = [data.bind(self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")).sensordata for name in self._config.touch_sensors]
         return jp.array(touches)
 
     def _get_origin(self, data: mjx.Data) -> jp.ndarray:
@@ -292,7 +292,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         )
 
     def get_joint_names(self):
-        return [j.name for j in self._spec.joints if j.name.replace(self._suffix, "") in consts.JOINTS]
+        return [j.name for j in self._spec.joints if j.name.replace(self._suffix, "") in self._config.joints]
 
     def root_body(self, data):
         #TODO: Double-check which body should be considered the root (walker or torso)

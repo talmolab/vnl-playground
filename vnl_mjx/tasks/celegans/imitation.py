@@ -21,6 +21,12 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path = str(consts.CELEGANS_XML_PATH),
         arena_xml_path = str(consts.ARENA_XML_PATH),
+        root_body = consts.ROOT,
+        joints = consts.JOINTS,
+        bodies = consts.BODIES,
+        end_effectors = consts.END_EFFECTORS,
+        touch_sensors = consts.TOUCH_SENSORS,
+        sensors = consts.SENSORS,
         mujoco_impl = "mjx",
         sim_dt  = 0.002,
         ctrl_dt = 0.02,
@@ -323,7 +329,7 @@ class Imitation(worm_base.CelegansEnv):
         reward = weight * jp.exp(-((distance/exp_scale)**2)/2)
         return reward, distance
     
-    def _get_bodies_dist(self, data, info, bodies=consts.BODIES) -> float:
+    def _get_bodies_dist(self, data, info, bodies=self._config.bodies) -> float:
         target = self._get_current_target(data, info)
         body_pos = self._get_bodies_pos(data, flatten=False)
         total_dist_sqr = 0.0
@@ -334,13 +340,13 @@ class Imitation(worm_base.CelegansEnv):
 
     @_named_reward("bodies_pos")
     def _body_pos_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
-        total_dist = self._get_bodies_dist(data, info, bodies=consts.BODIES)
+        total_dist = self._get_bodies_dist(data, info, bodies=self._config.bodies)
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
         return reward, total_dist
     
     @_named_reward("end_eff")
     def _end_eff_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
-        total_dist = self._get_bodies_dist(data, info, bodies=consts.END_EFFECTORS)
+        total_dist = self._get_bodies_dist(data, info, bodies=self._config.end_effectors)
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
         return reward, total_dist
     
