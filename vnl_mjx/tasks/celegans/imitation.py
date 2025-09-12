@@ -329,7 +329,7 @@ class Imitation(worm_base.CelegansEnv):
         reward = weight * jp.exp(-((distance/exp_scale)**2)/2)
         return reward, distance
     
-    def _get_bodies_dist(self, data, info, bodies=self._config.bodies) -> float:
+    def _get_bodies_dist(self, data, info, bodies=consts.BODIES) -> float:
         target = self._get_current_target(data, info)
         body_pos = self._get_bodies_pos(data, flatten=False)
         total_dist_sqr = 0.0
@@ -481,9 +481,14 @@ class Imitation(worm_base.CelegansEnv):
             mj_data_with_ghost.qpos = jp.concatenate((state.data.qpos, ref.qpos))
             mj_data_with_ghost.qvel = jp.concatenate((state.data.qvel, ref.qvel))
             mujoco.mj_forward(mj_model_with_ghost, mj_data_with_ghost)
-            renderer.update_scene(
-                mj_data_with_ghost, camera=camera, scene_option=scene_option
-            )
+            try:
+                renderer.update_scene(
+                    mj_data_with_ghost, camera=f"{camera}{self._suffix}", scene_option=scene_option
+                )
+            except ValueError as e:
+                print(f"Error updating scene for camera {f"{camera}{self._suffix}"}: {e}")
+                print(f"Available cameras: {[c.name for c in spec.cameras]}")
+                raise e
             if modify_scene_fns is not None:
                 modify_scene_fns[i](renderer.scene)
             rendered_frame = renderer.render()
