@@ -65,7 +65,7 @@ class ReferenceClips:
     
     @property
     def root_position(self) -> jp.ndarray:
-        return self.qpos[..., :3]
+        return self.xpos[..., 1, :]
     
     @property
     def root_quaternion(self) -> jp.ndarray:
@@ -78,11 +78,12 @@ class ReferenceClips:
     
     @property
     def joints_velocity(self) -> jp.ndarray:
-        return self.qvel[..., 6:]
+        start_idx = self.qvel.shape[-1] - len(JOINTS)
+        return self.qvel[..., start_idx:]
     
     @property
     def joint_names(self):
-        return self._names_qpos[7:]
+        return [name for name in self._names_qpos if name in JOINTS]
     
     @property
     def body_names(self):
