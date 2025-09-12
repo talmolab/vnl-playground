@@ -1,22 +1,26 @@
 import collections
-from typing import Any, Dict, Optional, Union, Tuple, Mapping, Callable, List
+import warnings
+from typing import Any, Dict, Optional, Union, Tuple, Mapping, Callable, List, Sequence
 import jax
 import jax.flatten_util
 import jax.numpy as jp
+from jax.scipy.spatial.transform import Rotation
+import numpy as np
 from ml_collections import config_dict
+import mujoco
 from mujoco import mjx
 import brax.math
 from vnl_mjx.tasks.celegans.reference_clips import ReferenceClips
-
-from mujoco_playground._src import mjx_env
+from mujoco_playground._src import mjx_env, wrapper
+import cv2
 
 from . import base as worm_base
 from . import consts
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
-        walker_xml_path = consts.CELEGANS_XML_PATH,
-        arena_xml_path = consts.ARENA_XML_PATH,
+        walker_xml_path = str(consts.CELEGANS_XML_PATH),
+        arena_xml_path = str(consts.ARENA_XML_PATH),
         mujoco_impl = "mjx",
         sim_dt  = 0.002,
         ctrl_dt = 0.02,
@@ -26,6 +30,7 @@ def default_config() -> config_dict.ConfigDict:
         noslip_iterations = 0,
         torque_actuators = False,
         rescale_factor = 1.0,
+        dim = 3,
 
         mocap_hz = 20,
         clip_length = 250,
@@ -73,24 +78,31 @@ class Imitation(worm_base.CelegansEnv):
         config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
     ) -> None:
         super().__init__(config, config_overrides)
+
         self.add_worm(
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
+            dim=self._config.dim
         )
         if self._config.with_ghost:
-            self.add_ghost_worm(rescale_factor=self._config.rescale_factor)
+            self.add_ghost_worm(rescale_factor=self._config.rescale_factor, dim=self._config.dim)
 
         self.compile()
         self.reference_clips = ReferenceClips(self._config.reference_data_path,
                                               self._config.clip_length)
-        if self._config.clip_set != "all":
+        max_n_clips = self.reference_clips.qpos.shape[0]
+        if self._config.clip_set == "all":
+            self._clip_set = max_n_clips
+        else:
             raise NotImplementedError("'all' is the only implemented set of clips.")
         self._steps_per_curr_frame = 1/(self._config.mocap_hz * self._config.ctrl_dt)
 
-    def reset(self, rng: jax.Array) -> mjx_env.State:
+    def reset(self, rng: jax.Array, clip_idx=None, start_frame=None) -> mjx_env.State:
         start_rng, clip_rng = jax.random.split(rng)
-        clip_idx = jax.random.choice(clip_rng, self._num_clips())
-        start_frame = jax.random.randint(start_rng, (), *self._config.start_frame_range)
+        if clip_idx is None:
+            clip_idx = jax.random.choice(clip_rng, self._num_clips())
+        if start_frame is None:
+            start_frame = jax.random.randint(start_rng, (), *self._config.start_frame_range)
         data = self._reset_data(clip_idx, start_frame)
         info : dict[str, Any] = {
             "start_frame": start_frame,
@@ -185,7 +197,7 @@ class Imitation(worm_base.CelegansEnv):
         rewards, dists = dict(), dict()
         for name, kwargs in self._config.reward_terms.items():
             r, d = _REWARD_FCN_REGISTRY[name](self, data, info, **kwargs)
-            rewards[name] = r
+            rewards[f"{name}_reward"] = r
             dists[f"{name}_dist"] = d
         return rewards, dists
 
@@ -282,7 +294,7 @@ class Imitation(worm_base.CelegansEnv):
         target = self._get_current_target(data, info)
         root_pos = self._get_root_pos(data)
         distance = jp.linalg.norm(target.root_position - root_pos)
-        reward = weight * jp.exp(-((distance/exp_scale)**2)/2)
+        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         return reward, distance
     
     @_named_reward("root_quat")
@@ -291,7 +303,7 @@ class Imitation(worm_base.CelegansEnv):
         root_quat = self._get_root_quat(data)
         quat_dist = 2.0*jp.dot(root_quat, target.root_quaternion)**2 - 1.0
         ang_dist = 0.5*jp.arccos(jp.minimum(1.0, quat_dist))
-        exp_scale = jp.deg2rad(exp_scale)
+        ang_dist = jp.rad2deg(ang_dist)
         reward = weight * jp.exp(-((ang_dist/exp_scale)**2)/2)
         return reward, ang_dist
     
@@ -311,23 +323,26 @@ class Imitation(worm_base.CelegansEnv):
         reward = weight * jp.exp(-((distance/exp_scale)**2)/2)
         return reward, distance
     
+    def _get_bodies_dist(self, data, info, bodies=consts.BODIES) -> float:
+        target = self._get_current_target(data, info)
+        body_pos = self._get_bodies_pos(data, flatten=False)
+        total_dist_sqr = 0.0
+        for body_name in bodies:
+            dist_sqr = jp.sum((body_pos[body_name] - target.body_xpos(body_name)) ** 2)
+            total_dist_sqr += dist_sqr
+        return jp.sqrt(total_dist_sqr)
+
     @_named_reward("bodies_pos")
     def _body_pos_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
-        target = self._get_current_target(data, info)
-        body_pos  = self._get_bodies_pos(data, flatten=False)
-        dists = jp.array([bp - target.body_xpos(k) for k, bp in body_pos.items()])
-        distance_sqr = jp.sum(dists**2)
-        reward = weight * jp.exp(-(distance_sqr/(exp_scale)**2)/2)
-        return reward, distance_sqr
+        total_dist = self._get_bodies_dist(data, info, bodies=consts.BODIES)
+        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        return reward, total_dist
     
     @_named_reward("end_eff")
     def _end_eff_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
-        target = self._get_current_target(data, info)
-        body_pos  = self._get_bodies_pos(data, flatten=False)
-        dists = jp.array([body_pos[ef] - target.body_xpos(ef) for ef in consts.END_EFFECTORS])
-        distance_sqr = jp.sum(dists**2)
-        reward = weight * jp.exp(-(distance_sqr/(exp_scale)**2)/2)
-        return reward, distance_sqr
+        total_dist = self._get_bodies_dist(data, info, bodies=consts.END_EFFECTORS)
+        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        return reward, total_dist
     
     @_named_reward("upright")
     def _upright_reward(self, data, info, weight, healthy_z_range) -> Tuple[float, float]:
@@ -397,6 +412,217 @@ class Imitation(worm_base.CelegansEnv):
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
 
+    def render(
+        self,
+        trajectory: List[mjx_env.State],
+        height: int = 240,
+        width: int = 320,
+        camera: Optional[str] = None,
+        scene_option: Optional[mujoco.MjvOption] = None,
+        modify_scene_fns: Optional[
+            Sequence[Callable[[mujoco.MjvScene], None]]
+        ] = None,
+        add_labels: bool = False,
+        termination_extra_frames: int = 0,
+    ) -> Sequence[np.ndarray]:
+        """
+        Renders a sequence of states (trajectory). The video includes the imitation
+        target as a white transparent "ghost".
+
+        Args:
+            trajectory (List[mjx_env.State]): Sequence of environment states to render.
+            height (int, optional): Height of the rendered frames in pixels. Defaults to 240.
+            width (int, optional): Width of the rendered frames in pixels. Defaults to 320.
+            camera (str, optional): Camera name or index to use for rendering.
+            scene_option (mujoco.MjvOption, optional): Additional scene rendering options.
+            modify_scene_fns (Sequence[Callable[[mujoco.MjvScene], None]], optional):
+                Sequence of functions to modify the scene before rendering each frame.
+                Defaults to None.
+            add_labels (bool, optional): Whether to overlay clip and termination cause
+                labels on frames. Defaults to False.
+            termination_extra_frames (int, optional): If larger than 0, then repeat the
+                frame triggering the termination this number of times. This gives
+                a freeze-on-done effect that may help debug termination criteria.
+                Additionally, a simple fade-out effect is applied during those frames
+                to smooth the tranisition between clips. If this is larger than 0, the
+                number of returned frames might be larger than `len(trajectory)`.
+        Returns:
+            Sequence[np.ndarray]: List of rendered frames as numpy arrays.
+        """
+        # Create a new spec with a ghost, without modifying the existing one
+        spec, mj_model_with_ghost = self.add_ghost(rescale_factor=self._config.rescale_factor,
+                                                   dim=self._config.dim,
+                                                   pos=(0, 0, 0.05),
+                                                   ghost_rgba=(1.0, 1.0, 1.0, 0.2),
+                                                   suffix="-ghost",
+                                                   inplace=False)
+
+        mj_model_with_ghost.vis.global_.offwidth = width
+        mj_model_with_ghost.vis.global_.offheight = height
+        mj_data_with_ghost = mujoco.MjData(mj_model_with_ghost)
+
+        renderer = mujoco.Renderer(mj_model_with_ghost, height=height, width=width)
+        if camera is None:
+            camera = -1
+
+        rendered_frames = []
+        for i, state in enumerate(trajectory):
+            time_in_frames = state.data.time * self._config.mocap_hz
+            frame = jp.floor(time_in_frames + state.info["start_frame"]).astype(int)
+            clip = state.info["reference_clip"]
+            ref = self.reference_clips.at(clip=clip, frame=frame)
+
+            mj_data_with_ghost.qpos = jp.concatenate((state.data.qpos, ref.qpos))
+            mj_data_with_ghost.qvel = jp.concatenate((state.data.qvel, ref.qvel))
+            mujoco.mj_forward(mj_model_with_ghost, mj_data_with_ghost)
+            renderer.update_scene(
+                mj_data_with_ghost, camera=camera, scene_option=scene_option
+            )
+            if modify_scene_fns is not None:
+                modify_scene_fns[i](renderer.scene)
+            rendered_frame = renderer.render()
+            if add_labels:
+                import cv2
+                label = f"Clip {clip}"
+                cv2.putText(
+                    rendered_frame,
+                    label,
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+            rendered_frames.append(rendered_frame)
+            if state.done:
+                if add_labels:
+                    import cv2
+
+                    reason = "<Unknown>"
+                    if state.info["truncated"]:
+                        reason = "truncated"
+                    for name in self._config.termination_criteria.keys():
+                        if state.metrics[name] > 0:
+                            reason = name
+                    cv2.putText(
+                        rendered_frame,
+                        reason,
+                        (10, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.0,
+                        (255, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+                for t in range(termination_extra_frames):
+                    rel_t = t / termination_extra_frames
+                    fade_factor = 1 / (
+                        1 + np.exp(10 * (rel_t - 0.5))
+                    )  # Logistic fade-out
+                    faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
+                    rendered_frames.append(faded_frame)
+        return rendered_frames
+    def verify_reference_data(self, atol: float = 5e-3) -> bool:
+        """A set of non-exhaustive sanity checks that the reference data found in
+        `config.REFERENCE_DATA_PATH` matches the environment's model. Most
+        importantly, it verifies that the global coordinates of the
+        body parts (xpos) match those the model produces when initialized to
+        the corresponding qpos from the file. This can catch issues with nested
+        free joints, mismatched joint orders, and incorrect scaling of the model
+        but it's not exhaustive). This current implementation tests all
+        frames of all clips in the reference data, and so is rather slow and
+        does not have to be run every time.
+
+        Args:
+            atol (float): Absolute floating-point tolerance for the checks.
+                          Defaults to 5e-3, because this seems to be the precision
+                          of the reference data (TODO: why are there several mm
+                          of error?).
+        Returns:
+            bool: True if all checks passed, False if any check failed.
+        """
+
+        def test_frame(clip_idx: int, frame: int) -> dict[str, bool]:
+            data = self._reset_data(clip_idx, frame)
+            reference = self.reference_clips.at(clip=clip_idx, frame=frame)
+            checks = collections.OrderedDict()
+            checks["root_pos"] = jp.allclose(
+                self.root_body(data).xpos[...,:self._config.dim], reference.root_position[...,:self._config.dim], atol=atol
+            )
+            checks["root_quat"] = jp.allclose(
+                self.root_body(data).xquat, reference.root_quaternion, atol=atol
+            )
+            checks["joints"] = jp.allclose(
+                self._get_joint_angles(data), reference.joints, atol=atol
+            )
+            body_pos = self._get_bodies_pos(data, flatten=False)
+            for body_name, body_pos in body_pos.items():
+                checks[f"body_xpos/{body_name}"] = jp.allclose(
+                    body_pos[...,:self._config.dim], reference.body_xpos(body_name)[...,:self._config.dim], atol=atol
+                )
+            if self._config.qvel_init == "reference":
+                checks["joints_ang_vel"] = jp.allclose(
+                    self._get_joint_ang_vels(data), reference.joints, atol=atol
+                )
+            return checks
+
+        @jax.jit
+        def test_clip(clip_idx: int):
+            return jax.vmap(test_frame, in_axes=(None, 0))(
+                clip_idx, jp.arange(self._clip_length())
+            )
+
+        _assert_all_are_prefix(
+            self.reference_clips.joint_names,
+            self.get_joint_names(),
+            "reference joints",
+            "model joints",
+        )
+        if isinstance(self._clip_set, int):
+            clip_idxs = jp.arange(self._clip_set)
+        else:
+            clip_idxs = self._clip_set
+
+        any_failed = False
+        for clip in clip_idxs:
+            if clip < 0 or clip >= self.reference_clips.qpos.shape[0]:
+                raise ValueError(
+                    f"Clip index {clip} is out of range. Reference"
+                    f"data has {self.reference_clips.qpos.shape[0]} clips."
+                )
+            data = self._reset_data(clip, 0)
+            reference = self.reference_clips.at(clip=clip, frame=0)
+            test_result = test_clip(clip)
+
+            for name, result in test_result.items():
+                n_failed = jp.sum(np.logical_not(result))
+                if n_failed > 0:
+                    first_failed_frame = jp.argmax(np.logical_not(result))
+                    warnings.warn(
+                        f"Reference data verification failed for {n_failed} frames"
+                        f" for check '{name}' for clip {clip}."
+                        f" First failure at frame {first_failed_frame}."
+                    )
+                    if name == "root_pos":
+                        warnings.warn(f"Root position: {self.root_body(data).xpos} != {reference.root_position}")
+                        warnings.warn(f"diff: {jp.linalg.norm(self.root_body(data).xpos[...,:self._config.dim] - reference.root_position[...,:self._config.dim])}")
+                    elif name == "root_quat":
+                        warnings.warn(f"Root quaternion: {self.root_body(data).xquat} != {reference.root_quaternion}")
+                        warnings.warn(f"diff: {jp.linalg.norm(self.root_body(data).xquat - reference.root_quaternion)}")
+                    elif name == "joints":
+                        warnings.warn(f"Joints: {self._get_joint_angles(data)} != {reference.joints}")
+                        warnings.warn(f"diff: {jp.linalg.norm(self._get_joint_angles(data) - reference.joints)}")
+                    elif name == "joints_ang_vel":
+                        warnings.warn(f"Joints ang vel: {self._get_joint_ang_vels(data)} != {reference.joints_velocity}")
+                        warnings.warn(f"diff: {jp.linalg.norm(self._get_joint_ang_vels(data) - reference.joints_velocity)}")
+                    elif "body_xpos" in name:
+                        body_name = name.split("/")[-1]
+                        warnings.warn(f"Bodies pos: {self._get_bodies_pos(data, flatten=False)[body_name][...,:self._config.dim]} != {reference.body_xpos(body_name)[...,:self._config.dim]}")
+                        warnings.warn(f"diff: {jp.linalg.norm(self._get_bodies_pos(data, flatten=False)[body_name][...,:self._config.dim] - reference.body_xpos(body_name)[...,:self._config.dim])}")
+                    any_failed = True
+        return not any_failed
+
 def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
     if isinstance(a, map):
         a = list(a)
@@ -408,27 +634,8 @@ def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
         if not b_el.startswith(a_el):
             raise AssertionError(f"Comparing {a_name} and {b_name}. Expected {a_el} to match {b_el}.")
 
-class Imitation2D(Imitation):
-    """Imitation environment for 2D C. Elegans."""
-
-    def __init__(self, config: config_dict.ConfigDict = default_config(),
-                 config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
-    ) -> None:
-        super().__init__(config, config_overrides)
+        
     
-    def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
-        data = mjx.make_data(self.mjx_model)#, impl=self._config.mujoco_impl)
-        reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
-
-        qpos2d = jnp.concat([reference.qpos[..., :3], reference.qpos[7:]], axis=-1)
-        data = data.replace(qpos=qpos2d)
-        if self._config.qvel_init == "default":
-            pass
-        elif self._config.qvel_init == "zeros":
-            data = data.replace(qvel = jp.zeros(self.mjx_model.nv))
-        elif self._config.qvel_init == "noise":
-            raise NotImplementedError("qvel_init='noise' is not yet implemented.")
-        elif self._config.qvel_init == "reference":
-            data = data.replace(qvel = jp.concat([reference.qvel[..., :3], reference.qvel[..., 6:]], axis=-1))
-        data = mjx.forward(self.mjx_model, data)
-        return data
+    
+    
+    
