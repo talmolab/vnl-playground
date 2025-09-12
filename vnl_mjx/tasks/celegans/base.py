@@ -28,6 +28,12 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.CELEGANS_XML_PATH,
         arena_xml_path=consts.WHITE_ARENA_XML_PATH,
+        root_body=consts.ROOT,
+        joints=consts.JOINTS,
+        bodies=consts.BODIES,
+        end_effectors=consts.END_EFFECTORS,
+        touch_sensors=consts.TOUCH_SENSORS,
+        sensors=consts.SENSORS,
         sim_dt=0.002,
         ctrl_dt=0.01,
         solver="cg",
@@ -63,6 +69,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         self,
         torque_actuators: bool,
         rescale_factor: float = 1.0,
+        dim: int = 3,
         pos: tuple[float, float, float] = (0, 0, 0.05),
         quat: tuple[float, float, float, float] = (1, 0, 0, 0),
         rgba: Optional[tuple[float, float, float, float]] = None,
@@ -79,6 +86,7 @@ class CelegansEnv(mjx_env.MjxEnv):
                 If None, no recoloring is applied. Defaults to None.
             suffix: Suffix to append to body names. Defaults to "-worm".
         """
+        print(f"Loading worm from {self._walker_xml_path}")
         worm = mujoco.MjSpec.from_file(self._walker_xml_path)
 
         # a) Convert motors to torque‑mode if requested
@@ -107,16 +115,32 @@ class CelegansEnv(mjx_env.MjxEnv):
         )
         spawn_body = spawn_site.attach_body(worm.worldbody,"", suffix=suffix)
         self._suffix = suffix
-        spawn_body.add_freejoint()
 
-    def add_ghost_worm(
+        if dim == 3:
+            spawn_body.add_freejoint()
+        elif dim == 2:
+            spawn_body.add_joint(axis=(1, 0, 0), name="rootx" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
+            spawn_body.add_joint(axis=(0, 1, 0), name="rooty" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
+            #spawn_body.add_joint(axis=(0, 0, 1), name="rootz" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
+            spawn_body.add_joint(axis=(0, 0, 1), name="free_body_rot" + suffix, type=mujoco.mjtJoint.mjJNT_HINGE, pos=[0, 0, 0])
+
+    def add_ghost(
         self,
         rescale_factor: float = 1.0,
         pos=(0, 0, 0.05),
         ghost_rgba=(0.8, 0.8, 0.8, 0.3),
         suffix="-ghost",
+        dim=3,
+        inplace=False,
     ):
         """Adds a ghost worm model to the environment."""
+        print(f"Loading ghost worm from {self._walker_xml_path}")
+
+        if not inplace:
+            spec = self._spec.copy()
+        else:
+            spec = self._spec
+
         walker_spec = mujoco.MjSpec.from_string(
             epath.Path(self._walker_xml_path).read_text()
         )
@@ -125,9 +149,19 @@ class CelegansEnv(mjx_env.MjxEnv):
             _scale_body_tree(body, rescale_factor)
             _recolour_tree(body, rgba=ghost_rgba)
         # Attach as ghost at the offset frame
-        frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
+        frame = spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         spawn_body = frame.attach_body(walker_spec.body(f"{consts.ROOT}"), "", suffix=suffix)
-        spawn_body.add_freejoint()
+
+        if dim == 3:
+            spawn_body.add_freejoint()
+        elif dim == 2:
+            spawn_body.add_joint(axis=(1, 0, 0), name="rootx" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
+            spawn_body.add_joint(axis=(0, 1, 0), name="rooty" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
+            # spawn_body.add_joint(axis=(0, 0, 1), name="rootz" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
+            spawn_body.add_joint(axis=(0, 0, 1), name="free_body_rot" + suffix, type=mujoco.mjtJoint.mjJNT_HINGE, pos=[0, 0, 0])
+        
+        if not inplace:
+            return spec, spec.compile()
 
     def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and put models to mjx"""
@@ -213,7 +247,8 @@ class CelegansEnv(mjx_env.MjxEnv):
             actuator_ctrl = self._get_actuator_ctrl(data),
             body_height = self._get_body_height(data),
             world_zaxis = self._get_world_zaxis(data),
-            appendages_pos = self._get_appendages_pos(data, flatten=flatten)
+            appendages_pos = self._get_appendages_pos(data, flatten=flatten),
+            kinematic_sensors = self._get_kinematic_sensors(data, flatten=flatten),
          )
         if flatten:
             proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)
@@ -221,9 +256,14 @@ class CelegansEnv(mjx_env.MjxEnv):
 
     def _get_kinematic_sensors(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
         """Get kinematic sensors data from the environment."""
-        accelerometer = data.bind(self.mjx_model, self._spec.sensor("accelerometer{self._suffix}")).sensordata
-        velocimeter = data.bind(self.mjx_model, self._spec.sensor("velocimeter{self._suffix}")).sensordata
-        gyro = data.bind(self.mjx_model, self._spec.sensor("gyro{self._suffix}")).sensordata
+        try:
+            accelerometer = data.bind(self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")).sensordata
+            velocimeter = data.bind(self.mjx_model, self._spec.sensor(f"velocimeter{self._suffix}")).sensordata
+            gyro = data.bind(self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")).sensordata
+        except TypeError as e:
+            print(f"Kinematic sensors not found for {self._suffix}")
+            print(f"Available sensors: {[s.name for s in self._spec.sensors]}")
+            raise e
         sensors = collections.OrderedDict(
             accelerometer = accelerometer,
             velocimeter = velocimeter,
@@ -252,7 +292,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         )
 
     def get_joint_names(self):
-        return map(lambda j: j.name, self._spec.joints[1:])
+        return [j.name for j in self._spec.joints if j.name.replace(self._suffix, "") in consts.JOINTS]
 
     def root_body(self, data):
         #TODO: Double-check which body should be considered the root (walker or torso)
