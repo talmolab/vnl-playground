@@ -27,16 +27,19 @@ def default_config() -> config_dict.ConfigDict:
         end_effectors = consts.END_EFFECTORS,
         touch_sensors = consts.TOUCH_SENSORS,
         sensors = consts.SENSORS,
-        mujoco_impl = "mjx",
+        mujoco_impl = "jax",
         sim_dt  = 0.002,
         ctrl_dt = 0.02,
         solver = "cg",
         iterations = 5,
         ls_iterations = 5,
         noslip_iterations = 0,
+        nconmax = 256,
+        njmax = 256,
         torque_actuators = False,
         rescale_factor = 1.0,
         dim = 3,
+        friction = (1, 1, 0.005, 0.0001, 0.0001),
 
         mocap_hz = 20,
         clip_length = 250,
@@ -88,7 +91,8 @@ class Imitation(worm_base.CelegansEnv):
         self.add_worm(
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
-            dim=self._config.dim
+            dim=self._config.dim,
+            friction=self._config.friction,
         )
         if self._config.with_ghost:
             self.add_ghost_worm(rescale_factor=self._config.rescale_factor, dim=self._config.dim)
@@ -223,7 +227,11 @@ class Imitation(worm_base.CelegansEnv):
         return costs, magnitudes
     
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
-        data = mjx.make_data(self.mjx_model)#, impl=self._config.mujoco_impl)
+        data = mjx.make_data(self.mj_model) #,
+        #     impl=self._config.mujoco_impl,
+        #     nconmax=self._config.nconmax,
+        #     njmax=self._config.nconmax,
+        # )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         data = data.replace(qpos = reference.qpos)
         if self._config.qvel_init == "default":

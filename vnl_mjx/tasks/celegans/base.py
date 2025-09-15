@@ -11,6 +11,7 @@ import numpy as np
 from ml_collections import config_dict
 import mujoco
 from mujoco import mjx
+from xml.etree import ElementTree as ET
 
 from mujoco_playground._src import mjx_env
 from vnl_mjx.tasks.celegans import consts
@@ -40,6 +41,9 @@ def default_config() -> config_dict.ConfigDict:
         iterations=4,
         ls_iterations=4,
         noslip_iterations=0,
+        nconmax=256,
+        njmax=256,
+        mujoco_impl="jax",
     )
 
 class CelegansEnv(mjx_env.MjxEnv):
@@ -72,6 +76,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         dim: int = 3,
         pos: tuple[float, float, float] = (0, 0, 0.05),
         quat: tuple[float, float, float, float] = (1, 0, 0, 0),
+        friction: tuple[float] = (1, 1, 0.005, 0.0001, 0.0001),
         rgba: Optional[tuple[float, float, float, float]] = None,
         suffix: str = "-worm",
     ) -> None:
@@ -113,7 +118,8 @@ class CelegansEnv(mjx_env.MjxEnv):
             pos=pos,
             quat=quat,
         )
-        spawn_body = spawn_site.attach_body(worm.worldbody,"", suffix=suffix)
+        root = worm.worldbody
+        spawn_body = spawn_site.attach_body(root,"", suffix=suffix)
         self._suffix = suffix
 
         if dim == 3:
@@ -121,8 +127,15 @@ class CelegansEnv(mjx_env.MjxEnv):
         elif dim == 2:
             spawn_body.add_joint(axis=(1, 0, 0), name="rootx" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
             spawn_body.add_joint(axis=(0, 1, 0), name="rooty" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
-            #spawn_body.add_joint(axis=(0, 0, 1), name="rootz" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
+            spawn_body.add_joint(axis=(0, 0, 1), name="rootz" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
             spawn_body.add_joint(axis=(0, 0, 1), name="free_body_rot" + suffix, type=mujoco.mjtJoint.mjJNT_HINGE, pos=[0, 0, 0])
+
+        for body_name in self._config.bodies:
+            body = worm.body(f"{body_name}{suffix}")
+            for geom in body.geoms:
+                if geom.type == mujoco.mjtGeom.mjGEOM_SPHERE:
+                    self._spec.add_pair(name=f"{body_name}_floor", geomname1=geom.name, geomname2="floor", condim=3, friction=friction)
+
 
     def add_ghost(
         self,
@@ -150,14 +163,16 @@ class CelegansEnv(mjx_env.MjxEnv):
             _recolour_tree(body, rgba=ghost_rgba)
         # Attach as ghost at the offset frame
         frame = spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
-        spawn_body = frame.attach_body(walker_spec.body(f"{self._config.root_body}"), "", suffix=suffix)
+        root = walker_spec.worldbody
+        spawn_body = frame.attach_body(root,"", suffix=suffix)
+        self._suffix = suffix
 
         if dim == 3:
             spawn_body.add_freejoint()
         elif dim == 2:
             spawn_body.add_joint(axis=(1, 0, 0), name="rootx" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
             spawn_body.add_joint(axis=(0, 1, 0), name="rooty" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
-            # spawn_body.add_joint(axis=(0, 0, 1), name="rootz" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
+            spawn_body.add_joint(axis=(0, 0, 1), name="rootz" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
             spawn_body.add_joint(axis=(0, 0, 1), name="free_body_rot" + suffix, type=mujoco.mjtJoint.mjJNT_HINGE, pos=[0, 0, 0])
         
         if not inplace:
@@ -174,7 +189,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
-            self._mjx_model = mjx.put_model(self._mj_model)
+            self._mjx_model = mjx.put_model(self._mj_model)#, impl=self._config.mujoco_impl)
             self._compiled = True
 
     def _get_root_pos(self, data: mjx.Data) -> jp.ndarray:
@@ -297,6 +312,18 @@ class CelegansEnv(mjx_env.MjxEnv):
     def root_body(self, data):
         #TODO: Double-check which body should be considered the root (walker or torso)
         return data.bind(self.mjx_model, self._spec.body(f"{consts.ROOT}{self._suffix}"))
+
+    def save_spec(self, path: str, return_str: bool = False):
+        """Save the spec to a file."""
+        xml_str = self._spec.to_xml()
+        root = ET.fromstring(xml_str)
+        with open(path, "wb") as f:
+            f.write(ET.tostring(root, encoding="utf-8", xml_declaration=True))
+        print(f"Saved spec to {path}")
+        if return_str:
+            return xml_str
+        else:
+            return None
 
     @property
     def action_size(self) -> int:
