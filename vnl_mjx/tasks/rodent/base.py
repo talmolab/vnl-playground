@@ -35,7 +35,7 @@ def default_config() -> config_dict.ConfigDict:
         iterations=4,
         ls_iterations=4,
         noslip_iterations=0,
-        mujoco_impl="jax"
+        mujoco_impl="jax",
     )
 
 
@@ -71,7 +71,7 @@ class RodentEnv(mjx_env.MjxEnv):
         suffix: str = "-rodent",
     ) -> None:
         """Adds the rodent model to the environment.
-        
+
         Args:
             torque_actuators: Whether to convert motors to torque-mode actuators.
             rescale_factor: Factor to rescale the rodent body. Defaults to 1.0.
@@ -142,71 +142,95 @@ class RodentEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
-            self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.mujoco_impl)
+            self._mjx_model = mjx.put_model(
+                self._mj_model, impl=self._config.mujoco_impl
+            )
             self._compiled = True
 
-    def _get_appendages_pos(self, data: mjx.Data, flatten: bool = True) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+    def _get_appendages_pos(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
         """Get _egocentric_ position of the appendages."""
         torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
         appendages_pos = collections.OrderedDict()
         for apppendage_name in consts.END_EFFECTORS:
-            global_xpos = data.bind(self.mjx_model, self._spec.body(f"{apppendage_name}{self._suffix}")).xpos
+            global_xpos = data.bind(
+                self.mjx_model, self._spec.body(f"{apppendage_name}{self._suffix}")
+            ).xpos
             egocentric_xpos = jp.dot(global_xpos - torso.xpos, torso.xmat)
             appendages_pos[apppendage_name] = egocentric_xpos
         if flatten:
             appendages_pos, _ = jax.flatten_util.ravel_pytree(appendages_pos)
         return appendages_pos
-    
-    def _get_bodies_pos(self, data: mjx.Data, flatten: bool = True) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+
+    def _get_bodies_pos(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
         """Get _global_ positions of the body parts."""
         bodies_pos = collections.OrderedDict()
         for body_name in consts.BODIES:
-            global_xpos = data.bind(self.mjx_model, self._spec.body(f"{body_name}{self._suffix}")).xpos
+            global_xpos = data.bind(
+                self.mjx_model, self._spec.body(f"{body_name}{self._suffix}")
+            ).xpos
             bodies_pos[body_name] = global_xpos
         if flatten:
             bodies_pos, _ = jax.flatten_util.ravel_pytree(bodies_pos)
         return bodies_pos
 
     def _get_joint_angles(self, data: mjx.Data) -> jp.ndarray:
-        return data.qpos[7:] #TODO: use MuJoCo functions to get this, rather than slicing
-    
+        return data.qpos[
+            7:
+        ]  # TODO: use MuJoCo functions to get this, rather than slicing
+
     def _get_joint_ang_vels(self, data: mjx.Data) -> jp.ndarray:
-        return data.qvel[6:] #TODO: use MuJoCo functions to get this, rather than slicing
-    
+        return data.qvel[
+            6:
+        ]  # TODO: use MuJoCo functions to get this, rather than slicing
+
     def _get_actuator_ctrl(self, data: mjx.Data) -> jp.ndarray:
         return data.qfrc_actuator
 
     def _get_body_height(self, data: mjx.Data) -> jp.ndarray:
-        torso_pos = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xpos
+        torso_pos = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos
         torso_z = torso_pos[2]
-        return torso_z#self.root_body(data).xpos[1]
-    
+        return torso_z  # self.root_body(data).xpos[1]
+
     def _get_world_zaxis(self, data: mjx.Data) -> jp.ndarray:
         return self.root_body(data).xmat.flatten()[6:]
 
-    def _get_proprioception(self, data: mjx.Data, flatten: bool = True) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
+    def _get_proprioception(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
         """Get proprioception data from the environment."""
         proprioception = collections.OrderedDict(
-            joint_angles = self._get_joint_angles(data),
-            joint_ang_vels = self._get_joint_ang_vels(data),
-            actuator_ctrl = self._get_actuator_ctrl(data),
-            body_height = self._get_body_height(data),
-            world_zaxis = self._get_world_zaxis(data),
-            appendages_pos = self._get_appendages_pos(data, flatten=flatten)
+            joint_angles=self._get_joint_angles(data),
+            joint_ang_vels=self._get_joint_ang_vels(data),
+            actuator_ctrl=self._get_actuator_ctrl(data),
+            body_height=self._get_body_height(data),
+            world_zaxis=self._get_world_zaxis(data),
+            appendages_pos=self._get_appendages_pos(data, flatten=flatten),
         )
         if flatten:
             proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)
         return proprioception
 
-    def _get_kinematic_sensors(self, data: mjx.Data, flatten: bool = True) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
+    def _get_kinematic_sensors(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
         """Get kinematic sensors data from the environment."""
-        accelerometer = data.bind(self.mjx_model, self._spec.sensor("accelerometer-rodent")).sensordata
-        velocimeter = data.bind(self.mjx_model, self._spec.sensor("velocimeter-rodent")).sensordata
+        accelerometer = data.bind(
+            self.mjx_model, self._spec.sensor("accelerometer-rodent")
+        ).sensordata
+        velocimeter = data.bind(
+            self.mjx_model, self._spec.sensor("velocimeter-rodent")
+        ).sensordata
         gyro = data.bind(self.mjx_model, self._spec.sensor("gyro-rodent")).sensordata
         sensors = collections.OrderedDict(
-            accelerometer = accelerometer,
-            velocimeter = velocimeter,
-            gyro = gyro,
+            accelerometer=accelerometer,
+            velocimeter=velocimeter,
+            gyro=gyro,
         )
         if flatten:
             sensors, _ = jax.flatten_util.ravel_pytree(sensors)
@@ -214,7 +238,12 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_touch_sensors(self, data: mjx.Data) -> jp.ndarray:
         """Get touch sensors data from the environment."""
-        touches = [data.bind(self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")).sensordata for name in TOUCH_SENSORS]
+        touches = [
+            data.bind(
+                self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")
+            ).sensordata
+            for name in consts.TOUCH_SENSORS
+        ]
         return jp.array(touches)
 
     def _get_origin(self, data: mjx.Data) -> jp.ndarray:
@@ -234,7 +263,7 @@ class RodentEnv(mjx_env.MjxEnv):
         return map(lambda j: j.name, self._spec.joints[1:])
 
     def root_body(self, data):
-        #TODO: Double-check which body should be considered the root (walker or torso)
+        # TODO: Double-check which body should be considered the root (walker or torso)
         return data.bind(self.mjx_model, self._spec.body(f"walker{self._suffix}"))
 
     @property

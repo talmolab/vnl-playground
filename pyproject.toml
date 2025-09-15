@@ -24,7 +24,7 @@ dependencies = [
     "mujoco",
     "dm_control",
     "mujoco-mjx[warp]>=3.3.5",
-    "warp-lang>=1.9.0",
+    "warp-lang",
     "mediapy",
     "jax",
     "flax",

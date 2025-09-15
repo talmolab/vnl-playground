@@ -3,6 +3,10 @@ Temporary train script for quick-start training
 """
 
 import os
+from typing import Callable
+
+from mujoco_playground._src import mjx_env
+from omegaconf import OmegaConf
 
 # os.environ["CUDA_VISIBLE_DEVICES"] = "2"  # visible GPU masks
 xla_flags = os.environ.get("XLA_FLAGS", "")
@@ -20,8 +24,7 @@ import imageio
 
 import jax
 import jax.numpy as jp
-import matplotlib.pyplot as plt
-import mediapy as media
+
 import mujoco
 import wandb
 from brax.training.agents.ppo import networks as ppo_networks
@@ -30,16 +33,16 @@ from brax.training.acme import running_statistics
 
 from etils import epath
 from flax.training import orbax_utils
-from IPython.display import clear_output, display
 from orbax import checkpoint as ocp
 from ml_collections import config_dict
-from tqdm import tqdm
 
-from mujoco_playground import locomotion, wrapper
-from mujoco_playground.config import locomotion_params
+from mujoco_playground import wrapper
 
-from vnl_mjx.tasks.rodent import flat_arena, bowl_escape, head_track_rear
+from vnl_mjx.tasks.rodent import head_track_rear
 
+from track_mjx.agent import checkpointing
+from track_mjx.agent import wandb_logging
+from track_mjx.agent.mlp_ppo import ppo_networks as track_networks
 
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
@@ -47,6 +50,12 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = head_track_rear.default_config()
+
+mimic_checkpoint_path = "/n/holylabs-olveczky/Users/charleszhang/track-mjx/model_checkpoints/250913_162327_167947"
+mimic_cfg = OmegaConf.create(
+    checkpointing.load_config_from_checkpoint(mimic_checkpoint_path)
+)
+decoder_policy_fn = track_networks.make_decoder_policy_fn(mimic_checkpoint_path)
 
 
 ppo_params = config_dict.create(
@@ -59,14 +68,14 @@ ppo_params = config_dict.create(
     num_minibatches=8,
     num_updates_per_batch=2,
     discounting=0.97,
-    learning_rate=1e-4,
+    learning_rate=5e-4,
     entropy_cost=1e-2,
-    num_envs=16384,
-    batch_size=2048,
+    num_envs=8192,
+    batch_size=1024,
     max_grad_norm=1.0,
     network_factory=config_dict.create(
-        policy_hidden_layer_sizes=(256, 256, 256, 256, 256, 256),
-        value_hidden_layer_sizes=(512, 512, 512, 256, 256, 256),
+        policy_hidden_layer_sizes=(2048, 1024, 512),
+        value_hidden_layer_sizes=(2048, 1024, 512),
     ),
     eval_every=10_000_000,  # num_evals = num_timesteps // eval_every
 )
@@ -89,19 +98,6 @@ exp_name = f"{env_name}-{timestamp}"
 if SUFFIX is not None:
     exp_name += f"-{SUFFIX}"
 print(f"Experiment name: {exp_name}")
-
-# Possibly restore from the latest checkpoint.
-if FINETUNE_PATH is not None:
-    FINETUNE_PATH = epath.Path(FINETUNE_PATH)
-    latest_ckpts = list(FINETUNE_PATH.glob("*"))
-    latest_ckpts = [ckpt for ckpt in latest_ckpts if ckpt.is_dir()]
-    latest_ckpts.sort(key=lambda x: int(x.name))
-    latest_ckpt = latest_ckpts[-1]
-    restore_checkpoint_path = latest_ckpt
-    print(f"Restoring from: {restore_checkpoint_path}")
-else:
-    restore_checkpoint_path = None
-
 
 ckpt_path = epath.Path("checkpoints").resolve() / exp_name
 ckpt_path.mkdir(parents=True, exist_ok=True)
@@ -154,7 +150,7 @@ train_fn = functools.partial(
     **training_params,
     num_evals=int(ppo_params.num_timesteps / ppo_params.eval_every),
     network_factory=network_factory,
-    restore_checkpoint_path=restore_checkpoint_path,
+    restore_checkpoint_path=None,
     progress_fn=progress_fn,
     wrap_env_fn=functools.partial(wrapper.wrap_for_brax_training),
     # policy_params_fn=policy_params_fn,
@@ -197,11 +193,47 @@ class FlattenObsWrapper(wrapper.Wrapper):
         return new_metrics
 
     @property
-    def observation_size(self) -> int:
-        rng_shape = jax.eval_shape(jax.random.key, 0)
-        # flat_obs = lambda rng: self._flatten(self.env.reset(rng).obs)
-        obs_size = len(jax.eval_shape(self.reset, rng_shape))
-        return obs_size
+    def observation_size(self) -> mjx_env.ObservationSize:
+        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+        obs = abstract_state.obs
+        if isinstance(obs, Mapping):
+            return jax.tree_util.tree_map(lambda x: x.shape, obs)
+        return jp.sum(jax.flatten_util.ravel_pytree(obs.shape[-1])[0])
+
+
+class HighLevelWrapper(wrapper.Wrapper):
+    """Takes a decoder inference function and uses it to get the ctrl used in the sim step.
+
+    The environment wrapped in this must use the same set of proprioceptive obs as the decoder.
+    """
+
+    def __init__(
+        self,
+        env: wrapper.mjx_env.MjxEnv,
+        decoder_inference_fn: Callable,
+        latent_size: int,
+        non_proprioceptive_obs_size: int,
+    ):
+        self._decoder_inference_fn = decoder_inference_fn
+        self._latent_size = latent_size
+        self.non_proprioceptive_obs_size = non_proprioceptive_obs_size
+        super().__init__(env)
+
+    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        obs = state.obs
+
+        # Note: We assume the non proprioceptive obs are first indices in obs, followed by proprioceptive obs.
+        ctrl, _ = self._decoder_inference_fn(
+            jp.concatenate(
+                [action, obs[..., self.non_proprioceptive_obs_size :]],
+                axis=-1,
+            ),
+        )
+        return self.env.step(state, ctrl)
+
+    @property
+    def action_size(self) -> int:
+        return self._latent_size
 
 
 def make_logging_inference_fn(ppo_networks):
@@ -247,8 +279,19 @@ def make_logging_inference_fn(ppo_networks):
 
 
 if __name__ == "__main__":
-    env = FlattenObsWrapper(head_track_rear.HeadTrackRear(config=env_cfg))
-    eval_env = FlattenObsWrapper(head_track_rear.HeadTrackRear(config=env_cfg))
+    env = head_track_rear.HeadTrackRear(config=env_cfg)
+    env = HighLevelWrapper(
+        FlattenObsWrapper(env),
+        decoder_policy_fn,
+        mimic_cfg.network_config.intention_size,
+        0,  # the head track task has no non-proprioceptive obs
+    )
+    eval_env = HighLevelWrapper(
+        FlattenObsWrapper(env),
+        decoder_policy_fn,
+        mimic_cfg.network_config.intention_size,
+        0,  # the head track task has no non-proprioceptive obs
+    )
 
     # render a rollout in the policy_params_fn to log to wandb at each step
     jit_reset = jax.jit(env.reset)
