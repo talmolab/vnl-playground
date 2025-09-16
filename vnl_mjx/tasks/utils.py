@@ -110,5 +110,5 @@ def dm_scale_spec(spec, scale):
         keypoint.qpos = qpos
         keypoint.qpos[2] = keypoint.qpos[2] * scale
 
-    scale_bodies(scaled_spec.body("walker"), scale)
+    scale_bodies(scaled_spec.worldbody.first_body(), scale)
     return scaled_spec

@@ -10,6 +10,7 @@ CELEGANS_PATH = epath.Path(__file__).parent
 CELEGANS_XML_PATH = CELEGANS_PATH / "xmls" / "celegans_fast.xml"
 ARENA_XML_PATH = CELEGANS_PATH / "xmls" / "arena.xml"
 WHITE_ARENA_XML_PATH = CELEGANS_PATH / "xmls" / "white_arena.xml"
+REFERENCE_H5_PATH = CELEGANS_PATH / "reference_data" / "reference2d.h5"
 
 ROOT = "torso1_body"
 END_EFFECTORS = ["torso1_body", "torso2_body", "torso3_body", "torso4_body", "torso5_body", "torso21_body", "torso22_body", "torso23_body", "torso24_body", "torso25_body"]

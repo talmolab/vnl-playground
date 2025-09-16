@@ -10,7 +10,7 @@ env_config:
   env_args:
     walker_xml_path: /home/aaprasad/mnt/projects/con3trol/src/vnl_playground/vnl_mjx/tasks/celegans/xmls/celegans/celegans_fast.xml
     torque_actuators: False  # Changed from False for better performance
-    rescale_factor: 1.0
+    rescale_factor: 1.04
     solver: "cg"
     iterations: 4
     ls_iterations: 4
