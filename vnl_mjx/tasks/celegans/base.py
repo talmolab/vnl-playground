@@ -134,7 +134,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             body = worm.body(f"{body_name}{suffix}")
             for geom in body.geoms:
                 if geom.type == mujoco.mjtGeom.mjGEOM_SPHERE:
-                    self._spec.add_pair(name=f"{body_name}_floor", geomname1=geom.name, geomname2="floor", condim=3, friction=friction)
+                    self._spec.add_pair(name=f"{body_name}_floor", geomname1=geom.name, geomname2="floor", condim=3, friction=friction, solimp=[0, 0.95, 0.001, 0.5, 2])
 
 
     def add_ghost(

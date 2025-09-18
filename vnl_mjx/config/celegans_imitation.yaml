@@ -8,9 +8,11 @@ env_config:
   backend: playground
 
   env_args:
-    walker_xml_path: /home/aaprasad/mnt/projects/con3trol/src/vnl_playground/vnl_mjx/tasks/celegans/xmls/celegans/celegans_fast.xml
+    walker_xml_path: /home/aaprasad/mnt/projects/con3trol/src/vnl-playground/vnl_mjx/tasks/celegans/xmls/celegans_slide.xml
     torque_actuators: False  # Changed from False for better performance
     rescale_factor: 1.04
+    dim: 2
+    friction: [1.0, 0.1, 0.005, 0.0001, 0.0001]
     solver: "cg"
     iterations: 4
     ls_iterations: 4
@@ -38,7 +40,7 @@ env_config:
         weight: 1.0
       joints_vel:
         exp_scale: 1.0
-        weight: 1.0
+        weight: 3.0
       bodies_pos:
         exp_scale: 0.5
         weight: 1.0
