@@ -14,7 +14,7 @@ import sys
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # visible GPU masks
 
 # os.environ["WANDB_API_KEY"] = ...
-# os.envirion["HDF5_USE_FILE_LOCKING"] = "false"
+# os.environ["HDF5_USE_FILE_LOCKING"] = "false"
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
@@ -68,7 +68,7 @@ def main(cfg: DictConfig):
     logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
 
     # Generate a new run_id and associated checkpoint path
-    # time.sleep(np.random.randint(60))
+    # sleep(np.random.randint(60))
     run_id = datetime.now().strftime("%y%m%d_%H%M%S")
     # TODO: Use a base path given by the config
     checkpoint_path = hydra.utils.to_absolute_path(

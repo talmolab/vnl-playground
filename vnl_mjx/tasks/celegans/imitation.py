@@ -40,6 +40,7 @@ def default_config() -> config_dict.ConfigDict:
         rescale_factor = 1.0,
         dim = 3,
         friction = (1, 1, 0.005, 0.0001, 0.0001),
+        solimp = (0.9, 0.95, 0.001, 0.5, 2),
 
         mocap_hz = 20,
         clip_length = 250,
@@ -93,6 +94,7 @@ class Imitation(worm_base.CelegansEnv):
             torque_actuators=self._config.torque_actuators,
             dim=self._config.dim,
             friction=self._config.friction,
+            solimp=self._config.solimp,
         )
         if self._config.with_ghost:
             self.add_ghost_worm(rescale_factor=self._config.rescale_factor, dim=self._config.dim)

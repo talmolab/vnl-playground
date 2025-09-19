@@ -77,6 +77,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         pos: tuple[float, float, float] = (0, 0, 0.05),
         quat: tuple[float, float, float, float] = (1, 0, 0, 0),
         friction: tuple[float] = (1, 1, 0.005, 0.0001, 0.0001),
+        solimp: tuple[float] = (0.9, 0.95, 0.001, 0.5, 2),
         rgba: Optional[tuple[float, float, float, float]] = None,
         suffix: str = "-worm",
     ) -> None:
@@ -134,7 +135,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             body = worm.body(f"{body_name}{suffix}")
             for geom in body.geoms:
                 if geom.type == mujoco.mjtGeom.mjGEOM_SPHERE:
-                    self._spec.add_pair(name=f"{body_name}_floor", geomname1=geom.name, geomname2="floor", condim=3, friction=friction, solimp=[0, 0.95, 0.001, 0.5, 2])
+                    self._spec.add_pair(name=f"{body_name}_floor", geomname1=geom.name, geomname2="floor", condim=3, friction=friction, solimp=solimp)
 
 
     def add_ghost(
