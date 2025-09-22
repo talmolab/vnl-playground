@@ -24,6 +24,7 @@ os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
 # )
 
 import jax
+
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
@@ -32,25 +33,25 @@ jax.config.update(
     "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
 )
 
-import hydra
-from omegaconf import DictConfig, OmegaConf
 import functools
-import wandb
-import orbax.checkpoint as ocp
-from track_mjx.agent.mlp_ppo import ppo, ppo_networks
-import warnings
-from pathlib import Path
-from datetime import datetime
-from time import sleep
-import numpy as np
 import logging
+import warnings
+from datetime import datetime
+from pathlib import Path
+from time import sleep
+
+import hydra
 import mujoco
-
-from vnl_mjx.tasks.celegans import imitation
-
-from track_mjx.agent import checkpointing
-from track_mjx.agent import wandb_logging
+import numpy as np
+import orbax.checkpoint as ocp
+from omegaconf import DictConfig, OmegaConf
+from track_mjx.agent import checkpointing, wandb_logging
+from track_mjx.agent.mlp_ppo import ppo, ppo_networks
 from track_mjx.analysis import render
+
+import wandb
+from vnl_mjx.tasks.celegans import imitation
+from vnl_mjx.tasks.celegans.reference_clips import ReferenceClips
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -90,7 +91,9 @@ def main(cfg: DictConfig):
                 cfg_loaded.network_config.decoder_layer_sizes,
             )
         )
-        cfg.network_config.decoder_layer_sizes = cfg_loaded.network_config.decoder_layer_sizes
+        cfg.network_config.decoder_layer_sizes = (
+            cfg_loaded.network_config.decoder_layer_sizes
+        )
         print(
             "Overwriting intention size from checkpoint from {} to {}".format(
                 cfg.network_config.intention_size,
@@ -122,27 +125,43 @@ def main(cfg: DictConfig):
     print(cfg)
     ppo_params = cfg.train_setup.train_config
     env_config = cfg.env_config.env_args
+    reference_config = cfg.reference_config
 
     episode_length = (
         env_config.clip_length
         - int(env_config.start_frame_range[1])
         - env_config.reference_length
-    ) * (1/(env_config.mocap_hz * env_config.ctrl_dt))
+    ) * (1 / (env_config.mocap_hz * env_config.ctrl_dt))
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
 
+    train_set, test_set = ReferenceClips.generate_train_test_split(**reference_config)
     # Create environment based on task_name
     task_name = cfg.env_config.task_name
     if task_name == "imitation":
-        env = imitation.Imitation(config_overrides=OmegaConf.to_container(env_config, resolve=True))
-        evaluator_env = imitation.Imitation(config_overrides=OmegaConf.to_container(env_config, resolve=True))
+        OmegaConf.update(env_config, "reference_clips", train_set)
+        env = imitation.Imitation(
+            config_overrides=OmegaConf.to_container(env_config, resolve=True)
+        )
+
+        OmegaConf.update(env_config, "reference_clips", test_set)
+        evaluator_env = imitation.Imitation(
+            config_overrides=OmegaConf.to_container(env_config, resolve=True)
+        )
+
     elif task_name == "imitation_2d":
-        env = imitation.Imitation2D(config_overrides=OmegaConf.to_container(env_config, resolve=True))
-        evaluator_env = imitation.Imitation2D(config_overrides=OmegaConf.to_container(env_config, resolve=True))
+        env = imitation.Imitation2D(
+            config_overrides=OmegaConf.to_container(env_config, resolve=True)
+        )
+        evaluator_env = imitation.Imitation2D(
+            config_overrides=OmegaConf.to_container(env_config, resolve=True)
+        )
     else:
         raise ValueError(
             f"Unknown task_name: {task_name}. Must be one of: imitation, imitation_2d"
         )
+    print(f"Training on {len(env.reference_clips)} clips")
+    print(f"Testing on {len(evaluator_env.reference_clips)} clips")
     env.save_spec("./env_spec.xml")
     train_fn = functools.partial(
         ppo.train,
@@ -184,7 +203,9 @@ def main(cfg: DictConfig):
     # # define the jit reset/step functions
     jit_reset = jax.jit(evaluator_env.reset)
     jit_step = jax.jit(evaluator_env.step)
-    renderer, mj_model, mj_data, scene_option = render.make_rollout_renderer(cfg, render_ghost=True)
+    renderer, mj_model, mj_data, scene_option = render.make_rollout_renderer(
+        cfg, render_ghost=True
+    )
     policy_params_fn = functools.partial(
         wandb_logging.rollout_logging_fn,
         evaluator_env,

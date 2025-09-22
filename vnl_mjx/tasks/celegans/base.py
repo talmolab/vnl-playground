@@ -1,21 +1,20 @@
 """Base classes for C. Elegans"""
 
-from typing import Any, Dict, Optional, Union
 import collections
-
-from etils import epath
 import logging
-import jax
-import jax.numpy as jp
-import numpy as np
-from ml_collections import config_dict
-import mujoco
-from mujoco import mjx
+from typing import Any, Dict, Optional, Union
 from xml.etree import ElementTree as ET
 
+import jax
+import jax.numpy as jp
+import mujoco
+import numpy as np
+from etils import epath
+from ml_collections import config_dict
+from mujoco import mjx
 from mujoco_playground._src import mjx_env
 from vnl_mjx.tasks.celegans import consts
-from vnl_mjx.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
+from vnl_mjx.tasks.utils import _recolour_tree, _scale_body_tree, dm_scale_spec
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -46,6 +45,7 @@ def default_config() -> config_dict.ConfigDict:
         mujoco_impl="jax",
     )
 
+
 class CelegansEnv(mjx_env.MjxEnv):
     """Base class for C. Elegans environments."""
 
@@ -67,7 +67,6 @@ class CelegansEnv(mjx_env.MjxEnv):
         self._arena_xml_path = str(config.arena_xml_path)
         self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
         self._compiled = False
-        
 
     def add_worm(
         self,
@@ -82,7 +81,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         suffix: str = "-worm",
     ) -> None:
         """Adds the c. elegans model to the environment.
-        
+
         Args:
             torque_actuators: Whether to convert motors to torque-mode actuators.
             rescale_factor: Factor to rescale the c. elegans body. Defaults to 1.0.
@@ -120,23 +119,48 @@ class CelegansEnv(mjx_env.MjxEnv):
             quat=quat,
         )
         root = worm.worldbody
-        spawn_body = spawn_site.attach_body(root,"", suffix=suffix)
+        spawn_body = spawn_site.attach_body(root, "", suffix=suffix)
         self._suffix = suffix
 
         if dim == 3:
             spawn_body.add_freejoint()
         elif dim == 2:
-            spawn_body.add_joint(axis=(1, 0, 0), name="rootx" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
-            spawn_body.add_joint(axis=(0, 1, 0), name="rooty" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
-            spawn_body.add_joint(axis=(0, 0, 1), name="rootz" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
-            spawn_body.add_joint(axis=(0, 0, 1), name="free_body_rot" + suffix, type=mujoco.mjtJoint.mjJNT_HINGE, pos=[0, 0, 0])
+            spawn_body.add_joint(
+                axis=(1, 0, 0),
+                name="rootx" + suffix,
+                type=mujoco.mjtJoint.mjJNT_SLIDE,
+                pos=[0, 0, 0],
+            )
+            spawn_body.add_joint(
+                axis=(0, 1, 0),
+                name="rooty" + suffix,
+                type=mujoco.mjtJoint.mjJNT_SLIDE,
+                pos=[0, 0, 0],
+            )
+            spawn_body.add_joint(
+                axis=(0, 0, 1),
+                name="rootz" + suffix,
+                type=mujoco.mjtJoint.mjJNT_SLIDE,
+                pos=[0, 0, 0],
+            )
+            spawn_body.add_joint(
+                axis=(0, 0, 1),
+                name="free_body_rot" + suffix,
+                type=mujoco.mjtJoint.mjJNT_HINGE,
+                pos=[0, 0, 0],
+            )
 
         for body_name in self._config.bodies:
             body = worm.body(f"{body_name}{suffix}")
             for geom in body.geoms:
                 if geom.type == mujoco.mjtGeom.mjGEOM_SPHERE:
-                    self._spec.add_pair(name=f"{body_name}_floor", geomname1=geom.name, geomname2="floor", condim=3, friction=friction, solimp=solimp)
-
+                    self._spec.add_pair(
+                        name=f"{body_name}_floor",
+                        geomname1=geom.name,
+                        geomname2="floor",
+                        condim=3,
+                        friction=friction,
+                    )  # , solimp=solimp)
 
     def add_ghost(
         self,
@@ -165,17 +189,37 @@ class CelegansEnv(mjx_env.MjxEnv):
         # Attach as ghost at the offset frame
         frame = spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         root = walker_spec.worldbody
-        spawn_body = frame.attach_body(root,"", suffix=suffix)
+        spawn_body = frame.attach_body(root, "", suffix=suffix)
         self._suffix = suffix
 
         if dim == 3:
             spawn_body.add_freejoint()
         elif dim == 2:
-            spawn_body.add_joint(axis=(1, 0, 0), name="rootx" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
-            spawn_body.add_joint(axis=(0, 1, 0), name="rooty" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
-            spawn_body.add_joint(axis=(0, 0, 1), name="rootz" + suffix, type=mujoco.mjtJoint.mjJNT_SLIDE, pos=[0, 0, 0])
-            spawn_body.add_joint(axis=(0, 0, 1), name="free_body_rot" + suffix, type=mujoco.mjtJoint.mjJNT_HINGE, pos=[0, 0, 0])
-        
+            spawn_body.add_joint(
+                axis=(1, 0, 0),
+                name="rootx" + suffix,
+                type=mujoco.mjtJoint.mjJNT_SLIDE,
+                pos=[0, 0, 0],
+            )
+            spawn_body.add_joint(
+                axis=(0, 1, 0),
+                name="rooty" + suffix,
+                type=mujoco.mjtJoint.mjJNT_SLIDE,
+                pos=[0, 0, 0],
+            )
+            spawn_body.add_joint(
+                axis=(0, 0, 1),
+                name="rootz" + suffix,
+                type=mujoco.mjtJoint.mjJNT_SLIDE,
+                pos=[0, 0, 0],
+            )
+            spawn_body.add_joint(
+                axis=(0, 0, 1),
+                name="free_body_rot" + suffix,
+                type=mujoco.mjtJoint.mjJNT_HINGE,
+                pos=[0, 0, 0],
+            )
+
         if not inplace:
             return spec, spec.compile()
 
@@ -190,34 +234,46 @@ class CelegansEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
-            self._mjx_model = mjx.put_model(self._mj_model)#, impl=self._config.mujoco_impl)
+            self._mjx_model = mjx.put_model(
+                self._mj_model
+            )  # , impl=self._config.mujoco_impl)
             self._compiled = True
 
     def _get_root_pos(self, data: mjx.Data) -> jp.ndarray:
         """Get root position from the environment."""
         return self.root_body(data).xpos
-    
+
     def _get_root_quat(self, data: mjx.Data) -> jp.ndarray:
         """Get root quaternion from the environment."""
-        return data.bind(self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")).xquat
-        
+        return data.bind(
+            self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")
+        ).xquat
+
     def _get_appendages_pos(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
         """Get appendages positions from the environment."""
-        root = data.bind(self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}"))
+        root = data.bind(
+            self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")
+        )
         appendages_pos = collections.OrderedDict()
         for apppendage_name in self._config.end_effectors:
-            global_xpos = data.bind(self.mjx_model, self._spec.body(f"{apppendage_name}{self._suffix}")).xpos
+            global_xpos = data.bind(
+                self.mjx_model, self._spec.body(f"{apppendage_name}{self._suffix}")
+            ).xpos
             egocentric_xpos = jp.dot(global_xpos - root.xpos, root.xmat)
             appendages_pos[apppendage_name] = egocentric_xpos
         if flatten:
             appendages_pos, _ = jax.flatten_util.ravel_pytree(appendages_pos)
         return appendages_pos
 
-    def _get_bodies_pos(self, data: mjx.Data, flatten: bool = True) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+    def _get_bodies_pos(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
         """Get _global_ positions of the body parts."""
         bodies_pos = collections.OrderedDict()
         for body_name in self._config.bodies:
-            global_xpos = data.bind(self.mjx_model, self._spec.body(f"{body_name}{self._suffix}")).xpos
+            global_xpos = data.bind(
+                self.mjx_model, self._spec.body(f"{body_name}{self._suffix}")
+            ).xpos
             bodies_pos[body_name] = global_xpos
         if flatten:
             bodies_pos, _ = jax.flatten_util.ravel_pytree(bodies_pos)
@@ -228,62 +284,78 @@ class CelegansEnv(mjx_env.MjxEnv):
         joint_angles = collections.OrderedDict()
         for joint_name in self._config.joints:
             try:
-                joint_angles[joint_name] = data.bind(self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")).qpos
+                joint_angles[joint_name] = data.bind(
+                    self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")
+                ).qpos
             except:
-                raise ValueError(f"Joint {joint_name}{self._suffix} not found in the environment.\nAvailable joints: {[joint.name for joint in self._spec.joints]}")
+                raise ValueError(
+                    f"Joint {joint_name}{self._suffix} not found in the environment.\nAvailable joints: {[joint.name for joint in self._spec.joints]}"
+                )
         if flatten:
             joint_angles, _ = jax.flatten_util.ravel_pytree(joint_angles)
         return joint_angles
-    
+
     def _get_joint_ang_vels(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
         """Get joint angular velocities of the body parts."""
         joint_ang_vels = collections.OrderedDict()
         for joint_name in self._config.joints:
-            joint_ang_vels[joint_name] = data.bind(self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")).qvel
+            joint_ang_vels[joint_name] = data.bind(
+                self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")
+            ).qvel
         if flatten:
             joint_ang_vels, _ = jax.flatten_util.ravel_pytree(joint_ang_vels)
         return joint_ang_vels
-    
+
     def _get_actuator_ctrl(self, data: mjx.Data) -> jp.ndarray:
         return data.qfrc_actuator
 
     def _get_body_height(self, data: mjx.Data) -> jp.ndarray:
-        torso_pos = data.bind(self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")).xpos
+        torso_pos = data.bind(
+            self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")
+        ).xpos
         torso_z = torso_pos[2]
-        return torso_z#self.root_body(data).xpos[1]
-    
+        return torso_z  # self.root_body(data).xpos[1]
+
     def _get_world_zaxis(self, data: mjx.Data) -> jp.ndarray:
         return self.root_body(data).xmat.flatten()[6:]
 
     def _get_proprioception(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
         """Get proprioception data from the environment."""
         proprioception = collections.OrderedDict(
-            joint_angles = self._get_joint_angles(data),
-            joint_ang_vels = self._get_joint_ang_vels(data),
-            actuator_ctrl = self._get_actuator_ctrl(data),
-            body_height = self._get_body_height(data),
-            world_zaxis = self._get_world_zaxis(data),
-            appendages_pos = self._get_appendages_pos(data, flatten=flatten),
-            kinematic_sensors = self._get_kinematic_sensors(data, flatten=flatten),
-         )
+            joint_angles=self._get_joint_angles(data),
+            joint_ang_vels=self._get_joint_ang_vels(data),
+            actuator_ctrl=self._get_actuator_ctrl(data),
+            body_height=self._get_body_height(data),
+            world_zaxis=self._get_world_zaxis(data),
+            appendages_pos=self._get_appendages_pos(data, flatten=flatten),
+            kinematic_sensors=self._get_kinematic_sensors(data, flatten=flatten),
+        )
         if flatten:
             proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)
         return proprioception
 
-    def _get_kinematic_sensors(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
+    def _get_kinematic_sensors(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> jp.ndarray:
         """Get kinematic sensors data from the environment."""
         try:
-            accelerometer = data.bind(self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")).sensordata
-            velocimeter = data.bind(self.mjx_model, self._spec.sensor(f"velocimeter{self._suffix}")).sensordata
-            gyro = data.bind(self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")).sensordata
+            accelerometer = data.bind(
+                self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")
+            ).sensordata
+            velocimeter = data.bind(
+                self.mjx_model, self._spec.sensor(f"velocimeter{self._suffix}")
+            ).sensordata
+            gyro = data.bind(
+                self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")
+            ).sensordata
         except TypeError as e:
             print(f"Kinematic sensors not found for {self._suffix}")
             print(f"Available sensors: {[s.name for s in self._spec.sensors]}")
             raise e
         sensors = collections.OrderedDict(
-            accelerometer = accelerometer,
-            velocimeter = velocimeter,
-            gyro = gyro,
+            accelerometer=accelerometer,
+            velocimeter=velocimeter,
+            gyro=gyro,
         )
         if flatten:
             sensors, _ = jax.flatten_util.ravel_pytree(sensors)
@@ -291,7 +363,12 @@ class CelegansEnv(mjx_env.MjxEnv):
 
     def _get_touch_sensors(self, data: mjx.Data) -> jp.ndarray:
         """Get touch sensors data from the environment."""
-        touches = [data.bind(self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")).sensordata for name in self._config.touch_sensors]
+        touches = [
+            data.bind(
+                self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")
+            ).sensordata
+            for name in self._config.touch_sensors
+        ]
         return jp.array(touches)
 
     def _get_origin(self, data: mjx.Data) -> jp.ndarray:
@@ -308,11 +385,17 @@ class CelegansEnv(mjx_env.MjxEnv):
         )
 
     def get_joint_names(self):
-        return [j.name for j in self._spec.joints if j.name.replace(self._suffix, "") in self._config.joints]
+        return [
+            j.name
+            for j in self._spec.joints
+            if j.name.replace(self._suffix, "") in self._config.joints
+        ]
 
     def root_body(self, data):
-        #TODO: Double-check which body should be considered the root (walker or torso)
-        return data.bind(self.mjx_model, self._spec.body(f"{consts.ROOT}{self._suffix}"))
+        # TODO: Double-check which body should be considered the root (walker or torso)
+        return data.bind(
+            self.mjx_model, self._spec.body(f"{consts.ROOT}{self._suffix}")
+        )
 
     def save_spec(self, path: str, return_str: bool = False):
         """Save the spec to a file."""

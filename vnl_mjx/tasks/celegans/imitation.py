@@ -1,83 +1,94 @@
 import collections
 import warnings
-from typing import Any, Dict, Optional, Union, Tuple, Mapping, Callable, List, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+
+import brax.math
+import cv2
 import jax
 import jax.flatten_util
 import jax.numpy as jp
-from jax.scipy.spatial.transform import Rotation
-import numpy as np
-from ml_collections import config_dict
 import mujoco
+import numpy as np
+from jax.scipy.spatial.transform import Rotation
+from ml_collections import config_dict
 from mujoco import mjx
-import brax.math
-from vnl_mjx.tasks.celegans.reference_clips import ReferenceClips
 from mujoco_playground._src import mjx_env, wrapper
-import cv2
+from vnl_mjx.tasks.celegans.reference_clips import ReferenceClips
 
 from . import base as worm_base
 from . import consts
 
+
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
-        walker_xml_path = str(consts.CELEGANS_XML_PATH),
-        arena_xml_path = str(consts.ARENA_XML_PATH),
-        root_body = consts.ROOT,
-        joints = consts.JOINTS,
-        bodies = consts.BODIES,
-        end_effectors = consts.END_EFFECTORS,
-        touch_sensors = consts.TOUCH_SENSORS,
-        sensors = consts.SENSORS,
-        mujoco_impl = "jax",
-        sim_dt  = 0.002,
-        ctrl_dt = 0.02,
-        solver = "cg",
-        iterations = 5,
-        ls_iterations = 5,
-        noslip_iterations = 0,
-        nconmax = 256,
-        njmax = 256,
-        torque_actuators = False,
-        rescale_factor = 1.0,
-        dim = 3,
-        friction = (1, 1, 0.005, 0.0001, 0.0001),
-        solimp = (0.9, 0.95, 0.001, 0.5, 2),
-
-        mocap_hz = 20,
-        clip_length = 250,
-        reference_data_path = "../registered_snips.h5",
-        clip_set = "all",
-        reference_length = 5,
-        start_frame_range = [0, 44],
-        qvel_init = "zeros",
-        with_ghost = False,
-        reward_terms = {
+        walker_xml_path=str(consts.CELEGANS_XML_PATH),
+        arena_xml_path=str(consts.ARENA_XML_PATH),
+        root_body=consts.ROOT,
+        joints=consts.JOINTS,
+        bodies=consts.BODIES,
+        end_effectors=consts.END_EFFECTORS,
+        touch_sensors=consts.TOUCH_SENSORS,
+        sensors=consts.SENSORS,
+        mujoco_impl="jax",
+        sim_dt=0.002,
+        ctrl_dt=0.01,
+        solver="cg",
+        iterations=5,
+        ls_iterations=5,
+        noslip_iterations=0,
+        nconmax=256,
+        njmax=256,
+        torque_actuators=False,
+        rescale_factor=1.0,
+        dim=3,
+        friction=(1, 1, 0.005, 0.0001, 0.0001),
+        solimp=(0.9, 0.95, 0.001, 0.5, 2),
+        mocap_hz=20,
+        reference_clips=ReferenceClips(
+            data_path=consts.REFERENCE_H5_PATH, n_frames_per_clip=250
+        ),
+        reference_length=5,
+        start_frame_range=[0, 44],
+        qvel_init="zeros",
+        with_ghost=False,
+        reward_terms={
             # Imitation rewards
-            "root_pos":      {"exp_scale":  0.05,  "weight": 1.0}, #Meters
-            "root_quat":     {"exp_scale": 0.0625,   "weight": 1.0}, #Degrees
-            "joints":        {"exp_scale":  16,   "weight": 1.0}, #Joint-space L2 distance
-            "joints_vel":    {"exp_scale":  0.02,   "weight": 1.0}, #Joint velocity-space L2 distance
-            "bodies_pos":    {"exp_scale":  0.125,  "weight": 1.0}, #Distance in concatenated euclidean space
-            "end_eff":       {"exp_scale":  0.002, "weight": 1.0}, #Distance in concatenated euclidean space
-            "upright":      {"healthy_z_range": (0.0, 1.0), "weight": 0.0},
-            
+            "root_pos": {"exp_scale": 0.05, "weight": 1.0},  # Meters
+            "root_quat": {"exp_scale": 0.0625, "weight": 1.0},  # Degrees
+            "joints": {"exp_scale": 16, "weight": 1.0},  # Joint-space L2 distance
+            "joints_vel": {
+                "exp_scale": 0.02,
+                "weight": 1.0,
+            },  # Joint velocity-space L2 distance
+            "bodies_pos": {
+                "exp_scale": 0.125,
+                "weight": 1.0,
+            },  # Distance in concatenated euclidean space
+            "end_eff": {
+                "exp_scale": 0.002,
+                "weight": 1.0,
+            },  # Distance in concatenated euclidean space
+            "upright": {"healthy_z_range": (0.0, 1.0), "weight": 0.0},
         },
         # Costs / regularizers
-        cost_terms = {
-            "control":       {"weight": 0.02},
-            "control_diff":  {"weight": 0.02},
-            "energy":        {"max_value":  50.0, "weight": 0.0},
+        cost_terms={
+            "control": {"weight": 0.02},
+            "control_diff": {"weight": 0.02},
+            "energy": {"max_value": 50.0, "weight": 0.0},
         },
-        termination_criteria = {
-            "fall":             {"healthy_z_range": (0.0, 1.0)},
-            "root_too_far":     {"max_distance": 0.01},  #Meters
-            "root_too_rotated": {"max_degrees":  60.0}, #Degrees
-            "pose_error":       {"max_l2_error": 4.5},  #Joint-space L2 distance
+        termination_criteria={
+            "fall": {"healthy_z_range": (0.0, 1.0)},
+            "root_too_far": {"max_distance": 0.01},  # Meters
+            "root_too_rotated": {"max_degrees": 60.0},  # Degrees
+            "pose_error": {"max_l2_error": 4.5},  # Joint-space L2 distance
         },
     )
+
 
 _REWARD_FCN_REGISTRY: dict[str, Callable] = {}
 _TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
 _COST_FCN_REGISTRY: dict[str, Callable] = {}
+
 
 class Imitation(worm_base.CelegansEnv):
     """Multi-clip imitation environment."""
@@ -97,44 +108,62 @@ class Imitation(worm_base.CelegansEnv):
             solimp=self._config.solimp,
         )
         if self._config.with_ghost:
-            self.add_ghost_worm(rescale_factor=self._config.rescale_factor, dim=self._config.dim)
+            self.add_ghost_worm(
+                rescale_factor=self._config.rescale_factor, dim=self._config.dim
+            )
 
         self.compile()
-        self.reference_clips = ReferenceClips(self._config.reference_data_path,
-                                              self._config.clip_length)
+        self.reference_clips = (
+            self._config.reference_clips
+        )  # ReferenceClips(self._config.reference_data_path,
+        # self._config.clip_length)
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
         else:
             raise NotImplementedError("'all' is the only implemented set of clips.")
-        self._steps_per_curr_frame = 1/(self._config.mocap_hz * self._config.ctrl_dt)
+
+        self._mocap_dt = 1 / self._config.mocap_hz
+        self._steps_per_curr_frame = self._mocap_dt / self._config.ctrl_dt
+        self._n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
+        if self._n_steps == 0:
+            warnings.warn(
+                f"Simulation will not advance! Please increase `ctrl_dt` from {self._config.ctrl_dt} to at least {self._config.sim_dt}."
+            )
 
     def reset(self, rng: jax.Array, clip_idx=None, start_frame=None) -> mjx_env.State:
         start_rng, clip_rng = jax.random.split(rng)
         if clip_idx is None:
             clip_idx = jax.random.choice(clip_rng, self._num_clips())
         if start_frame is None:
-            start_frame = jax.random.randint(start_rng, (), *self._config.start_frame_range)
+            start_frame = jax.random.randint(
+                start_rng, (), *self._config.start_frame_range
+            )
         data = self._reset_data(clip_idx, start_frame)
-        info : dict[str, Any] = {
+        info: dict[str, Any] = {
             "start_frame": start_frame,
             "reference_clip": clip_idx,
-            "prev_ctrl": jp.zeros((self.action_size,))
+            "prev_ctrl": jp.zeros((self.action_size,)),
         }
 
         last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        info["truncated"] = jp.astype(self._get_cur_frame(data, info) > last_valid_frame, float)
+        info["truncated"] = jp.astype(
+            self._get_cur_frame(data, info) > last_valid_frame, float
+        )
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
 
-
         obs = self._get_obs(data, info)
         # Used to initialize our intention network
-        info["reference_obs_size"] = jax.flatten_util.ravel_pytree(obs["imitation_target"])[0].shape[-1] #TODO: use getter functions
-        info["proprioceptive_obs_size"] = jax.flatten_util.ravel_pytree(obs["proprioception"])[0].shape[-1] #TODO: use getter functions
+        info["reference_obs_size"] = jax.flatten_util.ravel_pytree(
+            obs["imitation_target"]
+        )[0].shape[-1]  # TODO: use getter functions
+        info["proprioceptive_obs_size"] = jax.flatten_util.ravel_pytree(
+            obs["proprioception"]
+        )[0].shape[-1]  # TODO: use getter functions
 
-        obs = jax.flatten_util.ravel_pytree(obs)[0] #TODO: Use wrapper instead.
-        
+        obs = jax.flatten_util.ravel_pytree(obs)[0]  # TODO: Use wrapper instead.
+
         rewards, dists = self._get_rewards(data, info)
         reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
         costs, magnitudes = self._get_costs(data, info)
@@ -152,19 +181,23 @@ class Imitation(worm_base.CelegansEnv):
             **magnitudes,
             "current_frame": jp.astype(self._get_cur_frame(data, info), float),
         }
-        return mjx_env.State(data, obs, total_reward, jp.astype(done, float), metrics, info)
+        return mjx_env.State(
+            data, obs, total_reward, jp.astype(done, float), metrics, info
+        )
 
     def step(
         self,
         state: mjx_env.State,
         action: jax.Array,
     ) -> mjx_env.State:
-        n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
+        n_steps = self._n_steps
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
         last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        info["truncated"] = jp.astype(self._get_cur_frame(data, info) > last_valid_frame, float)
+        info["truncated"] = jp.astype(
+            self._get_cur_frame(data, info) > last_valid_frame, float
+        )
         info["prev_action"] = state.info["action"]
         info["action"] = action
 
@@ -174,11 +207,13 @@ class Imitation(worm_base.CelegansEnv):
         termination_conditions = self._get_termination_conditions(data, info)
         terminated = jp.any(jax.flatten_util.ravel_pytree(termination_conditions)[0])
         done = jp.logical_or(terminated, info["truncated"])
-        
+
         rewards, dists = self._get_rewards(data, info)
         costs, magnitudes = self._get_costs(data, info)
-        
-        total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0]) - jp.sum(jax.flatten_util.ravel_pytree(costs)[0])
+
+        total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0]) - jp.sum(
+            jax.flatten_util.ravel_pytree(costs)[0]
+        )
         state = state.replace(
             data=data,
             obs=obs,
@@ -205,7 +240,9 @@ class Imitation(worm_base.CelegansEnv):
             imitation_target=self._get_imitation_target(data, info),
         )
 
-    def _get_rewards(self, data: mjx.Data, info: Mapping[str, Any]) -> Tuple[Mapping[str, float], Mapping[str, float]]:
+    def _get_rewards(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> Tuple[Mapping[str, float], Mapping[str, float]]:
         rewards, dists = dict(), dict()
         for name, kwargs in self._config.reward_terms.items():
             r, d = _REWARD_FCN_REGISTRY[name](self, data, info, **kwargs)
@@ -213,89 +250,115 @@ class Imitation(worm_base.CelegansEnv):
             dists[f"{name}_dist"] = d
         return rewards, dists
 
-    def _get_termination_conditions(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, bool]:
+    def _get_termination_conditions(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> Mapping[str, bool]:
         termination_reasons = dict()
         for name, kwargs in self._config.termination_criteria.items():
             termination_fcn = _TERMINATION_FCN_REGISTRY[name]
             termination_reasons[name] = termination_fcn(self, data, info, **kwargs)
         return termination_reasons
 
-    def _get_costs(self, data: mjx.Data, info: Mapping[str, Any]) -> Tuple[Mapping[str, float], Mapping[str, float]]:
+    def _get_costs(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> Tuple[Mapping[str, float], Mapping[str, float]]:
         costs, magnitudes = dict(), dict()
         for name, kwargs in self._config.cost_terms.items():
             c, m = _COST_FCN_REGISTRY[name](self, data, info, **kwargs)
             costs[f"{name}_cost"] = c
             magnitudes[name] = m
         return costs, magnitudes
-    
+
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
-        data = mjx.make_data(self.mj_model) #,
+        data = mjx.make_data(self.mj_model)  # ,
         #     impl=self._config.mujoco_impl,
         #     nconmax=self._config.nconmax,
         #     njmax=self._config.nconmax,
         # )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
-        data = data.replace(qpos = reference.qpos)
+        data = data.replace(qpos=reference.qpos)
         if self._config.qvel_init == "default":
             pass
         elif self._config.qvel_init == "zeros":
-            data = data.replace(qvel = jp.zeros(self.mjx_model.nv))
+            data = data.replace(qvel=jp.zeros(self.mjx_model.nv))
         elif self._config.qvel_init == "noise":
             raise NotImplementedError("qvel_init='noise' is not yet implemented.")
         elif self._config.qvel_init == "reference":
-            data = data.replace(qvel = reference.qvel)
+            data = data.replace(qvel=reference.qvel)
         data = mjx.forward(self.mjx_model, data)
         return data
-    
+
     def null_action(self) -> jp.ndarray:
         return jp.zeros(self.action_size)
 
     def _num_clips(self):
         return self.reference_clips.qpos.shape[0]
-    
-    def _clip_length(self):
-        return self.reference_clips.qpos.shape[1]
-    
-    def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
-        return jp.floor(data.time * self._config.mocap_hz + info["start_frame"]).astype(int)
-    
-    def _get_current_target(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
-        return self.reference_clips.at(clip = info["reference_clip"],
-                                       frame = self._get_cur_frame(data, info))
-    def _get_reference_clip(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
-        return self.reference_clips.slice(clip = info["reference_clip"],
-                                          start_frame = 0,
-                                          length = self._config.clip_length)
-    
-    def _get_imitation_reference(self, data: mjx.Data, info: Mapping[str, Any]) -> ReferenceClips:
-        return self.reference_clips.slice(clip = info["reference_clip"],
-                                          start_frame = self._get_cur_frame(data, info)+1,
-                                          length = self._config.reference_length)
 
-    def _get_imitation_target(self,
-                              data: mjx.Data,
-                              info: Mapping[str, Any]
+    def _clip_length(self):
+        return self.reference_clips._n_frames_per_clip
+
+    def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
+        return jp.floor(data.time * self._config.mocap_hz + info["start_frame"]).astype(
+            int
+        )
+
+    def _get_current_target(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> ReferenceClips:
+        return self.reference_clips.at(
+            clip=info["reference_clip"], frame=self._get_cur_frame(data, info)
+        )
+
+    def _get_reference_clip(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> ReferenceClips:
+        return self.reference_clips.slice(
+            clip=info["reference_clip"], start_frame=0, length=self._clip_length()
+        )
+
+    def _get_imitation_reference(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> ReferenceClips:
+        return self.reference_clips.slice(
+            clip=info["reference_clip"],
+            start_frame=self._get_cur_frame(data, info) + 1,
+            length=self._config.reference_length,
+        )  # TODO: Use reference_clips.slice instead
+
+    def _get_imitation_target(
+        self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Mapping[str, jp.ndarray]:
         reference = self._get_imitation_reference(data, info)
 
-        root_pos  = self.root_body(data).xpos
+        root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
-        root_targets = jax.vmap(lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat))(reference.root_position)
-        quat_targets = jax.vmap(lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat))(reference.root_quaternion)
-        
-        _assert_all_are_prefix(reference.joint_names, self.get_joint_names(), "reference joints", "model joints")
+        root_targets = jax.vmap(
+            lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat)
+        )(reference.root_position)
+        quat_targets = jax.vmap(
+            lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat)
+        )(reference.root_quaternion)
+
+        _assert_all_are_prefix(
+            reference.joint_names,
+            self.get_joint_names(),
+            "reference joints",
+            "model joints",
+        )
         joint_targets = reference.joints - self._get_joint_angles(data)
 
         bodies_pos = self._get_bodies_pos(data, flatten=False)
-        body_rel_pos = jp.array([reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos])
+        body_rel_pos = jp.array(
+            [reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos]
+        )
         to_egocentric = jax.vmap(lambda diff_vec: brax.math.rotate(diff_vec, root_quat))
         body_targets = jax.vmap(to_egocentric)(body_rel_pos)
 
         return collections.OrderedDict(
-            root = root_targets,
-            quat = quat_targets,
-            joint = joint_targets,
-            body = body_targets,
+            root=root_targets,
+            quat=quat_targets,
+            joint=joint_targets,
+            body=body_targets,
         )
 
     # Rewards
@@ -303,8 +366,9 @@ class Imitation(worm_base.CelegansEnv):
         def decorator(reward_fcn: Callable):
             _REWARD_FCN_REGISTRY[name] = reward_fcn
             return reward_fcn
+
         return decorator
-    
+
     @_named_reward("root_pos")
     def _root_pos_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
         target = self._get_current_target(data, info)
@@ -312,33 +376,33 @@ class Imitation(worm_base.CelegansEnv):
         distance = jp.linalg.norm(target.root_position - root_pos)
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         return reward, distance
-    
+
     @_named_reward("root_quat")
     def _root_quat_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
         target = self._get_current_target(data, info)
         root_quat = self._get_root_quat(data)
-        quat_dist = 2.0*jp.dot(root_quat, target.root_quaternion)**2 - 1.0
-        ang_dist = 0.5*jp.arccos(jp.minimum(1.0, quat_dist))
+        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
+        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
         ang_dist = jp.rad2deg(ang_dist)
-        reward = weight * jp.exp(-((ang_dist/exp_scale)**2)/2)
+        reward = weight * jp.exp(-((ang_dist / exp_scale) ** 2) / 2)
         return reward, ang_dist
-    
+
     @_named_reward("joints")
     def _joints_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
         target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
         distance = jp.linalg.norm(target.joints - joints)
-        reward = weight * jp.exp(-((distance/exp_scale)**2)/2)
+        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         return reward, distance
-    
+
     @_named_reward("joints_vel")
     def _joint_vels_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
         target = self._get_current_target(data, info)
-        joint_vels  = self._get_joint_ang_vels(data)
+        joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
-        reward = weight * jp.exp(-((distance/exp_scale)**2)/2)
+        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         return reward, distance
-    
+
     def _get_bodies_dist(self, data, info, bodies=consts.BODIES) -> float:
         target = self._get_current_target(data, info)
         body_pos = self._get_bodies_pos(data, flatten=False)
@@ -353,16 +417,20 @@ class Imitation(worm_base.CelegansEnv):
         total_dist = self._get_bodies_dist(data, info, bodies=self._config.bodies)
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
         return reward, total_dist
-    
+
     @_named_reward("end_eff")
     def _end_eff_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
-        total_dist = self._get_bodies_dist(data, info, bodies=self._config.end_effectors)
+        total_dist = self._get_bodies_dist(
+            data, info, bodies=self._config.end_effectors
+        )
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
         return reward, total_dist
-    
+
     @_named_reward("upright")
-    def _upright_reward(self, data, info, weight, healthy_z_range) -> Tuple[float, float]:
-        torso_z = self._get_body_height(data)#root_body(data).xpos[2]
+    def _upright_reward(
+        self, data, info, weight, healthy_z_range
+    ) -> Tuple[float, float]:
+        torso_z = self._get_body_height(data)  # root_body(data).xpos[2]
         min_z, max_z = healthy_z_range
         in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
         return weight * in_range.astype(float), torso_z
@@ -372,53 +440,57 @@ class Imitation(worm_base.CelegansEnv):
         def decorator(cost_fcn: Callable):
             _COST_FCN_REGISTRY[name] = cost_fcn
             return cost_fcn
+
         return decorator
 
     @_named_cost("control")
     def _control_cost(self, data, info, weight) -> Tuple[float, float]:
         ctrl_magnitude = jp.sum(jp.square(info["action"]))
         return weight * ctrl_magnitude, ctrl_magnitude
-    
+
     @_named_cost("control_diff")
     def _control_diff_cost(self, data, info, weight) -> Tuple[float, float]:
         ctrl_diff = jp.sum(jp.square(info["action"] - info["prev_action"]))
         return weight * ctrl_diff, ctrl_diff
-    
+
     @_named_cost("energy")
     def _energy_cost(self, data, info, weight, max_value) -> Tuple[float, float]:
-        energy = jp.minimum(jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator)), max_value)
+        energy = jp.minimum(
+            jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator)), max_value
+        )
         return weight * energy, energy
-    
+
     @_named_cost("jerk")
     def _jerk_cost(self, data, info, weight, window_len) -> Tuple[float, float]:
         raise NotImplementedError("jerk_cost is not implemented")
-    
+
     # Termination
     def _named_termination_criterion(name: str):
         def decorator(termination_fcn: Callable):
             _TERMINATION_FCN_REGISTRY[name] = termination_fcn
             return termination_fcn
+
         return decorator
 
     @_named_termination_criterion("fall")
     def _fall(self, data, info, healthy_z_range) -> float:
-        torso_z = self._get_body_height(data)#root_body(data).xpos[2]
+        torso_z = self._get_body_height(data)  # root_body(data).xpos[2]
         min_z, max_z = healthy_z_range
         return jp.logical_or(torso_z < min_z, torso_z > max_z)
 
     @_named_termination_criterion("root_too_far")
     def _root_too_far(self, data, info, max_distance) -> bool:
         target = self._get_current_target(data, info)
-        root_pos  = self._get_root_pos(data)
+        root_pos = self._get_root_pos(data)
         distance = jp.linalg.norm(target.root_position - root_pos)
         return distance > max_distance
-    
+
     @_named_termination_criterion("root_too_rotated")
     def _root_too_rotated(self, data, info, max_degrees) -> bool:
         target = self._get_current_target(data, info)
         root_quat = self._get_root_quat(data)
-        quat_dist = 2.0*jp.dot(root_quat, target.root_quaternion)**2 - 1.0
-        ang_dist = 0.5*jp.arccos(jp.minimum(1.0, quat_dist))
+        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
+        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
         return ang_dist > jp.deg2rad(max_degrees)
 
     @_named_termination_criterion("pose_error")
@@ -435,9 +507,7 @@ class Imitation(worm_base.CelegansEnv):
         width: int = 320,
         camera: Optional[str] = None,
         scene_option: Optional[mujoco.MjvOption] = None,
-        modify_scene_fns: Optional[
-            Sequence[Callable[[mujoco.MjvScene], None]]
-        ] = None,
+        modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
         add_labels: bool = False,
         termination_extra_frames: int = 0,
     ) -> Sequence[np.ndarray]:
@@ -466,12 +536,14 @@ class Imitation(worm_base.CelegansEnv):
             Sequence[np.ndarray]: List of rendered frames as numpy arrays.
         """
         # Create a new spec with a ghost, without modifying the existing one
-        spec, mj_model_with_ghost = self.add_ghost(rescale_factor=self._config.rescale_factor,
-                                                   dim=self._config.dim,
-                                                   pos=(0, 0, 0.05),
-                                                   ghost_rgba=(1.0, 1.0, 1.0, 0.2),
-                                                   suffix="-ghost",
-                                                   inplace=False)
+        spec, mj_model_with_ghost = self.add_ghost(
+            rescale_factor=self._config.rescale_factor,
+            dim=self._config.dim,
+            pos=(0, 0, 0.05),
+            ghost_rgba=(1.0, 1.0, 1.0, 0.2),
+            suffix="-ghost",
+            inplace=False,
+        )
 
         mj_model_with_ghost.vis.global_.offwidth = width
         mj_model_with_ghost.vis.global_.offheight = height
@@ -493,10 +565,14 @@ class Imitation(worm_base.CelegansEnv):
             mujoco.mj_forward(mj_model_with_ghost, mj_data_with_ghost)
             try:
                 renderer.update_scene(
-                    mj_data_with_ghost, camera=f"{camera}{self._suffix}", scene_option=scene_option
+                    mj_data_with_ghost,
+                    camera=f"{camera}{self._suffix}",
+                    scene_option=scene_option,
                 )
             except ValueError as e:
-                print(f"Error updating scene for camera {f"{camera}{self._suffix}"}: {e}")
+                print(
+                    f"Error updating scene for camera {f'{camera}{self._suffix}'}: {e}"
+                )
                 print(f"Available cameras: {[c.name for c in spec.cameras]}")
                 raise e
             if modify_scene_fns is not None:
@@ -504,6 +580,7 @@ class Imitation(worm_base.CelegansEnv):
             rendered_frame = renderer.render()
             if add_labels:
                 import cv2
+
                 label = f"Clip {clip}"
                 cv2.putText(
                     rendered_frame,
@@ -544,6 +621,7 @@ class Imitation(worm_base.CelegansEnv):
                     faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
                     rendered_frames.append(faded_frame)
         return rendered_frames
+
     def verify_reference_data(self, atol: float = 5e-3) -> bool:
         """A set of non-exhaustive sanity checks that the reference data found in
         `config.REFERENCE_DATA_PATH` matches the environment's model. Most
@@ -569,7 +647,9 @@ class Imitation(worm_base.CelegansEnv):
             reference = self.reference_clips.at(clip=clip_idx, frame=frame)
             checks = collections.OrderedDict()
             checks["root_pos"] = jp.allclose(
-                self.root_body(data).xpos[...,:self._config.dim], reference.root_position[...,:self._config.dim], atol=atol
+                self.root_body(data).xpos[..., : self._config.dim],
+                reference.root_position[..., : self._config.dim],
+                atol=atol,
             )
             checks["root_quat"] = jp.allclose(
                 self.root_body(data).xquat, reference.root_quaternion, atol=atol
@@ -580,7 +660,9 @@ class Imitation(worm_base.CelegansEnv):
             body_pos = self._get_bodies_pos(data, flatten=False)
             for body_name, body_pos in body_pos.items():
                 checks[f"body_xpos/{body_name}"] = jp.allclose(
-                    body_pos[...,:self._config.dim], reference.body_xpos(body_name)[...,:self._config.dim], atol=atol
+                    body_pos[..., : self._config.dim],
+                    reference.body_xpos(body_name)[..., : self._config.dim],
+                    atol=atol,
                 )
             if self._config.qvel_init == "reference":
                 checks["joints_ang_vel"] = jp.allclose(
@@ -626,23 +708,44 @@ class Imitation(worm_base.CelegansEnv):
                         f" First failure at frame {first_failed_frame}."
                     )
                     if name == "root_pos":
-                        warnings.warn(f"Root position: {self.root_body(data).xpos} != {reference.root_position}")
-                        warnings.warn(f"diff: {jp.linalg.norm(self.root_body(data).xpos[...,:self._config.dim] - reference.root_position[...,:self._config.dim])}")
+                        warnings.warn(
+                            f"Root position: {self.root_body(data).xpos} != {reference.root_position}"
+                        )
+                        warnings.warn(
+                            f"diff: {jp.linalg.norm(self.root_body(data).xpos[..., : self._config.dim] - reference.root_position[..., : self._config.dim])}"
+                        )
                     elif name == "root_quat":
-                        warnings.warn(f"Root quaternion: {self.root_body(data).xquat} != {reference.root_quaternion}")
-                        warnings.warn(f"diff: {jp.linalg.norm(self.root_body(data).xquat - reference.root_quaternion)}")
+                        warnings.warn(
+                            f"Root quaternion: {self.root_body(data).xquat} != {reference.root_quaternion}"
+                        )
+                        warnings.warn(
+                            f"diff: {jp.linalg.norm(self.root_body(data).xquat - reference.root_quaternion)}"
+                        )
                     elif name == "joints":
-                        warnings.warn(f"Joints: {self._get_joint_angles(data)} != {reference.joints}")
-                        warnings.warn(f"diff: {jp.linalg.norm(self._get_joint_angles(data) - reference.joints)}")
+                        warnings.warn(
+                            f"Joints: {self._get_joint_angles(data)} != {reference.joints}"
+                        )
+                        warnings.warn(
+                            f"diff: {jp.linalg.norm(self._get_joint_angles(data) - reference.joints)}"
+                        )
                     elif name == "joints_ang_vel":
-                        warnings.warn(f"Joints ang vel: {self._get_joint_ang_vels(data)} != {reference.joints_velocity}")
-                        warnings.warn(f"diff: {jp.linalg.norm(self._get_joint_ang_vels(data) - reference.joints_velocity)}")
+                        warnings.warn(
+                            f"Joints ang vel: {self._get_joint_ang_vels(data)} != {reference.joints_velocity}"
+                        )
+                        warnings.warn(
+                            f"diff: {jp.linalg.norm(self._get_joint_ang_vels(data) - reference.joints_velocity)}"
+                        )
                     elif "body_xpos" in name:
                         body_name = name.split("/")[-1]
-                        warnings.warn(f"Bodies pos: {self._get_bodies_pos(data, flatten=False)[body_name][...,:self._config.dim]} != {reference.body_xpos(body_name)[...,:self._config.dim]}")
-                        warnings.warn(f"diff: {jp.linalg.norm(self._get_bodies_pos(data, flatten=False)[body_name][...,:self._config.dim] - reference.body_xpos(body_name)[...,:self._config.dim])}")
+                        warnings.warn(
+                            f"Bodies pos: {self._get_bodies_pos(data, flatten=False)[body_name][..., : self._config.dim]} != {reference.body_xpos(body_name)[..., : self._config.dim]}"
+                        )
+                        warnings.warn(
+                            f"diff: {jp.linalg.norm(self._get_bodies_pos(data, flatten=False)[body_name][..., : self._config.dim] - reference.body_xpos(body_name)[..., : self._config.dim])}"
+                        )
                     any_failed = True
         return not any_failed
+
 
 def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
     if isinstance(a, map):
@@ -650,13 +753,11 @@ def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
     if isinstance(b, map):
         b = list(b)
     if len(a) != len(b):
-        raise AssertionError(f"{a_name} has length {len(a)}, but {b_name} has length {len(b)}.")
+        raise AssertionError(
+            f"{a_name} has length {len(a)}, but {b_name} has length {len(b)}."
+        )
     for a_el, b_el in zip(a, b):
         if not b_el.startswith(a_el):
-            raise AssertionError(f"Comparing {a_name} and {b_name}. Expected {a_el} to match {b_el}.")
-
-        
-    
-    
-    
-    
+            raise AssertionError(
+                f"Comparing {a_name} and {b_name}. Expected {a_el} to match {b_el}."
+            )
