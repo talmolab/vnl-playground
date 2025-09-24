@@ -161,9 +161,7 @@
     <body name="torso" pos="0.03099526054578288 2.058524937651458e-07 0.06508957263119967">
       <!-- <light name="tracking_light" mode="trackcom" pos="0 0 3"/> -->
       <camera name="close_profile" mode="trackcom" pos=".5 -.5 0.5" xyaxes="1 1 0 -1 1 2"/>
-      <!-- <camera name="back" mode="trackcom" pos="-1 0 0.5" xyaxes="0 -1 0 1 0 2"/> -->
       <camera name="side" mode="trackcom" pos="0 -1 0.5" xyaxes="1 0 0 0 1 2"/>
-      <!-- <camera name="front" mode="trackcom" pos="1 0 0.3" xyaxes="0 1 0 0 0 1"/> -->
       <camera name="above" mode="trackcom" pos="0 0 1.5" xyaxes="1 0 0 0 1 0"/>
       <camera name="below" mode="trackcom" pos="0 0 -0.5" xyaxes="1 0 0 0 -1 0"/>
       <camera name="diagonal" mode="trackcom" pos="0.7 -0.7 0.7" xyaxes="1 1 0 -1 1 2"/>

@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from mujoco_playground._src import mjx_env
 from vnl_mjx.tasks.mouse import consts
+from vnl_mjx.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -26,7 +27,7 @@ def default_config() -> config_dict.ConfigDict:
     """Default sim + XML config for mouse tasks."""
     return config_dict.create(
         walker_xml_path=consts.MOUSE_XML_PATH,
-        arena_xml_path=consts.MOUSE_XML_PATH,    # required by arena-first base
+        arena_xml_path=consts.WHITE_ARENA_PATH,  # required by arena-first base
         ctrl_dt=0.001,
         sim_dt=0.001,
         Kp=35.0,
@@ -83,12 +84,11 @@ class MouseBaseEnv(mjx_env.MjxEnv):
             epath.Path(self._walker_xml_path).read_text()
         )
 
-        site = self._spec.worldbody.add_site(
-            name=f"mouse_spawn{suffix}",
+        frame = self._spec.worldbody.add_frame(
             pos=list(pos),
             quat=[1, 0, 0, 0],
         )
-        body = site.attach_body(mouse_spec.worldbody, "", suffix)
+        body = frame.attach_body(mouse_spec.worldbody, "", suffix)
         if freejoint:
             body.add_freejoint()
         if rgba is not None:
@@ -118,20 +118,14 @@ class MouseBaseEnv(mjx_env.MjxEnv):
             epath.Path(self._walker_xml_path).read_text()
         )
 
-        site = self._spec.worldbody.add_site(
-            name=f"ghost_spawn{suffix}",
+        frame = self._spec.worldbody.add_frame(
             pos=list(pos),
             quat=[1, 0, 0, 0],
         )
-        body = site.attach_body(mouse_spec.worldbody, "", suffix)
+        for body in mouse_spec.worldbody.bodies:
+            _recolour_tree(body, rgba=ghost_rgba)
+        body = frame.attach_body(mouse_spec.worldbody, "", suffix)
         # Intentionally NO freejoint: kinematically tied through the attached tree.
-
-        for g in getattr(body, "geom", []):
-            g.rgba = list(ghost_rgba)
-            if no_collision:
-                g.contype = 0
-                g.conaffinity = 0
-
 
     def add_multiple_mice(
         self,

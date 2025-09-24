@@ -96,9 +96,9 @@ class MouseEnv(MouseBaseEnv):
             None
         """
         super().compile()
-        # Cache IDs once compiled
-        self._wrist_body_id = self._mj_model.body("wrist_body").id
-        self._wrist_marker_geom_id = self._mj_model.geom("wrist_marker").id
+        # # Cache IDs once compiled
+        # self._wrist_body_id = self._mj_model.body("wrist_body").id
+        # self._wrist_marker_geom_id = self._mj_model.geom("wrist_marker").id
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
         """
