@@ -413,7 +413,7 @@ class Imitation(rodent_base.RodentEnv):
 
     @_named_reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
-        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(jp.square(info["action"]))
+        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(jp.square(info["action"] - info["prev_action"]))
         cost = weight * ctrl_diff_sqr
         metrics["costs/control_diff"] = cost
         return -cost

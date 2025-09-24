@@ -178,8 +178,8 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_body_height(self, data: mjx.Data) -> jp.ndarray:
         torso_pos = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xpos
-        torso_z = torso_pos[2]
-        return torso_z#self.root_body(data).xpos[1]
+        torso_z = torso_pos[2:3] #It's convenient the returned value has ndims=1 rather than 0 
+        return torso_z
     
     def _get_world_zaxis(self, data: mjx.Data) -> jp.ndarray:
         return self.root_body(data).xmat.flatten()[6:]
