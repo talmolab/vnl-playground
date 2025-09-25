@@ -397,7 +397,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Number of reference clips.
         """
-        return self.reference_clips.qpos.shape[0]
+        return self.reference_clips.n_clips
 
     def _clip_length(self) -> int:
         """Get the length of each clip.
@@ -405,7 +405,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Number of frames per clip.
         """
-        return self.reference_clips._n_frames_per_clip
+        return self.reference_clips.frames_per_clip
 
     def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
         """Get the current frame index in the reference clip.
@@ -856,6 +856,107 @@ class Imitation(worm_base.CelegansEnv):
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
+
+    # Properties for cleaner access
+    @property
+    def num_clips(self) -> int:
+        """Get the number of available reference clips.
+
+        Returns:
+            Number of reference clips.
+        """
+        return self._num_clips()
+
+    @property
+    def clip_length(self) -> int:
+        """Get the length of each clip.
+
+        Returns:
+            Number of frames per clip.
+        """
+        return self._clip_length()
+
+    @property
+    def mocap_dt(self) -> float:
+        """Get the motion capture time step.
+
+        Returns:
+            Time step for motion capture data.
+        """
+        return self._mocap_dt
+
+    @property
+    def steps_for_cur_frame(self) -> int:
+        """Get the number of steps per motion capture frame.
+
+        Returns:
+            Number of steps per motion capture frame.
+        """
+        return self._steps_for_cur_frame
+
+    @property
+    def n_steps(self) -> int:
+        """Get the number of physics steps per control step .
+
+        Returns:
+            Number of physics steps per control step.
+        """
+        return self._n_steps
+
+    @property
+    def reference_length(self) -> int:
+        """Get the length of reference windows for imitation.
+
+        Returns:
+            Number of reference frames used for imitation target.
+        """
+        return self._config.reference_length
+
+    @property
+    def start_frame_range(self) -> Tuple[int, int]:
+        """Get the range of valid start frames.
+
+        Returns:
+            Tuple of (min_start_frame, max_start_frame).
+        """
+        return tuple(self._config.start_frame_range)
+
+    @property
+    def reward_terms(self) -> Dict[str, Any]:
+        """Get the configured reward terms.
+
+        Returns:
+            Dictionary of reward term configurations.
+        """
+        return self._config.reward_terms
+
+    @property
+    def cost_terms(self) -> Dict[str, Any]:
+        """Get the configured cost terms.
+
+        Returns:
+            Dictionary of cost term configurations.
+        """
+        return self._config.cost_terms
+
+    @property
+    def termination_criteria(self) -> Dict[str, Any]:
+        """Get the configured termination criteria.
+
+        Returns:
+            Dictionary of termination criteria configurations.
+        """
+        return self._config.termination_criteria
+    
+    @property
+    def reference_clips(self) -> ReferenceClips:
+        """Get the reference clips.
+
+        Returns:
+            Reference clips.
+        """
+        return self._reference_clips
+        
 
     def render(
         self,

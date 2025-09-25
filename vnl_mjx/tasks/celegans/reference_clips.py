@@ -291,3 +291,66 @@ class ReferenceClips:
             Number of frames per clip.
         """
         return self.qpos.shape[1]
+
+    @property
+    def n_clips(self) -> int:
+        """Get number of clips in the dataset.
+
+        Returns:
+            Number of clips available.
+        """
+        return self.qpos.shape[0] if self.qpos.ndim >= 3 else 1
+
+    @property
+    def data_path(self) -> str:
+        """Get the path to the data file.
+
+        Returns:
+            Path to the HDF5 file containing the motion data.
+        """
+        return self._data_path
+
+    @property
+    def frames_per_clip(self) -> int:
+        """Get the number of frames per clip.
+
+        Returns:
+            Number of frames per motion clip.
+        """
+        return self._n_frames_per_clip
+
+    @property
+    def clip_indices(self) -> jp.ndarray:
+        """Get the indices of clips in this dataset.
+
+        Returns:
+            Array of clip indices.
+        """
+        return self._clip_idx
+
+    @property
+    def shape(self) -> Tuple[int, ...]:
+        """Get the shape of the motion data.
+
+        Returns:
+            Shape tuple of (n_clips, n_frames, ...) or (n_frames, ...) for sliced data.
+        """
+        return self.qpos.shape
+
+    @property
+    def is_sliced(self) -> bool:
+        """Check if this is a sliced reference clips object.
+
+        Returns:
+            True if this object represents a single clip/frame slice.
+        """
+        return self.qpos.ndim < 3
+
+    @property
+    def joint_indices(self) -> List[int]:
+        """Get indices of joints that are included in JOINTS constant.
+
+        Returns:
+            List of indices for joints included in JOINTS.
+        """
+        return [idx for name, idx in self._qpos_names.items() if name in JOINTS]

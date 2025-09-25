@@ -634,3 +634,102 @@ class CelegansEnv(mjx_env.MjxEnv):
             The MJX model instance for JAX-based simulation.
         """
         return self._mjx_model
+
+    @property
+    def is_compiled(self) -> bool:
+        """Check if the model has been compiled.
+
+        Returns:
+            True if the model has been compiled.
+        """
+        return self._compiled
+
+    @property
+    def suffix(self) -> str:
+        """Get the suffix used for body/joint names.
+
+        Returns:
+            Suffix string (e.g., "-worm").
+        """
+        return getattr(self, "_suffix", "")
+
+    @property
+    def spec(self) -> mujoco.MjSpec:
+        """Get the MuJoCo specification.
+
+        Returns:
+            The MuJoCo specification object.
+        """
+        return self._spec
+
+    @property
+    def config(self) -> Any:
+        """Get the environment configuration.
+
+        Returns:
+            The configuration object.
+        """
+        return self._config
+
+    @property
+    def root_name(self) -> str:
+        """Get the root body name.
+
+        Returns:
+            Name of the root body.
+        """
+        return self._config.root_body
+
+    @property
+    def joint_names(self) -> List[str]:
+        """Get the list of joint names in the configuration.
+
+        Returns:
+            List of joint names.
+        """
+        return self._config.joints
+
+    @property
+    def body_names(self) -> List[str]:
+        """Get the list of body names in the configuration.
+
+        Returns:
+            List of body names.
+        """
+        return self._config.bodies
+
+    @property
+    def end_eff_names(self) -> List[str]:
+        """Get the list of end effector names in the configuration.
+
+        Returns:
+            List of end effector names.
+        """
+        return self._config.end_effectors
+
+    @property
+    def n_bodies(self) -> int:
+        """Get number of bodies in the configuration.
+
+        Returns:
+            Number of body parts.
+        """
+        return len(self._config.bodies)
+
+    @property
+    def n_joints(self) -> int:
+        """Get number of joints in the configuration.
+
+        Returns:
+            Number of joints.
+        """
+        return len(self._config.joints)
+
+    @property
+    def n_end_effectors(self) -> int:
+        """Get number of end effectors.
+
+        Returns:
+            Number of end effector bodies.
+        """
+        return len(self._config.end_effectors)
