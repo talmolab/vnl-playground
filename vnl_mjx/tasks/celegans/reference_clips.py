@@ -1,8 +1,13 @@
-from typing import Tuple, Self
-from calendar import c
-import copy
-import h5py
+"""Reference clips for C. elegans motion data.
 
+This module provides utilities for loading and processing motion capture data
+for C. elegans, including train/test splitting and data access methods.
+"""
+
+from typing import List, Tuple
+import copy
+
+import h5py
 import jax
 import jax.numpy as jp
 
@@ -10,14 +15,42 @@ from vnl_mjx.tasks.celegans.consts import JOINTS
 
 
 class ReferenceClips:
-    _DATA_ARRAYS = ["qpos", "qvel", "xpos", "xquat"]
+    """Class for loading and managing C. elegans reference motion clips.
 
-    def __init__(self, data_path: str, n_frames_per_clip: int):
+    This class handles loading motion data from HDF5 files and provides
+    utilities for accessing specific clips, frames, and slicing data.
+
+    Attributes:
+        _DATA_ARRAYS: List of data array names stored in the HDF5 file.
+    """
+
+    _DATA_ARRAYS: List[str] = ["qpos", "qvel", "xpos", "xquat"]
+
+    def __init__(self, data_path: str, n_frames_per_clip: int) -> None:
+        """Initialize ReferenceClips with data from HDF5 file.
+
+        Args:
+            data_path: Path to the HDF5 file containing motion data.
+            n_frames_per_clip: Number of frames per motion clip.
+        """
         self._n_frames_per_clip = n_frames_per_clip
         self._data_path = data_path
         self._load_from_disk(self._data_path, self._n_frames_per_clip)
 
     def at(self, clip: int, frame: int) -> "ReferenceClips":
+        """Get data at a specific clip and frame.
+
+        Args:
+            clip: Index of the clip to access.
+            frame: Index of the frame within the clip.
+
+        Returns:
+            A new ReferenceClips instance containing data for the specified
+            clip and frame.
+
+        Raises:
+            IndexError: If trying to slice an already sliced ReferenceClip.
+        """
         if self.qpos.ndim < 3:
             raise IndexError("Trying to slice already sliced ReferenceClip.")
         subslice = copy.copy(self)
@@ -27,6 +60,19 @@ class ReferenceClips:
         return subslice
 
     def slice(self, clip: int, start_frame: int, length: int) -> "ReferenceClips":
+        """Extract a slice of frames from a specific clip.
+
+        Args:
+            clip: Index of the clip to slice.
+            start_frame: Starting frame index for the slice.
+            length: Number of frames to include in the slice.
+
+        Returns:
+            A new ReferenceClips instance containing the sliced data.
+
+        Raises:
+            IndexError: If trying to slice an already sliced ReferenceClip.
+        """
         if self.qpos.ndim < 3:
             raise IndexError("Trying to slice already sliced ReferenceClip.")
         subslice = copy.copy(self)
@@ -41,10 +87,21 @@ class ReferenceClips:
             subslice._data_arrays[key] = slice
         return subslice
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Return the number of clips.
+
+        Returns:
+            Number of clips in the dataset.
+        """
         return len(self.qpos)
 
-    def _load_from_disk(self, data_path: str, n_frames_per_clip: int):
+    def _load_from_disk(self, data_path: str, n_frames_per_clip: int) -> None:
+        """Load motion data from HDF5 file.
+
+        Args:
+            data_path: Path to the HDF5 file.
+            n_frames_per_clip: Number of frames per clip.
+        """
         self._data_arrays = {}
         with h5py.File(data_path, "r") as fid:
             for k in self._DATA_ARRAYS:
@@ -64,18 +121,18 @@ class ReferenceClips:
         data_path: str,
         n_frames_per_clip: int,
         test_ratio: float = 0.1,
-    ) -> Tuple[Self, Self]:
-        """
-        Generates a train-test split of the clips based on the provided ratio.
-        The split is done by randomly sampling clips from the metadata list.
-        The function returns two ReferenceClip objects: one for training and one for testing.
+    ) -> Tuple["ReferenceClips", "ReferenceClips"]:
+        """Generate train and test splits from the clips.
+
+        The split is done by randomly sampling clips from the dataset.
 
         Args:
-            data (ReferenceClip): The ReferenceClip object containing the clips to be split.
-            test_ratio (float, optional): ratio of the test set. Defaults to 0.1.
+            data_path: Path to the HDF5 file containing motion data.
+            n_frames_per_clip: Number of frames per clip.
+            test_ratio: Ratio of clips to use for testing. Defaults to 0.1.
 
         Returns:
-            Tuple[ReferenceClip, ReferenceClip]: training set and testing set as ReferenceClip objects.
+            A tuple containing (train_set, test_set) as ReferenceClips objects.
         """
         train_set = cls(data_path, n_frames_per_clip)
         test_set = cls(data_path, n_frames_per_clip)
@@ -114,52 +171,123 @@ class ReferenceClips:
 
     @property
     def qpos(self) -> jp.ndarray:
+        """Joint positions from the reference data.
+
+        Returns:
+            Array of joint positions for all clips and frames.
+        """
         return self._data_arrays["qpos"]
 
     @property
     def qvel(self) -> jp.ndarray:
+        """Joint velocities from the reference data.
+
+        Returns:
+            Array of joint velocities for all clips and frames.
+        """
         return self._data_arrays["qvel"]
 
     @property
     def xpos(self) -> jp.ndarray:
+        """Body positions from the reference data.
+
+        Returns:
+            Array of body positions for all clips and frames.
+        """
         return self._data_arrays["xpos"]
 
     @property
     def xquat(self) -> jp.ndarray:
+        """Body quaternions from the reference data.
+
+        Returns:
+            Array of body quaternions for all clips and frames.
+        """
         return self._data_arrays["xquat"]
 
     @property
     def root_position(self) -> jp.ndarray:
+        """Root body position from the reference data.
+
+        Returns:
+            Position of the root body (typically index 1 in xpos).
+        """
         return self.xpos[..., 1, :]
 
     @property
     def root_quaternion(self) -> jp.ndarray:
+        """Root body quaternion from the reference data.
+
+        Returns:
+            Quaternion of the root body (typically index 1 in xquat).
+        """
         return self.xquat[..., 1, :]
 
     @property
     def joints(self) -> jp.ndarray:
+        """Joint angles for joints defined in JOINTS constant.
+
+        Returns:
+            Array of joint angles filtered to include only joints in JOINTS.
+        """
         joint_idx = [idx for name, idx in self._qpos_names.items() if name in JOINTS]
         return self.qpos[..., joint_idx]
 
     @property
     def joints_velocity(self) -> jp.ndarray:
+        """Joint velocities for joints defined in JOINTS constant.
+
+        Returns:
+            Array of joint velocities filtered to include only joints in JOINTS.
+        """
         start_idx = self.qvel.shape[-1] - len(JOINTS)
         return self.qvel[..., start_idx:]
 
     @property
-    def joint_names(self):
+    def joint_names(self) -> List[str]:
+        """Get list of joint names.
+
+        Returns:
+            List of joint names that are included in JOINTS constant.
+        """
         return [name for name in self._names_qpos if name in JOINTS]
 
     @property
-    def body_names(self):
+    def body_names(self) -> jp.ndarray:
+        """Get list of body names.
+
+        Returns:
+            Array of body names from the reference data.
+        """
         return self._names_xpos
 
     def body_xpos(self, name: str) -> jp.ndarray:
+        """Get position data for a specific body.
+
+        Args:
+            name: Name of the body.
+
+        Returns:
+            Position array for the specified body.
+        """
         return self.xpos[..., self._xpos_names[name], :]
 
     def body_xquat(self, name: str) -> jp.ndarray:
+        """Get quaternion data for a specific body.
+
+        Args:
+            name: Name of the body.
+
+        Returns:
+            Quaternion array for the specified body.
+        """
         return self.xquat[..., self._xpos_names[name], :]
 
     @property
-    def n_frames(self):
+    def n_frames(self) -> int:
+        """Get number of frames in the clips.
+
+        Returns:
+            Number of frames per clip.
+        """
         return self.qpos.shape[1]

@@ -1,8 +1,12 @@
-"""Base classes for C. Elegans"""
+"""Base classes for C. elegans environments.
+
+This module provides the core CelegansEnv class and utility functions for
+creating and managing C. elegans simulation environments using MuJoCo.
+"""
 
 import collections
 import logging
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from xml.etree import ElementTree as ET
 
 import jax
@@ -18,6 +22,11 @@ from vnl_mjx.tasks.utils import _recolour_tree, _scale_body_tree, dm_scale_spec
 
 
 def get_assets() -> Dict[str, bytes]:
+    """Get asset files for C. elegans environment.
+
+    Returns:
+        Dictionary mapping asset file names to their byte content.
+    """
     assets = {}
     mjx_env.update_assets(assets, consts.CELEGANS_PATH / "xmls", "*.xml")
     mjx_env.update_assets(assets, consts.CELEGANS_PATH / "xmls" / "assets")
@@ -25,6 +34,11 @@ def get_assets() -> Dict[str, bytes]:
 
 
 def default_config() -> config_dict.ConfigDict:
+    """Create default configuration for C. elegans environment.
+
+    Returns:
+        Configuration dictionary with default parameters for the environment.
+    """
     return config_dict.create(
         walker_xml_path=consts.CELEGANS_XML_PATH,
         arena_xml_path=consts.WHITE_ARENA_XML_PATH,
@@ -52,15 +66,13 @@ class CelegansEnv(mjx_env.MjxEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: Optional[Dict[str, Union[str, int, List[Any]]]] = None,
     ) -> None:
-        """
-        Initialize the CelegansEnv class with only arena
+        """Initialize the CelegansEnv class with only arena.
 
         Args:
-            config (config_dict.ConfigDict): Configuration dictionary for the environment.
-            config_overrides (Optional[Dict[str, Union[str, int, list[Any]]]], optional): Optional overrides for the configuration. Defaults to None.
-            compile_spec (bool, optional): Whether to compile the model. Defaults to False.
+            config: Configuration dictionary for the environment.
+            config_overrides: Optional overrides for the configuration.
         """
         super().__init__(config, config_overrides)
         self._walker_xml_path = str(config.walker_xml_path)
@@ -73,11 +85,11 @@ class CelegansEnv(mjx_env.MjxEnv):
         torque_actuators: bool,
         rescale_factor: float = 1.0,
         dim: int = 3,
-        pos: tuple[float, float, float] = (0, 0, 0.05),
-        quat: tuple[float, float, float, float] = (1, 0, 0, 0),
-        friction: tuple[float] = (1, 1, 0.005, 0.0001, 0.0001),
-        solimp: tuple[float] = (0.9, 0.95, 0.001, 0.5, 2),
-        rgba: Optional[tuple[float, float, float, float]] = None,
+        pos: Tuple[float, float, float] = (0, 0, 0.05),
+        quat: Tuple[float, float, float, float] = (1, 0, 0, 0),
+        friction: Tuple[float, ...] = (1, 1, 0.005, 0.0001, 0.0001),
+        solimp: Tuple[float, ...] = (0.9, 0.95, 0.001, 0.5, 2),
+        rgba: Optional[Tuple[float, float, float, float]] = None,
         suffix: str = "-worm",
     ) -> None:
         """Adds the c. elegans model to the environment.
@@ -165,13 +177,26 @@ class CelegansEnv(mjx_env.MjxEnv):
     def add_ghost(
         self,
         rescale_factor: float = 1.0,
-        pos=(0, 0, 0.05),
-        ghost_rgba=(0.8, 0.8, 0.8, 0.3),
-        suffix="-ghost",
-        dim=3,
-        inplace=False,
-    ):
-        """Adds a ghost worm model to the environment."""
+        pos: Tuple[float, float, float] = (0, 0, 0.05),
+        ghost_rgba: Tuple[float, float, float, float] = (0.8, 0.8, 0.8, 0.3),
+        suffix: str = "-ghost",
+        dim: int = 3,
+        inplace: bool = False,
+    ) -> Optional[Tuple[mujoco.MjSpec, mujoco.MjModel]]:
+        """Add a ghost worm model to the environment.
+
+        Args:
+            rescale_factor: Factor to rescale the ghost body.
+            pos: Position to spawn the ghost worm.
+            ghost_rgba: RGBA color values for the ghost.
+            suffix: Suffix to append to ghost body names.
+            dim: Dimensionality of the environment (2 or 3).
+            inplace: Whether to modify the spec in place.
+
+        Returns:
+            If not inplace, returns tuple of (spec, compiled_model).
+            Otherwise returns None.
+        """
         print(f"Loading ghost worm from {self._walker_xml_path}")
 
         if not inplace:
@@ -223,8 +248,12 @@ class CelegansEnv(mjx_env.MjxEnv):
         if not inplace:
             return spec, spec.compile()
 
-    def compile(self, forced=False) -> None:
-        """Compiles the model from the mj_spec and put models to mjx"""
+    def compile(self, forced: bool = False) -> None:
+        """Compile the model from the mj_spec and put models to mjx.
+
+        Args:
+            forced: Whether to force recompilation even if already compiled.
+        """
         if not self._compiled or forced:
             self._spec.option.noslip_iterations = self._config.noslip_iterations
             self._mj_model = self._spec.compile()
@@ -240,17 +269,42 @@ class CelegansEnv(mjx_env.MjxEnv):
             self._compiled = True
 
     def _get_root_pos(self, data: mjx.Data) -> jp.ndarray:
-        """Get root position from the environment."""
+        """Get root position from the environment.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Root body position in global coordinates.
+        """
         return self.root_body(data).xpos
 
     def _get_root_quat(self, data: mjx.Data) -> jp.ndarray:
-        """Get root quaternion from the environment."""
+        """Get root quaternion from the environment.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Root body quaternion (w, x, y, z).
+        """
         return data.bind(
             self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")
         ).xquat
 
-    def _get_appendages_pos(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
-        """Get appendages positions from the environment."""
+    def _get_appendages_pos(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[jp.ndarray, Dict[str, jp.ndarray]]:
+        """Get appendages positions from the environment.
+
+        Args:
+            data: MuJoCo simulation data.
+            flatten: Whether to flatten the output into a single array.
+
+        Returns:
+            If flatten=True, returns flattened array of all appendage positions.
+            If flatten=False, returns dict mapping appendage names to positions.
+        """
         root = data.bind(
             self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")
         )
@@ -267,8 +321,17 @@ class CelegansEnv(mjx_env.MjxEnv):
 
     def _get_bodies_pos(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
-        """Get _global_ positions of the body parts."""
+    ) -> Union[Dict[str, jp.ndarray], jp.ndarray]:
+        """Get global positions of the body parts.
+
+        Args:
+            data: MuJoCo simulation data.
+            flatten: Whether to flatten the output into a single array.
+
+        Returns:
+            If flatten=True, returns flattened array of all body positions.
+            If flatten=False, returns dict mapping body names to positions.
+        """
         bodies_pos = collections.OrderedDict()
         for body_name in self._config.bodies:
             global_xpos = data.bind(
@@ -279,15 +342,27 @@ class CelegansEnv(mjx_env.MjxEnv):
             bodies_pos, _ = jax.flatten_util.ravel_pytree(bodies_pos)
         return bodies_pos
 
-    def _get_joint_angles(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
-        """Get joint angles of the body parts."""
+    def _get_joint_angles(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[jp.ndarray, Dict[str, jp.ndarray]]:
+        """Get joint angles of the body parts.
+
+        Args:
+            data: MuJoCo simulation data.
+            flatten: Whether to flatten the output into a single array.
+
+        Returns:
+            If flatten=True, returns flattened array of all joint angles.
+            If flatten=False, returns dict mapping joint names to angles.
+        """
         joint_angles = collections.OrderedDict()
         for joint_name in self._config.joints:
             try:
                 joint_angles[joint_name] = data.bind(
                     self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")
                 ).qpos
-            except:
+            except Exception as e:
+                print(e)
                 raise ValueError(
                     f"Joint {joint_name}{self._suffix} not found in the environment.\nAvailable joints: {[joint.name for joint in self._spec.joints]}"
                 )
@@ -295,8 +370,19 @@ class CelegansEnv(mjx_env.MjxEnv):
             joint_angles, _ = jax.flatten_util.ravel_pytree(joint_angles)
         return joint_angles
 
-    def _get_joint_ang_vels(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
-        """Get joint angular velocities of the body parts."""
+    def _get_joint_ang_vels(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[jp.ndarray, Dict[str, jp.ndarray]]:
+        """Get joint angular velocities of the body parts.
+
+        Args:
+            data: MuJoCo simulation data.
+            flatten: Whether to flatten the output into a single array.
+
+        Returns:
+            If flatten=True, returns flattened array of all joint velocities.
+            If flatten=False, returns dict mapping joint names to velocities.
+        """
         joint_ang_vels = collections.OrderedDict()
         for joint_name in self._config.joints:
             joint_ang_vels[joint_name] = data.bind(
@@ -307,9 +393,25 @@ class CelegansEnv(mjx_env.MjxEnv):
         return joint_ang_vels
 
     def _get_actuator_ctrl(self, data: mjx.Data) -> jp.ndarray:
+        """Get actuator control forces.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Array of actuator forces.
+        """
         return data.qfrc_actuator
 
     def _get_body_height(self, data: mjx.Data) -> jp.ndarray:
+        """Get the height (z-coordinate) of the root body.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Z-coordinate of the root body position.
+        """
         torso_pos = data.bind(
             self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")
         ).xpos
@@ -317,10 +419,29 @@ class CelegansEnv(mjx_env.MjxEnv):
         return torso_z  # self.root_body(data).xpos[1]
 
     def _get_world_zaxis(self, data: mjx.Data) -> jp.ndarray:
+        """Get the world z-axis in the root body frame.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Z-axis vector in the root body's coordinate frame.
+        """
         return self.root_body(data).xmat.flatten()[6:]
 
-    def _get_proprioception(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
-        """Get proprioception data from the environment."""
+    def _get_proprioception(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[jp.ndarray, Dict[str, Any]]:
+        """Get proprioception data from the environment.
+
+        Args:
+            data: MuJoCo simulation data.
+            flatten: Whether to flatten the output into a single array.
+
+        Returns:
+            If flatten=True, returns flattened array of all proprioceptive data.
+            If flatten=False, returns dict with proprioceptive components.
+        """
         proprioception = collections.OrderedDict(
             joint_angles=self._get_joint_angles(data),
             joint_ang_vels=self._get_joint_ang_vels(data),
@@ -336,8 +457,17 @@ class CelegansEnv(mjx_env.MjxEnv):
 
     def _get_kinematic_sensors(
         self, data: mjx.Data, flatten: bool = True
-    ) -> jp.ndarray:
-        """Get kinematic sensors data from the environment."""
+    ) -> Union[jp.ndarray, Dict[str, jp.ndarray]]:
+        """Get kinematic sensors data from the environment.
+
+        Args:
+            data: MuJoCo simulation data.
+            flatten: Whether to flatten the output into a single array.
+
+        Returns:
+            If flatten=True, returns flattened array of sensor data.
+            If flatten=False, returns dict mapping sensor names to data.
+        """
         try:
             accelerometer = data.bind(
                 self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")
@@ -362,7 +492,14 @@ class CelegansEnv(mjx_env.MjxEnv):
         return sensors
 
     def _get_touch_sensors(self, data: mjx.Data) -> jp.ndarray:
-        """Get touch sensors data from the environment."""
+        """Get touch sensors data from the environment.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Array of touch sensor readings.
+        """
         touches = [
             data.bind(
                 self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")
@@ -372,33 +509,68 @@ class CelegansEnv(mjx_env.MjxEnv):
         return jp.array(touches)
 
     def _get_origin(self, data: mjx.Data) -> jp.ndarray:
-        """Get origin position in the torso frame."""
+        """Get origin position in the torso frame.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Origin position relative to the torso coordinate frame.
+        """
         torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         torso_frame = torso.xmat
         torso_pos = torso.xpos
         return jp.dot(-torso_pos, torso_frame)
 
-    def _get_egocentric_camera(self, data: mjx.Data):
-        """Get egocentric camera data from the environment."""
+    def _get_egocentric_camera(self, data: mjx.Data) -> None:
+        """Get egocentric camera data from the environment.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Raises:
+            NotImplementedError: This method is not yet implemented.
+        """
         raise NotImplementedError(
             "Egocentric camera is not implemented for this environment."
         )
 
-    def get_joint_names(self):
+    def get_joint_names(self) -> List[str]:
+        """Get list of joint names in the environment.
+
+        Returns:
+            List of joint names that exist in the environment.
+        """
         return [
             j.name
             for j in self._spec.joints
             if j.name.replace(self._suffix, "") in self._config.joints
         ]
 
-    def root_body(self, data):
+    def root_body(self, data: mjx.Data) -> mjx.Data:
+        """Get the root body from the simulation data.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Root body data.
+        """
         # TODO: Double-check which body should be considered the root (walker or torso)
         return data.bind(
             self.mjx_model, self._spec.body(f"{consts.ROOT}{self._suffix}")
         )
 
-    def save_spec(self, path: str, return_str: bool = False):
-        """Save the spec to a file."""
+    def save_spec(self, path: str, return_str: bool = False) -> Optional[str]:
+        """Save the spec to a file.
+
+        Args:
+            path: Path where to save the XML specification.
+            return_str: Whether to return the XML string.
+
+        Returns:
+            XML string if return_str is True, otherwise None.
+        """
         xml_str = self._spec.to_xml()
         root = ET.fromstring(xml_str)
         with open(path, "wb") as f:
@@ -411,24 +583,54 @@ class CelegansEnv(mjx_env.MjxEnv):
 
     @property
     def action_size(self) -> int:
+        """Number of actuated degrees of freedom.
+
+        Returns:
+            Dimension of the action space.
+        """
         return self._mjx_model.nu
 
     @property
     def xml_path(self) -> str:
+        """Path to the walker XML file.
+
+        Returns:
+            String path to the walker XML specification.
+        """
         return self._walker_xml_path
 
     @property
     def walker_xml_path(self) -> str:
+        """Path to the walker XML file.
+
+        Returns:
+            String path to the walker XML specification.
+        """
         return self._walker_xml_path
 
     @property
     def arena_xml_path(self) -> str:
+        """Path to the arena XML file.
+
+        Returns:
+            String path to the arena XML specification.
+        """
         return self._arena_xml_path
 
     @property
     def mj_model(self) -> mujoco.MjModel:
+        """Compiled MuJoCo model.
+
+        Returns:
+            The compiled MuJoCo model instance.
+        """
         return self._mj_model
 
     @property
     def mjx_model(self) -> mjx.Model:
+        """MuJoCo XLA (JAX) model.
+
+        Returns:
+            The MJX model instance for JAX-based simulation.
+        """
         return self._mjx_model

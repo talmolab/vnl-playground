@@ -1,3 +1,9 @@
+"""C. elegans imitation learning environment.
+
+This module implements an imitation learning environment for C. elegans that
+allows training agents to mimic reference motion clips.
+"""
+
 import collections
 import warnings
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
@@ -9,10 +15,9 @@ import jax.flatten_util
 import jax.numpy as jp
 import mujoco
 import numpy as np
-from jax.scipy.spatial.transform import Rotation
 from ml_collections import config_dict
 from mujoco import mjx
-from mujoco_playground._src import mjx_env, wrapper
+from mujoco_playground._src import mjx_env
 from vnl_mjx.tasks.celegans.reference_clips import ReferenceClips
 
 from . import base as worm_base
@@ -20,6 +25,11 @@ from . import consts
 
 
 def default_config() -> config_dict.ConfigDict:
+    """Create default configuration for the imitation environment.
+
+    Returns:
+        Configuration dictionary with default parameters for imitation learning.
+    """
     return config_dict.create(
         walker_xml_path=str(consts.CELEGANS_XML_PATH),
         arena_xml_path=str(consts.ARENA_XML_PATH),
@@ -86,19 +96,32 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
-_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
-_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
-_COST_FCN_REGISTRY: dict[str, Callable] = {}
+_REWARD_FCN_REGISTRY: Dict[str, Callable] = {}
+_TERMINATION_FCN_REGISTRY: Dict[str, Callable] = {}
+_COST_FCN_REGISTRY: Dict[str, Callable] = {}
 
 
 class Imitation(worm_base.CelegansEnv):
-    """Multi-clip imitation environment."""
+    """Multi-clip imitation environment for C. elegans.
+
+    This environment enables training agents to imitate reference motion clips
+    by providing rewards based on how closely the agent's motion matches the
+    reference data.
+    """
 
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
+        config_overrides: Optional[
+            Dict[str, Union[str, int, List[Any], Dict[str, Any]]]
+        ] = None,
     ) -> None:
+        """Initialize the imitation environment.
+
+        Args:
+            config: Configuration dictionary for the environment.
+            config_overrides: Optional overrides for the configuration.
+        """
         super().__init__(config, config_overrides)
 
         self.add_worm(
@@ -132,7 +155,22 @@ class Imitation(worm_base.CelegansEnv):
                 f"Simulation will not advance! Please increase `ctrl_dt` from {self._config.ctrl_dt} to at least {self._config.sim_dt}."
             )
 
-    def reset(self, rng: jax.Array, clip_idx=None, start_frame=None) -> mjx_env.State:
+    def reset(
+        self,
+        rng: jax.Array,
+        clip_idx: Optional[int] = None,
+        start_frame: Optional[int] = None,
+    ) -> mjx_env.State:
+        """Reset the environment to initial state.
+
+        Args:
+            rng: Random number generator key.
+            clip_idx: Specific clip index to use. If None, randomly selected.
+            start_frame: Specific start frame. If None, randomly selected.
+
+        Returns:
+            Initial environment state.
+        """
         start_rng, clip_rng = jax.random.split(rng)
         if clip_idx is None:
             clip_idx = jax.random.choice(clip_rng, self._num_clips())
@@ -191,6 +229,15 @@ class Imitation(worm_base.CelegansEnv):
         state: mjx_env.State,
         action: jax.Array,
     ) -> mjx_env.State:
+        """Step the environment forward by one timestep.
+
+        Args:
+            state: Current environment state.
+            action: Action to apply.
+
+        Returns:
+            Next environment state.
+        """
         n_steps = self._n_steps
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
@@ -236,6 +283,15 @@ class Imitation(worm_base.CelegansEnv):
         return state
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Get observations from the environment.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+
+        Returns:
+            Dictionary containing proprioception and imitation target data.
+        """
         return collections.OrderedDict(
             proprioception=self._get_proprioception(data, flatten=False),
             imitation_target=self._get_imitation_target(data, info),
@@ -244,6 +300,16 @@ class Imitation(worm_base.CelegansEnv):
     def _get_rewards(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Tuple[Mapping[str, float], Mapping[str, float]]:
+        """Compute all reward terms for the current state.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+
+        Returns:
+            Tuple of (reward_dict, distance_dict) where reward_dict contains
+            computed rewards and distance_dict contains the corresponding distances.
+        """
         rewards, dists = dict(), dict()
         for name, kwargs in self._config.reward_terms.items():
             r, d = _REWARD_FCN_REGISTRY[name](self, data, info, **kwargs)
@@ -254,6 +320,15 @@ class Imitation(worm_base.CelegansEnv):
     def _get_termination_conditions(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Mapping[str, bool]:
+        """Check all termination conditions for the current state.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+
+        Returns:
+            Dictionary mapping termination condition names to boolean values.
+        """
         termination_reasons = dict()
         for name, kwargs in self._config.termination_criteria.items():
             termination_fcn = _TERMINATION_FCN_REGISTRY[name]
@@ -263,6 +338,16 @@ class Imitation(worm_base.CelegansEnv):
     def _get_costs(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Tuple[Mapping[str, float], Mapping[str, float]]:
+        """Compute all cost terms for the current state.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+
+        Returns:
+            Tuple of (cost_dict, magnitude_dict) where cost_dict contains
+            computed costs and magnitude_dict contains the underlying magnitudes.
+        """
         costs, magnitudes = dict(), dict()
         for name, kwargs in self._config.cost_terms.items():
             c, m = _COST_FCN_REGISTRY[name](self, data, info, **kwargs)
@@ -271,6 +356,15 @@ class Imitation(worm_base.CelegansEnv):
         return costs, magnitudes
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
+        """Reset simulation data to a specific clip and frame.
+
+        Args:
+            clip_idx: Index of the clip to reset to.
+            start_frame: Frame within the clip to start from.
+
+        Returns:
+            Initialized MuJoCo simulation data.
+        """
         data = mjx.make_data(self.mj_model)  # ,
         #     impl=self._config.mujoco_impl,
         #     nconmax=self._config.nconmax,
@@ -290,15 +384,39 @@ class Imitation(worm_base.CelegansEnv):
         return data
 
     def null_action(self) -> jp.ndarray:
+        """Get a null (zero) action.
+
+        Returns:
+            Zero action array.
+        """
         return jp.zeros(self.action_size)
 
-    def _num_clips(self):
+    def _num_clips(self) -> int:
+        """Get the number of available clips.
+
+        Returns:
+            Number of reference clips.
+        """
         return self.reference_clips.qpos.shape[0]
 
-    def _clip_length(self):
+    def _clip_length(self) -> int:
+        """Get the length of each clip.
+
+        Returns:
+            Number of frames per clip.
+        """
         return self.reference_clips._n_frames_per_clip
 
     def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
+        """Get the current frame index in the reference clip.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+
+        Returns:
+            Current frame index.
+        """
         return jp.floor(data.time * self._config.mocap_hz + info["start_frame"]).astype(
             int
         )
@@ -306,6 +424,15 @@ class Imitation(worm_base.CelegansEnv):
     def _get_current_target(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> ReferenceClips:
+        """Get reference data for the current timestep.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+
+        Returns:
+            Reference clips data for the current frame.
+        """
         return self.reference_clips.at(
             clip=info["reference_clip"], frame=self._get_cur_frame(data, info)
         )
@@ -313,6 +440,15 @@ class Imitation(worm_base.CelegansEnv):
     def _get_reference_clip(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> ReferenceClips:
+        """Get the full reference clip.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+
+        Returns:
+            Complete reference clip data.
+        """
         return self.reference_clips.slice(
             clip=info["reference_clip"], start_frame=0, length=self._clip_length()
         )
@@ -320,6 +456,15 @@ class Imitation(worm_base.CelegansEnv):
     def _get_imitation_reference(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> ReferenceClips:
+        """Get future reference frames for imitation target.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+
+        Returns:
+            Reference clips data for future frames used as imitation target.
+        """
         return self.reference_clips.slice(
             clip=info["reference_clip"],
             start_frame=self._get_cur_frame(data, info) + 1,
@@ -329,6 +474,16 @@ class Imitation(worm_base.CelegansEnv):
     def _get_imitation_target(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Mapping[str, jp.ndarray]:
+        """Get imitation targets transformed to agent's egocentric frame.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+
+        Returns:
+            Dictionary containing target positions, orientations, and joint angles
+            in the agent's egocentric coordinate frame.
+        """
         reference = self._get_imitation_reference(data, info)
 
         root_pos = self.root_body(data).xpos
@@ -364,6 +519,15 @@ class Imitation(worm_base.CelegansEnv):
 
     # Rewards
     def _named_reward(name: str):
+        """Decorator to register reward functions.
+
+        Args:
+            name: Name to register the reward function under.
+
+        Returns:
+            Decorator function that registers the reward function.
+        """
+
         def decorator(reward_fcn: Callable):
             _REWARD_FCN_REGISTRY[name] = reward_fcn
             return reward_fcn
@@ -372,6 +536,17 @@ class Imitation(worm_base.CelegansEnv):
 
     @_named_reward("root_pos")
     def _root_pos_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+        """Reward for matching root position to reference.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Reward weight multiplier.
+            exp_scale: Exponential scaling factor for distance.
+
+        Returns:
+            Tuple of (reward_value, distance_to_target).
+        """
         target = self._get_current_target(data, info)
         root_pos = self._get_root_pos(data)
         distance = jp.linalg.norm(target.root_position - root_pos)
@@ -380,6 +555,17 @@ class Imitation(worm_base.CelegansEnv):
 
     @_named_reward("root_quat")
     def _root_quat_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+        """Reward for matching root orientation to reference.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Reward weight multiplier.
+            exp_scale: Exponential scaling factor for angular distance.
+
+        Returns:
+            Tuple of (reward_value, angular_distance_in_degrees).
+        """
         target = self._get_current_target(data, info)
         root_quat = self._get_root_quat(data)
         quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
@@ -390,6 +576,17 @@ class Imitation(worm_base.CelegansEnv):
 
     @_named_reward("joints")
     def _joints_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+        """Reward for matching joint angles to reference.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Reward weight multiplier.
+            exp_scale: Exponential scaling factor for joint space distance.
+
+        Returns:
+            Tuple of (reward_value, joint_space_l2_distance).
+        """
         target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
         distance = jp.linalg.norm(target.joints - joints)
@@ -398,13 +595,36 @@ class Imitation(worm_base.CelegansEnv):
 
     @_named_reward("joints_vel")
     def _joint_vels_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+        """Reward for matching joint velocities to reference.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Reward weight multiplier.
+            exp_scale: Exponential scaling factor for velocity space distance.
+
+        Returns:
+            Tuple of (reward_value, joint_velocity_l2_distance).
+        """
         target = self._get_current_target(data, info)
         joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         return reward, distance
 
-    def _get_bodies_dist(self, data, info, bodies=consts.BODIES) -> float:
+    def _get_bodies_dist(
+        self, data: mjx.Data, info: Mapping[str, Any], bodies: List[str] = consts.BODIES
+    ) -> float:
+        """Calculate distance between current and target body positions.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            bodies: List of body names to include in distance calculation.
+
+        Returns:
+            Total distance between current and target body positions.
+        """
         target = self._get_current_target(data, info)
         body_pos = self._get_bodies_pos(data, flatten=False)
         total_dist_sqr = 0.0
@@ -415,12 +635,34 @@ class Imitation(worm_base.CelegansEnv):
 
     @_named_reward("bodies_pos")
     def _body_pos_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+        """Reward for matching body positions to reference.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Reward weight multiplier.
+            exp_scale: Exponential scaling factor for distance.
+
+        Returns:
+            Tuple of (reward_value, total_body_distance).
+        """
         total_dist = self._get_bodies_dist(data, info, bodies=self._config.bodies)
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
         return reward, total_dist
 
     @_named_reward("end_eff")
     def _end_eff_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+        """Reward for matching end effector positions to reference.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Reward weight multiplier.
+            exp_scale: Exponential scaling factor for distance.
+
+        Returns:
+            Tuple of (reward_value, end_effector_distance).
+        """
         total_dist = self._get_bodies_dist(
             data, info, bodies=self._config.end_effectors
         )
@@ -431,6 +673,17 @@ class Imitation(worm_base.CelegansEnv):
     def _upright_reward(
         self, data, info, weight, healthy_z_range
     ) -> Tuple[float, float]:
+        """Reward for staying upright within a healthy height range.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Reward weight multiplier.
+            healthy_z_range: Tuple of (min_height, max_height) for healthy range.
+
+        Returns:
+            Tuple of (reward_value, current_height).
+        """
         torso_z = self._get_body_height(data)  # root_body(data).xpos[2]
         min_z, max_z = healthy_z_range
         in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
@@ -438,6 +691,15 @@ class Imitation(worm_base.CelegansEnv):
 
     # Costs
     def _named_cost(name: str):
+        """Decorator to register cost functions.
+
+        Args:
+            name: Name to register the cost function under.
+
+        Returns:
+            Decorator function that registers the cost function.
+        """
+
         def decorator(cost_fcn: Callable):
             _COST_FCN_REGISTRY[name] = cost_fcn
             return cost_fcn
@@ -446,16 +708,47 @@ class Imitation(worm_base.CelegansEnv):
 
     @_named_cost("control")
     def _control_cost(self, data, info, weight) -> Tuple[float, float]:
+        """Cost for control effort (action magnitude).
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Cost weight multiplier.
+
+        Returns:
+            Tuple of (cost_value, control_magnitude).
+        """
         ctrl_magnitude = jp.sum(jp.square(info["action"]))
         return weight * ctrl_magnitude, ctrl_magnitude
 
     @_named_cost("control_diff")
     def _control_diff_cost(self, data, info, weight) -> Tuple[float, float]:
+        """Cost for control smoothness (action differences).
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Cost weight multiplier.
+
+        Returns:
+            Tuple of (cost_value, control_difference).
+        """
         ctrl_diff = jp.sum(jp.square(info["action"] - info["prev_action"]))
         return weight * ctrl_diff, ctrl_diff
 
     @_named_cost("energy")
     def _energy_cost(self, data, info, weight, max_value) -> Tuple[float, float]:
+        """Cost for energy consumption.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Cost weight multiplier.
+            max_value: Maximum energy value to clip at.
+
+        Returns:
+            Tuple of (cost_value, energy_consumption).
+        """
         energy = jp.minimum(
             jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator)), max_value
         )
@@ -463,10 +756,33 @@ class Imitation(worm_base.CelegansEnv):
 
     @_named_cost("jerk")
     def _jerk_cost(self, data, info, weight, window_len) -> Tuple[float, float]:
+        """Cost for jerk (third derivative of position).
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Cost weight multiplier.
+            window_len: Window length for jerk calculation.
+
+        Returns:
+            Tuple of (cost_value, jerk_magnitude).
+
+        Raises:
+            NotImplementedError: This cost function is not yet implemented.
+        """
         raise NotImplementedError("jerk_cost is not implemented")
 
     # Termination
     def _named_termination_criterion(name: str):
+        """Decorator to register termination criteria functions.
+
+        Args:
+            name: Name to register the termination criterion under.
+
+        Returns:
+            Decorator function that registers the termination function.
+        """
+
         def decorator(termination_fcn: Callable):
             _TERMINATION_FCN_REGISTRY[name] = termination_fcn
             return termination_fcn
@@ -475,12 +791,32 @@ class Imitation(worm_base.CelegansEnv):
 
     @_named_termination_criterion("fall")
     def _fall(self, data, info, healthy_z_range) -> float:
+        """Termination criterion for falling outside healthy height range.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            healthy_z_range: Tuple of (min_height, max_height) for healthy range.
+
+        Returns:
+            Boolean indicating if the agent has fallen.
+        """
         torso_z = self._get_body_height(data)  # root_body(data).xpos[2]
         min_z, max_z = healthy_z_range
         return jp.logical_or(torso_z < min_z, torso_z > max_z)
 
     @_named_termination_criterion("root_too_far")
     def _root_too_far(self, data, info, max_distance) -> bool:
+        """Termination criterion for root position deviation.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            max_distance: Maximum allowed distance from reference position.
+
+        Returns:
+            Boolean indicating if root is too far from reference.
+        """
         target = self._get_current_target(data, info)
         root_pos = self._get_root_pos(data)
         distance = jp.linalg.norm(target.root_position - root_pos)
@@ -488,6 +824,16 @@ class Imitation(worm_base.CelegansEnv):
 
     @_named_termination_criterion("root_too_rotated")
     def _root_too_rotated(self, data, info, max_degrees) -> bool:
+        """Termination criterion for root orientation deviation.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            max_degrees: Maximum allowed angular deviation in degrees.
+
+        Returns:
+            Boolean indicating if root is too rotated from reference.
+        """
         target = self._get_current_target(data, info)
         root_quat = self._get_root_quat(data)
         quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
@@ -496,6 +842,16 @@ class Imitation(worm_base.CelegansEnv):
 
     @_named_termination_criterion("pose_error")
     def _bad_pose(self, data, info, max_l2_error) -> bool:
+        """Termination criterion for joint pose error.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            max_l2_error: Maximum allowed L2 error in joint space.
+
+        Returns:
+            Boolean indicating if pose error is too large.
+        """
         target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
@@ -580,8 +936,6 @@ class Imitation(worm_base.CelegansEnv):
                 modify_scene_fns[i](renderer.scene)
             rendered_frame = renderer.render()
             if add_labels:
-                import cv2
-
                 label = f"Clip {clip}"
                 cv2.putText(
                     rendered_frame,
@@ -596,8 +950,6 @@ class Imitation(worm_base.CelegansEnv):
             rendered_frames.append(rendered_frame)
             if state.done:
                 if add_labels:
-                    import cv2
-
                     reason = "<Unknown>"
                     if state.info["truncated"]:
                         reason = "truncated"
@@ -748,7 +1100,20 @@ class Imitation(worm_base.CelegansEnv):
         return not any_failed
 
 
-def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
+def _assert_all_are_prefix(
+    a: List[str], b: List[str], a_name: str = "a", b_name: str = "b"
+) -> None:
+    """Assert that all elements in list a are prefixes of corresponding elements in list b.
+
+    Args:
+        a: List of strings that should be prefixes.
+        b: List of strings to check against.
+        a_name: Name for list a in error messages.
+        b_name: Name for list b in error messages.
+
+    Raises:
+        AssertionError: If lists have different lengths or elements don't match.
+    """
     if isinstance(a, map):
         a = list(a)
     if isinstance(b, map):
