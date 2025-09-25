@@ -135,11 +135,20 @@ def main(cfg: DictConfig):
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
 
-    train_set, test_set = ReferenceClips.generate_train_test_split(data_path=reference_config.data_path,
-                                                                 test_ratio=reference_config.test_ratio,
-                                                                 n_frames_per_clip=reference_config.clip_length,)
-    OmegaConf.update(reference_config, "train_indices", train_set._clip_idx.tolist(), force_add=True)
-    OmegaConf.update(reference_config, "test_indices", test_set._clip_idx.tolist(), force_add=True)
+    train_set, test_set = ReferenceClips.generate_train_test_split(
+        data_path=reference_config.data_path,
+        test_ratio=reference_config.test_ratio,
+        n_frames_per_clip=reference_config.clip_length,
+    )
+    OmegaConf.update(
+        reference_config,
+        "train_indices",
+        train_set.clip_indices.tolist(),
+        force_add=True,
+    )
+    OmegaConf.update(
+        reference_config, "test_indices", test_set.clip_indices.tolist(), force_add=True
+    )
     # Create environment based on task_name
     task_name = cfg.env_config.task_name
     if task_name == "imitation":

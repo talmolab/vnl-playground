@@ -35,7 +35,7 @@ class ReferenceClips:
         """
         self._n_frames_per_clip = n_frames_per_clip
         self._data_path = data_path
-        self._load_from_disk(self._data_path, self._n_frames_per_clip)
+        self._load_from_disk(self.data_path, self.n_frames_per_clip)
 
     def at(self, clip: int, frame: int) -> "ReferenceClips":
         """Get data at a specific clip and frame.
@@ -54,8 +54,8 @@ class ReferenceClips:
         if self.qpos.ndim < 3:
             raise IndexError("Trying to slice already sliced ReferenceClip.")
         subslice = copy.copy(self)
-        subslice._data_arrays = {
-            k: subslice._data_arrays[k][clip, frame] for k in self._DATA_ARRAYS
+        subslice.data_arrays = {
+            k: subslice.data_arrays[k][clip, frame] for k in self._DATA_ARRAYS
         }
         return subslice
 
@@ -76,15 +76,15 @@ class ReferenceClips:
         if self.qpos.ndim < 3:
             raise IndexError("Trying to slice already sliced ReferenceClip.")
         subslice = copy.copy(self)
-        subslice._data_arrays = copy.copy(self._data_arrays)
+        subslice.data_arrays = copy.copy(self.data_arrays)
         for key in subslice._DATA_ARRAYS:
-            clip_array = subslice._data_arrays[key][clip]
+            clip_array = subslice.data_arrays[key][clip]
             slice = jax.lax.dynamic_slice(
                 clip_array,
                 (start_frame, *jp.zeros(clip_array.ndim - 1, dtype=int)),
                 (length, *clip_array.shape[1:]),
             )
-            subslice._data_arrays[key] = slice
+            subslice.data_arrays[key] = slice
         return subslice
 
     def __len__(self) -> int:
@@ -157,11 +157,11 @@ class ReferenceClips:
             train_idx.sort()
             test_idx.sort()
 
-            train_set._data_arrays = {
-                k: train_set._data_arrays[k][train_idx] for k in train_set._DATA_ARRAYS
+            train_set.data_arrays = {
+                k: train_set.data_arrays[k][train_idx] for k in train_set._DATA_ARRAYS
             }
-            test_set._data_arrays = {
-                k: test_set._data_arrays[k][test_idx] for k in test_set._DATA_ARRAYS
+            test_set.data_arrays = {
+                k: test_set.data_arrays[k][test_idx] for k in test_set._DATA_ARRAYS
             }
 
             train_set._clip_idx = train_idx
@@ -170,13 +170,31 @@ class ReferenceClips:
         return train_set, test_set
 
     @property
+    def data_arrays(self) -> Dict[str, jp.ndarray]:
+        """Get the data arrays.
+
+        Returns:
+            Dictionary of data arrays.
+        """
+        return self.data_arrays
+
+    @data_arrays.setter
+    def data_arrays(self, data_arrays: Dict[str, jp.ndarray]) -> None:
+        """Set the data arrays.
+
+        Args:
+            data_arrays: Dictionary of data arrays.
+        """
+        self._data_arrays = data_arrays
+
+    @property
     def qpos(self) -> jp.ndarray:
         """Joint positions from the reference data.
 
         Returns:
             Array of joint positions for all clips and frames.
         """
-        return self._data_arrays["qpos"]
+        return self.data_arrays["qpos"]
 
     @property
     def qvel(self) -> jp.ndarray:
@@ -185,7 +203,7 @@ class ReferenceClips:
         Returns:
             Array of joint velocities for all clips and frames.
         """
-        return self._data_arrays["qvel"]
+        return self.data_arrays["qvel"]
 
     @property
     def xpos(self) -> jp.ndarray:
@@ -194,7 +212,7 @@ class ReferenceClips:
         Returns:
             Array of body positions for all clips and frames.
         """
-        return self._data_arrays["xpos"]
+        return self.data_arrays["xpos"]
 
     @property
     def xquat(self) -> jp.ndarray:
@@ -203,7 +221,7 @@ class ReferenceClips:
         Returns:
             Array of body quaternions for all clips and frames.
         """
-        return self._data_arrays["xquat"]
+        return self.data_arrays["xquat"]
 
     @property
     def root_position(self) -> jp.ndarray:

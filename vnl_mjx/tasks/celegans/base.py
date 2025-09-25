@@ -162,7 +162,7 @@ class CelegansEnv(mjx_env.MjxEnv):
                 pos=[0, 0, 0],
             )
 
-        for body_name in self._config.bodies:
+        for body_name in self.body_names:
             body = worm.body(f"{body_name}{suffix}")
             for geom in body.geoms:
                 if geom.type == mujoco.mjtGeom.mjGEOM_SPHERE:
@@ -255,17 +255,17 @@ class CelegansEnv(mjx_env.MjxEnv):
             forced: Whether to force recompilation even if already compiled.
         """
         if not self._compiled or forced:
-            self._spec.option.noslip_iterations = self._config.noslip_iterations
+            self._spec.option.noslip_iterations = self.config.noslip_iterations
             self._mj_model = self._spec.compile()
-            self._mj_model.opt.timestep = self._config.sim_dt
+            self._mj_model.opt.timestep = self.config.sim_dt
             # Increase offscreen framebuffer size to render at higher resolutions.
             self._mj_model.vis.global_.offwidth = 3840
             self._mj_model.vis.global_.offheight = 2160
-            self._mj_model.opt.iterations = self._config.iterations
-            self._mj_model.opt.ls_iterations = self._config.ls_iterations
+            self._mj_model.opt.iterations = self.config.iterations
+            self._mj_model.opt.ls_iterations = self.config.ls_iterations
             self._mjx_model = mjx.put_model(
                 self._mj_model
-            )  # , impl=self._config.mujoco_impl)
+            )  # , impl=self.config.mujoco_impl)
             self._compiled = True
 
     def _get_root_pos(self, data: mjx.Data) -> jp.ndarray:
@@ -289,7 +289,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             Root body quaternion (w, x, y, z).
         """
         return data.bind(
-            self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")
+            self.mjx_model, self._spec.body(f"{self.root_name}{self.suffix}")
         ).xquat
 
     def _get_appendages_pos(
@@ -306,12 +306,12 @@ class CelegansEnv(mjx_env.MjxEnv):
             If flatten=False, returns dict mapping appendage names to positions.
         """
         root = data.bind(
-            self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")
+            self.mjx_model, self._spec.body(f"{self.root_name}{self.suffix}")
         )
         appendages_pos = collections.OrderedDict()
-        for apppendage_name in self._config.end_effectors:
+        for apppendage_name in self.end_eff_names:
             global_xpos = data.bind(
-                self.mjx_model, self._spec.body(f"{apppendage_name}{self._suffix}")
+                self.mjx_model, self.spec.body(f"{apppendage_name}{self.suffix}")
             ).xpos
             egocentric_xpos = jp.dot(global_xpos - root.xpos, root.xmat)
             appendages_pos[apppendage_name] = egocentric_xpos
@@ -333,9 +333,9 @@ class CelegansEnv(mjx_env.MjxEnv):
             If flatten=False, returns dict mapping body names to positions.
         """
         bodies_pos = collections.OrderedDict()
-        for body_name in self._config.bodies:
+        for body_name in self.body_names:
             global_xpos = data.bind(
-                self.mjx_model, self._spec.body(f"{body_name}{self._suffix}")
+                self.mjx_model, self.spec.body(f"{body_name}{self.suffix}")
             ).xpos
             bodies_pos[body_name] = global_xpos
         if flatten:
@@ -356,10 +356,10 @@ class CelegansEnv(mjx_env.MjxEnv):
             If flatten=False, returns dict mapping joint names to angles.
         """
         joint_angles = collections.OrderedDict()
-        for joint_name in self._config.joints:
+        for joint_name in self.joint_names:
             try:
                 joint_angles[joint_name] = data.bind(
-                    self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")
+                    self.mjx_model, self.spec.joint(f"{joint_name}{self.suffix}")
                 ).qpos
             except Exception as e:
                 print(e)
@@ -384,9 +384,9 @@ class CelegansEnv(mjx_env.MjxEnv):
             If flatten=False, returns dict mapping joint names to velocities.
         """
         joint_ang_vels = collections.OrderedDict()
-        for joint_name in self._config.joints:
+        for joint_name in self.joint_names:
             joint_ang_vels[joint_name] = data.bind(
-                self.mjx_model, self._spec.joint(f"{joint_name}{self._suffix}")
+                self.mjx_model, self.spec.joint(f"{joint_name}{self.suffix}")
             ).qvel
         if flatten:
             joint_ang_vels, _ = jax.flatten_util.ravel_pytree(joint_ang_vels)
@@ -413,7 +413,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             Z-coordinate of the root body position.
         """
         torso_pos = data.bind(
-            self.mjx_model, self._spec.body(f"{self._config.root_body}{self._suffix}")
+            self.mjx_model, self.spec.body(f"{self.root_name}{self.suffix}")
         ).xpos
         torso_z = torso_pos[2]
         return torso_z  # self.root_body(data).xpos[1]
@@ -504,7 +504,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             data.bind(
                 self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")
             ).sensordata
-            for name in self._config.touch_sensors
+            for name in self.config.touch_sensors
         ]
         return jp.array(touches)
 
@@ -534,18 +534,6 @@ class CelegansEnv(mjx_env.MjxEnv):
         raise NotImplementedError(
             "Egocentric camera is not implemented for this environment."
         )
-
-    def get_joint_names(self) -> List[str]:
-        """Get list of joint names in the environment.
-
-        Returns:
-            List of joint names that exist in the environment.
-        """
-        return [
-            j.name
-            for j in self._spec.joints
-            if j.name.replace(self._suffix, "") in self._config.joints
-        ]
 
     def root_body(self, data: mjx.Data) -> mjx.Data:
         """Get the root body from the simulation data.
@@ -678,7 +666,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             Name of the root body.
         """
-        return self._config.root_body
+        return self.config.root_body
 
     @property
     def joint_names(self) -> List[str]:
@@ -687,7 +675,11 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             List of joint names.
         """
-        return self._config.joints
+        return [
+            j.name
+            for j in self._spec.joints
+            if j.name.replace(self.suffix, "") in self.config.joints
+        ]
 
     @property
     def body_names(self) -> List[str]:
@@ -696,7 +688,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             List of body names.
         """
-        return self._config.bodies
+        return self.config.bodies
 
     @property
     def end_eff_names(self) -> List[str]:
@@ -705,7 +697,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             List of end effector names.
         """
-        return self._config.end_effectors
+        return self.config.end_effectors
 
     @property
     def n_bodies(self) -> int:
@@ -714,7 +706,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             Number of body parts.
         """
-        return len(self._config.bodies)
+        return len(self.config.bodies)
 
     @property
     def n_joints(self) -> int:
@@ -723,7 +715,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             Number of joints.
         """
-        return len(self._config.joints)
+        return len(self.config.joints)
 
     @property
     def n_end_effectors(self) -> int:
@@ -732,4 +724,4 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             Number of end effector bodies.
         """
-        return len(self._config.end_effectors)
+        return len(self.config.end_effectors)

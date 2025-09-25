@@ -141,7 +141,7 @@ class Imitation(worm_base.CelegansEnv):
             self._config.reference_clips
         )  # ReferenceClips(self._config.reference_data_path,
         # self._config.clip_length)
-        max_n_clips = self.reference_clips.qpos.shape[0]
+        max_n_clips = self.reference_clips.n_clips
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
         else:
@@ -173,11 +173,9 @@ class Imitation(worm_base.CelegansEnv):
         """
         start_rng, clip_rng = jax.random.split(rng)
         if clip_idx is None:
-            clip_idx = jax.random.choice(clip_rng, self._num_clips())
+            clip_idx = jax.random.choice(clip_rng, self.num_clips)
         if start_frame is None:
-            start_frame = jax.random.randint(
-                start_rng, (), *self._config.start_frame_range
-            )
+            start_frame = jax.random.randint(start_rng, (), *self.start_frame_range)
         data = self._reset_data(clip_idx, start_frame)
         info: dict[str, Any] = {
             "start_frame": start_frame,
@@ -185,7 +183,7 @@ class Imitation(worm_base.CelegansEnv):
             "prev_ctrl": jp.zeros((self.action_size,)),
         }
 
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
+        last_valid_frame = self.clip_length - self.reference_length - 1
         info["truncated"] = jp.astype(
             self._get_cur_frame(data, info) > last_valid_frame, float
         )
@@ -242,7 +240,7 @@ class Imitation(worm_base.CelegansEnv):
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
+        last_valid_frame = self.clip_length - self.reference_length - 1
         info["truncated"] = jp.astype(
             self._get_cur_frame(data, info) > last_valid_frame, float
         )
@@ -311,7 +309,7 @@ class Imitation(worm_base.CelegansEnv):
             computed rewards and distance_dict contains the corresponding distances.
         """
         rewards, dists = dict(), dict()
-        for name, kwargs in self._config.reward_terms.items():
+        for name, kwargs in self.reward_terms.items():
             r, d = _REWARD_FCN_REGISTRY[name](self, data, info, **kwargs)
             rewards[f"{name}_reward"] = r
             dists[f"{name}_dist"] = d
@@ -330,7 +328,7 @@ class Imitation(worm_base.CelegansEnv):
             Dictionary mapping termination condition names to boolean values.
         """
         termination_reasons = dict()
-        for name, kwargs in self._config.termination_criteria.items():
+        for name, kwargs in self.termination_criteria.items():
             termination_fcn = _TERMINATION_FCN_REGISTRY[name]
             termination_reasons[name] = termination_fcn(self, data, info, **kwargs)
         return termination_reasons
@@ -349,7 +347,7 @@ class Imitation(worm_base.CelegansEnv):
             computed costs and magnitude_dict contains the underlying magnitudes.
         """
         costs, magnitudes = dict(), dict()
-        for name, kwargs in self._config.cost_terms.items():
+        for name, kwargs in self.cost_terms.items():
             c, m = _COST_FCN_REGISTRY[name](self, data, info, **kwargs)
             costs[f"{name}_cost"] = c
             magnitudes[name] = m
@@ -450,7 +448,7 @@ class Imitation(worm_base.CelegansEnv):
             Complete reference clip data.
         """
         return self.reference_clips.slice(
-            clip=info["reference_clip"], start_frame=0, length=self._clip_length()
+            clip=info["reference_clip"], start_frame=0, length=self.clip_length
         )
 
     def _get_imitation_reference(
@@ -468,7 +466,7 @@ class Imitation(worm_base.CelegansEnv):
         return self.reference_clips.slice(
             clip=info["reference_clip"],
             start_frame=self._get_cur_frame(data, info) + 1,
-            length=self._config.reference_length,
+            length=self.reference_length,
         )  # TODO: Use reference_clips.slice instead
 
     def _get_imitation_target(
@@ -646,7 +644,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Tuple of (reward_value, total_body_distance).
         """
-        total_dist = self._get_bodies_dist(data, info, bodies=self._config.bodies)
+        total_dist = self._get_bodies_dist(data, info, bodies=self.body_names)
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
         return reward, total_dist
 
@@ -663,9 +661,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Tuple of (reward_value, end_effector_distance).
         """
-        total_dist = self._get_bodies_dist(
-            data, info, bodies=self._config.end_effectors
-        )
+        total_dist = self._get_bodies_dist(data, info, bodies=self.end_eff_names)
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
         return reward, total_dist
 
@@ -947,7 +943,7 @@ class Imitation(worm_base.CelegansEnv):
             Dictionary of termination criteria configurations.
         """
         return self._config.termination_criteria
-    
+
     @property
     def reference_clips(self) -> ReferenceClips:
         """Get the reference clips.
@@ -956,7 +952,6 @@ class Imitation(worm_base.CelegansEnv):
             Reference clips.
         """
         return self._reference_clips
-        
 
     def render(
         self,
@@ -1054,7 +1049,7 @@ class Imitation(worm_base.CelegansEnv):
                     reason = "<Unknown>"
                     if state.info["truncated"]:
                         reason = "truncated"
-                    for name in self._config.termination_criteria.keys():
+                    for name in self.termination_criteria.keys():
                         if state.metrics[name] > 0:
                             reason = name
                     cv2.putText(
@@ -1127,7 +1122,7 @@ class Imitation(worm_base.CelegansEnv):
         @jax.jit
         def test_clip(clip_idx: int):
             return jax.vmap(test_frame, in_axes=(None, 0))(
-                clip_idx, jp.arange(self._clip_length())
+                clip_idx, jp.arange(self.clip_length)
             )
 
         _assert_all_are_prefix(
@@ -1143,10 +1138,10 @@ class Imitation(worm_base.CelegansEnv):
 
         any_failed = False
         for clip in clip_idxs:
-            if clip < 0 or clip >= self.reference_clips.qpos.shape[0]:
+            if clip < 0 or clip >= self.reference_clips.n_clips:
                 raise ValueError(
                     f"Clip index {clip} is out of range. Reference"
-                    f"data has {self.reference_clips.qpos.shape[0]} clips."
+                    f"data has {self.reference_clips.n_clips} clips."
                 )
             data = self._reset_data(clip, 0)
             reference = self.reference_clips.at(clip=clip, frame=0)
