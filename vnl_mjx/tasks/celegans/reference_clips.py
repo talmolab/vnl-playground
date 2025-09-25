@@ -1,3 +1,4 @@
+from typing import Tuple, Self
 from calendar import c
 import copy
 import h5py
@@ -63,7 +64,7 @@ class ReferenceClips:
         data_path: str,
         n_frames_per_clip: int,
         test_ratio: float = 0.1,
-    ) -> Tuple[ReferenceClip, ReferenceClip]:
+    ) -> Tuple[Self, Self]:
         """
         Generates a train-test split of the clips based on the provided ratio.
         The split is done by randomly sampling clips from the metadata list.
@@ -82,25 +83,28 @@ class ReferenceClips:
         num_clips = len(train_set)
         test_size = int(num_clips * test_ratio)
 
-        if len(test_size) == 0:
+        if test_size == 0:
             import warnings
 
             warnings.warn(
                 "No test set found, please increase the test ratio! Train set and test set will be the same."
             )
         else:
+            split_rng = jax.random.PRNGKey(0)
             indices = jp.arange(num_clips)
-            test_idx = jp.random.choice(indices, size=test_size, replace=False)
+            test_idx = jax.random.choice(
+                split_rng, indices, shape=(test_size,), replace=False
+            )
             train_idx = indices[~jp.isin(indices, test_idx)]
 
             train_idx.sort()
             test_idx.sort()
 
             train_set._data_arrays = {
-                k: train_set._data_arrays[k][train_idx] for k in self._DATA_ARRAYS
+                k: train_set._data_arrays[k][train_idx] for k in train_set._DATA_ARRAYS
             }
             test_set._data_arrays = {
-                k: test_set._data_arrays[k][test_idx] for k in self._DATA_ARRAYS
+                k: test_set._data_arrays[k][test_idx] for k in test_set._DATA_ARRAYS
             }
 
             train_set._clip_idx = train_idx

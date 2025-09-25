@@ -4,7 +4,7 @@
 reference_config:
     data_path: /home/aaprasad/mnt/projects/con3trol/run/results/stac/celegans_ik_only_04182019am_centerline_0-500_2d.h5
     clip_length: 250
-    test_ratio: 0.1
+    test_ratio: 0.2
 
 env_config:
   env_name: celegans
@@ -25,7 +25,7 @@ env_config:
     solver: "cg"
     iterations: 4
     ls_iterations: 4
-    ctrl_dt: 0.05
+    ctrl_dt: 0.1
     sim_dt: 0.005
 
     mocap_hz: 20
@@ -44,11 +44,11 @@ env_config:
         exp_scale: 30
         weight: 1.0
       joints:
-        exp_scale: 2.0
-        weight: 1.0 #2.0
+        exp_scale: 1.0
+        weight: 2.0 #2.0
       joints_vel:
-        exp_scale: 3.0
-        weight: 1.0 #3.0
+        exp_scale: 1.0
+        weight: 3.0 #3.0
       bodies_pos:
         exp_scale: 0.5
         weight: 1.0

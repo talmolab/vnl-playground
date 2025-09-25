@@ -47,6 +47,7 @@ def default_config() -> config_dict.ConfigDict:
         reference_clips=ReferenceClips(
             data_path=consts.REFERENCE_H5_PATH, n_frames_per_clip=250
         ),
+        clip_set="all",
         reference_length=5,
         start_frame_range=[0, 44],
         qvel_init="zeros",
@@ -124,7 +125,7 @@ class Imitation(worm_base.CelegansEnv):
             raise NotImplementedError("'all' is the only implemented set of clips.")
 
         self._mocap_dt = 1 / self._config.mocap_hz
-        self._steps_per_curr_frame = self._mocap_dt / self._config.ctrl_dt
+        self._steps_for_cur_frame = self._mocap_dt / self._config.ctrl_dt
         self._n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
         if self._n_steps == 0:
             warnings.warn(

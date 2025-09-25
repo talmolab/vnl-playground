@@ -128,26 +128,30 @@ def main(cfg: DictConfig):
     reference_config = cfg.reference_config
 
     episode_length = (
-        env_config.clip_length
+        reference_config.clip_length
         - int(env_config.start_frame_range[1])
         - env_config.reference_length
     ) * (1 / (env_config.mocap_hz * env_config.ctrl_dt))
     print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
 
-    train_set, test_set = ReferenceClips.generate_train_test_split(**reference_config)
+    train_set, test_set = ReferenceClips.generate_train_test_split(data_path=reference_config.data_path,
+                                                                 test_ratio=reference_config.test_ratio,
+                                                                 n_frames_per_clip=reference_config.clip_length,)
+    OmegaConf.update(reference_config, "train_indices", train_set._clip_idx.tolist(), force_add=True)
+    OmegaConf.update(reference_config, "test_indices", test_set._clip_idx.tolist(), force_add=True)
     # Create environment based on task_name
     task_name = cfg.env_config.task_name
     if task_name == "imitation":
-        OmegaConf.update(env_config, "reference_clips", train_set)
         env = imitation.Imitation(
             config_overrides=OmegaConf.to_container(env_config, resolve=True)
         )
 
-        OmegaConf.update(env_config, "reference_clips", test_set)
+        env.reference_clips = train_set
         evaluator_env = imitation.Imitation(
             config_overrides=OmegaConf.to_container(env_config, resolve=True)
         )
+        evaluator_env.reference_clips = test_set
 
     elif task_name == "imitation_2d":
         env = imitation.Imitation2D(
