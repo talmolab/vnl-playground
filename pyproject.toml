@@ -26,7 +26,7 @@ dependencies = [
     "mujoco-mjx[warp]>=3.3.5",
     "warp-lang>=1.9.0",
     "mediapy",
-    "jax",
+    "jax>=0.7.2",
     "flax",
     "optax",
     "imageio[ffmpeg]",

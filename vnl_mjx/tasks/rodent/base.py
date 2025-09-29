@@ -178,7 +178,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_body_height(self, data: mjx.Data) -> jp.ndarray:
         torso_pos = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xpos
-        torso_z = torso_pos[2:3] #It's convenient the returned value has ndims=1 rather than 0 
+        torso_z = torso_pos[2]
         return torso_z
     
     def _get_world_zaxis(self, data: mjx.Data) -> jp.ndarray:
@@ -190,7 +190,7 @@ class RodentEnv(mjx_env.MjxEnv):
             joint_angles = self._get_joint_angles(data),
             joint_ang_vels = self._get_joint_ang_vels(data),
             actuator_ctrl = self._get_actuator_ctrl(data),
-            body_height = self._get_body_height(data),
+            body_height = self._get_body_height(data).reshape(1),
             world_zaxis = self._get_world_zaxis(data),
             appendages_pos = self._get_appendages_pos(data, flatten=flatten)
         )
