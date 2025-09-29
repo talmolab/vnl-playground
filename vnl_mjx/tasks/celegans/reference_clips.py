@@ -4,7 +4,7 @@ This module provides utilities for loading and processing motion capture data
 for C. elegans, including train/test splitting and data access methods.
 """
 
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import copy
 
 import h5py
@@ -176,7 +176,7 @@ class ReferenceClips:
         Returns:
             Dictionary of data arrays.
         """
-        return self.data_arrays
+        return self._data_arrays
 
     @data_arrays.setter
     def data_arrays(self, data_arrays: Dict[str, jp.ndarray]) -> None:
@@ -329,7 +329,7 @@ class ReferenceClips:
         return self._data_path
 
     @property
-    def frames_per_clip(self) -> int:
+    def n_frames_per_clip(self) -> int:
         """Get the number of frames per clip.
 
         Returns:

@@ -79,6 +79,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         self._arena_xml_path = str(config.arena_xml_path)
         self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
         self._compiled = False
+        self._n_worms = 0
 
     def add_worm(
         self,
@@ -133,6 +134,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         root = worm.worldbody
         spawn_body = spawn_site.attach_body(root, "", suffix=suffix)
         self._suffix = suffix
+        self._n_worms += 1
 
         if dim == 3:
             spawn_body.add_freejoint()
@@ -215,7 +217,6 @@ class CelegansEnv(mjx_env.MjxEnv):
         frame = spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         root = walker_spec.worldbody
         spawn_body = frame.attach_body(root, "", suffix=suffix)
-        self._suffix = suffix
 
         if dim == 3:
             spawn_body.add_freejoint()
@@ -624,6 +625,15 @@ class CelegansEnv(mjx_env.MjxEnv):
         return self._mjx_model
 
     @property
+    def spec(self) -> mujoco.MjSpec:
+        """Get the MuJoCo specification.
+
+        Returns:
+            The MuJoCo specification object.
+        """
+        return self._spec
+
+    @property
     def is_compiled(self) -> bool:
         """Check if the model has been compiled.
 
@@ -642,13 +652,13 @@ class CelegansEnv(mjx_env.MjxEnv):
         return getattr(self, "_suffix", "")
 
     @property
-    def spec(self) -> mujoco.MjSpec:
-        """Get the MuJoCo specification.
+    def n_worms(self) -> int:
+        """Get the number of worms in the environment.
 
         Returns:
-            The MuJoCo specification object.
+            Number of worms.
         """
-        return self._spec
+        return self._n_worms
 
     @property
     def config(self) -> Any:
@@ -675,11 +685,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             List of joint names.
         """
-        return [
-            j.name
-            for j in self._spec.joints
-            if j.name.replace(self.suffix, "") in self.config.joints
-        ]
+        return self.config.joints
 
     @property
     def body_names(self) -> List[str]:

@@ -389,22 +389,6 @@ class Imitation(worm_base.CelegansEnv):
         """
         return jp.zeros(self.action_size)
 
-    def _num_clips(self) -> int:
-        """Get the number of available clips.
-
-        Returns:
-            Number of reference clips.
-        """
-        return self.reference_clips.n_clips
-
-    def _clip_length(self) -> int:
-        """Get the length of each clip.
-
-        Returns:
-            Number of frames per clip.
-        """
-        return self.reference_clips.frames_per_clip
-
     def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
         """Get the current frame index in the reference clip.
 
@@ -495,7 +479,7 @@ class Imitation(worm_base.CelegansEnv):
 
         _assert_all_are_prefix(
             reference.joint_names,
-            self.get_joint_names(),
+            self.joint_names,
             "reference joints",
             "model joints",
         )
@@ -854,14 +838,6 @@ class Imitation(worm_base.CelegansEnv):
         return pose_error > max_l2_error
 
     # Properties for cleaner access
-    @property
-    def num_clips(self) -> int:
-        """Get the number of available reference clips.
-
-        Returns:
-            Number of reference clips.
-        """
-        return self._num_clips()
 
     @property
     def clip_length(self) -> int:
@@ -870,7 +846,16 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Number of frames per clip.
         """
-        return self._clip_length()
+        return self.reference_clips.n_frames_per_clip
+
+    @property
+    def num_clips(self) -> int:
+        """Get the number of available reference clips.
+
+        Returns:
+            Number of reference clips.
+        """
+        return self.reference_clips.n_clips
 
     @property
     def mocap_dt(self) -> float:
@@ -953,6 +938,15 @@ class Imitation(worm_base.CelegansEnv):
         """
         return self._reference_clips
 
+    @reference_clips.setter
+    def reference_clips(self, reference_clips: ReferenceClips) -> None:
+        """Set the reference clips.
+
+        Args:
+            reference_clips: Reference clips.
+        """
+        self._reference_clips = reference_clips
+
     def render(
         self,
         trajectory: List[mjx_env.State],
@@ -1005,7 +999,7 @@ class Imitation(worm_base.CelegansEnv):
         renderer = mujoco.Renderer(mj_model_with_ghost, height=height, width=width)
         if camera is None:
             camera = -1
-
+        print(f"Rendering with camera: {camera}{self._suffix}")
         rendered_frames = []
         for i, state in enumerate(trajectory):
             time_in_frames = state.data.time * self._config.mocap_hz
@@ -1127,7 +1121,7 @@ class Imitation(worm_base.CelegansEnv):
 
         _assert_all_are_prefix(
             self.reference_clips.joint_names,
-            self.get_joint_names(),
+            self.joint_names,
             "reference joints",
             "model joints",
         )
