@@ -59,6 +59,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 @hydra.main(version_base=None, config_path="config", config_name="bowl_escape_transfer")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
+    logging.info(f"Using JAX version: {jax.__version__}")
     try:
         n_devices = jax.device_count(backend="gpu")
         logging.info(f"Using {n_devices} GPUs")
@@ -108,7 +109,9 @@ def main(cfg: DictConfig):
             )
         )
         cfg.walker_config.rescale_factor = cfg_loaded.walker_config.rescale_factor
-        cfg.env_config.env_args.rescale_factor = cfg_loaded.walker_config.rescale_factor
+        cfg.env_config.env_args.rescale_factor = (
+            cfg_loaded.env_config.env_args.rescale_factor
+        )
 
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
