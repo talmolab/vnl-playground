@@ -102,10 +102,10 @@ train_setup:
   reset_every: 50_000_000
   freeze_decoder: False
   train_config:
-    num_envs: 2048
+    num_envs: 4096
     num_timesteps: 15_000_000_000
     batch_size: 1024
-    num_minibatches: 8
+    num_minibatches: 16
     num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2     
