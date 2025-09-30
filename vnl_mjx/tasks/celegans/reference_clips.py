@@ -102,7 +102,18 @@ class ReferenceClips:
             data_path: Path to the HDF5 file.
             n_frames_per_clip: Number of frames per clip.
         """
-        self._data_arrays = {}
+        self._data_arrays = {
+            k: jp.zeros((0, n_frames_per_clip, 0)) for k in self._DATA_ARRAYS
+        }
+        if data_path is None or data_path == "":
+            print("No data path provided! Creating empty ReferenceClips object.")
+            self._names_qpos = []
+            self._names_xpos = []
+            self._qpos_names = {}
+            self._xpos_names = {}
+            self._clip_idx = jp.arange(0)
+            return
+
         with h5py.File(data_path, "r") as fid:
             for k in self._DATA_ARRAYS:
                 arr = fid[k][()]
