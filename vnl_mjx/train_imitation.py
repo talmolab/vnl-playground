@@ -45,7 +45,7 @@ import mujoco
 import numpy as np
 import orbax.checkpoint as ocp
 from omegaconf import DictConfig, OmegaConf
-from track_mjx.agent import checkpointing, wandb_logging
+from track_mjx.agent import checkpointing, wandb_logging, preemption
 from track_mjx.agent.mlp_ppo import ppo, ppo_networks
 from track_mjx.analysis import render
 
@@ -69,13 +69,53 @@ def main(cfg: DictConfig):
 
     logging.info(f"Configs: {OmegaConf.to_container(cfg, resolve=True)}")
 
-    # Generate a new run_id and associated checkpoint path
-    # sleep(np.random.randint(60))
-    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
-    # TODO: Use a base path given by the config
-    checkpoint_path = hydra.utils.to_absolute_path(
-        f"./{cfg.logging_config.model_path}/{run_id}"
-    )
+    # Check for existing run state (preemption handling)
+    existing_run_state = preemption.discover_existing_run_state(cfg)
+
+    # Auto-preemption resume logic
+    if existing_run_state:
+        # Resume from existing run
+        run_id = existing_run_state["run_id"]
+        checkpoint_path = existing_run_state["checkpoint_path"]
+        # Ensure checkpoint_path is absolute
+        checkpoint_path_obj = Path(checkpoint_path)
+        if not checkpoint_path_obj.is_absolute():
+            checkpoint_path_obj = Path.cwd() / checkpoint_path_obj
+        checkpoint_path = str(checkpoint_path_obj)
+        logging.info(f"Resuming from existing run: {run_id}")
+        # Add checkpoint path to config to use orbax for resuming
+        cfg.train_setup["checkpoint_to_restore"] = checkpoint_path
+    # If manually passing json run_state
+    elif cfg.train_setup["restore_from_run_state"] is not None:
+        # Access file path
+        base_path = Path(cfg.logging_config.model_path).resolve()
+        full_path = base_path / cfg.train_setup["restore_from_run_state"]
+        # Read json with file locking to prevent concurrent access
+        with open(full_path, "r") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            existing_run_state = json.load(f)
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        run_id = existing_run_state["run_id"]
+        checkpoint_path = existing_run_state["checkpoint_path"]
+        # Ensure checkpoint_path is absolute
+        checkpoint_path_obj = Path(checkpoint_path)
+        if not checkpoint_path_obj.is_absolute():
+            checkpoint_path_obj = Path.cwd() / checkpoint_path_obj
+        checkpoint_path = str(checkpoint_path_obj)
+        logging.info(f"Restoring from run state: {run_id}")
+        # Add checkpoint path to config to use orbax for resuming
+        cfg.train_setup["checkpoint_to_restore"] = checkpoint_path
+    # If no existing run state, generate a new run_id and checkpoint path
+    else:
+        # Generate a new run_id and associated checkpoint path
+        # sleep(np.random.randint(60))
+        timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+        run_id = f"{cfg.logging_config.exp_name}_{cfg.env_config.env_name}_{cfg.env_config.task_name}_{timestamp}"
+
+        model_path = Path(cfg.logging_config.model_path)
+        if not model_path.is_absolute():
+            model_path = Path.cwd() / model_path
+        checkpoint_path = str(model_path / run_id)
 
     # Load the checkpoint's config
     if cfg.train_setup["checkpoint_to_restore"] is not None:
@@ -86,7 +126,7 @@ def main(cfg: DictConfig):
         cfg_loaded = OmegaConf.create(
             checkpointing.load_config_from_checkpoint(checkpoint_to_restore)
         )
-        print(
+        logging.info(
             "Overwriting decoder layer sizes from checkpoint from {} to {}".format(
                 cfg.network_config.decoder_layer_sizes,
                 cfg_loaded.network_config.decoder_layer_sizes,
@@ -95,14 +135,14 @@ def main(cfg: DictConfig):
         cfg.network_config.decoder_layer_sizes = (
             cfg_loaded.network_config.decoder_layer_sizes
         )
-        print(
+        logging.info(
             "Overwriting intention size from checkpoint from {} to {}".format(
                 cfg.network_config.intention_size,
                 cfg_loaded.network_config.intention_size,
             )
         )
         cfg.network_config.intention_size = cfg_loaded.network_config.intention_size
-        print(
+        logging.info(
             "Overwriting rescale factor from checkpoint from {} to {}".format(
                 cfg.walker_config.rescale_factor,
                 cfg_loaded.walker_config.rescale_factor,
@@ -125,7 +165,7 @@ def main(cfg: DictConfig):
 
     logging.info(f"run_id: {run_id}")
     logging.info(f"Training checkpoint path: {checkpoint_path}")
-    print(cfg)
+    logging.info(cfg)
     ppo_params = cfg.train_setup.train_config
     env_config = cfg.env_config.env_args
     reference_config = cfg.reference_config
@@ -135,7 +175,6 @@ def main(cfg: DictConfig):
         - int(env_config.start_frame_range[1])
         - env_config.reference_length
     ) * (1 / (env_config.mocap_hz * env_config.ctrl_dt))
-    print(f"episode_length {episode_length}")
     logging.info(f"episode_length {episode_length}")
 
     train_set, test_set = ReferenceClips.generate_train_test_split(
@@ -176,9 +215,49 @@ def main(cfg: DictConfig):
         raise ValueError(
             f"Unknown task_name: {task_name}. Must be one of: imitation, imitation_2d"
         )
-    print(f"Training on {len(env.reference_clips)} clips")
-    print(f"Testing on {len(evaluator_env.reference_clips)} clips")
+    logging.info(f"Training on {len(env.reference_clips)} clips")
+    logging.info(f"Testing on {len(evaluator_env.reference_clips)} clips")
     env.save_spec("./env_spec.xml")
+    # Determine wandb run ID for resuming
+    if existing_run_state:
+        wandb_run_id = existing_run_state["wandb_run_id"]
+        wandb_resume = "must"  # Must resume the exact run
+        logging.info(f"Resuming wandb run: {wandb_run_id}")
+    else:
+        wandb_run_id = run_id
+        wandb_resume = "allow"  # Allow resuming if run exists
+        logging.info(f"Starting new wandb run: {wandb_run_id}")
+
+    wandb.init(
+        project=cfg.logging_config.project_name,
+        config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
+        notes=f"{cfg.logging_config.notes}",
+        id=run_id,
+        resume="allow",
+        group=cfg.logging_config.group_name,
+    )
+
+    def wandb_progress(num_steps, metrics):
+        metrics["num_steps_thousands"] = num_steps
+        wandb.log(metrics)
+
+    # Save initial run state after wandb initialization
+    if not existing_run_state:
+        preemption.save_run_state(
+            cfg=cfg,
+            run_id=run_id,
+            checkpoint_path=checkpoint_path,
+            wandb_run_id=wandb.run.id,
+        )
+
+    # Create the checkpoint callback with the correct wandb_run_id
+    checkpoint_callback = preemption.create_checkpoint_callback(
+        cfg=cfg,
+        run_id=run_id,
+        checkpoint_path=checkpoint_path,
+        wandb_run_id=wandb.run.id,
+    )
+
     train_fn = functools.partial(
         ppo.train,
         **ppo_params,
@@ -200,21 +279,8 @@ def main(cfg: DictConfig):
         freeze_decoder=cfg.train_setup.freeze_decoder,
         config_dict=OmegaConf.to_container(cfg, resolve=True),  # finalize config here
         use_kl_schedule=cfg.network_config.kl_schedule,
+        checkpoint_callback=checkpoint_callback,
     )
-
-    run_id = f"{cfg.logging_config.exp_name}_{cfg.env_config.env_name}_{cfg.env_config.task_name}_{run_id}"
-    wandb.init(
-        project=cfg.logging_config.project_name,
-        config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
-        notes=f"{cfg.logging_config.notes}",
-        id=run_id,
-        resume="allow",
-        group=cfg.logging_config.group_name,
-    )
-
-    def wandb_progress(num_steps, metrics):
-        metrics["num_steps_thousands"] = num_steps
-        wandb.log(metrics, commit=False)
 
     # # define the jit reset/step functions
     jit_reset = jax.jit(evaluator_env.reset)
