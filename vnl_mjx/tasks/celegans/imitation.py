@@ -217,6 +217,9 @@ class Imitation(worm_base.CelegansEnv):
             **dists,
             **magnitudes,
             "current_frame": jp.astype(self._get_cur_frame(data, info), float),
+            "total_reward": total_reward,
+            "total_cost": cost,
+            "net_reward": reward,
         }
         return mjx_env.State(
             data, obs, total_reward, jp.astype(done, float), metrics, info
@@ -257,9 +260,9 @@ class Imitation(worm_base.CelegansEnv):
         rewards, dists = self._get_rewards(data, info)
         costs, magnitudes = self._get_costs(data, info)
 
-        total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0]) - jp.sum(
-            jax.flatten_util.ravel_pytree(costs)[0]
-        )
+        reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
+        cost = jp.sum(jax.flatten_util.ravel_pytree(costs)[0])
+        total_reward = reward - cost
         state = state.replace(
             data=data,
             obs=obs,
@@ -275,6 +278,7 @@ class Imitation(worm_base.CelegansEnv):
             **dists,
             **magnitudes,
             "current_frame": jp.astype(self._get_cur_frame(data, info), float),
+            "total_cost": cost,
         }
         state.metrics.update(metrics)
 
