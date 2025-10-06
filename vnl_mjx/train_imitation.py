@@ -39,6 +39,9 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 from time import sleep
+import fcntl
+import json
+
 
 import hydra
 import mujoco
@@ -232,8 +235,8 @@ def main(cfg: DictConfig):
         project=cfg.logging_config.project_name,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
         notes=f"{cfg.logging_config.notes}",
-        id=run_id,
-        resume="allow",
+        id=wandb_run_id,
+        resume=wandb_resume,
         group=cfg.logging_config.group_name,
     )
 
@@ -306,6 +309,15 @@ def main(cfg: DictConfig):
         progress_fn=wandb_progress,
         policy_params_fn=policy_params_fn,
     )
+
+    # Clean up run state after successful completion
+    try:
+        preemption.cleanup_run_state(cfg)
+        logging.info("Training completed successfully, cleaned up run state")
+    except Exception as e:
+        logging.warning(f"Failed to cleanup run state: {e}")
+        return False
+    return True
 
 
 if __name__ == "__main__":
