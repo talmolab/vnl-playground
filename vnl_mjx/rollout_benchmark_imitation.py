@@ -37,9 +37,11 @@ env = vnl_mjx.tasks.rodent.imitation.Imitation(config=env_cfg)
 
 print("Creating first state")
 reset_keys = jax.random.split(jax.random.key(SEED), N_ENVS)
+
 state0 = jax.vmap(env.reset)(reset_keys)
 
 # Env
+@jax.jit
 @jax.vmap
 def rollout_env(state0):
     def step_fn(state, _):
@@ -56,10 +58,11 @@ print(f"Env stepping {100*N_ENVS/(stop-start):.2f} steps/sec")
 
 
 # Physics
+@jax.jit
 @jax.vmap
 def physics_rollout(state0):
     def step_fn(mj_data, _):
-        new_mj_data = mjx.step(env.mj_model, mj_data)
+        new_mj_data = mjx.step(env.mjx_model, mj_data)
         return new_mj_data, None
     return jax.lax.scan(step_fn, state0.data, None, length=1000)[0]
 print("Compiling physics rollout")
@@ -73,12 +76,15 @@ print(f"Physics stepping {1000*N_ENVS/(stop-start):.2f} steps/sec")
 
 # Wrapped env
 wrapped_env = vnl_mjx.flatten_wrapper.FlattenObsWrapper(env)
-wrapped_env = mujoco_playground.wrapper.wrap_for_brax_training(wrapped_env, full_reset=True)
+# Wrapper handles vmapping, I think
+#wrapped_env = mujoco_playground.wrapper.wrap_for_brax_training(wrapped_env, full_reset=True)
 state0_wrapped = jax.vmap(wrapped_env.reset)(reset_keys)
+
+@jax.jit
 @jax.vmap
 def rollout_wrapped_env(state0):
     def step_fn(state, _):
-        return wrapped_env.step(state, jp.zeros(wrapped_env.action_size)), None
+        return wrapped_env.step(state, jp.zeros((wrapped_env.action_size,))), None
     return jax.lax.scan(step_fn, state0, None, length=100)[0]
 print("Compiling wrapped env rollout")
 rollout_wrapped_env(state0_wrapped)
@@ -96,16 +102,20 @@ nets = brax.training.agents.ppo.networks.make_ppo_networks(
 )
 net_params = nets.policy_network.init(jax.random.key(SEED))
 normalizer_params = brax.training.acme.running_statistics.init_state(jp.array((wrapped_env.observation_size,)))
+make_policy = brax.training.agents.ppo.networks.make_inference_fn(nets)
 
-def rollout_with_net(state0, nets, normalizer_params, net_params):
+
+def rollout_with_net(state0, normalizer_params, net_params):
+    policy = make_policy((normalizer_params, net_params))
     def step_fn(state, _):
-        action = nets.policy_network.apply(normalizer_params, net_params, state.obs)
+        action, _ = policy(state.obs, jax.random.key(0))
         return wrapped_env.step(state, action), None
     return jax.lax.scan(step_fn, state0, None, length=100)[0]
-rollout_with_net = jax.vmap(rollout_with_net, in_axes=(0, None, None, None))
+rollout_with_net = jax.vmap(rollout_with_net, in_axes=(0, None, None))
+rollout_with_net = jax.jit(rollout_with_net)#, static_argnums=(1,))
 
 print("Compiling wrapped env rollout with net")
-rollout_with_net(state0_wrapped, nets, normalizer_params, net_params)
+rollout_with_net(state0_wrapped, normalizer_params, net_params)
 
 print("Rolling out wrapped env with net")
 start = time.perf_counter()
