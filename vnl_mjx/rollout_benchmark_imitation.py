@@ -120,7 +120,64 @@ rollout_with_net(state0_wrapped, normalizer_params, net_params)
 print("Rolling out wrapped env with net")
 start = time.perf_counter()
 jax.block_until_ready(
-    rollout_with_net(state0_wrapped, nets, normalizer_params, net_params)
+    rollout_with_net(state0_wrapped, normalizer_params, net_params)
 )
 stop = time.perf_counter()
 print(f"Wrapped env stepping with net {100*N_ENVS/(stop-start):.2f} steps/sec")
+
+
+'''
+import yaml
+from brax import envs
+from track_mjx.io import load
+from track_mjx.environment.task.multi_clip_tracking import MultiClipTracking
+from track_mjx.environment.task.single_clip_tracking import SingleClipTracking
+from track_mjx.environment.walker.rodent import Rodent
+from track_mjx.environment.task.reward import RewardConfig
+
+cfg = yaml.load(open("../track-mjx/track_mjx/config/rodent-full-clips.yaml", "r"), yaml.Loader)
+all_clips = load.make_multiclip_data("../track-mjx/track_mjx/"+cfg["data_path"])
+envs.register_environment("rodent_multi_clip", MultiClipTracking)
+env_args = cfg["env_config"]["env_args"]
+env_rewards = cfg["env_config"]["reward_weights"]
+train_config = cfg["train_setup"]["train_config"]
+walker_config = cfg["walker_config"]
+traj_config = cfg["reference_config"]
+
+env_args["reset_noise_scale"] = float(env_args["reset_noise_scale"])
+env_rewards["var_coeff"] = float(env_rewards["var_coeff"])
+env_rewards["jerk_coeff"] = float(env_rewards["jerk_coeff"])
+
+walker = Rodent(**walker_config)
+reward_config = RewardConfig(**env_rewards)
+track_mjx_env = envs.get_environment(
+    env_name=cfg["env_config"]["env_name"],
+    reference_clip=all_clips,
+    walker=walker,
+    reward_config=reward_config,
+    **env_args,
+    **traj_config,
+)
+
+env._mjx_model = track_mjx_env.sys
+
+print("Creating state with track-mjx mjx_model")
+reset_keys = jax.random.split(jax.random.key(SEED), N_ENVS)
+state0 = jax.vmap(env.reset)(reset_keys)
+
+# Env
+@jax.jit
+@jax.vmap
+def rollout_env(state0):
+    def step_fn(state, _):
+        return env.step(state, jp.zeros(env.action_size)), None
+    return jax.lax.scan(step_fn, state0, None, length=100)[0]
+print("Compiling env rollout")
+rollout_env(state0)
+
+print("Rolling out env")
+start = time.perf_counter()
+jax.block_until_ready(rollout_env(state0))
+stop = time.perf_counter()
+print(f"Env stepping {100*N_ENVS/(stop-start):.2f} steps/sec")
+'''
