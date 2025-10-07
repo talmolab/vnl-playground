@@ -142,6 +142,10 @@ class RodentEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
+            self._mj_model.opt.solver = {
+                "cg": mujoco.mjtSolver.mjSOL_CG,
+                "newton": mujoco.mjtSolver.mjSOL_NEWTON,
+            }[self._config.solver.lower()]
             self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.mujoco_impl)
             self._compiled = True
 
