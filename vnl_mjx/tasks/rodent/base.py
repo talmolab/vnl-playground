@@ -204,11 +204,12 @@ class RodentEnv(mjx_env.MjxEnv):
         self, data: mjx.Data, flatten: bool = True
     ) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
         """Get proprioception data from the environment."""
+
         proprioception = collections.OrderedDict(
             joint_angles=self._get_joint_angles(data),
             joint_ang_vels=self._get_joint_ang_vels(data),
             actuator_ctrl=self._get_actuator_ctrl(data),
-            body_height=self._get_body_height(data),
+            body_height=self._get_body_height(data).reshape(1),
             world_zaxis=self._get_world_zaxis(data),
             appendages_pos=self._get_appendages_pos(data, flatten=flatten),
         )

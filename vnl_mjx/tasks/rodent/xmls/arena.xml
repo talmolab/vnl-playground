@@ -12,6 +12,6 @@
   </asset>
 
   <worldbody>
-    <geom name="floor" pos="0 0 -0.005" size="10 10 0.005" type="plane" material="grid"/>
+    <geom name="floor" contype="0" conaffinity="1" pos="0 0 -0.005" size="10 10 0.005" type="plane" material="grid"/>
   </worldbody>
 </mujoco>

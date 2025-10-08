@@ -22,7 +22,7 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         mujoco_impl="jax",
         sim_dt=0.002,
-        ctrl_dt=0.02,
+        ctrl_dt=0.01,
         solver="cg",
         iterations=5,
         ls_iterations=5,
@@ -31,21 +31,21 @@ def default_config() -> config_dict.ConfigDict:
         noslip_iterations=0,
         torque_actuators=True,
         rescale_factor=0.9,
-        head_z_target=0.12,
+        head_z_target=0.125,
         qvel_init="zeros",
         reward_terms={
             # Head tracking (to mimic real-time mocap tracking head)
-            "hold_head_z": {"weight": 1.0},
-            "head_z_dist": {"exp_scale": 0.05, "weight": 0.1},
+            "hold_head_z": {"weight": 1.0, "time_threshold": 0.2},
+            # "head_z_dist": {"exp_scale": 0.03, "weight": 0.05},
             # Costs / regularizers
-            "torso_z_range": {"healthy_z_range": (0.0325, 0.5), "weight": 0.1},
+            # "torso_z_range": {"healthy_z_range": (0.03, 1.0), "weight": 0.05},
             # "control_cost": {"weight": 0.01},
             # "control_diff_cost": {"weight": 0.01},
             # "energy_cost": {"max_value": 50.0, "weight": 0.01},
         },
         termination_criteria={
             "fallen": {"healthy_z_range": (0.0325, 0.5)},  # Meters
-            "upside_down": {},  # when root quat[2] < 0
+            # "upside_down": {},  # when root quat[2] < 0
         },
     )
 
@@ -242,10 +242,10 @@ class HeadTrackRear(rodent_base.RodentEnv):
         return decorator
 
     @_named_reward("hold_head_z")
-    def _hold_head_z_reward(self, data, info, metrics, weight) -> float:
+    def _hold_head_z_reward(self, data, info, metrics, weight, time_threshold) -> float:
         in_reward_window = jp.logical_and(
-            info["above_z_time"] >= 1.0,
-            info["above_z_time"] < 1.0 + self._config.ctrl_dt,
+            info["above_z_time"] >= time_threshold,
+            info["above_z_time"] < time_threshold + self._config.ctrl_dt,
         )
         reward = jp.where(in_reward_window, weight, 0.0)
         metrics["rewards/hold_head_z"] = reward

@@ -3,10 +3,7 @@ Temporary train script for quick-start training
 """
 
 import os
-from typing import Callable, Mapping
-
-from mujoco_playground._src import mjx_env
-from omegaconf import OmegaConf
+from threading import stack_size
 
 # os.environ["CUDA_VISIBLE_DEVICES"] = "2"  # visible GPU masks
 xla_flags = os.environ.get("XLA_FLAGS", "")
@@ -24,69 +21,61 @@ import imageio
 
 import jax
 import jax.numpy as jp
-
+import matplotlib.pyplot as plt
+import mediapy as media
 import mujoco
 import wandb
-from brax.training.agents.ppo import networks as ppo_networks
-from brax.training.agents.ppo import train as ppo
+from brax.training.agents.sac import networks as sac_networks
+
+# from brax.training.agents.sac import train as sac
 from brax.training.acme import running_statistics
 
 from etils import epath
 from flax.training import orbax_utils
+from IPython.display import clear_output, display
 from orbax import checkpoint as ocp
 from ml_collections import config_dict
+from tqdm import tqdm
 
-from mujoco_playground import wrapper
+from mujoco_playground import locomotion, wrapper
+from mujoco_playground.config import locomotion_params
 
-from vnl_mjx.tasks.rodent import head_track_rear
-from vnl_mjx.tasks.rodent import wrappers
+from vnl_mjx import sac
+from vnl_mjx.tasks.rodent import wrappers as rodent_wrappers
+from vnl_mjx.tasks.rodent import imitation
 
-from track_mjx.agent import checkpointing
-from track_mjx.agent import wandb_logging
-from track_mjx.agent.mlp_ppo import ppo_networks as track_networks
 
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
-env_cfg = head_track_rear.default_config()
-
-mimic_checkpoint_path = "/n/holylabs-olveczky/Users/charleszhang/track-mjx/model_checkpoints/250929_210018_111014"
-mimic_cfg = OmegaConf.create(
-    checkpointing.load_config_from_checkpoint(mimic_checkpoint_path)
-)
-decoder_policy_fn = track_networks.make_decoder_policy_fn(mimic_checkpoint_path)
+env_cfg = imitation.default_config()
 
 
-ppo_params = config_dict.create(
-    num_timesteps=int(1e9),  # 1 billion
+sac_params = config_dict.create(
+    num_timesteps=int(4e9),  # 1 billion
     reward_scaling=1.0,
-    episode_length=1500,
+    episode_length=390,  # hardcoded for now
     normalize_observations=True,
     action_repeat=1,
-    unroll_length=20,
-    num_minibatches=8,
-    num_updates_per_batch=2,
-    discounting=0.9,
-    learning_rate=1e-3,
-    entropy_cost=1e-2,
-    num_envs=8192,
+    learning_rate=1e-4,
+    num_envs=4096,
     batch_size=1024,
-    max_grad_norm=1.0,
+    grad_updates_per_step=2,
+    max_replay_size=1_000_000,
     network_factory=config_dict.create(
-        policy_hidden_layer_sizes=(1024, 512, 256),
-        value_hidden_layer_sizes=(1024, 512, 256),
+        hidden_layer_sizes=(1024, 1024, 512, 256),
     ),
-    eval_every=10_000_000,  # num_evals = num_timesteps // eval_every
+    eval_every=25_000_000,  # num_evals = num_timesteps // eval_every
 )
 
-env_name = "head_track_rear"
-env_cfg.nconmax *= ppo_params.num_envs
+env_name = "imitation"
+env_cfg.nconmax *= sac_params.num_envs
 
 from pprint import pprint
 
-pprint(f"ppo_params: {ppo_params}")
+pprint(sac_params)
 
 
 SUFFIX = None
@@ -100,6 +89,19 @@ if SUFFIX is not None:
     exp_name += f"-{SUFFIX}"
 print(f"Experiment name: {exp_name}")
 
+# Possibly restore from the latest checkpoint.
+if FINETUNE_PATH is not None:
+    FINETUNE_PATH = epath.Path(FINETUNE_PATH)
+    latest_ckpts = list(FINETUNE_PATH.glob("*"))
+    latest_ckpts = [ckpt for ckpt in latest_ckpts if ckpt.is_dir()]
+    latest_ckpts.sort(key=lambda x: int(x.name))
+    latest_ckpt = latest_ckpts[-1]
+    restore_checkpoint_path = latest_ckpt
+    print(f"Restoring from: {restore_checkpoint_path}")
+else:
+    restore_checkpoint_path = None
+
+
 ckpt_path = epath.Path("checkpoints").resolve() / exp_name
 ckpt_path.mkdir(parents=True, exist_ok=True)
 print(f"{ckpt_path}")
@@ -111,7 +113,7 @@ with open(ckpt_path / "config.json", "w") as fp:
 USE_WANDB = True
 
 if USE_WANDB:
-    wandb.init(project="vnl-mjx-rl", config=env_cfg, id=f"head_track_rear-{exp_name}")
+    wandb.init(project="vnl-mjx-rl", config=env_cfg, id=f"imitation-{exp_name}")
     wandb.config.update(
         {
             "env_name": env_name,
@@ -133,13 +135,13 @@ def progress(num_steps, metrics):
 progress_fn = wandb_progress if USE_WANDB else progress
 
 
-training_params = dict(ppo_params)
+training_params = dict(sac_params)
 del training_params["network_factory"]
 del training_params["eval_every"]
 
 # stuff to make logging inference fn in this file
 network_factory = functools.partial(
-    ppo_networks.make_ppo_networks, **ppo_params.network_factory
+    sac_networks.make_sac_networks, **sac_params.network_factory
 )
 normalize = lambda x, y: x
 if training_params["normalize_observations"]:
@@ -147,26 +149,26 @@ if training_params["normalize_observations"]:
 
 
 train_fn = functools.partial(
-    ppo.train,
+    sac.train,
     **training_params,
-    num_evals=int(ppo_params.num_timesteps / ppo_params.eval_every),
+    num_evals=int(sac_params.num_timesteps / sac_params.eval_every),
     network_factory=network_factory,
-    restore_checkpoint_path=None,
+    restore_checkpoint_path=restore_checkpoint_path,
     progress_fn=progress_fn,
     wrap_env_fn=functools.partial(wrapper.wrap_for_brax_training),
     # policy_params_fn=policy_params_fn,
 )
 
 
-def make_logging_inference_fn(ppo_networks):
-    """Creates params and inference function for the PPO agent.
+def make_logging_inference_fn(sac_networks):
+    """Creates params and inference function for the SAC agent.
     The policy takes the params as an input, so different sets of params can be used.
     """
 
     def make_logging_policy(deterministic=False):
-        policy_network = ppo_networks.policy_network
+        policy_network = sac_networks.policy_network
         # can modify this to provide stochastic action + noise
-        parametric_action_distribution = ppo_networks.parametric_action_distribution
+        parametric_action_distribution = sac_networks.parametric_action_distribution
 
         def logging_policy(
             params,
@@ -178,7 +180,7 @@ def make_logging_inference_fn(ppo_networks):
             # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             if deterministic:
                 return (
-                    jp.array(ppo_networks.parametric_action_distribution.mode(logits)),
+                    jp.array(sac_networks.parametric_action_distribution.mode(logits)),
                     {},
                 )
             # action sampling is happening here, according to distribution parameter logits
@@ -201,34 +203,28 @@ def make_logging_inference_fn(ppo_networks):
 
 
 if __name__ == "__main__":
-    env = head_track_rear.HeadTrackRear(config=env_cfg)
-    env = wrappers.HighLevelWrapper(
-        wrappers.FlattenObsWrapper(env),
-        decoder_policy_fn,
-        mimic_cfg.network_config.intention_size,
-        0,  # the head track task has no non-proprioceptive obs
-    )
-    eval_env = wrappers.HighLevelWrapper(
-        wrappers.FlattenObsWrapper(head_track_rear.HeadTrackRear(config=env_cfg)),
-        decoder_policy_fn,
-        mimic_cfg.network_config.intention_size,
-        0,  # the head track task has no non-proprioceptive obs
-    )
+    env = rodent_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg))
+    eval_env = rodent_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg))
 
     # render a rollout in the policy_params_fn to log to wandb at each step
-    jit_reset = jax.jit(env.reset)
-    jit_step = jax.jit(env.step)
+    render_cfg = env_cfg.copy_and_resolve_references()
+    render_cfg.start_frame_range = [0, 0]
+    rollout_env = rodent_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=render_cfg)
+    )
+    jit_reset = jax.jit(rollout_env.reset)
+    jit_step = jax.jit(rollout_env.step)
     rng = jax.random.PRNGKey(0)
     start_state = jit_reset(rng)
-    mj_model = env._mj_model
+    mj_model = rollout_env.mj_model
     mj_data = mujoco.MjData(mj_model)
     renderer = mujoco.Renderer(mj_model, height=512, width=512)
-    ppo_network = network_factory(
+    sac_network = network_factory(
         start_state.obs.shape[-1],
-        env.action_size,
+        rollout_env.action_size,
         preprocess_observations_fn=normalize,
     )
-    make_logging_policy = make_logging_inference_fn(ppo_network)
+    make_logging_policy = make_logging_inference_fn(sac_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
     def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):
@@ -238,7 +234,7 @@ if __name__ == "__main__":
         rollout = [start_state]
         state = start_state
         rng = jax.random.PRNGKey(0)
-        for _ in range(ppo_params.episode_length):
+        for _ in range(sac_params.episode_length):
             _, rng = jax.random.split(rng)
             action, _ = jit_logging_inference_fn(params, state.obs, rng)
             state = jit_step(state, action)
@@ -248,7 +244,7 @@ if __name__ == "__main__":
         qposes_rollout = np.array([state.data.qpos for state in rollout])
         video_path = f"{ckpt_path}/{current_step}.mp4"
 
-        with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
+        with imageio.get_writer(video_path, fps=int((1.0 / rollout_env.dt))) as video:
             for qpos in qposes_rollout:
                 mj_data.qpos = qpos
                 mujoco.mj_forward(mj_model, mj_data)
