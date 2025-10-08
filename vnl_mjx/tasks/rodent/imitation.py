@@ -1,15 +1,17 @@
 import collections
 import warnings
-from typing import Any, Callable, Dict, Mapping, Optional, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 import brax.math
 import jax
 import jax.numpy as jp
+import mujoco
 import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
+from .. import utils
 from . import base as rodent_base
 from . import consts
 from .reference_clips import ReferenceClips
@@ -92,6 +94,7 @@ class Imitation(rodent_base.RodentEnv):
         self.add_rodent(
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
+            rgba=(0, 0.5, 0.5, 1),  # Teal color
         )
         self.compile()
         self.reference_clips = ReferenceClips(
@@ -224,6 +227,7 @@ class Imitation(rodent_base.RodentEnv):
             metrics["terminations/" + name] = jp.astype(terminated, float)
         metrics["terminations/any"] = jp.astype(any_terminated, float)
         return any_terminated
+
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         data = mjx.make_data(
@@ -435,7 +439,7 @@ class Imitation(rodent_base.RodentEnv):
     def _control_diff_cost(
         self, data, info, metrics, imitation_reference, weight
     ) -> float:
-        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(jp.square(info["action"]))
+        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(jp.square(info["action"] - info["prev_action"]))
         cost = weight * ctrl_diff_sqr
         metrics["rewards/control_diff_cost"] = cost
         return -cost
@@ -485,6 +489,122 @@ class Imitation(rodent_base.RodentEnv):
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
+
+    def render(
+        self,
+        trajectory: List[mjx_env.State],
+        height: int = 240,
+        width: int = 320,
+        camera: Optional[str] = None,
+        scene_option: Optional[mujoco.MjvOption] = None,
+        modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
+        add_labels=False,
+        termination_extra_frames=0,
+    ) -> Sequence[np.ndarray]:
+        """
+        Renders a sequence of states (trajectory). The video includes the imitation
+        target as a white transparent "ghost".
+
+        Args:
+            trajectory (List[mjx_env.State]): Sequence of environment states to render.
+            height (int, optional): Height of the rendered frames in pixels. Defaults to 240.
+            width (int, optional): Width of the rendered frames in pixels. Defaults to 320.
+            camera (str, optional): Camera name or index to use for rendering.
+            scene_option (mujoco.MjvOption, optional): Additional scene rendering options.
+            modify_scene_fns (Sequence[Callable[[mujoco.MjvScene], None]], optional):
+                Sequence of functions to modify the scene before rendering each frame.
+                Defaults to None.
+            add_labels (bool, optional): Whether to overlay clip and termination cause
+                labels on frames. Defaults to False.
+            termination_extra_frames (int, optional): If larger than 0, then repeat the
+                frame triggering the termination this number of times. This gives
+                a freeze-on-done effect that may help debug termination criteria.
+                Additionally, a simple fade-out effect is applied during those frames
+                to smooth the tranisition between clips. If this is larger than 0, the
+                number of returned frames might be larger than `len(trajectory)`.
+        Returns:
+            Sequence[np.ndarray]: List of rendered frames as numpy arrays.
+        """
+        # Create a new spec with a ghost, without modifying the existing one
+        spec = self._spec.copy()
+        ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
+        ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
+        if ghost_rescale != 1.0:
+            ghost_rodent = utils.dm_scale_spec(ghost_rodent, ghost_rescale)
+        for body in ghost_rodent.worldbody.bodies:
+            utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
+        spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
+        spawn_body = spawn_site.attach_body(ghost_rodent.worldbody, "", suffix="-ghost")
+        spawn_body.add_freejoint()
+        mj_model_with_ghost = spec.compile()
+        mj_model_with_ghost.vis.global_.offwidth = width
+        mj_model_with_ghost.vis.global_.offheight = height
+        mj_data_with_ghost = mujoco.MjData(mj_model_with_ghost)
+
+        renderer = mujoco.Renderer(mj_model_with_ghost, height=height, width=width)
+        if camera is None:
+            camera = -1
+
+        rendered_frames = []
+        for i, state in enumerate(trajectory):
+            time_in_frames = state.data.time * self._config.mocap_hz
+            frame = jp.floor(time_in_frames + state.info["start_frame"]).astype(int)
+            clip = state.info["reference_clip"]
+            ref = self.reference_clips.at(clip=clip, frame=frame)
+
+            mj_data_with_ghost.qpos = jp.concatenate((state.data.qpos, ref.qpos))
+            mj_data_with_ghost.qvel = jp.concatenate((state.data.qvel, ref.qvel))
+            mujoco.mj_forward(mj_model_with_ghost, mj_data_with_ghost)
+            renderer.update_scene(
+                mj_data_with_ghost, camera=camera, scene_option=scene_option
+            )
+            if modify_scene_fns is not None:
+                modify_scene_fns[i](renderer.scene)
+            rendered_frame = renderer.render()
+            if add_labels:
+                import cv2
+
+                behavior_label = self.reference_clips.clip_names[clip]
+                label = f"Clip {clip} ({behavior_label})"
+                cv2.putText(
+                    rendered_frame,
+                    label,
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+            rendered_frames.append(rendered_frame)
+            if state.done:
+                if add_labels:
+                    import cv2
+
+                    reason = "<Unknown>"
+                    if state.info["truncated"]:
+                        reason = "truncated"
+                    for name in self._config.termination_criteria.keys():
+                        if state.metrics["terminations/" + name] > 0:
+                            reason = name
+                    cv2.putText(
+                        rendered_frame,
+                        reason,
+                        (10, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.0,
+                        (255, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+                for t in range(termination_extra_frames):
+                    rel_t = t / termination_extra_frames
+                    fade_factor = 1 / (
+                        1 + np.exp(10 * (rel_t - 0.5))
+                    )  # Logistic fade-out
+                    faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
+                    rendered_frames.append(faded_frame)
+        return rendered_frames
 
     @property
     def proprioceptive_obs_size(self) -> int:
@@ -588,7 +708,6 @@ class Imitation(rodent_base.RodentEnv):
                     )
                     any_failed = True
         return not any_failed
-
 
 def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
     if isinstance(a, map):

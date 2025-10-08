@@ -34,11 +34,11 @@ class ReferenceClips:
             A new ReferenceClips instance with each field sliced to the specified
             clip and frame.
         """
-        if self.qpos.ndim < 3:
+        if len(self.qpos.shape) < 3:
             raise IndexError("Trying to slice already sliced ReferenceClip.")
         subslice = copy.copy(self)
         subslice._data_arrays = {
-            k: subslice._data_arrays[k][clip, frame] for k in self._DATA_ARRAYS
+            k: self._data_arrays[k][clip, frame] for k in self._DATA_ARRAYS
         }
         return subslice
 
@@ -54,12 +54,12 @@ class ReferenceClips:
         Returns:
             ReferenceClips: A new ReferenceClips object containing the sliced data.
         """
-        if self.qpos.ndim < 3:
+        if len(self.qpos.shape) < 3:
             raise IndexError("Trying to slice already sliced ReferenceClip.")
         subslice = copy.copy(self)
-        subslice._data_arrays = copy.copy(self._data_arrays)
+        subslice._data_arrays = {}
         for key in subslice._DATA_ARRAYS:
-            clip_array = subslice._data_arrays[key][clip]
+            clip_array = self._data_arrays[key][clip]
             slice = jax.lax.dynamic_slice(
                 clip_array,
                 (start_frame, *jp.zeros(clip_array.ndim - 1, dtype=int)),
@@ -77,6 +77,11 @@ class ReferenceClips:
                 arr = fid[k][()]
                 n_clips = arr.shape[0] // n_frames_per_clip
                 arr = arr.reshape(n_clips, n_frames_per_clip, *arr.shape[1:])
+                # Storing the references as regular jax.arrays encourages
+                # const folding durig jitting, which can blow up RAM use during
+                # compilation.
+                # TODO: Check if jax.device_put(arr) or jax.array_ref(jp.array(arr))
+                # blocks const folding.
                 self._data_arrays[k] = jp.array(arr)
             self._names_qpos = fid["names_qpos"][()].astype(str)
             self._names_xpos = fid["names_xpos"][()].astype(str)

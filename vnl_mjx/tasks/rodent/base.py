@@ -142,9 +142,11 @@ class RodentEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
-            self._mjx_model = mjx.put_model(
-                self._mj_model, impl=self._config.mujoco_impl
-            )
+            self._mj_model.opt.solver = {
+                "cg": mujoco.mjtSolver.mjSOL_CG,
+                "newton": mujoco.mjtSolver.mjSOL_NEWTON,
+            }[self._config.solver.lower()]
+            self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.mujoco_impl)
             self._compiled = True
 
     def _get_appendages_pos(
@@ -195,8 +197,8 @@ class RodentEnv(mjx_env.MjxEnv):
             self.mjx_model, self._spec.body(f"torso{self._suffix}")
         ).xpos
         torso_z = torso_pos[2]
-        return torso_z  # self.root_body(data).xpos[1]
-
+        return torso_z
+    
     def _get_world_zaxis(self, data: mjx.Data) -> jp.ndarray:
         return self.root_body(data).xmat.flatten()[6:]
 
