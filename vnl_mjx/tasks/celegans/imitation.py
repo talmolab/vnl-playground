@@ -1007,9 +1007,17 @@ class Imitation(worm_base.CelegansEnv):
         mj_data_with_ghost = mujoco.MjData(mj_model_with_ghost)
 
         renderer = mujoco.Renderer(mj_model_with_ghost, height=height, width=width)
+
+        available_cameras = [c.name for c in spec.cameras]
         if camera is None:
             camera = -1
-        print(f"Rendering with camera: {camera}{self._suffix}")
+        elif camera not in available_cameras:
+            warnings.warn(
+                f"Camera {camera} not found in available cameras: {available_cameras}! (Hint: did you forget the suffix?)"
+            )
+            warnings.warn("Defaulting to camera: 'track-worm'")
+            camera = "track-worm"
+        print(f"Rendering with camera: {camera}")
         rendered_frames = []
         for i, state in enumerate(trajectory):
             time_in_frames = state.data.time * self._config.mocap_hz
@@ -1020,18 +1028,12 @@ class Imitation(worm_base.CelegansEnv):
             mj_data_with_ghost.qpos = jp.concatenate((state.data.qpos, ref.qpos))
             mj_data_with_ghost.qvel = jp.concatenate((state.data.qvel, ref.qvel))
             mujoco.mj_forward(mj_model_with_ghost, mj_data_with_ghost)
-            try:
-                renderer.update_scene(
-                    mj_data_with_ghost,
-                    camera=f"{camera}{self._suffix}",
-                    scene_option=scene_option,
-                )
-            except ValueError as e:
-                print(
-                    f"Error updating scene for camera {f'{camera}{self._suffix}'}: {e}"
-                )
-                print(f"Available cameras: {[c.name for c in spec.cameras]}")
-                raise e
+
+            renderer.update_scene(
+                mj_data_with_ghost,
+                camera=camera,
+                scene_option=scene_option,
+            )
             if modify_scene_fns is not None:
                 modify_scene_fns[i](renderer.scene)
             rendered_frame = renderer.render()
