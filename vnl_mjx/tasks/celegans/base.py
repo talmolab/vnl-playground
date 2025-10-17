@@ -547,7 +547,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         """
         # TODO: Double-check which body should be considered the root (walker or torso)
         return data.bind(
-            self.mjx_model, self._spec.body(f"{consts.ROOT}{self._suffix}")
+            self.mjx_model, self._spec.body(f"{self.root_name}{self._suffix}")
         )
 
     def save_spec(self, path: str, return_str: bool = False) -> Optional[str]:

@@ -476,10 +476,10 @@ class Imitation(worm_base.CelegansEnv):
         root_quat = self.root_body(data).xquat
         root_targets = jax.vmap(
             lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat)
-        )(reference.root_position)
+        )(reference.body_xpos(self.root_name))
         quat_targets = jax.vmap(
             lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat)
-        )(reference.root_quaternion)
+        )(reference.body_xquat(self.root_name))
 
         _assert_all_are_prefix(
             reference.joint_names,
@@ -534,8 +534,9 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (reward_value, distance_to_target).
         """
         target = self._get_current_target(data, info)
+        target_pos = target.body_xpos(self.root_name)
         root_pos = self._get_root_pos(data)
-        distance = jp.linalg.norm(target.root_position - root_pos)
+        distance = jp.linalg.norm(target_pos - root_pos)
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         return reward, distance
 
@@ -553,8 +554,9 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (reward_value, angular_distance_in_degrees).
         """
         target = self._get_current_target(data, info)
+        target_quat = target.body_xquat(self.root_name)
         root_quat = self._get_root_quat(data)
-        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
+        quat_dist = 2.0 * jp.dot(root_quat, target_quat) ** 2 - 1.0
         ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
         ang_dist = jp.rad2deg(ang_dist)
         reward = weight * jp.exp(-((ang_dist / exp_scale) ** 2) / 2)
@@ -599,7 +601,7 @@ class Imitation(worm_base.CelegansEnv):
         return reward, distance
 
     def _get_bodies_dist(
-        self, data: mjx.Data, info: Mapping[str, Any], bodies: List[str] = consts.BODIES
+        self, data: mjx.Data, info: Mapping[str, Any], bodies: List[str] = None
     ) -> float:
         """Calculate distance between current and target body positions.
 
@@ -611,6 +613,8 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Total distance between current and target body positions.
         """
+        if bodies is None:
+            bodies = self.body_names
         target = self._get_current_target(data, info)
         body_pos = self._get_bodies_pos(data, flatten=False)
         total_dist_sqr = 0.0
@@ -802,8 +806,9 @@ class Imitation(worm_base.CelegansEnv):
             Boolean indicating if root is too far from reference.
         """
         target = self._get_current_target(data, info)
+        target_pos = target.body_xpos(self.root_name)
         root_pos = self._get_root_pos(data)
-        distance = jp.linalg.norm(target.root_position - root_pos)
+        distance = jp.linalg.norm(target_pos - root_pos)
         return distance > max_distance
 
     @_named_termination_criterion("root_too_rotated")
@@ -819,8 +824,9 @@ class Imitation(worm_base.CelegansEnv):
             Boolean indicating if root is too rotated from reference.
         """
         target = self._get_current_target(data, info)
+        target_quat = target.body_xquat(self.root_name)
         root_quat = self._get_root_quat(data)
-        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
+        quat_dist = 2.0 * jp.dot(root_quat, target_quat) ** 2 - 1.0
         ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
         return ang_dist > jp.deg2rad(max_degrees)
 
@@ -1095,11 +1101,13 @@ class Imitation(worm_base.CelegansEnv):
             checks = collections.OrderedDict()
             checks["root_pos"] = jp.allclose(
                 self.root_body(data).xpos[..., : self._config.dim],
-                reference.root_position[..., : self._config.dim],
+                reference.body_xpos(self.root_name)[..., : self._config.dim],
                 atol=atol,
             )
             checks["root_quat"] = jp.allclose(
-                self.root_body(data).xquat, reference.root_quaternion, atol=atol
+                self.root_body(data).xquat,
+                reference.body_xquat(self.root_name),
+                atol=atol,
             )
             checks["joints"] = jp.allclose(
                 self._get_joint_angles(data), reference.joints, atol=atol
@@ -1156,17 +1164,17 @@ class Imitation(worm_base.CelegansEnv):
                     )
                     if name == "root_pos":
                         warnings.warn(
-                            f"Root position: {self.root_body(data).xpos} != {reference.root_position}"
+                            f"Root position: {self.root_body(data).xpos} != {reference.body_xpos(self.root_name)}"
                         )
                         warnings.warn(
-                            f"diff: {jp.linalg.norm(self.root_body(data).xpos[..., : self._config.dim] - reference.root_position[..., : self._config.dim])}"
+                            f"diff: {jp.linalg.norm(self.root_body(data).xpos[..., : self._config.dim] - reference.body_xpos(self.root_name)[..., : self._config.dim])}"
                         )
                     elif name == "root_quat":
                         warnings.warn(
-                            f"Root quaternion: {self.root_body(data).xquat} != {reference.root_quaternion}"
+                            f"Root quaternion: {self.root_body(data).xquat} != {reference.body_xquat(self.root_name)}"
                         )
                         warnings.warn(
-                            f"diff: {jp.linalg.norm(self.root_body(data).xquat - reference.root_quaternion)}"
+                            f"diff: {jp.linalg.norm(self.root_body(data).xquat - reference.body_xquat(self.root_name))}"
                         )
                     elif name == "joints":
                         warnings.warn(
