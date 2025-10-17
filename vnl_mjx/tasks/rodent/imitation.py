@@ -24,7 +24,7 @@ def default_config() -> config_dict.ConfigDict:
         mujoco_impl="jax",
         sim_dt=0.002,
         ctrl_dt=0.01,
-        solver="cg",
+        solver="newton",
         iterations=5,
         ls_iterations=5,
         nconmax=256,
@@ -35,10 +35,11 @@ def default_config() -> config_dict.ConfigDict:
         reference_data_path=consts.IMITATION_REFERENCE_PATH,
         mocap_hz=50,
         clip_length=250,
-        clip_set="all",
+        clip_set="all",  # NOTE: Charles added keep_clips_idx which basically is the same as this for indices to reduce memory usage
         reference_length=5,
         start_frame_range=[0, 44],
         qvel_init="zeros",
+        keep_clips_idx=None,
         reward_terms={
             # Imitation rewards
             "root_pos": {"exp_scale": 0.035, "weight": 1.0},  # Meters
@@ -66,6 +67,7 @@ def default_config() -> config_dict.ConfigDict:
             "root_too_far": {"max_distance": 0.1},  # Meters
             "root_too_rotated": {"max_degrees": 60.0},  # Degrees
             "pose_error": {"max_l2_error": 4.5},  # Joint-space L2 distance
+            "nan_termination": {},
         },
     )
 
@@ -98,7 +100,9 @@ class Imitation(rodent_base.RodentEnv):
         )
         self.compile()
         self.reference_clips = ReferenceClips(
-            self._config.reference_data_path, self._config.clip_length
+            self._config.reference_data_path,
+            self._config.clip_length,
+            self._config.keep_clips_idx,
         )
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
@@ -185,6 +189,10 @@ class Imitation(rodent_base.RodentEnv):
         terminated = self._is_done(data, info, state.metrics)
         done = jp.logical_or(terminated, info["truncated"])
         reward = self._get_reward(data, info, state.metrics)
+
+        # Handle nans during sim with this in addition to termination on nans in data
+        reward = jp.nan_to_num(reward)
+
         state = state.replace(
             data=data,
             obs=obs,
@@ -198,7 +206,7 @@ class Imitation(rodent_base.RodentEnv):
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
         return collections.OrderedDict(
-            proprioception=self._get_proprioception(data, flatten=False),
+            proprioception=self._get_proprioception(data, info, flatten=False),
             imitation_target=self._get_imitation_target(data, info),
         )
 
@@ -227,7 +235,6 @@ class Imitation(rodent_base.RodentEnv):
             metrics["terminations/" + name] = jp.astype(terminated, float)
         metrics["terminations/any"] = jp.astype(any_terminated, float)
         return any_terminated
-
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         data = mjx.make_data(
@@ -439,7 +446,9 @@ class Imitation(rodent_base.RodentEnv):
     def _control_diff_cost(
         self, data, info, metrics, imitation_reference, weight
     ) -> float:
-        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(jp.square(info["action"] - info["prev_action"]))
+        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(
+            jp.square(info["action"] - info["prev_action"])
+        )
         cost = weight * ctrl_diff_sqr
         metrics["rewards/control_diff_cost"] = cost
         return -cost
@@ -489,6 +498,13 @@ class Imitation(rodent_base.RodentEnv):
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
+
+    @_named_termination_criterion("nan_termination")
+    def _nan_termination(self, data, info) -> bool:
+        # Handle nans during sim by resetting env
+        flattened_vals, _ = jax.flatten_util.ravel_pytree(data)
+        num_nans = jp.sum(jp.isnan(flattened_vals))
+        return num_nans > 0
 
     def render(
         self,
@@ -708,6 +724,7 @@ class Imitation(rodent_base.RodentEnv):
                     )
                     any_failed = True
         return not any_failed
+
 
 def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
     if isinstance(a, map):

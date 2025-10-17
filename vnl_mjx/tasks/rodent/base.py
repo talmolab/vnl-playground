@@ -146,7 +146,9 @@ class RodentEnv(mjx_env.MjxEnv):
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
-            self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.mujoco_impl)
+            self._mjx_model = mjx.put_model(
+                self._mj_model, impl=self._config.mujoco_impl
+            )
             self._compiled = True
 
     def _get_appendages_pos(
@@ -198,12 +200,12 @@ class RodentEnv(mjx_env.MjxEnv):
         ).xpos
         torso_z = torso_pos[2]
         return torso_z
-    
+
     def _get_world_zaxis(self, data: mjx.Data) -> jp.ndarray:
         return self.root_body(data).xmat.flatten()[6:]
 
     def _get_proprioception(
-        self, data: mjx.Data, flatten: bool = True
+        self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True
     ) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
         """Get proprioception data from the environment."""
 
@@ -214,6 +216,7 @@ class RodentEnv(mjx_env.MjxEnv):
             body_height=self._get_body_height(data).reshape(1),
             world_zaxis=self._get_world_zaxis(data),
             appendages_pos=self._get_appendages_pos(data, flatten=flatten),
+            prev_action=info["prev_action"],
         )
         if flatten:
             proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)

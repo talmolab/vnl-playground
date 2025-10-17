@@ -1,4 +1,5 @@
 import copy
+from ctypes import Array
 import re
 from typing import Any, Mapping
 
@@ -12,7 +13,12 @@ import yaml
 class ReferenceClips:
     _DATA_ARRAYS = ["qpos", "qvel", "xpos", "xquat"]
 
-    def __init__(self, data_path: str, n_frames_per_clip: int):
+    def __init__(
+        self,
+        data_path: str,
+        n_frames_per_clip: int,
+        keep_clips_idx: Array[int] | None = None,
+    ):
         """
         Load reference clips from a h5 file.
         Args:
@@ -20,9 +26,11 @@ class ReferenceClips:
             n_frames_per_clip (int): Number of frames in each clip. This is
                                      needed because the clips are stored in
                                      a contiguous array in the h5 file.
+            keep_clips_idx (Array[int]): Indices of the clips to keep. If None, all
+                                      clips are kept.
         """
 
-        self._load_from_disk(data_path, n_frames_per_clip)
+        self._load_from_disk(data_path, n_frames_per_clip, keep_clips_idx)
 
     def at(self, clip: int, frame: int) -> "ReferenceClips":
         """
@@ -46,7 +54,7 @@ class ReferenceClips:
         """
         Extracts a contiguous slice of frames from a specific clip in the
         ReferenceClips object.
-        
+
         Args:
             clip (int): Index of the clip to slice.
             start_frame (int): The starting frame index for the slice.
@@ -68,7 +76,9 @@ class ReferenceClips:
             subslice._data_arrays[key] = slice
         return subslice
 
-    def _load_from_disk(self, data_path: str, n_frames_per_clip: int):
+    def _load_from_disk(
+        self, data_path: str, n_frames_per_clip: int, keep_clips_idx: Array[int] | None
+    ):
         self._data_arrays = {}
         with h5py.File(data_path, "r") as fid:
             self._config = yaml.safe_load(fid["config"][()])
@@ -83,6 +93,9 @@ class ReferenceClips:
                 # TODO: Check if jax.device_put(arr) or jax.array_ref(jp.array(arr))
                 # blocks const folding.
                 self._data_arrays[k] = jp.array(arr)
+                if keep_clips_idx is not None:
+                    print(f"{k}: Keeping {len(keep_clips_idx)} clips")
+                    self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
             self._names_qpos = fid["names_qpos"][()].astype(str)
             self._names_xpos = fid["names_xpos"][()].astype(str)
             self._qpos_names = {n: i for (i, n) in enumerate(self._names_qpos)}
@@ -122,13 +135,13 @@ class ReferenceClips:
     @property
     def root_position(self) -> jp.ndarray:
         """First 3 elements of qpos, corresponding to the root position for
-           the rodent."""
+        the rodent."""
         return self.qpos[..., :3]
 
     @property
     def root_quaternion(self) -> jp.ndarray:
         """Elements 3-6 of qpos, corresponding to the root quaterinion for
-           the rodent."""
+        the rodent."""
         return self.qpos[..., 3:7]
 
     @property

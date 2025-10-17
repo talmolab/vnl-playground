@@ -38,7 +38,7 @@ from tqdm import tqdm
 from mujoco_playground import locomotion, wrapper
 from mujoco_playground.config import locomotion_params
 
-from vnl_mjx.tasks.rodent import flat_arena, bowl_escape, head_track_rear
+from vnl_mjx.tasks.rodent import head_track_rear, rodent_wrappers
 
 
 # Enable persistent compilation cache.
@@ -161,49 +161,6 @@ train_fn = functools.partial(
 )
 
 
-class FlattenObsWrapper(wrapper.Wrapper):
-
-    def __init__(self, env: wrapper.mjx_env.MjxEnv):
-        super().__init__(env)
-
-    def reset(self, rng: jax.Array) -> wrapper.mjx_env.State:
-        state = self.env.reset(rng)
-        return self._flatten(state)
-
-    def step(
-        self, state: wrapper.mjx_env.State, action: jax.Array
-    ) -> wrapper.mjx_env.State:
-        state = self.env.step(state, action)
-        return self._flatten(state)
-
-    def _flatten(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
-        state = state.replace(
-            obs=jax.flatten_util.ravel_pytree(state.obs)[0],
-            metrics=self._flatten_metrics(state.metrics),
-        )
-        return state
-
-    def _flatten_metrics(self, metrics: dict) -> dict:
-        new_metrics = {}
-
-        def rec(d: dict, prefix=""):
-            for k, v in d.items():
-                if isinstance(v, dict):
-                    rec(v, prefix + k + "/")
-                else:
-                    new_metrics[prefix + k] = v
-
-        rec(metrics)
-        return new_metrics
-
-    @property
-    def observation_size(self) -> int:
-        rng_shape = jax.eval_shape(jax.random.key, 0)
-        # flat_obs = lambda rng: self._flatten(self.env.reset(rng).obs)
-        obs_size = len(jax.eval_shape(self.reset, rng_shape))
-        return obs_size
-
-
 def make_logging_inference_fn(ppo_networks):
     """Creates params and inference function for the PPO agent.
     The policy takes the params as an input, so different sets of params can be used.
@@ -247,8 +204,12 @@ def make_logging_inference_fn(ppo_networks):
 
 
 if __name__ == "__main__":
-    env = FlattenObsWrapper(head_track_rear.HeadTrackRear(config=env_cfg))
-    eval_env = FlattenObsWrapper(head_track_rear.HeadTrackRear(config=env_cfg))
+    env = rodent_wrappers.FlattenObsWrapper(
+        head_track_rear.HeadTrackRear(config=env_cfg)
+    )
+    eval_env = rodent_wrappers.FlattenObsWrapper(
+        head_track_rear.HeadTrackRear(config=env_cfg)
+    )
 
     # render a rollout in the policy_params_fn to log to wandb at each step
     jit_reset = jax.jit(env.reset)

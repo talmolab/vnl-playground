@@ -25,7 +25,9 @@ class FlattenObsWrapper(wrapper.Wrapper):
         return self._flatten(state)
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
-        return jax.flatten_util.ravel_pytree(self.env._get_obs(data, info))[0]
+        obs = jax.flatten_util.ravel_pytree(self.env._get_obs(data, info))[0]
+        obs = jp.nan_to_num(obs)
+        return obs
 
     def _flatten(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
         state = state.replace(
