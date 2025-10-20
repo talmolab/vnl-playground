@@ -7,6 +7,7 @@ allows training agents to mimic reference motion clips.
 import collections
 import warnings
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from pprint import pformat
 
 import brax.math
 import cv2
@@ -62,6 +63,7 @@ def default_config() -> config_dict.ConfigDict:
         start_frame_range=[0, 44],
         qvel_init="zeros",
         with_ghost=False,
+        var_window_size=10,
         reward_terms={
             # Imitation rewards
             "root_pos": {"exp_scale": 0.05, "weight": 1.0},  # Meters
@@ -86,6 +88,8 @@ def default_config() -> config_dict.ConfigDict:
             "control": {"weight": 0.02},
             "control_diff": {"weight": 0.02},
             "energy": {"max_value": 50.0, "weight": 0.0},
+            "jerk": {"weight": 0.0},
+            "var": {"weight": 0.0},
         },
         termination_criteria={
             "fall": {"healthy_z_range": (0.0, 1.0)},
@@ -155,6 +159,36 @@ class Imitation(worm_base.CelegansEnv):
                 f"Simulation will not advance! Please increase `ctrl_dt` from {self._config.ctrl_dt} to at least {self._config.sim_dt}."
             )
 
+    def __repr__(self) -> str:
+        walker_config = pformat(
+            {
+                "rescale_factor": self._config.rescale_factor,
+                "dim": self._config.dim,
+                "friction": self._config.friction,
+                "solimp": self._config.solimp,
+                "torque_actuators": self._config.torque_actuators,
+            }
+        )
+        reference_config = pformat(
+            {
+                "reference_clips": self._config.reference_clips,
+                "mocap_hz": self._config.mocap_hz,
+                "clip_set": self._config.clip_set,
+                "reference_length": self._config.reference_length,
+                "start_frame_range": self._config.start_frame_range,
+                "qvel_init": self._config.qvel_init,
+            }
+        )
+        return (
+            "Imitation("
+            f"agent={super().__repr__()}, "
+            f"walker_config={walker_config}, "
+            f"reference_config={reference_config}, "
+            f"reward_terms={self._config.reward_terms}, "
+            f"cost_terms={self._config.cost_terms}, "
+            f"termination_criteria={self._config.termination_criteria})"
+        )
+
     def reset(
         self,
         rng: jax.Array,
@@ -181,6 +215,8 @@ class Imitation(worm_base.CelegansEnv):
             "start_frame": start_frame,
             "reference_clip": clip_idx,
             "prev_ctrl": jp.zeros((self.action_size,)),
+            "action_buffer": jp.zeros((self._config.var_window_size, self.action_size)),
+            "buffer_index": 0,
         }
 
         last_valid_frame = self.clip_length - self.reference_length - 1
@@ -202,10 +238,10 @@ class Imitation(worm_base.CelegansEnv):
         obs = jax.flatten_util.ravel_pytree(obs)[0]  # TODO: Use wrapper instead.
 
         rewards, dists = self._get_rewards(data, info)
-        reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
+        total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
         costs, magnitudes = self._get_costs(data, info)
         cost = jp.sum(jax.flatten_util.ravel_pytree(costs)[0])
-        total_reward = reward - cost
+        net_reward = total_reward - cost
 
         termination_conditions = self._get_termination_conditions(data, info)
         done = jp.any(jax.flatten_util.ravel_pytree(termination_conditions)[0])
@@ -219,10 +255,10 @@ class Imitation(worm_base.CelegansEnv):
             "current_frame": jp.astype(self._get_cur_frame(data, info), float),
             "total_reward": total_reward,
             "total_cost": cost,
-            "net_reward": reward,
+            "net_reward": net_reward,
         }
         return mjx_env.State(
-            data, obs, total_reward, jp.astype(done, float), metrics, info
+            data, obs, net_reward, jp.astype(done, float), metrics, info
         )
 
     def step(
@@ -250,6 +286,13 @@ class Imitation(worm_base.CelegansEnv):
         info["prev_action"] = state.info["action"]
         info["action"] = action
 
+        buffer = info["action_buffer"]
+        idx = info["buffer_index"]
+        buffer = buffer.at[idx].set(action)
+        idx = (idx + 1) % self._config.var_window_size
+        info["action_buffer"] = buffer
+        info["buffer_index"] = idx
+
         obs = self._get_obs(data, info)
         obs = jax.flatten_util.ravel_pytree(obs)[0]
 
@@ -260,14 +303,14 @@ class Imitation(worm_base.CelegansEnv):
         rewards, dists = self._get_rewards(data, info)
         costs, magnitudes = self._get_costs(data, info)
 
-        reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
+        total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
         cost = jp.sum(jax.flatten_util.ravel_pytree(costs)[0])
-        total_reward = reward - cost
+        net_reward = total_reward - cost
         state = state.replace(
             data=data,
             obs=obs,
             info=info,
-            reward=total_reward,
+            reward=net_reward,
             done=jp.astype(done, float),
         )
 
@@ -278,7 +321,9 @@ class Imitation(worm_base.CelegansEnv):
             **dists,
             **magnitudes,
             "current_frame": jp.astype(self._get_cur_frame(data, info), float),
+            "total_reward": total_reward,
             "total_cost": cost,
+            "net_reward": net_reward,
         }
         state.metrics.update(metrics)
 
@@ -742,8 +787,28 @@ class Imitation(worm_base.CelegansEnv):
         )
         return weight * energy, energy
 
+    @_named_cost("var")
+    def _var_cost(self, data, info, weight) -> Tuple[float, float]:
+        """Cost for action variance.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            weight: Cost weight multiplier.
+
+        Returns:
+            Tuple of (cost_value, sum of action_variance).
+        """
+        buffer = info["action_buffer"]
+        mean_act = jp.mean(buffer, axis=0)
+        var_act = jp.mean((buffer - mean_act) ** 2, axis=0)
+        var = jp.sum(var_act)
+        var_cost = weight * var
+
+        return var_cost, var
+
     @_named_cost("jerk")
-    def _jerk_cost(self, data, info, weight, window_len) -> Tuple[float, float]:
+    def _jerk_cost(self, data, info, weight) -> Tuple[float, float]:
         """Cost for jerk (third derivative of position).
 
         Args:
@@ -758,7 +823,16 @@ class Imitation(worm_base.CelegansEnv):
         Raises:
             NotImplementedError: This cost function is not yet implemented.
         """
-        raise NotImplementedError("jerk_cost is not implemented")
+        window_len = self._config.var_window_size
+        buffer = info["action_buffer"]
+        idx = info["buffer_index"]
+        ordered = jax.lax.dynamic_slice(
+            buffer, (idx, 0), (window_len, self.action_size)
+        )
+        jerks = ordered[2:] - 2 * ordered[1:-1] + ordered[:-2]
+        jerk = jp.sum(jerks**2)
+        jerk_cost = weight * jerk
+        return jerk_cost, jerk
 
     # Termination
     def _named_termination_criterion(name: str):

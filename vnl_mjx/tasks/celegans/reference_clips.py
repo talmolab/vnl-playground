@@ -37,6 +37,14 @@ class ReferenceClips:
         self._data_path = data_path
         self._load_from_disk(self.data_path, self.n_frames_per_clip)
 
+    def __repr__(self) -> str:
+        return (
+            "ReferenceClips("
+            f"data_path={self._data_path}, "
+            f"n_clips={self.n_clips},"
+            f"n_frames_per_clip={self._n_frames_per_clip})"
+        )
+
     def at(self, clip: int, frame: int) -> "ReferenceClips":
         """Get data at a specific clip and frame.
 

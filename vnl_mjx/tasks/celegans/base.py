@@ -8,6 +8,7 @@ import collections
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 from xml.etree import ElementTree as ET
+from pprint import pformat
 
 import jax
 import jax.numpy as jp
@@ -80,6 +81,46 @@ class CelegansEnv(mjx_env.MjxEnv):
         self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
         self._compiled = False
         self._n_worms = 0
+
+    def __repr__(self) -> str:
+        xml_paths = pformat(
+            {
+                "walker_xml_path": self._walker_xml_path,
+                "arena_xml_path": self._arena_xml_path,
+            }
+        )
+        body_components = pformat(
+            {
+                "root_body": self.root_name,
+                "joints": self.joint_names,
+                "bodies": self.body_names,
+                "end_effectors": self.end_eff_names,
+                "sensors": self.sensor_names,
+                "touch_sensors": self.touch_sensor_names,
+            }
+        )
+        sim_config = pformat(
+            {
+                "dt": {"sim": self.config.sim_dt, "ctrl": self.config.ctrl_dt},
+                "physics_iterations": self.config.iterations,
+                "solver_config": {
+                    "solver": self.config.solver,
+                    "ls_iterations": self.config.ls_iterations,
+                    "noslip_iterations": self.config.noslip_iterations,
+                    "nconmax": self.config.nconmax,
+                    "njmax": self.config.njmax,
+                },
+                "mujoco_impl": self.config.mujoco_impl,
+            }
+        )
+        return (
+            "C.Elegans("
+            f"n_worms={self._n_worms}, "
+            f"compiled={self._compiled}, "
+            f"xml_paths={xml_paths}, "
+            f"body_components={body_components}, "
+            f"sim_config={sim_config})"
+        )
 
     def add_worm(
         self,
@@ -264,6 +305,10 @@ class CelegansEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self.config.iterations
             self._mj_model.opt.ls_iterations = self.config.ls_iterations
+            self._mj_model.opt.solver = {
+                "cg": mujoco.mjtSolver.mjSOL_CG,
+                "newton": mujoco.mjtSolver.mjSOL_NEWTON,
+            }[self._config.solver.lower()]
             self._mjx_model = mjx.put_model(
                 self._mj_model
             )  # , impl=self.config.mujoco_impl)
@@ -704,6 +749,24 @@ class CelegansEnv(mjx_env.MjxEnv):
             List of end effector names.
         """
         return self.config.end_effectors
+
+    @property
+    def touch_sensor_names(self) -> List[str]:
+        """Get the list of touch sensor names in the configuration.
+
+        Returns:
+            List of touch sensor names.
+        """
+        return self.config.touch_sensors
+
+    @property
+    def sensor_names(self) -> List[str]:
+        """Get the list of sensor names in the configuration.
+
+        Returns:
+            List of sensor names.
+        """
+        return self.config.sensors
 
     @property
     def n_bodies(self) -> int:
