@@ -10,17 +10,19 @@ env_config:
   env_name: celegans
   task_name: imitation
   walker_name: celegans
-  render_camera_name: track
+  render_camera_name: track-worm
   render_fps: 20
   render_interval: 1
   backend: playground
 
   env_args:
-    walker_xml_path: /home/aaprasad/mnt/projects/con3trol/src/vnl-playground/vnl_mjx/tasks/celegans/xmls/celegans_slide.xml
+    walker_xml_path: /home/aaprasad/mnt/projects/con3trol/src/vnl-playground/vnl_mjx/tasks/celegans/xmls/celegans_reduce_contacts.xml
     torque_actuators: False  # Changed from False for better performance
     rescale_factor: 1.04
     dim: 2
     friction: [1.0, 0.1, 0.005, 0.0001, 0.0001]
+
+    root_body: torso13_body
 
     solver: "cg"
     iterations: 4
@@ -90,6 +92,7 @@ network_config:
 train_setup:
   agent_name: celegans
   run_name: imitation_init_run
+  restore_from_run_state:
   checkpoint_to_restore:
   train_test_split_info: # "data/train_test_split_rodent.json" # Path to the train/test split file, records the index
   # Ratio of training data of the whole training dataset. Needs to be in the train_test_split_info["train_subset"] key. 
