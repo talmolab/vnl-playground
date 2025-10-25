@@ -94,6 +94,9 @@ class RodentEnv(mjx_env.MjxEnv):
                 actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
                 actuator.biasprm = np.zeros((10, 1))
 
+        # TODO: add foot mods
+        # (https://github.com/google-deepmind/dm_control/blob/783b386691d413971b32479c811fd236ec0b8244/dm_control/locomotion/walkers/rodent.py#L85-L87)
+
         if rescale_factor != 1.0:
             logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
             rodent = dm_scale_spec(rodent, rescale_factor)
@@ -107,7 +110,7 @@ class RodentEnv(mjx_env.MjxEnv):
             pos=pos,
             quat=quat,
         )
-        spawn_body = spawn_site.attach_body(rodent.worldbody, "", suffix=suffix)
+        spawn_body = spawn_site.attach_body(rodent.body("walker"), "", suffix=suffix)
         self._suffix = suffix
         spawn_body.add_freejoint()
 
