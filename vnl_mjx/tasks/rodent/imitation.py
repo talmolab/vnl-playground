@@ -457,7 +457,7 @@ class Imitation(rodent_base.RodentEnv):
     def _energy_cost(
         self, data, info, metrics, imitation_reference, weight, max_value
     ) -> float:
-        energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
+        energy_use = jp.sum(jp.abs(data.qvel[6:]) * jp.abs(data.qfrc_actuator[6:]))
         metrics["energy_use"] = energy_use
         cost = weight * jp.minimum(energy_use, max_value)
         metrics["rewards/energy_cost"] = cost
