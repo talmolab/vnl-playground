@@ -65,7 +65,7 @@ class RodentEnv(mjx_env.MjxEnv):
         self,
         torque_actuators: bool,
         rescale_factor: float = 1.0,
-        pos: tuple[float, float, float] = (0, 0, 0.05),
+        pos: tuple[float, float, float] = (0, 0, 0),
         quat: tuple[float, float, float, float] = (1, 0, 0, 0),
         rgba: Optional[tuple[float, float, float, float]] = None,
         suffix: str = "-rodent",
@@ -112,7 +112,7 @@ class RodentEnv(mjx_env.MjxEnv):
         )
         spawn_body = spawn_site.attach_body(rodent.body("walker"), "", suffix=suffix)
         self._suffix = suffix
-        spawn_body.add_freejoint()
+        spawn_body.add_freejoint(name="root")
 
     def add_ghost_rodent(
         self,
