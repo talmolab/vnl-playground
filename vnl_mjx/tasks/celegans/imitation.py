@@ -96,6 +96,7 @@ def default_config() -> config_dict.ConfigDict:
             "root_too_far": {"max_distance": 0.01},  # Meters
             "root_too_rotated": {"max_degrees": 60.0},  # Degrees
             "pose_error": {"max_l2_error": 4.5},  # Joint-space L2 distance
+            "nan": {},
         },
     )
 
@@ -139,6 +140,8 @@ class Imitation(worm_base.CelegansEnv):
             self.add_ghost_worm(
                 rescale_factor=self._config.rescale_factor, dim=self._config.dim
             )
+
+        self._config.termination_criteria["nan"] = {}  # nan termination always on
 
         self.compile()
         self.reference_clips = (
@@ -244,7 +247,9 @@ class Imitation(worm_base.CelegansEnv):
         net_reward = total_reward - cost
 
         termination_conditions = self._get_termination_conditions(data, info)
-        done = jp.any(jax.flatten_util.ravel_pytree(termination_conditions)[0])
+        terminated = jp.any(jax.flatten_util.ravel_pytree(termination_conditions)[0])
+
+        done = jp.logical_or(terminated, info["truncated"])
 
         metrics = {
             **rewards,
@@ -256,6 +261,7 @@ class Imitation(worm_base.CelegansEnv):
             "total_reward": total_reward,
             "total_cost": cost,
             "net_reward": net_reward,
+            "terminated": jp.astype(terminated, float),
         }
         return mjx_env.State(
             data, obs, net_reward, jp.astype(done, float), metrics, info
@@ -298,6 +304,7 @@ class Imitation(worm_base.CelegansEnv):
 
         termination_conditions = self._get_termination_conditions(data, info)
         terminated = jp.any(jax.flatten_util.ravel_pytree(termination_conditions)[0])
+
         done = jp.logical_or(terminated, info["truncated"])
 
         rewards, dists = self._get_rewards(data, info)
@@ -324,6 +331,7 @@ class Imitation(worm_base.CelegansEnv):
             "total_reward": total_reward,
             "total_cost": cost,
             "net_reward": net_reward,
+            "terminated": jp.astype(terminated, float),
         }
         state.metrics.update(metrics)
 
@@ -380,6 +388,7 @@ class Imitation(worm_base.CelegansEnv):
         for name, kwargs in self.termination_criteria.items():
             termination_fcn = _TERMINATION_FCN_REGISTRY[name]
             termination_reasons[name] = termination_fcn(self, data, info, **kwargs)
+
         return termination_reasons
 
     def _get_costs(
@@ -920,6 +929,19 @@ class Imitation(worm_base.CelegansEnv):
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
+
+    @_named_termination_criterion("nan")
+    def _nan(self, data, info, **kwargs) -> bool:
+        """Termination criterion for nan values in simulation.
+
+        Args:
+            data: MuJoCo simulation data.
+            info: Environment info dictionary.
+            kwargs: Additional keyword arguments (Used for compatibility with other termination criteria)
+        """
+        flattened_vals, _ = jax.flatten_util.ravel_pytree(data)
+        num_nans = jp.sum(jp.isnan(flattened_vals))
+        return num_nans > 0
 
     # Properties for cleaner access
 

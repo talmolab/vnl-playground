@@ -59,7 +59,7 @@ from vnl_mjx.tasks.celegans.reference_clips import ReferenceClips
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="bowl_escape_transfer")
+@hydra.main(version_base=None, config_path="config", config_name="celegans_imitation")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     logging.info(f"Using JAX version: {jax.__version__}")
@@ -220,7 +220,8 @@ def main(cfg: DictConfig):
         )
     logging.info(f"Training on {len(env.reference_clips)} clips")
     logging.info(f"Testing on {len(evaluator_env.reference_clips)} clips")
-    env.save_spec("./env_spec.xml")
+    print(env)
+    xml = env.save_spec("./env_spec.xml", return_str=True)
     # Determine wandb run ID for resuming
     if existing_run_state:
         wandb_run_id = existing_run_state["wandb_run_id"]
@@ -231,7 +232,7 @@ def main(cfg: DictConfig):
         wandb_resume = "allow"  # Allow resuming if run exists
         logging.info(f"Starting new wandb run: {wandb_run_id}")
 
-    wandb.init(
+    run = wandb.init(
         project=cfg.logging_config.project_name,
         config=OmegaConf.to_container(cfg, resolve=True, structured_config_mode=True),
         notes=f"{cfg.logging_config.notes}",
@@ -240,9 +241,18 @@ def main(cfg: DictConfig):
         group=cfg.logging_config.group_name,
     )
 
-    def wandb_progress(num_steps, metrics):
+    run.log({"spec_file": wandb.Html(xml)}, commit=False)
+
+    def wandb_progress(num_steps, metrics, run):
+        for metric in metrics:
+            if metric not in run.summary.keys():
+                if "reward" in metric or "episode_length" in metric:
+                    mode = "max"
+                else:
+                    mode = "mean"
+                run.define_metric(metric, summary=mode)
         metrics["num_steps_thousands"] = num_steps
-        wandb.log(metrics)
+        run.log(metrics)
 
     # Save initial run state after wandb initialization
     if not existing_run_state:
@@ -306,7 +316,7 @@ def main(cfg: DictConfig):
 
     make_inference_fn, params, _ = train_fn(
         environment=env,
-        progress_fn=wandb_progress,
+        progress_fn=functools.partial(wandb_progress, run=run),
         policy_params_fn=policy_params_fn,
     )
 
