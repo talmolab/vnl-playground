@@ -11,14 +11,14 @@ import sys
 # )
 
 # # limit to 1 GPU
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # visible GPU masks
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"  # visible GPU masks
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-os.environ["MUJOCO_GL"] = os.environ.get("MUJOCO_GL", "egl")
-os.environ["PYOPENGL_PLATFORM"] = os.environ.get("PYOPENGL_PLATFORM", "egl")
-# os.environ["XLA_FLAGS"] = (
-#     "--xla_gpu_enable_triton_softmax_fusion=true --xla_gpu_triton_gemm_any=True --xla_dump_to=/tmp/foo"
-# )
+xla_flags = os.environ.get("XLA_FLAGS", "")
+xla_flags += " --xla_gpu_triton_gemm_any=True"
+os.environ["XLA_FLAGS"] = xla_flags
+os.environ["MUJOCO_GL"] = "egl"
+os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 import jax
 # Enable persistent compilation cache.

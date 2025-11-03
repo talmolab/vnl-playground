@@ -19,13 +19,14 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",]
 dependencies = [
-    "brax==0.12.1",
+    "brax==0.13.0",
     "wandb",
     "mujoco",
     "dm_control",
-    "mujoco-mjx",
+    "mujoco-mjx[warp]>=3.3.5",
+    "warp-lang",
     "mediapy",
-    "jax",
+    "jax>=0.7.2",
     "flax",
     "optax",
     "imageio[ffmpeg]",
@@ -38,6 +39,7 @@ dependencies = [
     "pandas",
     "numpy",
     "playground",
+    "dvc",
     ]
 
 dynamic = ["version", "readme"]

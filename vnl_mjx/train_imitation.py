@@ -38,7 +38,8 @@ from tqdm import tqdm
 from mujoco_playground import locomotion, wrapper
 from mujoco_playground.config import locomotion_params
 
-from vnl_mjx.tasks.rodent import head_track_rear, rodent_wrappers
+from vnl_mjx.tasks.rodent import imitation
+from vnl_mjx.tasks.rodent import wrappers as rodent_wrappers
 
 
 # Enable persistent compilation cache.
@@ -46,32 +47,34 @@ jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
-env_cfg = head_track_rear.default_config()
-
+env_cfg = imitation.default_config()
+env_cfg.mujoco_impl = "warp"
+env_cfg.keep_clips_idx = np.arange(50)
 
 ppo_params = config_dict.create(
-    num_timesteps=int(1e9),  # 1 billion
-    reward_scaling=1.0,
-    episode_length=1500,
-    normalize_observations=True,
+    num_envs=4096,
+    num_timesteps=int(4_000_000_000),
+    batch_size=1024,
+    num_minibatches=16,
+    num_updates_per_batch=3,
+    learning_rate=1e-3,
+    clipping_epsilon=0.1,
+    discounting=0.95,
     action_repeat=1,
-    unroll_length=20,
-    num_minibatches=8,
-    num_updates_per_batch=2,
-    discounting=0.97,
-    learning_rate=1e-4,
     entropy_cost=1e-2,
-    num_envs=16384,
-    batch_size=2048,
+    reward_scaling=1.0,
+    normalize_observations=True,
+    unroll_length=20,
+    episode_length=400,
     max_grad_norm=1.0,
     network_factory=config_dict.create(
-        policy_hidden_layer_sizes=(256, 256, 256, 256, 256, 256),
-        value_hidden_layer_sizes=(512, 512, 512, 256, 256, 256),
+        policy_hidden_layer_sizes=(2048, 1024, 1024, 1024, 1024, 512),
+        value_hidden_layer_sizes=(2048, 1024, 1024, 1024, 1024, 512),
     ),
-    eval_every=10_000_000,  # num_evals = num_timesteps // eval_every
+    eval_every=25_000_000,  # num_evals = num_timesteps // eval_every
 )
 
-env_name = "head_track_rear"
+env_name = "imitation"
 env_cfg.nconmax *= ppo_params.num_envs
 
 from pprint import pprint
@@ -114,7 +117,7 @@ with open(ckpt_path / "config.json", "w") as fp:
 USE_WANDB = True
 
 if USE_WANDB:
-    wandb.init(project="vnl-mjx-rl", config=env_cfg, id=f"head_track_rear-{exp_name}")
+    wandb.init(project="vnl-mjx-rl", config=env_cfg, id=f"imitation-{exp_name}")
     wandb.config.update(
         {
             "env_name": env_name,
@@ -156,7 +159,7 @@ train_fn = functools.partial(
     network_factory=network_factory,
     restore_checkpoint_path=restore_checkpoint_path,
     progress_fn=progress_fn,
-    wrap_env_fn=functools.partial(wrapper.wrap_for_brax_training),
+    wrap_env_fn=functools.partial(wrapper.wrap_for_brax_training, full_reset=True),
     # policy_params_fn=policy_params_fn,
 )
 
@@ -204,12 +207,8 @@ def make_logging_inference_fn(ppo_networks):
 
 
 if __name__ == "__main__":
-    env = rodent_wrappers.FlattenObsWrapper(
-        head_track_rear.HeadTrackRear(config=env_cfg)
-    )
-    eval_env = rodent_wrappers.FlattenObsWrapper(
-        head_track_rear.HeadTrackRear(config=env_cfg)
-    )
+    env = rodent_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg))
+    eval_env = rodent_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg))
 
     # render a rollout in the policy_params_fn to log to wandb at each step
     jit_reset = jax.jit(env.reset)

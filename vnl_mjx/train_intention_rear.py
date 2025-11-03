@@ -3,6 +3,10 @@ Temporary train script for quick-start training
 """
 
 import os
+from typing import Callable, Mapping
+
+from mujoco_playground._src import mjx_env
+from omegaconf import OmegaConf
 
 # os.environ["CUDA_VISIBLE_DEVICES"] = "2"  # visible GPU masks
 xla_flags = os.environ.get("XLA_FLAGS", "")
@@ -20,8 +24,7 @@ import imageio
 
 import jax
 import jax.numpy as jp
-import matplotlib.pyplot as plt
-import mediapy as media
+
 import mujoco
 import wandb
 from brax.training.agents.ppo import networks as ppo_networks
@@ -30,16 +33,17 @@ from brax.training.acme import running_statistics
 
 from etils import epath
 from flax.training import orbax_utils
-from IPython.display import clear_output, display
 from orbax import checkpoint as ocp
 from ml_collections import config_dict
-from tqdm import tqdm
 
-from mujoco_playground import locomotion, wrapper
-from mujoco_playground.config import locomotion_params
+from mujoco_playground import wrapper
 
-from vnl_mjx.tasks.rodent import head_track_rear, rodent_wrappers
+from vnl_mjx.tasks.rodent import head_track_rear
+from vnl_mjx.tasks.rodent import wrappers
 
+from track_mjx.agent import checkpointing
+from track_mjx.agent import wandb_logging
+from track_mjx.agent.mlp_ppo import ppo_networks as track_networks
 
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
@@ -47,6 +51,12 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = head_track_rear.default_config()
+
+mimic_checkpoint_path = "/n/holylabs-olveczky/Users/charleszhang/track-mjx/model_checkpoints/250929_210018_111014"
+mimic_cfg = OmegaConf.create(
+    checkpointing.load_config_from_checkpoint(mimic_checkpoint_path)
+)
+decoder_policy_fn = track_networks.make_decoder_policy_fn(mimic_checkpoint_path)
 
 
 ppo_params = config_dict.create(
@@ -58,15 +68,15 @@ ppo_params = config_dict.create(
     unroll_length=20,
     num_minibatches=8,
     num_updates_per_batch=2,
-    discounting=0.97,
-    learning_rate=1e-4,
+    discounting=0.9,
+    learning_rate=1e-3,
     entropy_cost=1e-2,
-    num_envs=16384,
-    batch_size=2048,
+    num_envs=8192,
+    batch_size=1024,
     max_grad_norm=1.0,
     network_factory=config_dict.create(
-        policy_hidden_layer_sizes=(256, 256, 256, 256, 256, 256),
-        value_hidden_layer_sizes=(512, 512, 512, 256, 256, 256),
+        policy_hidden_layer_sizes=(1024, 512, 256),
+        value_hidden_layer_sizes=(1024, 512, 256),
     ),
     eval_every=10_000_000,  # num_evals = num_timesteps // eval_every
 )
@@ -76,7 +86,7 @@ env_cfg.nconmax *= ppo_params.num_envs
 
 from pprint import pprint
 
-pprint(ppo_params)
+pprint(f"ppo_params: {ppo_params}")
 
 
 SUFFIX = None
@@ -89,19 +99,6 @@ exp_name = f"{env_name}-{timestamp}"
 if SUFFIX is not None:
     exp_name += f"-{SUFFIX}"
 print(f"Experiment name: {exp_name}")
-
-# Possibly restore from the latest checkpoint.
-if FINETUNE_PATH is not None:
-    FINETUNE_PATH = epath.Path(FINETUNE_PATH)
-    latest_ckpts = list(FINETUNE_PATH.glob("*"))
-    latest_ckpts = [ckpt for ckpt in latest_ckpts if ckpt.is_dir()]
-    latest_ckpts.sort(key=lambda x: int(x.name))
-    latest_ckpt = latest_ckpts[-1]
-    restore_checkpoint_path = latest_ckpt
-    print(f"Restoring from: {restore_checkpoint_path}")
-else:
-    restore_checkpoint_path = None
-
 
 ckpt_path = epath.Path("checkpoints").resolve() / exp_name
 ckpt_path.mkdir(parents=True, exist_ok=True)
@@ -154,7 +151,7 @@ train_fn = functools.partial(
     **training_params,
     num_evals=int(ppo_params.num_timesteps / ppo_params.eval_every),
     network_factory=network_factory,
-    restore_checkpoint_path=restore_checkpoint_path,
+    restore_checkpoint_path=None,
     progress_fn=progress_fn,
     wrap_env_fn=functools.partial(wrapper.wrap_for_brax_training),
     # policy_params_fn=policy_params_fn,
@@ -204,11 +201,18 @@ def make_logging_inference_fn(ppo_networks):
 
 
 if __name__ == "__main__":
-    env = rodent_wrappers.FlattenObsWrapper(
-        head_track_rear.HeadTrackRear(config=env_cfg)
+    env = head_track_rear.HeadTrackRear(config=env_cfg)
+    env = wrappers.HighLevelWrapper(
+        wrappers.FlattenObsWrapper(env),
+        decoder_policy_fn,
+        mimic_cfg.network_config.intention_size,
+        0,  # the head track task has no non-proprioceptive obs
     )
-    eval_env = rodent_wrappers.FlattenObsWrapper(
-        head_track_rear.HeadTrackRear(config=env_cfg)
+    eval_env = wrappers.HighLevelWrapper(
+        wrappers.FlattenObsWrapper(head_track_rear.HeadTrackRear(config=env_cfg)),
+        decoder_policy_fn,
+        mimic_cfg.network_config.intention_size,
+        0,  # the head track task has no non-proprioceptive obs
     )
 
     # render a rollout in the policy_params_fn to log to wandb at each step
