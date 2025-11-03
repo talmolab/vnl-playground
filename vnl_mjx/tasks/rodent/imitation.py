@@ -83,6 +83,7 @@ class Imitation(rodent_base.RodentEnv):
         self,
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
+        clips: Optional[ReferenceClips] = None,
     ) -> None:
         """
         Initialize the rodent imitation environment.
@@ -91,6 +92,9 @@ class Imitation(rodent_base.RodentEnv):
                 Defaults to `default_config()`.
             config_overrides (optional):
                 Dictionary of configuration overrides.
+            clips (optional):
+                Pre-loaded ReferenceClips object. If provided, it overrides
+                loading from `config.reference_data_path`.
         """
         super().__init__(config, config_overrides)
         self.add_rodent(
@@ -99,11 +103,14 @@ class Imitation(rodent_base.RodentEnv):
             rgba=(0, 0.5, 0.5, 1),  # Teal color
         )
         self.compile()
-        self.reference_clips = ReferenceClips(
-            self._config.reference_data_path,
-            self._config.clip_length,
-            self._config.keep_clips_idx,
-        )
+        if clips is not None:
+            self.reference_clips = clips
+        else:
+            self.reference_clips = ReferenceClips(
+                self._config.reference_data_path,
+                self._config.clip_length,
+                self._config.keep_clips_idx,
+            )
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
