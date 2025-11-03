@@ -76,6 +76,42 @@ class ReferenceClips:
             subslice._data_arrays[key] = slice
         return subslice
 
+    def split(self, train_ratio: float = 0.8, seed: int = 0) -> tuple["ReferenceClips", "ReferenceClips"]:
+        """
+        Split the reference clips into train and test sets.
+        
+        Args:
+            train_ratio (float): Proportion of clips to use for training (0.0 to 1.0).
+            seed (int): Random seed for reproducible splits.
+        
+        Returns:
+            tuple[ReferenceClips, ReferenceClips]: (train_clips, test_clips)
+        """
+        n_clips = self.qpos.shape[0]
+        n_train = int(n_clips * train_ratio)
+        
+        # Shuffle indices with seed for reproducibility
+        rng = np.random.RandomState(seed)
+        indices = rng.permutation(n_clips)
+        
+        train_indices = indices[:n_train]
+        test_indices = indices[n_train:]
+        
+        # Create new ReferenceClips instances with filtered data
+        train_clips = copy.copy(self)
+        train_clips._data_arrays = {
+            k: self._data_arrays[k][train_indices] for k in self._DATA_ARRAYS
+        }
+        train_clips.clip_names = self.clip_names[train_indices]
+        
+        test_clips = copy.copy(self)
+        test_clips._data_arrays = {
+            k: self._data_arrays[k][test_indices] for k in self._DATA_ARRAYS
+        }
+        test_clips.clip_names = self.clip_names[test_indices]
+        
+        return train_clips, test_clips
+
     def _load_from_disk(
         self, data_path: str, n_frames_per_clip: int, keep_clips_idx: Array[int] | None
     ):
