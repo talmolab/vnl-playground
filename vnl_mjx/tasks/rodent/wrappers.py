@@ -1,4 +1,4 @@
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Optional
 
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
@@ -14,8 +14,13 @@ class FlattenObsWrapper(wrapper.Wrapper):
     def __init__(self, env: wrapper.mjx_env.MjxEnv):
         super().__init__(env)
 
-    def reset(self, rng: jax.Array) -> wrapper.mjx_env.State:
-        state = self.env.reset(rng)
+    def reset(
+            self, 
+            rng: jax.Array, 
+            clip_idx: Optional[int] = None,
+            start_frame: Optional[int] = None,
+        ) -> wrapper.mjx_env.State:
+        state = self.env.reset(rng, clip_idx=clip_idx, start_frame=start_frame)
         return self._flatten(state)
 
     def step(

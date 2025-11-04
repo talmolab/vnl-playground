@@ -138,18 +138,26 @@ class Imitation(rodent_base.RodentEnv):
                 f" ({self.reference_clips._config['model']['SCALE_FACTOR']})."
             )
 
-    def reset(self, rng: jax.Array) -> mjx_env.State:
+    def reset(
+            self, 
+            rng: jax.Array, 
+            clip_idx: Optional[int] = None, 
+            start_frame: Optional[int] = None
+        ) -> mjx_env.State:
         """
         Resets the environment state: draws a new reference clip and initializes the rodent's pose to match.
         Args:
-            rng (jax.Array): JAX random number generator stare.
+            rng (jax.Array): JAX random number generator state.
+            clip_idx (optional): If provided, uses this clip index instead of sampling randomly.
         Returns:
             mjx_env.State: The initial state of the environment after reset.
         """
 
         start_rng, clip_rng = jax.random.split(rng)
-        clip_idx = jax.random.choice(clip_rng, self._clip_set)
-        start_frame = jax.random.randint(start_rng, (), *self._config.start_frame_range)
+        if clip_idx is None:
+            clip_idx = jax.random.choice(clip_rng, self._clip_set)
+        if start_frame is None:
+            start_frame = jax.random.randint(start_rng, (), *self._config.start_frame_range)
         data = self._reset_data(clip_idx, start_frame)
         info: dict[str, Any] = {
             "start_frame": start_frame,
