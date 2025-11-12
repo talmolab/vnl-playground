@@ -71,7 +71,7 @@ ppo_params = config_dict.create(
         policy_hidden_layer_sizes=(2048, 1024, 1024, 1024, 1024, 512),
         value_hidden_layer_sizes=(2048, 1024, 1024, 1024, 1024, 512),
     ),
-    eval_every=25_000_000,  # num_evals = num_timesteps // eval_every
+    eval_every=1_000_000,  # num_evals = num_timesteps // eval_every
 )
 
 env_name = "imitation"

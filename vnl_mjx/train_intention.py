@@ -11,7 +11,7 @@ import sys
 # )
 
 # # limit to 1 GPU
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"  # visible GPU masks
+# os.environ["CUDA_VISIBLE_DEVICES"] = "2"  # visible GPU masks
 
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 xla_flags = os.environ.get("XLA_FLAGS", "")
