@@ -23,8 +23,8 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         mujoco_impl="jax",
         sim_dt=0.002,
-        ctrl_dt=0.01,
-        solver="newton",
+        ctrl_dt=0.02,
+        solver="cg",
         iterations=5,
         ls_iterations=5,
         nconmax=256,
@@ -149,6 +149,7 @@ class Imitation(rodent_base.RodentEnv):
         Args:
             rng (jax.Array): JAX random number generator state.
             clip_idx (optional): If provided, uses this clip index instead of sampling randomly.
+            start_frame (optional): If provided, uses this start frame instead of sampling randomly.
         Returns:
             mjx_env.State: The initial state of the environment after reset.
         """
@@ -231,12 +232,7 @@ class Imitation(rodent_base.RodentEnv):
         net_reward = 0.0
         for name, kwargs in self._config.reward_terms.items():
             net_reward += _REWARD_FCN_REGISTRY[name](
-                self,
-                data,
-                info,
-                metrics,
-                imitation_reference=self._get_current_target(data, info),
-                **kwargs,
+                self, data, info, metrics, **kwargs
             )
         return net_reward
 
@@ -352,25 +348,21 @@ class Imitation(rodent_base.RodentEnv):
         return decorator
 
     @_named_reward("root_pos")
-    def _root_pos_reward(
-        self, data, info, metrics, imitation_reference, weight, exp_scale
-    ) -> float:
+    def _root_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
+        target = self._get_current_target(data, info)
         root_pos = self.root_body(data).xpos
-        distance = jp.linalg.norm(imitation_reference.root_position - root_pos)
+        distance = jp.linalg.norm(target.root_position - root_pos)
         metrics["root_pos_distance"] = distance
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         metrics["rewards/root_pos"] = reward
         return reward
 
     @_named_reward("root_quat")
-    def _root_quat_reward(
-        self, data, info, metrics, imitation_reference, weight, exp_scale
-    ) -> float:
+    def _root_quat_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """`exp_scale` is in degrees."""
+        target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
-        quat_dist = (
-            2.0 * jp.dot(root_quat, imitation_reference.root_quaternion) ** 2 - 1.0
-        )
+        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
         rot_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
         ang_dist_degrees = jp.rad2deg(rot_dist)
         metrics["root_angular_error"] = ang_dist_degrees
@@ -379,68 +371,54 @@ class Imitation(rodent_base.RodentEnv):
         return reward
 
     @_named_reward("joints")
-    def _joints_reward(
-        self, data, info, metrics, imitation_reference, weight, exp_scale
-    ) -> float:
+    def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
+        target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
-        distance = jp.linalg.norm(imitation_reference.joints - joints)
+        distance = jp.linalg.norm(target.joints - joints)
         metrics["joint_l2_error"] = distance
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         metrics["rewards/joints"] = reward
         return reward
 
     @_named_reward("joints_vel")
-    def _joint_vels_reward(
-        self, data, info, metrics, imitation_reference, weight, exp_scale
-    ) -> float:
+    def _joint_vels_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         joint_vels = self._get_joint_ang_vels(data)
-        distance = jp.linalg.norm(imitation_reference.joints_velocity - joint_vels)
+        distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         metrics["joint_vel_l2_error"] = distance
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         metrics["rewards/joints_vel"] = reward
         return reward
 
-    def _get_bodies_dist(
-        self, data, info, metrics, imitation_reference, bodies=consts.BODIES
-    ) -> float:
+    def _get_bodies_dist(self, data, info, metrics, bodies=consts.BODIES) -> float:
+        target = self._get_current_target(data, info)
         body_pos = self._get_bodies_pos(data, flatten=False)
         total_dist_sqr = 0.0
         for body_name in bodies:
-            dist_sqr = jp.sum(
-                (body_pos[body_name] - imitation_reference.body_xpos(body_name)) ** 2
-            )
+            dist_sqr = jp.sum((body_pos[body_name] - target.body_xpos(body_name)) ** 2)
             metrics["body_errors/" + body_name] = jp.sqrt(dist_sqr)
             total_dist_sqr += dist_sqr
         return jp.sqrt(total_dist_sqr)
 
     @_named_reward("bodies_pos")
-    def _body_pos_reward(
-        self, data, info, metrics, imitation_reference, weight, exp_scale
-    ) -> float:
-        total_dist = self._get_bodies_dist(
-            data, info, metrics, imitation_reference, consts.BODIES
-        )
+    def _body_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
+        total_dist = self._get_bodies_dist(data, info, metrics, consts.BODIES)
         metrics["body_errors/total"] = total_dist
-        reward = weight * jp.exp(-(((total_dist / exp_scale)) ** 2) / 2)
+        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
         metrics["rewards/bodies_pos"] = reward
         return reward
 
     @_named_reward("end_eff")
-    def _end_eff_reward(
-        self, data, info, metrics, imitation_reference, weight, exp_scale
-    ) -> float:
-        total_dist = self._get_bodies_dist(
-            data, info, metrics, imitation_reference, consts.END_EFFECTORS
-        )
+    def _end_eff_reward(self, data, info, metrics, weight, exp_scale) -> float:
+        total_dist = self._get_bodies_dist(data, info, metrics, consts.END_EFFECTORS)
         metrics["body_errors/end_eff_total"] = total_dist
-        reward = weight * jp.exp(-(((total_dist / exp_scale)) ** 2) / 2)
+        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
         metrics["rewards/end_eff"] = reward
         return reward
 
     @_named_reward("torso_z_range")
     def _torso_z_range_reward(
-        self, data, info, metrics, imitation_reference, weight, healthy_z_range
+        self, data, info, metrics, weight, healthy_z_range
     ) -> float:
         metrics["torso_z"] = torso_z = self._get_body_height(data)
         min_z, max_z = healthy_z_range
@@ -451,37 +429,29 @@ class Imitation(rodent_base.RodentEnv):
         return reward
 
     @_named_reward("control_cost")
-    def _control_cost(self, data, info, metrics, imitation_reference, weight) -> float:
+    def _control_cost(self, data, info, metrics, weight) -> float:
         metrics["ctrl_sqr"] = ctrl_sqr = jp.sum(jp.square(info["action"]))
         cost = weight * ctrl_sqr
-        metrics["rewards/control_cost"] = cost
+        metrics["costs/control"] = cost
         return -cost
 
     @_named_reward("control_diff_cost")
-    def _control_diff_cost(
-        self, data, info, metrics, imitation_reference, weight
-    ) -> float:
-        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(
-            jp.square(info["action"] - info["prev_action"])
-        )
+    def _control_diff_cost(self, data, info, metrics, weight) -> float:
+        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(jp.square(info["action"] - info["prev_action"]))
         cost = weight * ctrl_diff_sqr
-        metrics["rewards/control_diff_cost"] = cost
+        metrics["costs/control_diff"] = cost
         return -cost
 
     @_named_reward("energy_cost")
-    def _energy_cost(
-        self, data, info, metrics, imitation_reference, weight, max_value
-    ) -> float:
-        energy_use = jp.sum(jp.abs(data.qvel[6:]) * jp.abs(data.qfrc_actuator[6:]))
+    def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
+        energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
         metrics["energy_use"] = energy_use
         cost = weight * jp.minimum(energy_use, max_value)
-        metrics["rewards/energy_cost"] = cost
+        metrics["costs/energy"] = cost
         return -cost
 
     @_named_reward("jerk_cost")
-    def _jerk_cost(
-        self, data, info, weight, metrics, imitation_reference, window_len
-    ) -> float:
+    def _jerk_cost(self, data, info, weight, metrics, window_len) -> float:
         raise NotImplementedError("jerk_cost is not implemented")
 
     # Termination
@@ -739,7 +709,6 @@ class Imitation(rodent_base.RodentEnv):
                     )
                     any_failed = True
         return not any_failed
-
 
 def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
     if isinstance(a, map):

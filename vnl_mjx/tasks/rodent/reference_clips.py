@@ -54,7 +54,7 @@ class ReferenceClips:
         """
         Extracts a contiguous slice of frames from a specific clip in the
         ReferenceClips object.
-
+        
         Args:
             clip (int): Index of the clip to slice.
             start_frame (int): The starting frame index for the slice.

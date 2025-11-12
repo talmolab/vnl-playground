@@ -35,4 +35,3 @@ BODIES = [
     "lower_arm_R",
     "finger_R",
 ]
-HEAD = "skull"
