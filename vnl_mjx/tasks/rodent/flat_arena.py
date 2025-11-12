@@ -24,6 +24,8 @@ def default_config() -> config_dict.ConfigDict:
         sim_dt=0.002,
         iterations=4,
         ls_iterations=4,
+        mujoco_impl="jax",
+        solver = 'cg',
         noslip_iterations=0, #added to avoid error in train.py
         torque_actuators=True,
         rescale_factor=0.9,
