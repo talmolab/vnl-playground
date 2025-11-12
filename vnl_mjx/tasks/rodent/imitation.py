@@ -432,14 +432,14 @@ class Imitation(rodent_base.RodentEnv):
     def _control_cost(self, data, info, metrics, weight) -> float:
         metrics["ctrl_sqr"] = ctrl_sqr = jp.sum(jp.square(info["action"]))
         cost = weight * ctrl_sqr
-        metrics["costs/control"] = cost
+        metrics["rewards/control_cost"] = -cost
         return -cost
 
     @_named_reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
         metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(jp.square(info["action"] - info["prev_action"]))
         cost = weight * ctrl_diff_sqr
-        metrics["costs/control_diff"] = cost
+        metrics["rewards/control_diff_cost"] = -cost
         return -cost
 
     @_named_reward("energy_cost")
@@ -447,7 +447,7 @@ class Imitation(rodent_base.RodentEnv):
         energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
         metrics["energy_use"] = energy_use
         cost = weight * jp.minimum(energy_use, max_value)
-        metrics["costs/energy"] = cost
+        metrics["rewards/energy_cost"] = -cost
         return -cost
 
     @_named_reward("jerk_cost")
