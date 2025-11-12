@@ -1,4 +1,5 @@
 from typing import Any, Dict, Optional, Union, Tuple
+import collections
 
 from etils import epath
 import jax
@@ -98,6 +99,31 @@ class FlatWalk(rodent_base.RodentEnv):
         )
 
         return state
+    
+    # the proprioceptive obs in main branch because it matches track-mjx obs
+    def _get_proprioception(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
+        """Get proprioception data from the environment."""
+        qpos = data.qpos[7:]  # skip the root joint
+        qvel = data.qvel[6:]  # skip the root joint velocity
+        actuator_ctrl = data.qfrc_actuator
+        _, body_height, _ = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos
+        world_zaxis = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xmat.flatten()[6:]
+        appendages_pos = self._get_appendages_pos(data)
+        proprioception = collections.OrderedDict(
+            joint_angles=qpos,
+            joint_ang_vels=qvel,
+            actuator_ctrl=actuator_ctrl,
+            body_height=jp.array([body_height]),
+            world_zaxis=world_zaxis,
+            appendages_pos=appendages_pos,
+        )
+        if flatten:
+            proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)
+        return proprioception
 
     def _get_obs(self, data: mjx.Data) -> Tuple[jp.ndarray, jp.ndarray]:
         """Get the current observation from the simulation data.
