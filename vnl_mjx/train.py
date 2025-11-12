@@ -38,7 +38,7 @@ from tqdm import tqdm
 from mujoco_playground import locomotion, wrapper
 from mujoco_playground.config import locomotion_params
 
-from vnl_mjx.tasks.rodent import head_track_rear, rodent_wrappers
+from vnl_mjx.tasks.rodent import flat_arena, wrappers
 
 
 # Enable persistent compilation cache.
@@ -46,7 +46,7 @@ jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
-env_cfg = head_track_rear.default_config()
+env_cfg = flat_arena.default_config()
 
 
 ppo_params = config_dict.create(
@@ -206,11 +206,11 @@ def make_logging_inference_fn(ppo_networks):
 
 
 if __name__ == "__main__":
-    env = rodent_wrappers.FlattenObsWrapper(
-        head_track_rear.HeadTrackRear(config=env_cfg)
+    env = wrappers.FlattenObsWrapper(
+        flat_arena.FlatWalk(config=env_cfg)
     )
-    eval_env = rodent_wrappers.FlattenObsWrapper(
-        head_track_rear.HeadTrackRear(config=env_cfg)
+    eval_env = wrappers.FlattenObsWrapper(
+        flat_arena.FlatWalk(config=env_cfg)
     )
 
     # render a rollout in the policy_params_fn to log to wandb at each step
