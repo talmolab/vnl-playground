@@ -74,7 +74,7 @@ ppo_params = config_dict.create(
 
 #env_name = "head_track_rear"
 env_name = "flat_arena"
-env_cfg.nconmax *= ppo_params.num_envs
+#env_cfg.nconmax *= ppo_params.num_envs comment out if not head_track_rear
 
 from pprint import pprint
 
