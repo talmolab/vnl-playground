@@ -50,7 +50,7 @@ env_cfg = head_track_rear.default_config()
 
 
 ppo_params = config_dict.create(
-    num_timesteps=int(1e9),  # 1 billion
+    num_timesteps=int(1e8),  # 1 billion, changed for test runs
     reward_scaling=1.0,
     episode_length=1500,
     normalize_observations=True,
@@ -68,10 +68,12 @@ ppo_params = config_dict.create(
         policy_hidden_layer_sizes=(256, 256, 256, 256, 256, 256),
         value_hidden_layer_sizes=(512, 512, 512, 256, 256, 256),
     ),
-    eval_every=10_000_000,  # num_evals = num_timesteps // eval_every
+    #eval_every=10_000_000,  # num_evals = num_timesteps // eval_every
+    eval_every=1_000_000,  # smaller for testing
 )
 
-env_name = "head_track_rear"
+#env_name = "head_track_rear"
+env_name = "flat_arena"
 env_cfg.nconmax *= ppo_params.num_envs
 
 from pprint import pprint
@@ -114,7 +116,7 @@ with open(ckpt_path / "config.json", "w") as fp:
 USE_WANDB = True
 
 if USE_WANDB:
-    wandb.init(project="vnl-mjx-rl", config=env_cfg, id=f"head_track_rear-{exp_name}")
+    wandb.init(entity= "daniel-y-sprague-harvard-university", project="vnl-mjx-rl", config=env_cfg, id=f"flat_arena-{exp_name}")
     wandb.config.update(
         {
             "env_name": env_name,
