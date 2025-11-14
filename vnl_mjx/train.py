@@ -178,12 +178,15 @@ def make_logging_inference_fn(ppo_networks):
             observations,
             key_sample,
         ):
-            param_subset = (params[0], params[1])
-            logits = policy_network.apply(*param_subset, observations)
+            #param_subset = (params[0], params[1])
+
+            policy_params = params.policy
+            logits = policy_network.apply(policy_params, observations)
             # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             if deterministic:
+                actions = parametric_action_distribution.postprocess(parametric_action_distribution.mode(logits)) #post processing to bound actions similar to stochastic version
                 return (
-                    jp.array(ppo_networks.parametric_action_distribution.mode(logits)),
+                    jp.array(actions),
                     {},
                 )
             # action sampling is happening here, according to distribution parameter logits
