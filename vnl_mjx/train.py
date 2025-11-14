@@ -239,16 +239,20 @@ if __name__ == "__main__":
     make_logging_policy = make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
-    def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):
-        del make_policy  # Unused.
+    def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn=None):
+        #del make_policy  # Unused.
+
+        policy = make_policy(deterministic=True)
 
         # generate a rollout
         rollout = [start_state]
         state = start_state
         rng = jax.random.PRNGKey(0)
         for _ in range(ppo_params.episode_length):
-            _, rng = jax.random.split(rng)
-            action, _ = jit_logging_inference_fn(params, state.obs, rng)
+            #_, rng = jax.random.split(rng)
+            rng, sub = jax.random.split(rng)
+            #action, _ = jit_logging_inference_fn(params, state.obs, rng)
+            action = policy(params, state.obs, sub)
             state = jit_step(state, action)
             rollout.append(state)
 
