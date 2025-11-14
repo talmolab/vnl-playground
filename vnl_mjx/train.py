@@ -162,6 +162,15 @@ train_fn = functools.partial(
     # policy_params_fn=policy_params_fn,
 )
 
+def extract_policy_params(params):
+    if hasattr(params, "policy"):
+        return params.policy
+    if isinstance(params, dict) and "policy" in params:
+        return params["policy"]
+    if isinstance(params, (tuple, list)) and len(params) > 0:
+        return params[0]
+    raise TypeError(f"Unrecognized params structure: {type(params)}")
+
 
 def make_logging_inference_fn(ppo_networks):
     """Creates params and inference function for the PPO agent.
@@ -178,9 +187,7 @@ def make_logging_inference_fn(ppo_networks):
             observations,
             key_sample,
         ):
-            #param_subset = (params[0], params[1])
-
-            policy_params = params.policy
+            policy_params = extract_policy_params(params)
             logits = policy_network.apply(policy_params, observations)
             # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             if deterministic:
