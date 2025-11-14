@@ -162,15 +162,6 @@ train_fn = functools.partial(
     # policy_params_fn=policy_params_fn,
 )
 
-def extract_policy_params(params):
-    if hasattr(params, "policy"):
-        return params.policy
-    if isinstance(params, dict) and "policy" in params:
-        return params["policy"]
-    if isinstance(params, (tuple, list)) and len(params) > 0:
-        return params[0]
-    raise TypeError(f"Unrecognized params structure: {type(params)}")
-
 
 def make_logging_inference_fn(ppo_networks):
     """Creates params and inference function for the PPO agent.
@@ -187,11 +178,14 @@ def make_logging_inference_fn(ppo_networks):
             observations,
             key_sample,
         ):
-            policy_params = extract_policy_params(params)
+            print(type(params))
+            #param_subset = (params[0], params[1])
+
+            policy_params = params.policy
             logits = policy_network.apply(policy_params, observations)
             # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
             if deterministic:
-                actions = parametric_action_distribution.postprocess(parametric_action_distribution.mode(logits)) #post processing to bound actions similar to stochastic version
+                actions = parametric_action_distribution.postprocess(parametric_action_distribution.mode(logits)) #post processing to bound actions similar to stochastic
                 return (
                     jp.array(actions),
                     {},
@@ -239,20 +233,16 @@ if __name__ == "__main__":
     make_logging_policy = make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
-    def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn=None):
-        #del make_policy  # Unused.
-
-        policy = make_policy(params, deterministic=True)
+    def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):
+        del make_policy  # Unused.
 
         # generate a rollout
         rollout = [start_state]
         state = start_state
         rng = jax.random.PRNGKey(0)
         for _ in range(ppo_params.episode_length):
-            #_, rng = jax.random.split(rng)
-            rng, sub = jax.random.split(rng)
-            #action, _ = jit_logging_inference_fn(params, state.obs, rng)
-            action = policy(params, state.obs, sub)
+            _, rng = jax.random.split(rng)
+            action, _ = jit_logging_inference_fn(params, state.obs, rng)
             state = jit_step(state, action)
             rollout.append(state)
 
