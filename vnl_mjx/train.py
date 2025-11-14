@@ -242,7 +242,7 @@ if __name__ == "__main__":
     def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn=None):
         #del make_policy  # Unused.
 
-        policy = make_policy(deterministic=True)
+        policy = make_policy(params, deterministic=True)
 
         # generate a rollout
         rollout = [start_state]
