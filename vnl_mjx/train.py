@@ -178,8 +178,9 @@ def make_logging_inference_fn(ppo_networks):
             observations,
             key_sample,
         ):
-            param_subset = (params[0], params[1])
-            print(dir(params[1]))
+            param_subset = (params[0], params[1]['policy'])
+
+            print(type(params[1]['policy']))
 
             #policy_params = params.policy
             logits = policy_network.apply(*param_subset, observations)
