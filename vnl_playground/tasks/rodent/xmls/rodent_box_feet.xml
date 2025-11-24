@@ -156,7 +156,7 @@
   <statistic meansize="0.003" />
   <asset>
     <!-- <skin name="skin"
-      file="/root/vast/scott-yang/vnl-mjx/vnl_mjx/tasks/rodent/xmls/rodent_walker_skin.skn" /> -->
+      file="/root/vast/scott-yang/vnl-mjx/vnl_playground/tasks/rodent/xmls/rodent_walker_skin.skn" /> -->
     <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3"
       rgb2=".2 .3 .4" />
     <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2" />
