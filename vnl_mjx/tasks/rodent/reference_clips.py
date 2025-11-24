@@ -8,6 +8,8 @@ import jax
 import jax.numpy as jp
 import numpy as np
 import yaml
+import warnings
+import logging
 
 
 class ReferenceClips:
@@ -81,7 +83,8 @@ class ReferenceClips:
         Split the reference clips into train and test sets.
         
         Args:
-            train_ratio (float): Proportion of clips to use for training (0.0 to 1.0).
+            train_ratio (float): Proportion of clips to use for training (0.0 to 1.0). If set to 1.0, 
+                                 the full dataset is used for both train and test.
             seed (int): Random seed for reproducible splits.
         
         Returns:
@@ -89,7 +92,15 @@ class ReferenceClips:
         """
         n_clips = self.qpos.shape[0]
         n_train = int(n_clips * train_ratio)
+
+        # If user specifies train_ratio such that test set is empty, use full dataset for both
+        if n_clips == n_train:
+            warnings.warn("train_ratio results in an empty test set; using full dataset for both train and test.")
+            logging.info(f"Number of training clips: {n_train}; Number of test clips: {n_train}")
+            return copy.copy(self), copy.copy(self)
         
+        logging.info(f"Number of training clips: {n_train}; Number of test clips: {n_clips - n_train}")
+
         # Shuffle indices with seed for reproducibility
         rng = np.random.RandomState(seed)
         indices = rng.permutation(n_clips)
