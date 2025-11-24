@@ -1,5 +1,5 @@
-from vnl_mjx.tasks.rodent import base as rodent_base
-from vnl_mjx.tasks.rodent import consts
+from vnl_playground.tasks.rodent import base as rodent_base
+from vnl_playground.tasks.rodent import consts
 
 from mujoco_playground._src import mjx_env
 
