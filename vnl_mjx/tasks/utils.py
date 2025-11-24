@@ -3,6 +3,7 @@
 import numpy as np
 from typing import Any, Tuple
 
+
 def _scale_vec(vec: list[float] | np.ndarray, s: float) -> None:
     """Scale a vector in-place by a scalar.
 
@@ -65,7 +66,7 @@ def _recolour_geom(geom, rgba: list[float]) -> None:
             new_rgba.append(new_val)
     # If fewer new values provided, preserve any remaining original channels
     if len(original_rgba) > len(rgba):
-        new_rgba.extend(original_rgba[len(rgba):])
+        new_rgba.extend(original_rgba[len(rgba) :])
     geom.rgba = new_rgba
     geom.group = 2  # separate collision group
 

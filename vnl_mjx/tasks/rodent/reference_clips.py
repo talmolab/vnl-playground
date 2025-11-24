@@ -1,4 +1,5 @@
 import copy
+from ctypes import Array
 import re
 from typing import Any, Mapping
 
@@ -7,12 +8,19 @@ import jax
 import jax.numpy as jp
 import numpy as np
 import yaml
+import warnings
+import logging
 
 
 class ReferenceClips:
     _DATA_ARRAYS = ["qpos", "qvel", "xpos", "xquat"]
 
-    def __init__(self, data_path: str, n_frames_per_clip: int):
+    def __init__(
+        self,
+        data_path: str,
+        n_frames_per_clip: int,
+        keep_clips_idx: Array[int] | None = None,
+    ):
         """
         Load reference clips from a h5 file.
         Args:
@@ -20,9 +28,11 @@ class ReferenceClips:
             n_frames_per_clip (int): Number of frames in each clip. This is
                                      needed because the clips are stored in
                                      a contiguous array in the h5 file.
+            keep_clips_idx (Array[int]): Indices of the clips to keep. If None, all
+                                      clips are kept.
         """
 
-        self._load_from_disk(data_path, n_frames_per_clip)
+        self._load_from_disk(data_path, n_frames_per_clip, keep_clips_idx)
 
     def at(self, clip: int, frame: int) -> "ReferenceClips":
         """
@@ -68,7 +78,54 @@ class ReferenceClips:
             subslice._data_arrays[key] = slice
         return subslice
 
-    def _load_from_disk(self, data_path: str, n_frames_per_clip: int):
+    def split(self, train_ratio: float = 0.8, seed: int = 0) -> tuple["ReferenceClips", "ReferenceClips"]:
+        """
+        Split the reference clips into train and test sets.
+        
+        Args:
+            train_ratio (float): Proportion of clips to use for training (0.0 to 1.0). If set to 1.0, 
+                                 the full dataset is used for both train and test.
+            seed (int): Random seed for reproducible splits.
+        
+        Returns:
+            tuple[ReferenceClips, ReferenceClips]: (train_clips, test_clips)
+        """
+        n_clips = self.qpos.shape[0]
+        n_train = int(n_clips * train_ratio)
+
+        # If user specifies train_ratio such that test set is empty, use full dataset for both
+        if n_clips == n_train:
+            warnings.warn("train_ratio results in an empty test set; using full dataset for both train and test.")
+            logging.info(f"Number of training clips: {n_train}; Number of test clips: {n_train}")
+            return copy.copy(self), copy.copy(self)
+        
+        logging.info(f"Number of training clips: {n_train}; Number of test clips: {n_clips - n_train}")
+
+        # Shuffle indices with seed for reproducibility
+        rng = np.random.RandomState(seed)
+        indices = rng.permutation(n_clips)
+        
+        train_indices = indices[:n_train]
+        test_indices = indices[n_train:]
+        
+        # Create new ReferenceClips instances with filtered data
+        train_clips = copy.copy(self)
+        train_clips._data_arrays = {
+            k: self._data_arrays[k][train_indices] for k in self._DATA_ARRAYS
+        }
+        train_clips.clip_names = self.clip_names[train_indices]
+        
+        test_clips = copy.copy(self)
+        test_clips._data_arrays = {
+            k: self._data_arrays[k][test_indices] for k in self._DATA_ARRAYS
+        }
+        test_clips.clip_names = self.clip_names[test_indices]
+        
+        return train_clips, test_clips
+
+    def _load_from_disk(
+        self, data_path: str, n_frames_per_clip: int, keep_clips_idx: Array[int] | None
+    ):
         self._data_arrays = {}
         with h5py.File(data_path, "r") as fid:
             self._config = yaml.safe_load(fid["config"][()])
@@ -83,6 +140,9 @@ class ReferenceClips:
                 # TODO: Check if jax.device_put(arr) or jax.array_ref(jp.array(arr))
                 # blocks const folding.
                 self._data_arrays[k] = jp.array(arr)
+                if keep_clips_idx is not None:
+                    print(f"{k}: Keeping {len(keep_clips_idx)} clips")
+                    self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
             self._names_qpos = fid["names_qpos"][()].astype(str)
             self._names_xpos = fid["names_xpos"][()].astype(str)
             self._qpos_names = {n: i for (i, n) in enumerate(self._names_qpos)}
@@ -122,13 +182,13 @@ class ReferenceClips:
     @property
     def root_position(self) -> jp.ndarray:
         """First 3 elements of qpos, corresponding to the root position for
-           the rodent."""
+        the rodent."""
         return self.qpos[..., :3]
 
     @property
     def root_quaternion(self) -> jp.ndarray:
         """Elements 3-6 of qpos, corresponding to the root quaterinion for
-           the rodent."""
+        the rodent."""
         return self.qpos[..., 3:7]
 
     @property

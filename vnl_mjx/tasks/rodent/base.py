@@ -35,7 +35,7 @@ def default_config() -> config_dict.ConfigDict:
         iterations=4,
         ls_iterations=4,
         noslip_iterations=0,
-        mujoco_impl="jax"
+        mujoco_impl="jax",
     )
 
 
@@ -65,13 +65,13 @@ class RodentEnv(mjx_env.MjxEnv):
         self,
         torque_actuators: bool,
         rescale_factor: float = 1.0,
-        pos: tuple[float, float, float] = (0, 0, 0.05),
+        pos: tuple[float, float, float] = (0, 0, 0),
         quat: tuple[float, float, float, float] = (1, 0, 0, 0),
         rgba: Optional[tuple[float, float, float, float]] = None,
         suffix: str = "-rodent",
     ) -> None:
         """Adds the rodent model to the environment.
-        
+
         Args:
             torque_actuators: Whether to convert motors to torque-mode actuators.
             rescale_factor: Factor to rescale the rodent body. Defaults to 1.0.
@@ -94,6 +94,9 @@ class RodentEnv(mjx_env.MjxEnv):
                 actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
                 actuator.biasprm = np.zeros((10, 1))
 
+        # TODO: add foot mods
+        # (https://github.com/google-deepmind/dm_control/blob/783b386691d413971b32479c811fd236ec0b8244/dm_control/locomotion/walkers/rodent.py#L85-L87)
+
         if rescale_factor != 1.0:
             logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
             rodent = dm_scale_spec(rodent, rescale_factor)
@@ -107,9 +110,9 @@ class RodentEnv(mjx_env.MjxEnv):
             pos=pos,
             quat=quat,
         )
-        spawn_body = spawn_site.attach_body(rodent.worldbody, "", suffix=suffix)
+        spawn_body = spawn_site.attach_body(rodent.body("walker"), "", suffix=suffix)
         self._suffix = suffix
-        spawn_body.add_freejoint()
+        spawn_body.add_freejoint(name="root")
 
     def add_ghost_rodent(
         self,
@@ -184,19 +187,20 @@ class RodentEnv(mjx_env.MjxEnv):
         torso_pos = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xpos
         torso_z = torso_pos[2]
         return torso_z
-    
+
     def _get_world_zaxis(self, data: mjx.Data) -> jp.ndarray:
         return self.root_body(data).xmat.flatten()[6:]
 
-    def _get_proprioception(self, data: mjx.Data, flatten: bool = True) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
+    def _get_proprioception(self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
         """Get proprioception data from the environment."""
         proprioception = collections.OrderedDict(
-            joint_angles = self._get_joint_angles(data),
-            joint_ang_vels = self._get_joint_ang_vels(data),
-            actuator_ctrl = self._get_actuator_ctrl(data),
-            body_height = self._get_body_height(data).reshape(1),
-            world_zaxis = self._get_world_zaxis(data),
-            appendages_pos = self._get_appendages_pos(data, flatten=flatten)
+            joint_angles=self._get_joint_angles(data),
+            joint_ang_vels=self._get_joint_ang_vels(data),
+            actuator_ctrl=self._get_actuator_ctrl(data),
+            body_height=self._get_body_height(data).reshape(1),
+            world_zaxis=self._get_world_zaxis(data),
+            appendages_pos=self._get_appendages_pos(data, flatten=flatten),
+            prev_action=info["prev_action"],
         )
         if flatten:
             proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)
@@ -204,8 +208,12 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_kinematic_sensors(self, data: mjx.Data, flatten: bool = True) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
         """Get kinematic sensors data from the environment."""
-        accelerometer = data.bind(self.mjx_model, self._spec.sensor("accelerometer-rodent")).sensordata
-        velocimeter = data.bind(self.mjx_model, self._spec.sensor("velocimeter-rodent")).sensordata
+        accelerometer = data.bind(
+            self.mjx_model, self._spec.sensor("accelerometer-rodent")
+        ).sensordata
+        velocimeter = data.bind(
+            self.mjx_model, self._spec.sensor("velocimeter-rodent")
+        ).sensordata
         gyro = data.bind(self.mjx_model, self._spec.sensor("gyro-rodent")).sensordata
         sensors = collections.OrderedDict(
             accelerometer = accelerometer,
@@ -218,7 +226,12 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_touch_sensors(self, data: mjx.Data) -> jp.ndarray:
         """Get touch sensors data from the environment."""
-        touches = [data.bind(self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")).sensordata for name in TOUCH_SENSORS]
+        touches = [
+            data.bind(
+                self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")
+            ).sensordata
+            for name in consts.TOUCH_SENSORS
+        ]
         return jp.array(touches)
 
     def _get_origin(self, data: mjx.Data) -> jp.ndarray:

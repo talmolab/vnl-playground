@@ -30,15 +30,16 @@ def default_config() -> config_dict.ConfigDict:
         nconmax=256,
         njmax=128,
         noslip_iterations=0,
-        torque_actuators=False,
+        torque_actuators=True,
         rescale_factor=0.9,
         reference_data_path=consts.IMITATION_REFERENCE_PATH,
         mocap_hz=50,
         clip_length=250,
-        clip_set="all",
+        clip_set="all",  # NOTE: Charles added keep_clips_idx which basically is the same as this for indices to reduce memory usage
         reference_length=5,
         start_frame_range=[0, 44],
         qvel_init="zeros",
+        keep_clips_idx=None,
         reward_terms={
             # Imitation rewards
             "root_pos": {"exp_scale": 0.035, "weight": 1.0},  # Meters
@@ -66,6 +67,7 @@ def default_config() -> config_dict.ConfigDict:
             "root_too_far": {"max_distance": 0.1},  # Meters
             "root_too_rotated": {"max_degrees": 60.0},  # Degrees
             "pose_error": {"max_l2_error": 4.5},  # Joint-space L2 distance
+            "nan_termination": {},
         },
     )
 
@@ -81,6 +83,7 @@ class Imitation(rodent_base.RodentEnv):
         self,
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
+        clips: Optional[ReferenceClips] = None,
     ) -> None:
         """
         Initialize the rodent imitation environment.
@@ -89,6 +92,9 @@ class Imitation(rodent_base.RodentEnv):
                 Defaults to `default_config()`.
             config_overrides (optional):
                 Dictionary of configuration overrides.
+            clips (optional):
+                Pre-loaded ReferenceClips object. If provided, it overrides
+                loading from `config.reference_data_path`.
         """
         super().__init__(config, config_overrides)
         self.add_rodent(
@@ -97,9 +103,14 @@ class Imitation(rodent_base.RodentEnv):
             rgba=(0, 0.5, 0.5, 1),  # Teal color
         )
         self.compile()
-        self.reference_clips = ReferenceClips(
-            self._config.reference_data_path, self._config.clip_length
-        )
+        if clips is not None:
+            self.reference_clips = clips
+        else:
+            self.reference_clips = ReferenceClips(
+                self._config.reference_data_path,
+                self._config.clip_length,
+                self._config.keep_clips_idx,
+            )
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
@@ -127,18 +138,27 @@ class Imitation(rodent_base.RodentEnv):
                 f" ({self.reference_clips._config['model']['SCALE_FACTOR']})."
             )
 
-    def reset(self, rng: jax.Array) -> mjx_env.State:
+    def reset(
+            self, 
+            rng: jax.Array, 
+            clip_idx: Optional[int] = None, 
+            start_frame: Optional[int] = None
+        ) -> mjx_env.State:
         """
         Resets the environment state: draws a new reference clip and initializes the rodent's pose to match.
         Args:
-            rng (jax.Array): JAX random number generator stare.
+            rng (jax.Array): JAX random number generator state.
+            clip_idx (optional): If provided, uses this clip index instead of sampling randomly.
+            start_frame (optional): If provided, uses this start frame instead of sampling randomly.
         Returns:
             mjx_env.State: The initial state of the environment after reset.
         """
 
         start_rng, clip_rng = jax.random.split(rng)
-        clip_idx = jax.random.choice(clip_rng, self._clip_set)
-        start_frame = jax.random.randint(start_rng, (), *self._config.start_frame_range)
+        if clip_idx is None:
+            clip_idx = jax.random.choice(clip_rng, self._clip_set)
+        if start_frame is None:
+            start_frame = jax.random.randint(start_rng, (), *self._config.start_frame_range)
         data = self._reset_data(clip_idx, start_frame)
         info: dict[str, Any] = {
             "start_frame": start_frame,
@@ -185,6 +205,10 @@ class Imitation(rodent_base.RodentEnv):
         terminated = self._is_done(data, info, state.metrics)
         done = jp.logical_or(terminated, info["truncated"])
         reward = self._get_reward(data, info, state.metrics)
+
+        # Handle nans during sim with this in addition to termination on nans in data
+        reward = jp.nan_to_num(reward)
+
         state = state.replace(
             data=data,
             obs=obs,
@@ -198,7 +222,7 @@ class Imitation(rodent_base.RodentEnv):
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
         return collections.OrderedDict(
-            proprioception=self._get_proprioception(data, flatten=False),
+            proprioception=self._get_proprioception(data, info, flatten=False),
             imitation_target=self._get_imitation_target(data, info),
         )
 
@@ -408,14 +432,14 @@ class Imitation(rodent_base.RodentEnv):
     def _control_cost(self, data, info, metrics, weight) -> float:
         metrics["ctrl_sqr"] = ctrl_sqr = jp.sum(jp.square(info["action"]))
         cost = weight * ctrl_sqr
-        metrics["costs/control"] = cost
+        metrics["rewards/control_cost"] = -cost
         return -cost
 
     @_named_reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
         metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(jp.square(info["action"] - info["prev_action"]))
         cost = weight * ctrl_diff_sqr
-        metrics["costs/control_diff"] = cost
+        metrics["rewards/control_diff_cost"] = -cost
         return -cost
 
     @_named_reward("energy_cost")
@@ -423,7 +447,7 @@ class Imitation(rodent_base.RodentEnv):
         energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
         metrics["energy_use"] = energy_use
         cost = weight * jp.minimum(energy_use, max_value)
-        metrics["costs/energy"] = cost
+        metrics["rewards/energy_cost"] = -cost
         return -cost
 
     @_named_reward("jerk_cost")
@@ -459,6 +483,13 @@ class Imitation(rodent_base.RodentEnv):
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
+
+    @_named_termination_criterion("nan_termination")
+    def _nan_termination(self, data, info) -> bool:
+        # Handle nans during sim by resetting env
+        flattened_vals, _ = jax.flatten_util.ravel_pytree(data)
+        num_nans = jp.sum(jp.isnan(flattened_vals))
+        return num_nans > 0
 
     def render(
         self,
@@ -575,6 +606,26 @@ class Imitation(rodent_base.RodentEnv):
                     faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
                     rendered_frames.append(faded_frame)
         return rendered_frames
+
+    @property
+    def proprioceptive_obs_size(self) -> int:
+        obs_size = self.non_flattened_observation_size
+        return jp.sum(jax.flatten_util.ravel_pytree(obs_size["proprioception"])[0])
+
+    @property
+    def non_proprioceptive_obs_size(self) -> int:
+        return self.observation_size - self.proprioceptive_obs_size
+
+    @property
+    def observation_size(self) -> mjx_env.ObservationSize:
+        obs = self.non_flattened_observation_size
+        return jp.sum(jax.flatten_util.ravel_pytree(obs)[0])
+
+    @property
+    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
+        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+        obs = abstract_state.obs
+        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     def verify_reference_data(self, atol: float = 5e-3) -> bool:
         """A set of non-exhaustive sanity checks that the reference data found in
