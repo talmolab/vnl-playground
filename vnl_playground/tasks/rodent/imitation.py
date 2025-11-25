@@ -6,7 +6,7 @@ import jax.numpy as jp
 from ml_collections import config_dict
 from mujoco import mjx
 import brax.math
-from vnl_mjx.tasks.rodent.reference_clips import ReferenceClips
+from vnl_playground.tasks.rodent.reference_clips import ReferenceClips
 
 from mujoco_playground._src import mjx_env
 

@@ -41,7 +41,7 @@ from datetime import datetime
 import logging
 import mujoco
 
-from vnl_mjx.tasks.rodent import flat_arena, bowl_escape, maze_forage
+from vnl_playground.tasks.rodent import flat_arena, bowl_escape, maze_forage
 
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging

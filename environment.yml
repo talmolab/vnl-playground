@@ -1,4 +1,4 @@
-name: vnl_mjx
+name: vnl_playground
 channels:
   - conda-forge
 

@@ -53,8 +53,8 @@ from track_mjx.agent.mlp_ppo import ppo, ppo_networks
 from track_mjx.analysis import render
 
 import wandb
-from vnl_mjx.tasks.celegans import imitation
-from vnl_mjx.tasks.celegans.reference_clips import ReferenceClips
+from vnl_playground.tasks.celegans import imitation
+from vnl_playground.tasks.celegans.reference_clips import ReferenceClips
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

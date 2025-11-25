@@ -14,8 +14,8 @@ import mujoco
 from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
-from vnl_mjx.tasks.rodent import consts
-from vnl_mjx.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
+from vnl_playground.tasks.rodent import consts
+from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
 
 
 def get_assets() -> Dict[str, bytes]:

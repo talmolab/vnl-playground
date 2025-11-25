@@ -33,7 +33,7 @@ from tqdm import tqdm
 from mujoco_playground import locomotion, wrapper
 from mujoco_playground.config import locomotion_params
 
-from vnl_mjx.tasks.rodent import flat_arena, bowl_escape
+from vnl_playground.tasks.rodent import flat_arena, bowl_escape
 
 
 # Enable persistent compilation cache.

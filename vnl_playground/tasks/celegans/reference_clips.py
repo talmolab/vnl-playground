@@ -11,7 +11,7 @@ import h5py
 import jax
 import jax.numpy as jp
 
-from vnl_mjx.tasks.celegans.consts import JOINTS
+from vnl_playground.tasks.celegans.consts import JOINTS
 
 
 class ReferenceClips:

@@ -18,8 +18,8 @@ from etils import epath
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
-from vnl_mjx.tasks.celegans import consts
-from vnl_mjx.tasks.utils import _recolour_tree, _scale_body_tree, dm_scale_spec
+from vnl_playground.tasks.celegans import consts
+from vnl_playground.tasks.utils import _recolour_tree, _scale_body_tree, dm_scale_spec
 
 
 def get_assets() -> Dict[str, bytes]:

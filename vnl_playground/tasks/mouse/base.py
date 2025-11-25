@@ -11,7 +11,7 @@ from mujoco import mjx
 from tqdm import tqdm
 
 from mujoco_playground._src import mjx_env
-from vnl_mjx.tasks.mouse import consts
+from vnl_playground.tasks.mouse import consts
 
 
 def get_assets() -> Dict[str, bytes]:

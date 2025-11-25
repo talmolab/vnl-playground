@@ -1,5 +1,5 @@
-from vnl_mjx.tasks.fruitfly import base as fly_base
-from vnl_mjx.tasks.fruitfly import consts
+from vnl_playground.tasks.fruitfly import base as fly_base
+from vnl_playground.tasks.fruitfly import consts
 
 from mujoco_playground._src import mjx_env
 

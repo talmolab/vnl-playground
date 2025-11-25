@@ -24,14 +24,14 @@ from orbax import checkpoint as ocp
 from ml_collections import config_dict
 from mujoco_playground import wrapper
 
-import vnl_mjx.tasks.celegans.imitation
+import vnl_playground.tasks.celegans.imitation
 
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
-env_cfg = vnl_mjx.tasks.celegans.imitation.default_config()
+env_cfg = vnl_playground.tasks.celegans.imitation.default_config()
 env_cfg.mujoco_impl = "warp"
 
 ppo_params = config_dict.create(
@@ -159,7 +159,7 @@ class FlattenObsWrapper(wrapper.Wrapper):
         obs_size = len(jax.eval_shape(self.reset, rng_shape))
         return obs_size
 
-env = vnl_mjx.tasks.celegans.imitation.Imitation(config=env_cfg)
-eval_env = env#FlattenObsWrapper(vnl_mjx.tasks.rodent.imitation.Imitation())
+env = vnl_playground.tasks.celegans.imitation.Imitation(config=env_cfg)
+eval_env = env#FlattenObsWrapper(vnl_playground.tasks.rodent.imitation.Imitation())
 make_inference_fn, params, _ = train_fn(environment=env, eval_env=eval_env)
 

@@ -19,7 +19,7 @@ import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
-from vnl_mjx.tasks.celegans.reference_clips import ReferenceClips
+from vnl_playground.tasks.celegans.reference_clips import ReferenceClips
 
 from . import base as worm_base
 from . import consts

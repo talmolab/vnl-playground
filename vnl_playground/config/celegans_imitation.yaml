@@ -16,7 +16,7 @@ env_config:
   backend: playground
 
   env_args:
-    walker_xml_path: /home/aaprasad/mnt/projects/con3trol/src/vnl-playground/vnl_mjx/tasks/celegans/xmls/celegans_reduce_contacts.xml
+    walker_xml_path: /home/aaprasad/mnt/projects/con3trol/src/vnl-playground/vnl_playground/tasks/celegans/xmls/celegans_reduce_contacts.xml
     torque_actuators: False  # Changed from False for better performance
     rescale_factor: 1.04
     dim: 2
