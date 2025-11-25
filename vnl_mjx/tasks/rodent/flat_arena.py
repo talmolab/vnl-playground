@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Union, Tuple
+from typing import Any, Dict, Optional, Union, Tuple, Callable, Mapping
 
 import collections
 
@@ -36,8 +36,14 @@ def default_config() -> config_dict.ConfigDict:
         action_scale=1,
         energy_termination_threshold=np.inf,
         target_speed=0.5,
+        termination_criteria={
+            "root_too_far": {"max_distance": 0.1},  # Meters
+            "root_too_rotated": {"max_degrees": 60.0},  # Degrees
+            "pose_error": {"max_l2_error": 4.5},  # Joint-space L2 distance
+        }
     )
 
+_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
 
 class FlatWalk(rodent_base.RodentEnv):
     """Flat walk environment."""
@@ -72,7 +78,9 @@ class FlatWalk(rodent_base.RodentEnv):
             "proprioceptive_obs_size": proprioceptive_obs_size,
         }
 
-        return mjx_env.State(data, obs, reward, done, metrics, info)
+        done = self._is_done(data, info, metrics)
+
+        return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
 
     def step(
         self,
@@ -83,6 +91,11 @@ class FlatWalk(rodent_base.RodentEnv):
 
         # Apply the action to the model.
         data = mjx_env.step(self.mjx_model, state.data, action)
+        
+        info = state.info
+
+        terminated = self._is_done(data, info, state.metrics)
+        done = terminated
 
         # Get the new observation.
         task_obs, proprioceptive_obs = self._get_obs(data)
@@ -100,6 +113,17 @@ class FlatWalk(rodent_base.RodentEnv):
         )
 
         return state
+    
+    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
+        any_terminated = False
+        for name, kwargs in self._config.termination_criteria.items():
+            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
+            terminated = termination_fcn(self, data, info, **kwargs)
+            any_terminated = jp.logical_or(any_terminated, terminated)
+            # Also log terminations as floats so averaging -> hazard rate
+            metrics["terminations/" + name] = jp.astype(terminated, float)
+        metrics["terminations/any"] = jp.astype(any_terminated, float)
+        return any_terminated
     
     # the proprioceptive obs in main branch because it matches track-mjx obs
     def _get_proprioception(self, data: mjx.Data, flatten: bool = True) -> jp.ndarray:
@@ -223,3 +247,40 @@ class FlatWalk(rodent_base.RodentEnv):
         z = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos[-1]
         fall_under_ground = jp.where(z < 0.0, 1.0, 0.0)
         return fall_under_ground
+    
+    # Termination
+    def _named_termination_criterion(name: str):
+        def decorator(termination_fcn: Callable):
+            _TERMINATION_FCN_REGISTRY[name] = termination_fcn
+            return termination_fcn
+
+        return decorator
+
+    @_named_termination_criterion("root_too_far")
+    def _root_too_far(self, data, info, max_distance) -> bool:
+        target = self._get_current_target(data, info)
+        root_pos = self.root_body(data).xpos
+        distance = jp.linalg.norm(target.root_position - root_pos)
+        return distance > max_distance
+
+    @_named_termination_criterion("root_too_rotated")
+    def _root_too_rotated(self, data, info, max_degrees) -> bool:
+        target = self._get_current_target(data, info)
+        root_quat = self.root_body(data).xquat
+        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
+        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
+        return ang_dist > jp.deg2rad(max_degrees)
+
+    @_named_termination_criterion("pose_error")
+    def _bad_pose(self, data, info, max_l2_error) -> bool:
+        target = self._get_current_target(data, info)
+        joints = self._get_joint_angles(data)
+        pose_error = jp.linalg.norm(target.joints - joints)
+        return pose_error > max_l2_error
+
+    @_named_termination_criterion("nan_termination")
+    def _nan_termination(self, data, info) -> bool:
+        # Handle nans during sim by resetting env
+        flattened_vals, _ = jax.flatten_util.ravel_pytree(data)
+        num_nans = jp.sum(jp.isnan(flattened_vals))
+        return num_nans > 0
