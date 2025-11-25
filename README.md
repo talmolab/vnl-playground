@@ -1,4 +1,4 @@
-# vnl-mjx
+# vnl-playground
 Virtual Neural Lab (VNL) in MJX. Tasks driven deep-RL learning in JAX
 
 ## Quick Start

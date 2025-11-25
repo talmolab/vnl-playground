@@ -1,0 +1,12 @@
+name: vnl_playground
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+  - ffmpeg
+  - jupyterlab
+  - mesalib
+  - pip
+  - pip:
+    - "--editable=.[with-cuda]"
