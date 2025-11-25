@@ -94,8 +94,7 @@ class FlatWalk(rodent_base.RodentEnv):
         
         info = state.info
 
-        terminated = self._is_done(data, info, state.metrics)
-        done = terminated
+        term_criteria = self._is_done(data, info, state.metrics)
 
         # Get the new observation.
         task_obs, proprioceptive_obs = self._get_obs(data)
@@ -104,7 +103,9 @@ class FlatWalk(rodent_base.RodentEnv):
         # Compute the reward.
         rewards = self._get_reward(data)
         reward = rewards["speed * upright"]
-        done = self._get_termination(data)
+        termination = self._get_termination(data)
+
+        done = jp.logical_or(termination, term_criteria)
         state = state.replace(
             data=data,
             obs=obs,
