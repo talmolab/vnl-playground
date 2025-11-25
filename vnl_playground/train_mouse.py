@@ -33,7 +33,7 @@ from ml_collections import config_dict
 from mujoco_playground import locomotion, wrapper
 from mujoco_playground.config import locomotion_params
 
-from vnl_mjx.tasks.mouse import mouse_reach
+from vnl_playground.tasks.mouse import mouse_reach
 
 from brax.envs.wrappers import training as brax_training
 from mujoco_playground import mjx_env, locomotion, wrapper

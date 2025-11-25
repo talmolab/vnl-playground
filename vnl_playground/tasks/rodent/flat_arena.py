@@ -12,8 +12,8 @@ from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward
 from mujoco_playground._src.dm_control_suite import common
 
-from vnl_mjx.tasks.rodent import base as rodent_base
-from vnl_mjx.tasks.rodent import consts
+from vnl_playground.tasks.rodent import base as rodent_base
+from vnl_playground.tasks.rodent import consts
 
 
 def default_config() -> config_dict.ConfigDict:

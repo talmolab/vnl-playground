@@ -38,8 +38,8 @@ from tqdm import tqdm
 from mujoco_playground import locomotion, wrapper
 from mujoco_playground.config import locomotion_params
 
-from vnl_mjx.tasks.rodent import imitation
-from vnl_mjx.tasks.rodent import wrappers as rodent_wrappers
+from vnl_playground.tasks.rodent import imitation
+from vnl_playground.tasks.rodent import wrappers as rodent_wrappers
 
 
 # Enable persistent compilation cache.

@@ -12,8 +12,8 @@ import mujoco
 from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
-from vnl_mjx.tasks.rodent import base as rodent_base
-from vnl_mjx.tasks.rodent import consts
+from vnl_playground.tasks.rodent import base as rodent_base
+from vnl_playground.tasks.rodent import consts
 
 # -----------------------------------------------------------------------------#
 # Maze‑height‑field utilities

@@ -17,8 +17,8 @@ import warnings
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward
 
-from vnl_mjx.tasks.rodent import base as rodent_base
-from vnl_mjx.tasks.rodent import consts
+from vnl_playground.tasks.rodent import base as rodent_base
+from vnl_playground.tasks.rodent import consts
 
 import matplotlib.colors as mcolors
 

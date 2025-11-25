@@ -11,8 +11,8 @@ from mujoco import mjx
 import time
 
 from mujoco_playground._src import mjx_env, reward
-from vnl_mjx.tasks.mouse import consts
-from vnl_mjx.tasks.mouse.base import MouseBaseEnv, default_config  # <- import the base & config
+from vnl_playground.tasks.mouse import consts
+from vnl_playground.tasks.mouse.base import MouseBaseEnv, default_config  # <- import the base & config
 
 
 class MouseEnv(MouseBaseEnv):
