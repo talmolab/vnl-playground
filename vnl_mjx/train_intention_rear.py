@@ -78,7 +78,7 @@ ppo_params = config_dict.create(
         policy_hidden_layer_sizes=(1024, 512, 256),
         value_hidden_layer_sizes=(1024, 512, 256),
     ),
-    eval_every=10_000_000,  # num_evals = num_timesteps // eval_every
+    eval_every=2_500_000,  # num_evals = num_timesteps // eval_every
 )
 
 env_name = "head_track_rear"
