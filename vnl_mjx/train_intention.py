@@ -209,14 +209,14 @@ if __name__ == "__main__":
         wrappers.FlattenObsWrapper(env),
         decoder_policy_fn,
         mimic_cfg.network_config.intention_size,
-        0,  # the head track task has no non-proprioceptive obs
+        247,  # the head track task has no non-proprioceptive obs
     )
     eval_env = wrappers.HighLevelWrapper(
         #wrappers.FlattenObsWrapper(head_track_rear.HeadTrackRear(config=env_cfg)),
         wrappers.FlattenObsWrapper(flat_arena.FlatWalk(config=env_cfg)),
         decoder_policy_fn,
         mimic_cfg.network_config.intention_size,
-        0,  # the head track task has no non-proprioceptive obs
+        247,  # the head track task has no non-proprioceptive obs
     )
 
     # render a rollout in the policy_params_fn to log to wandb at each step
