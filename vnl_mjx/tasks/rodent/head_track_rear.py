@@ -23,9 +23,9 @@ def default_config() -> config_dict.ConfigDict:
         mujoco_impl="jax",
         sim_dt=0.002,
         ctrl_dt=0.01,
-        solver="cg",
-        iterations=5,
-        ls_iterations=5,
+        solver="newton",
+        iterations=8,
+        ls_iterations=8,
         nconmax=256,
         njmax=128,
         noslip_iterations=0,
@@ -38,10 +38,10 @@ def default_config() -> config_dict.ConfigDict:
             "hold_head_z": {"weight": 1.0, "time_threshold": 0.2},
             # "head_z_dist": {"exp_scale": 0.03, "weight": 0.05},
             # Costs / regularizers
-            # "torso_z_range": {"healthy_z_range": (0.03, 1.0), "weight": 0.05},
-            # "control_cost": {"weight": 0.01},
-            # "control_diff_cost": {"weight": 0.01},
-            # "energy_cost": {"max_value": 50.0, "weight": 0.01},
+            "torso_z_range": {"healthy_z_range": (0.03, 1.0), "weight": 0.05},
+            "control_cost": {"weight": 0.01},
+            "control_diff_cost": {"weight": 0.01},
+            "energy_cost": {"max_value": 50.0, "weight": 0.01},
         },
         termination_criteria={
             "fallen": {"healthy_z_range": (0.0325, 0.5)},  # Meters

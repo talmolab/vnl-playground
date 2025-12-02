@@ -88,7 +88,6 @@ from pprint import pprint
 
 pprint(f"ppo_params: {ppo_params}")
 
-
 SUFFIX = None
 FINETUNE_PATH = None
 
@@ -202,7 +201,7 @@ def make_logging_inference_fn(ppo_networks):
 
 if __name__ == "__main__":
     env = head_track_rear.HeadTrackRear(config=env_cfg)
-    env = wrappers.HighLevelWrapper(
+    env = wrappers.HighLevelWrapper( #defines wrapper that passses output of policy into decoder to produce actual control
         wrappers.FlattenObsWrapper(env),
         decoder_policy_fn,
         mimic_cfg.network_config.intention_size,
