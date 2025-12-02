@@ -52,7 +52,7 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = head_track_rear.default_config()
 
-mimic_checkpoint_path = "/n/holylabs-olveczky/Users/charleszhang/track-mjx/model_checkpoints/250929_210018_111014"
+mimic_checkpoint_path = "/n/home09/dsprague/vnl-playground/model_checkpoints/251006_144548_202519"
 mimic_cfg = OmegaConf.create(
     checkpointing.load_config_from_checkpoint(mimic_checkpoint_path)
 )
