@@ -36,7 +36,7 @@ def default_config() -> config_dict.ConfigDict:
         reward_terms={
             # Head tracking (to mimic real-time mocap tracking head)
             "hold_head_z": {"weight": 1.0, "time_threshold": 0.2},
-            "head_z_dist": {"exp_scale": 0.03, "weight": 0.05},
+            "head_z_dist": {"exp_scale": 0.1, "weight": 0.05},
             # Costs / regularizers
             "torso_z_range": {"healthy_z_range": (0.03, 1.0), "weight": 0.05},
             "control_cost": {"weight": 0.01},
