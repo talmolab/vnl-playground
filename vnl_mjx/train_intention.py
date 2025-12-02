@@ -203,7 +203,8 @@ def make_logging_inference_fn(ppo_networks):
 
 
 if __name__ == "__main__":
-    env = head_track_rear.HeadTrackRear(config=env_cfg)
+    #env = head_track_rear.HeadTrackRear(config=env_cfg)
+    env = flat_arena.FlatWalk(config=env_cfg)
     env = wrappers.HighLevelWrapper( #defines wrapper that passses output of policy into decoder to produce actual control
         wrappers.FlattenObsWrapper(env),
         decoder_policy_fn,
@@ -211,7 +212,8 @@ if __name__ == "__main__":
         0,  # the head track task has no non-proprioceptive obs
     )
     eval_env = wrappers.HighLevelWrapper(
-        wrappers.FlattenObsWrapper(head_track_rear.HeadTrackRear(config=env_cfg)),
+        #wrappers.FlattenObsWrapper(head_track_rear.HeadTrackRear(config=env_cfg)),
+        wrappers.FlattenObsWrapper(flat_arena.FlatWalk(config=env_cfg)),
         decoder_policy_fn,
         mimic_cfg.network_config.intention_size,
         0,  # the head track task has no non-proprioceptive obs
