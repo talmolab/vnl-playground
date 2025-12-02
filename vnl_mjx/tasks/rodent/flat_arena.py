@@ -37,9 +37,8 @@ def default_config() -> config_dict.ConfigDict:
         energy_termination_threshold=np.inf,
         target_speed=0.5,
         termination_criteria={
-            "root_too_far": {"max_distance": 0.1},  # Meters
-            "root_too_rotated": {"max_degrees": 60.0},  # Degrees
-            "pose_error": {"max_l2_error": 4.5},  # Joint-space L2 distance
+            "nan_termination": {},
+            "fallen": {"healthy_z_range": (0.0325, 0.5)},  # Meters
         }
     )
 
@@ -278,6 +277,13 @@ class FlatWalk(rodent_base.RodentEnv):
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
+    
+    @_named_termination_criterion("fallen")
+    def _fallen(self, data, info, healthy_z_range) -> bool:
+        torso_z = self._get_body_height(data)
+        min_z, max_z = healthy_z_range
+        fall = jp.logical_or(torso_z < min_z, torso_z > max_z)
+        return fall
 
     @_named_termination_criterion("nan_termination")
     def _nan_termination(self, data, info) -> bool:
