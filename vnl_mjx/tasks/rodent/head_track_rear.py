@@ -36,7 +36,7 @@ def default_config() -> config_dict.ConfigDict:
         reward_terms={
             # Head tracking (to mimic real-time mocap tracking head)
             "hold_head_z": {"weight": 1.0, "time_threshold": 0.2},
-            # "head_z_dist": {"exp_scale": 0.03, "weight": 0.05},
+            "head_z_dist": {"exp_scale": 0.03, "weight": 0.05},
             # Costs / regularizers
             "torso_z_range": {"healthy_z_range": (0.03, 1.0), "weight": 0.05},
             "control_cost": {"weight": 0.01},
@@ -45,7 +45,7 @@ def default_config() -> config_dict.ConfigDict:
         },
         termination_criteria={
             "fallen": {"healthy_z_range": (0.0325, 0.5)},  # Meters
-            # "upside_down": {},  # when root quat[2] < 0
+            "upside_down": {},  # when root quat[2] < 0
         },
     )
 
@@ -254,7 +254,7 @@ class HeadTrackRear(rodent_base.RodentEnv):
     @_named_reward("head_z_dist")
     def _head_z_dist_reward(self, data, info, metrics, weight, exp_scale) -> float:
         head_z = self._get_head_xpos(data)[2]
-        head_z_dist = jp.abs(head_z - self._config.head_z_target)
+        head_z_dist = jp.abs(head_z - (self._config.head_z_target*1.1)) # set target to 10% above threshold 
         reward = weight * jp.exp(-((head_z_dist / exp_scale) ** 2) / 2)
         metrics["rewards/head_z_dist"] = reward
         return reward
