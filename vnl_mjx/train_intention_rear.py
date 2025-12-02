@@ -60,7 +60,7 @@ decoder_policy_fn = track_networks.make_decoder_policy_fn(mimic_checkpoint_path)
 
 
 ppo_params = config_dict.create(
-    num_timesteps=int(1e9),  # 1 billion
+    num_timesteps=int(1e8),  # 1 billion
     reward_scaling=1.0,
     episode_length=1500,
     normalize_observations=True,
@@ -78,7 +78,7 @@ ppo_params = config_dict.create(
         policy_hidden_layer_sizes=(1024, 512, 256),
         value_hidden_layer_sizes=(1024, 512, 256),
     ),
-    eval_every=10_000_000,  # num_evals = num_timesteps // eval_every
+    eval_every=1_000_000,  # num_evals = num_timesteps // eval_every
 )
 
 env_name = "head_track_rear"
