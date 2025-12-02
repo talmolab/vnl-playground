@@ -111,7 +111,7 @@ with open(ckpt_path / "config.json", "w") as fp:
 USE_WANDB = True
 
 if USE_WANDB:
-    wandb.init(project="vnl-mjx-rl", config=env_cfg, id=f"head_track_rear-{exp_name}")
+    wandb.init(entity= "daniel-y-sprague-harvard-university", project="vnl-mjx-rl", config=env_cfg, id=f"intention-rear-{exp_name}")
     wandb.config.update(
         {
             "env_name": env_name,
