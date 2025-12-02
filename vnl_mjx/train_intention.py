@@ -38,7 +38,7 @@ from ml_collections import config_dict
 
 from mujoco_playground import wrapper
 
-from vnl_mjx.tasks.rodent import head_track_rear
+from vnl_mjx.tasks.rodent import head_track_rear, flat_arena
 from vnl_mjx.tasks.rodent import wrappers
 
 from track_mjx.agent import checkpointing
@@ -50,7 +50,8 @@ jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
-env_cfg = head_track_rear.default_config()
+#env_cfg = head_track_rear.default_config()
+env_cfg = flat_arena.default_config()
 
 mimic_checkpoint_path = "/n/home09/dsprague/vnl-playground/model_checkpoints/251006_144548_202519"
 mimic_cfg = OmegaConf.create(
