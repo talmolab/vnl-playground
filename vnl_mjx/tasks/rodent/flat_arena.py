@@ -106,7 +106,7 @@ class FlatWalk(rodent_base.RodentEnv):
         reward = rewards["speed * upright"]
         termination = self._get_termination(data)
 
-        done = jp.logical_or(termination, term_criteria)
+        done = jp.astype(jp.logical_or(termination, term_criteria), float)
         state = state.replace(
             data=data,
             obs=obs,
