@@ -22,16 +22,16 @@ network_config:
 train_setup:
   agent_name: rodent
   run_name: flat_run
-  checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
+  checkpoint_to_restore: /n/home09/dsprague/vnl-playground/model_checkpoints/251006_144548_202519
   freeze_decoder: True
   checkpoint_max_to_keep:
   checkpoint_keep_period:
-  eval_every: 20_000_000
+  eval_every: 10_000_000
   reset_every: 50_000_000
   train_config:
     episode_length: 1000
     num_envs: 4096
-    num_timesteps: 5_000_000_000
+    num_timesteps: 1_000_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4
