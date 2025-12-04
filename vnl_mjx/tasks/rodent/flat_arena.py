@@ -38,12 +38,17 @@ def default_config() -> config_dict.ConfigDict:
         action_scale=1,
         energy_termination_threshold=np.inf,
         target_speed=0.5,
+        reward_terms = {
+            "speed": {"weight": 0.5},
+            "upright": {"weight":0.5}
+        }
         termination_criteria={
-        #    "nan_termination": {},
-        #    "fallen": {"healthy_z_range": (0.0325, 0.5)},  # Meters
+            "nan_termination": {},
+            "fallen": {"healthy_z_range": (0.0325, 0.5)},  # Meters
         }
     )
 
+_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
 _TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
 
 class FlatWalk(rodent_base.RodentEnv):
@@ -95,8 +100,6 @@ class FlatWalk(rodent_base.RodentEnv):
         
         info = state.info
 
-        term_criteria = self._is_done(data, info, state.metrics)
-
         # Get the new observation.
         task_obs, proprioceptive_obs = self._get_obs(data)
         obs = jp.concatenate([task_obs, proprioceptive_obs])
@@ -104,9 +107,10 @@ class FlatWalk(rodent_base.RodentEnv):
         # Compute the reward.
         rewards = self._get_reward(data)
         reward = rewards["speed * upright"]
-        termination = self._get_termination(data)
 
-        done = jp.astype(jp.logical_or(termination, term_criteria), float)
+        termination = self._is_done(data)
+
+        done = jp.astype(termination, float)
         state = state.replace(
             data=data,
             obs=obs,
@@ -185,19 +189,39 @@ class FlatWalk(rodent_base.RodentEnv):
         )
         return task_obs, proprioceptive_obs
 
+    #def _get_reward(
+    #    self,
+    #    data: mjx.Data,
+    #) -> Dict[str, jax.Array]:
+    #    speed_reward = self._get_speed_reward(data)
+    #    upright_reward = self._upright_reward(data, deviation_angle=10)
+    #    return {
+    #        "speed_reward": speed_reward,
+    #        "upright_reward": upright_reward,
+    #        "speed * upright": speed_reward * upright_reward,
+    #    }
+    
     def _get_reward(
-        self,
-        data: mjx.Data,
-    ) -> Dict[str, jax.Array]:
-        speed_reward = self._get_speed_reward(data)
-        upright_reward = self._upright_reward(data, deviation_angle=10)
-        return {
-            "speed_reward": speed_reward,
-            "upright_reward": upright_reward,
-            "speed * upright": speed_reward * upright_reward,
-        }
+        self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
+    ) -> float:
+        net_reward = 0.0
+        for name, kwargs in self._config.reward_terms.items():
+            net_reward += _REWARD_FCN_REGISTRY[name](
+                self, data, info, metrics, **kwargs
+            )
+        return net_reward
+    
 
-    def _get_speed_reward(
+    # Rewards
+    def _named_reward(name: str):
+        def decorator(reward_fcn: Callable):
+            _REWARD_FCN_REGISTRY[name] = reward_fcn
+            return reward_fcn
+
+        return decorator
+
+    @_named_reward("speed")
+    def _speed_reward(
         self,
         data: mjx.Data,
     ) -> jp.ndarray:
@@ -209,6 +233,7 @@ class FlatWalk(rodent_base.RodentEnv):
         )
         return reward_value
 
+    @_named_reward("upright")
     def _upright_reward(self, data: mjx.Data, deviation_angle=0):
         """Returns a reward proportional to how upright the torso is.
 
@@ -247,7 +272,7 @@ class FlatWalk(rodent_base.RodentEnv):
             jax.Array: _description_
         """
         z = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos[-1]
-        fall_under_ground = jp.where(z < 0.0, 1.0, 0.0)
+        fall_under_ground = jp.where(z < 0.03, 1.0, 0.0)
         return fall_under_ground
     
     # Termination
