@@ -40,7 +40,7 @@ def default_config() -> config_dict.ConfigDict:
         target_speed=0.5,
         reward_terms = {
             "speed": {"weight": 0.5},
-            "upright": {"weight":0.5}
+            "upright": {"weight":0.5},
         }
         termination_criteria={
             "nan_termination": {},
