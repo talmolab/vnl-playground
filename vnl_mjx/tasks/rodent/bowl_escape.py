@@ -1,6 +1,8 @@
 # Bowl escape definition, reflecting the mujoco playgrounds.
 
-from typing import Any, Dict, Optional, Union, Tuple, Callable
+from typing import Any, Dict, Optional, Union, Tuple, Callable, Mapping
+import collections
+
 import jax.flatten_util
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -300,6 +302,24 @@ class BowlEscape(rodent_base.RodentEnv):
             ]
         )
         return task_obs, proprioceptive_obs
+    
+    def _get_proprioception(
+        self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True
+    ) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
+        """Get proprioception data from the environment."""
+
+        proprioception = collections.OrderedDict(
+            joint_angles=self._get_joint_angles(data),
+            joint_ang_vels=self._get_joint_ang_vels(data),
+            actuator_ctrl=self._get_actuator_ctrl(data),
+            body_height=self._get_body_height(data).reshape(1),
+            world_zaxis=self._get_world_zaxis(data),
+            appendages_pos=self._get_appendages_pos(data, flatten=flatten),
+            prev_action=info["last_act"],
+        )
+        if flatten:
+            proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)
+        return proprioception
 
     def _upright_reward(self, data: mjx.Data, deviation_angle: float = 0) -> float:
         """Returns a reward proportional to how upright the torso is.
