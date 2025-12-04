@@ -70,11 +70,14 @@ class FlatWalk(rodent_base.RodentEnv):
         # Sample a random initial configuration with some probability.
 
         data = mjx_env.init(self.mjx_model)
+        zero = 0.0
+        metrics = {
+            "nans": zero,
+            "reward": zero,
+        }
 
         task_obs, proprioceptive_obs = self._get_obs(data)
         obs = jp.concatenate([task_obs, proprioceptive_obs])
-        reward, done = jp.zeros(2)
-        metrics = {}
         # TODO: currently, this denotes the task specific inputs
         task_obs_size = task_obs.shape[0]
         proprioceptive_obs_size = proprioceptive_obs.shape[0]
@@ -84,13 +87,7 @@ class FlatWalk(rodent_base.RodentEnv):
             "proprioceptive_obs_size": proprioceptive_obs_size,
         }
 
-        zero = 0.0
-        metrics = {
-            "nans": zero,
-            "reward": zero,
-        }
-
-
+        reward = self._get_reward(data, info, metrics)
         done = self._is_done(data, info, metrics)
 
         return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)

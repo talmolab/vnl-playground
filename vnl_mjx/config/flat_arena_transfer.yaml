@@ -15,7 +15,7 @@ network_config:
   encoder_layer_sizes: [512, 512, 512, 256, 128]
   decoder_layer_sizes: [0]  # loaded from checkpoint
   critic_layer_sizes: [512, 512, 512, 256, 256]
-  intention_size: 16 # recover from the checkpoint 
+  intention_size: 60 # recover from the checkpoint 
   kl_schedule: True # Whether to use a ramping KL schedule
   kl_weight: 1e-3 # The maximum weight if schedule is True
 
