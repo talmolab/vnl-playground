@@ -274,7 +274,7 @@ class BowlEscape(rodent_base.RodentEnv):
         Returns:
             jp.ndarray: The concatenated position and velocity observations.
         """
-        proprioception = self._get_proprioception(data)
+        proprioception = self._get_proprioception(data, info)
         kinematic_sensors = self._get_kinematic_sensors(data)
         touch_sensors = self._get_touch_sensors(data)
         appendages_pos = self._get_appendages_pos(data)

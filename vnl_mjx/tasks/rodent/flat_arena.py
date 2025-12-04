@@ -165,6 +165,7 @@ class FlatWalk(rodent_base.RodentEnv):
         if flatten:
             proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)
         return proprioception
+    
 
     def _get_obs(self, data: mjx.Data) -> Tuple[jp.ndarray, jp.ndarray]:
         """Get the current observation from the simulation data.
