@@ -1,6 +1,6 @@
 env_config:
   env_name: rodent
-  task_name: flat_run
+  task_name: flat_arena
   walker_name: rodent
   render_camera_name: close_profile
 

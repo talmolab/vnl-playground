@@ -11,7 +11,7 @@ import mujoco
 from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
-from mujoco_playground._src import reward
+from mujoco_playground._src import reward as rw
 from mujoco_playground._src.dm_control_suite import common
 
 from vnl_mjx.tasks.rodent import base as rodent_base
@@ -239,7 +239,7 @@ class FlatWalk(rodent_base.RodentEnv):
         body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
         vel = jp.linalg.norm(body.subtree_linvel)
         target_speed = self._config.target_speed
-        reward_value = reward.tolerance(
+        reward_value = rw.tolerance(
             vel, bounds=(target_speed, target_speed), margin=target_speed
         )
         metrics["rewards/speed"] = reward_value*weight
@@ -261,7 +261,7 @@ class FlatWalk(rodent_base.RodentEnv):
         upright_torso = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xmat[
             -1, -1
         ]
-        upright = reward.tolerance(
+        upright = rw.tolerance(
             upright_torso,
             bounds=(deviation, np.inf),
             sigmoid="linear",
