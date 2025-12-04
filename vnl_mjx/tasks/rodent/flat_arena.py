@@ -38,10 +38,10 @@ def default_config() -> config_dict.ConfigDict:
         action_scale=1,
         energy_termination_threshold=np.inf,
         target_speed=0.5,
-        #termination_criteria={
+        termination_criteria={
         #    "nan_termination": {},
         #    "fallen": {"healthy_z_range": (0.0325, 0.5)},  # Meters
-        #}
+        }
     )
 
 _TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
