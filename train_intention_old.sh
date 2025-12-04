@@ -8,8 +8,8 @@
 #SBATCH --gpus-per-node=1
 #SBATCH --time=0-08:00
 #SBATCH --mem=256G
-#SBATCH --output=output/train_intention_output.out
-#SBATCH --error=error/train_intention_error.err
+#SBATCH --output=output/train_intention_old_output.out
+#SBATCH --error=error/train_intention_error_old.err
 #SBATCH --mail-type=END
 #SBATCH --mail-user=daniel_sprague@fas.harvard.edu
 

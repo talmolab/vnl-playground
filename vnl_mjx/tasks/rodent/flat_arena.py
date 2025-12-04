@@ -84,6 +84,13 @@ class FlatWalk(rodent_base.RodentEnv):
             "proprioceptive_obs_size": proprioceptive_obs_size,
         }
 
+        zero = 0.0
+        metrics = {
+            "nans": zero,
+            "reward": zero,
+        }
+
+
         done = self._is_done(data, info, metrics)
 
         return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
@@ -105,12 +112,18 @@ class FlatWalk(rodent_base.RodentEnv):
         obs = jp.concatenate([task_obs, proprioceptive_obs])
 
         # Compute the reward.
-        rewards = self._get_reward(data)
-        reward = rewards["speed * upright"]
+        reward = self._get_reward(data, info, state.metrics)
+        #reward = rewards["speed * upright"]
 
-        termination = self._is_done(data)
+        termination = self._is_done(data, info, state.metrics)
 
         done = jp.astype(termination, float)
+
+        state.metrics.update(
+            # nans=nan,
+            reward=reward,
+        )
+
         state = state.replace(
             data=data,
             obs=obs,
@@ -222,19 +235,18 @@ class FlatWalk(rodent_base.RodentEnv):
 
     @_named_reward("speed")
     def _speed_reward(
-        self,
-        data: mjx.Data,
-    ) -> jp.ndarray:
+        self, data: mjx.Data, info, metrics, weight) -> jp.ndarray:
         body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
         vel = jp.linalg.norm(body.subtree_linvel)
         target_speed = self._config.target_speed
         reward_value = reward.tolerance(
             vel, bounds=(target_speed, target_speed), margin=target_speed
         )
-        return reward_value
+        metrics["rewards/speed"] = reward_value*weight
+        return reward_value*weight
 
     @_named_reward("upright")
-    def _upright_reward(self, data: mjx.Data, deviation_angle=0):
+    def _upright_reward(self, data: mjx.Data, info, metrics, weight, deviation_angle=0):
         """Returns a reward proportional to how upright the torso is.
 
         Args:
@@ -256,7 +268,11 @@ class FlatWalk(rodent_base.RodentEnv):
             margin=1 + deviation,
             value_at_margin=0,
         )
-        return np.min(upright)
+
+        reward = np.min(upright)*weight
+        metrics["rewards/upright"] = reward
+
+        return reward
 
     def _get_termination(
         self,

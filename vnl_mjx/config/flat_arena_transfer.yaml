@@ -21,7 +21,7 @@ network_config:
 
 train_setup:
   agent_name: rodent
-  run_name: flat_run
+  run_name: flat_arena
   checkpoint_to_restore: /n/home09/dsprague/vnl-playground/model_checkpoints/251006_144548_202519
   freeze_decoder: True
   checkpoint_max_to_keep:
@@ -46,7 +46,7 @@ train_setup:
     seed: 0
 
 logging_config:
-  project_name: vnl_playground
+  project_name: vnl-mjx-rl
   group_name:
   model_path: model_checkpoints
   notes: ""
