@@ -244,6 +244,7 @@ def main(cfg: DictConfig):
 
     ppo_network = network_factory(
         start_state.obs.shape[-1],
+        0, # no reference observations for this task
         env.action_size,
         preprocess_observations_fn=normalize,
     )
