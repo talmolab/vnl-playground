@@ -50,7 +50,7 @@ from track_mjx.analysis import render
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="bowl_escape_transfer")
+@hydra.main(version_base=None, config_path="config", config_name="flat_arena_transfer")
 def main(cfg: DictConfig):
     """Main function using Hydra configs"""
     try:
