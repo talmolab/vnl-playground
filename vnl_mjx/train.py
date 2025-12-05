@@ -50,7 +50,7 @@ env_cfg = flat_arena.default_config()
 
 
 ppo_params = config_dict.create(
-    num_timesteps=int(1e8),  # 1 billion, changed for test runs
+    num_timesteps=int(1e9),  # 1 billion, changed for test runs
     reward_scaling=1.0,
     episode_length=1500,
     normalize_observations=True,
@@ -69,7 +69,7 @@ ppo_params = config_dict.create(
         value_hidden_layer_sizes=(512, 512, 512, 256, 256, 256),
     ),
     #eval_every=10_000_000,  # num_evals = num_timesteps // eval_every
-    eval_every=1_000_000,  # smaller for testing
+    eval_every=10_000_000,  # smaller for testing
 )
 
 #env_name = "head_track_rear"
