@@ -188,17 +188,17 @@ class FlatWalk(rodent_base.RodentEnv):
             ]
         )
 
-        proprioceptive_obs = jp.concatenate(
-            [
-                # align with the most recent checkpoint
-                data.qpos[7:],
-                data.qvel[6:],
-                data.qfrc_actuator,
-                self._get_appendages_pos(data),
-                self._get_kinematic_sensors(data),
-            ]
-        )
-        return task_obs, proprioceptive_obs
+        #proprioceptive_obs = jp.concatenate(
+        #    [
+        #        # align with the most recent checkpoint
+        #        data.qpos[7:],
+        #        data.qvel[6:],
+        #        data.qfrc_actuator,
+        #        self._get_appendages_pos(data),
+        #        self._get_kinematic_sensors(data),
+        #    ]
+        #)
+        return task_obs, proprioception
 
     #def _get_reward(
     #    self,
