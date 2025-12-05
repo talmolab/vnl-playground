@@ -3,6 +3,7 @@ env_config:
   task_name: flat_arena
   walker_name: rodent
   render_camera_name: close_profile
+  render_interval: 10_000_000
 
   env_args:
     # this will be passed to the env constructor as config overrides
