@@ -5,6 +5,14 @@ Entry point for track-mjx. Load the config file, create environments, initialize
 import os
 import sys
 
+import jax 
+import jax.numpy as jp
+import numpy as np
+
+from flax.training import orbax_utils
+
+import imageio
+
 # set default env variable if not set
 # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
 #     "XLA_PYTHON_CLIENT_MEM_FRACTION", "0.6"
@@ -40,6 +48,8 @@ from pathlib import Path
 from datetime import datetime
 import logging
 import mujoco
+
+from brax.training.acme import running_statistics
 
 from vnl_mjx.tasks.rodent import flat_arena, bowl_escape, maze_forage
 
@@ -132,6 +142,14 @@ def main(cfg: DictConfig):
         raise ValueError(
             f"Unknown task_name: {task_name}. Must be one of: maze_forage, bowl_escape, flat_arena"
         )
+    
+    network_factory = functools.partial(
+            ppo_networks.make_intention_ppo_networks,
+            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
+            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
+            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
+            intention_latent_size=cfg.network_config.intention_size,
+        )
 
     train_fn = functools.partial(
         ppo.train,
@@ -141,13 +159,7 @@ def main(cfg: DictConfig):
         ),
         num_resets_per_eval=cfg.train_setup.eval_every // cfg.train_setup.reset_every,
         kl_weight=cfg.network_config.kl_weight,
-        network_factory=functools.partial(
-            ppo_networks.make_intention_ppo_networks,
-            encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
-            decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
-            value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),
-            intention_latent_size=cfg.network_config.intention_size,
-        ),
+        network_factory=network_factory,
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,
         freeze_decoder=cfg.train_setup.freeze_decoder,
@@ -165,6 +177,58 @@ def main(cfg: DictConfig):
         group=cfg.logging_config.group_name,
     )
 
+    training_params = dict(ppo_params)
+    del training_params["network_factory"]
+    del training_params["eval_every"]
+
+    normalize = lambda x, y: x
+    if training_params["normalize_observations"]:
+        normalize = running_statistics.normalize
+
+    def make_logging_inference_fn(ppo_networks):
+        """Creates params and inference function for the PPO agent.
+        The policy takes the params as an input, so different sets of params can be used.
+        """
+
+        def make_logging_policy(deterministic=False):
+            policy_network = ppo_networks.policy_network
+            # can modify this to provide stochastic action + noise
+            parametric_action_distribution = ppo_networks.parametric_action_distribution
+
+            def logging_policy(
+                params,
+                observations,
+                key_sample,
+            ):
+                param_subset = (params[0], params[1])
+
+                #policy_params = params.policy
+                logits = policy_network.apply(*param_subset, observations)
+                # logits comes from policy directly, raw predictions that decoder generates (action, intention_mean, intention_logvar)
+                if deterministic:
+                    actions = parametric_action_distribution.postprocess(parametric_action_distribution.mode(logits)) #post processing to bound actions similar to stochastic
+                    return (
+                        jp.array(actions),
+                        {},
+                    )
+                # action sampling is happening here, according to distribution parameter logits
+                raw_actions = parametric_action_distribution.sample_no_postprocessing(
+                    logits, key_sample
+                )
+                # probability of selection specific action, actions with higher reward should have higher probability
+                log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
+                postprocessed_actions = parametric_action_distribution.postprocess(
+                    raw_actions
+                )
+                return jp.array(postprocessed_actions), {
+                    "log_prob": log_prob,
+                    "raw_action": raw_actions,
+                }
+
+            return logging_policy
+
+        return make_logging_policy
+
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
         wandb.log(metrics, commit=False)
@@ -172,28 +236,76 @@ def main(cfg: DictConfig):
     # # define the jit reset/step functions
     jit_reset = jax.jit(evaluator_env.reset)
     jit_step = jax.jit(evaluator_env.step)
+    rng = jax.random.PRNGKey(0)
+    start_state = jit_reset(rng)
     mj_model = evaluator_env.mj_model
     mj_data = mujoco.MjData(mj_model)
     scene_option = mujoco.MjvOption()
     scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
     renderer = mujoco.Renderer(mj_model, height=512, width=512)
-    policy_params_fn = functools.partial(
-        wandb_logging.rollout_logging_fn,
-        evaluator_env,
-        jit_reset,
-        jit_step,
-        cfg,
-        checkpoint_path,
-        renderer,
-        mj_model,
-        mj_data,
-        scene_option,
+
+    ppo_network = network_factory(
+        start_state.obs.shape[-1],
+        env.action_size,
+        preprocess_observations_fn=normalize,
     )
+
+    make_logging_policy = make_logging_inference_fn(ppo_network)
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
+
+    #policy_params_fn = functools.partial(
+    #    wandb_logging.rollout_logging_fn,
+    #    evaluator_env,
+    #    jit_reset,
+    #    jit_step,
+    #    cfg,
+    #    checkpoint_path,
+    #    renderer,
+    #    mj_model,
+    #    mj_data,
+    #    scene_option,
+    #)
+
+    def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):
+        del make_policy  # Unused.
+
+        # generate a rollout
+        rollout = [start_state]
+        state = start_state
+        rng = jax.random.PRNGKey(0)
+        for _ in range(ppo_params.episode_length):
+            _, rng = jax.random.split(rng)
+            action, _ = jit_logging_inference_fn(params, state.obs, rng)
+            state = jit_step(state, action)
+            rollout.append(state)
+
+        # render and log
+        qposes_rollout = np.array([state.data.qpos for state in rollout])
+        video_path = f"{checkpoint_path}/{current_step}.mp4"
+
+        with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
+            for qpos in qposes_rollout:
+                mj_data.qpos = qpos
+                mujoco.mj_forward(mj_model, mj_data)
+                renderer.update_scene(
+                    mj_data,
+                    camera="close_profile-rodent",
+                )
+                video.append_data(renderer.render())
+
+        # don't commit because progress_fn is called after
+        wandb.log({"eval/rollout": wandb.Video(video_path, format="mp4")}, commit=False)
+        orbax_checkpointer = ocp.PyTreeCheckpointer()
+        save_args = orbax_utils.save_args_from_target(params)
+        path = checkpoint_path / f"{current_step}"
+        orbax_checkpointer.save(path, params, force=True, save_args=save_args)
 
     make_inference_fn, params, _ = train_fn(
         environment=env,
+        eval_env = evaluator_env,
         progress_fn=wandb_progress,
-        policy_params_fn=policy_params_fn,
+        policy_params_fn=functools.partial(
+            policy_params_fn, jit_logging_inference_fn=jit_logging_inference_fn),
     )
 
 
