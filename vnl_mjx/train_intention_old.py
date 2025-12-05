@@ -178,7 +178,6 @@ def main(cfg: DictConfig):
     )
 
     training_params = dict(ppo_params)
-    del training_params["network_factory"]
     del training_params["eval_every"]
 
     normalize = lambda x, y: x
