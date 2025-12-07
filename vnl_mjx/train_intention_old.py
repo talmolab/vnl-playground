@@ -265,8 +265,7 @@ def main(cfg: DictConfig):
     #    scene_option,
     #)
 
-    def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn, policy_params_fn_key: jax.random.PRNGKey,render_video: bool = True):
-        del make_policy  # Unused.
+    def policy_params_fn(current_step, params, jit_logging_inference_fn, policy_params_fn_key: jax.random.PRNGKey,render_video: bool = True):
 
         # generate a rollout
         rollout = [start_state]
