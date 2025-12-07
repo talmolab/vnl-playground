@@ -69,17 +69,17 @@ ppo_params = config_dict.create(
     unroll_length=20,
     num_minibatches=8,
     num_updates_per_batch=2,
-    discounting=0.9,
+    discounting=0.97,
     learning_rate=1e-4,
     entropy_cost=1e-2,
-    num_envs=8192,
-    batch_size=1024,
+    num_envs=16384,
+    batch_size=2048,
     max_grad_norm=1.0,
     network_factory=config_dict.create(
         #policy_hidden_layer_sizes=(1024, 512, 256),
         #value_hidden_layer_sizes=(1024, 512, 256),
-        policy_hidden_layer_sizes=(256, 256, 256),
-        value_hidden_layer_sizes=(512, 512, 256),
+        policy_hidden_layer_sizes=(512, 256, 256),
+        value_hidden_layer_sizes=(512, 256, 256),
     ),
     eval_every=10_000_000,  # num_evals = num_timesteps // eval_every
 )
