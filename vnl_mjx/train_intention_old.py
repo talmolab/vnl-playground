@@ -295,7 +295,7 @@ def main(cfg: DictConfig):
         wandb.log({"eval/rollout": wandb.Video(video_path, format="mp4")}, commit=False)
         orbax_checkpointer = ocp.PyTreeCheckpointer()
         save_args = orbax_utils.save_args_from_target(params)
-        path = checkpoint_path / f"{current_step}"
+        path = f"{checkpoint_path}/{current_step}" 
         orbax_checkpointer.save(path, params, force=True, save_args=save_args)
 
     make_inference_fn, params, _ = train_fn(
