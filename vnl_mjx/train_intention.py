@@ -38,7 +38,7 @@ from ml_collections import config_dict
 
 from mujoco_playground import wrapper
 
-from vnl_mjx.tasks.rodent import head_track_rear, flat_arena
+from vnl_mjx.tasks.rodent import head_track_rear, flat_arena_new
 from vnl_mjx.tasks.rodent import wrappers
 
 from track_mjx.agent import checkpointing
@@ -51,7 +51,7 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 #env_cfg = head_track_rear.default_config()
-env_cfg = flat_arena.default_config()
+env_cfg = flat_arena_new.default_config()
 
 mimic_checkpoint_path = "/n/home09/dsprague/vnl-playground/model_checkpoints/251006_144548_202519"
 mimic_cfg = OmegaConf.create(
@@ -206,7 +206,7 @@ def make_logging_inference_fn(ppo_networks):
 
 if __name__ == "__main__":
     #env = head_track_rear.HeadTrackRear(config=env_cfg)
-    env = flat_arena.FlatWalk(config=env_cfg)
+    env = flat_arena_new.FlatWalk(config=env_cfg)
     env = wrappers.HighLevelWrapper( #defines wrapper that passses output of policy into decoder to produce actual control
         wrappers.FlattenObsWrapper(env),
         decoder_policy_fn,
@@ -215,7 +215,7 @@ if __name__ == "__main__":
     )
     eval_env = wrappers.HighLevelWrapper(
         #wrappers.FlattenObsWrapper(head_track_rear.HeadTrackRear(config=env_cfg)),
-        wrappers.FlattenObsWrapper(flat_arena.FlatWalk(config=env_cfg)),
+        wrappers.FlattenObsWrapper(flat_arena_new.FlatWalk(config=env_cfg)),
         decoder_policy_fn,
         mimic_cfg.network_config.intention_size,
         247,  # the head track task has no non-proprioceptive obs
