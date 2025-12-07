@@ -57,6 +57,8 @@ from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
 from track_mjx.analysis import render
 
+from pprint import pprint
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -229,7 +231,9 @@ def main(cfg: DictConfig):
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
-        wandb.log(metrics, commit=False)
+        pprint(metrics)
+        wandb.log(metrics)
+        #wandb.log(metrics, commit=False)
 
     # # define the jit reset/step functions
     jit_reset = jax.jit(evaluator_env.reset)
