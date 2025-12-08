@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=train_intention_old
-#SBATCH --account=olveczky
+#SBATCH --account=olveczky_lab
 #SBATCH --partition=gpu_h200
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
