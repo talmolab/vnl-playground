@@ -253,7 +253,8 @@ class FlatWalk(rodent_base.RodentEnv):
         # xmat is a flattened 3×3 rotation matrix, row-major
         R = body.xmat.reshape(3, 3)
         # Assume local +x axis is "nose forward"
-        forward_dir = R[:, 0]
+        #forward_dir = R[:, 0]
+        forward_dir = jp.array([1.0, 0.0, 0.0])
 
         forward_speed = jp.dot(vel_world, forward_dir)
         forward_speed = jp.maximum(forward_speed, 0.0)

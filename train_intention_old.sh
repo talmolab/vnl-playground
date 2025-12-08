@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=train_intention_old
-#SBATCH --account=kempner_hms
-#SBATCH --partition=kempner
+#SBATCH --account=olveczky
+#SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus-per-node=1
-#SBATCH --time=0-07:30
+#SBATCH --time=0-08:00
 #SBATCH --mem=256G
 #SBATCH --output=output/train_intention_old_output.out
 #SBATCH --error=error/train_intention_error_old.err

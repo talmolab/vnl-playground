@@ -32,7 +32,7 @@ train_setup:
   train_config:
     episode_length: 1500
     num_envs: 16384
-    num_timesteps: 3_000_000_000
+    num_timesteps: 1_500_000_000
     batch_size: 2048
     num_minibatches: 8
     num_updates_per_batch: 2
