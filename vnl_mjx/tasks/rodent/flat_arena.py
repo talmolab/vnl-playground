@@ -231,17 +231,42 @@ class FlatWalk(rodent_base.RodentEnv):
 
         return decorator
 
+    #@_named_reward("speed")
+    #def _speed_reward(
+    #    self, data: mjx.Data, info, metrics, weight) -> jp.ndarray:
+    #    body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+    #    vel = jp.linalg.norm(body.subtree_linvel)
+    #    target_speed = self._config.target_speed
+    #    reward_value = rw.tolerance(
+    #        vel, bounds=(target_speed, target_speed), margin=target_speed
+    #    )
+    #    metrics["rewards/speed"] = reward_value*weight
+    #    return reward_value*weight
+    
     @_named_reward("speed")
     def _speed_reward(
-        self, data: mjx.Data, info, metrics, weight) -> jp.ndarray:
+        self, data: mjx.Data, info, metrics, weight
+    ) -> jp.ndarray:
         body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
-        vel = jp.linalg.norm(body.subtree_linvel)
+        vel_world = body.subtree_linvel  # (3,)
+
+        # xmat is a flattened 3×3 rotation matrix, row-major
+        R = body.xmat.reshape(3, 3)
+        # Assume local +x axis is "nose forward"
+        forward_dir = R[:, 0]
+
+        forward_speed = jp.dot(vel_world, forward_dir)
+        forward_speed = jp.maximum(forward_speed, 0.0)
+
         target_speed = self._config.target_speed
         reward_value = rw.tolerance(
-            vel, bounds=(target_speed, target_speed), margin=target_speed
+            forward_speed,
+            bounds=(target_speed, target_speed),
+            margin=target_speed,
         )
-        metrics["rewards/speed"] = reward_value*weight
-        return reward_value*weight
+
+        metrics["rewards/forward_speed"] = reward_value * weight
+        return reward_value * weight
 
     @_named_reward("upright")
     def _upright_reward(self, data: mjx.Data, info, metrics, weight, deviation_angle=0):
@@ -297,27 +322,6 @@ class FlatWalk(rodent_base.RodentEnv):
 
         return decorator
 
-    @_named_termination_criterion("root_too_far")
-    def _root_too_far(self, data, info, max_distance) -> bool:
-        target = self._get_current_target(data, info)
-        root_pos = self.root_body(data).xpos
-        distance = jp.linalg.norm(target.root_position - root_pos)
-        return distance > max_distance
-
-    @_named_termination_criterion("root_too_rotated")
-    def _root_too_rotated(self, data, info, max_degrees) -> bool:
-        target = self._get_current_target(data, info)
-        root_quat = self.root_body(data).xquat
-        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
-        return ang_dist > jp.deg2rad(max_degrees)
-
-    @_named_termination_criterion("pose_error")
-    def _bad_pose(self, data, info, max_l2_error) -> bool:
-        target = self._get_current_target(data, info)
-        joints = self._get_joint_angles(data)
-        pose_error = jp.linalg.norm(target.joints - joints)
-        return pose_error > max_l2_error
     
     @_named_termination_criterion("fallen")
     def _fallen(self, data, info, healthy_z_range) -> bool:

@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus-per-node=1
-#SBATCH --time=0-08:00
+#SBATCH --time=0-012:00
 #SBATCH --mem=256G
 #SBATCH --output=output/train_intention_old_output.out
 #SBATCH --error=error/train_intention_error_old.err
