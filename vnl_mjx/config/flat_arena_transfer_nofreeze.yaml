@@ -24,7 +24,7 @@ train_setup:
   agent_name: rodent
   run_name: flat_arena
   checkpoint_to_restore: /n/home09/dsprague/vnl-playground/model_checkpoints/251006_144548_202519
-  freeze_decoder: True
+  freeze_decoder: False
   checkpoint_max_to_keep:
   checkpoint_keep_period:
   eval_every: 10_000_000

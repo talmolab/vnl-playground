@@ -39,8 +39,11 @@ def default_config() -> config_dict.ConfigDict:
         energy_termination_threshold=np.inf,
         target_speed=0.5,
         reward_terms = {
-            "speed": {"weight": 0.5},
-            "upright": {"weight":0.5},
+            "speed": {"weight": 0.75},
+            "upright": {"weight":0.25},
+            "control_cost": {"weight": 0.02},
+            "control_diff_cost": {"weight": 0.02},
+            "energy_cost": {"max_value": 50.0, "weight": 0.01},
         },
         termination_criteria={
             "nan_termination": {},
@@ -297,6 +300,34 @@ class FlatWalk(rodent_base.RodentEnv):
         metrics["rewards/upright"] = reward
 
         return reward
+    
+    @_named_reward("control_cost")
+    def _control_cost(self, data, info, metrics, imitation_reference, weight) -> float:
+        metrics["ctrl_sqr"] = ctrl_sqr = jp.sum(jp.square(info["action"]))
+        cost = weight * ctrl_sqr
+        metrics["rewards/control_cost"] = cost
+        return -cost
+
+    @_named_reward("control_diff_cost")
+    def _control_diff_cost(
+        self, data, info, metrics, imitation_reference, weight
+    ) -> float:
+        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(
+            jp.square(info["action"] - info["prev_action"])
+        )
+        cost = weight * ctrl_diff_sqr
+        metrics["rewards/control_diff_cost"] = cost
+        return -cost
+
+    @_named_reward("energy_cost")
+    def _energy_cost(
+        self, data, info, metrics, imitation_reference, weight, max_value
+    ) -> float:
+        energy_use = jp.sum(jp.abs(data.qvel[6:]) * jp.abs(data.qfrc_actuator[6:]))
+        metrics["energy_use"] = energy_use
+        cost = weight * jp.minimum(energy_use, max_value)
+        metrics["rewards/energy_cost"] = cost
+        return -cost
 
     def _get_termination(
         self,
