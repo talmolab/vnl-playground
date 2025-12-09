@@ -28,5 +28,5 @@ CFG=${CONFIGS[$SLURM_ARRAY_TASK_ID]}
 
 echo "Running config: $CFG"
 
-# Run
-MUJOCO_GL=egl python vnl_mjx/train_intention_old.py "$CFG"
+# Run with correct Hydra flag
+MUJOCO_GL=egl python vnl_mjx/train_intention_old.py --config-name "$CFG"
