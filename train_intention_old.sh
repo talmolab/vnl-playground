@@ -19,5 +19,7 @@ module load python
 # Activate conda environment
 source activate vnl
 
+pip install -e ../track-mjx/.
+
 # Run with correct Hydra flag
 MUJOCO_GL=egl python vnl_mjx/train_intention_old.py --config-name "flat_arena_transfer_nofreeze"
