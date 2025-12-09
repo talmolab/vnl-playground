@@ -39,7 +39,7 @@ def default_config() -> config_dict.ConfigDict:
         energy_termination_threshold=np.inf,
         target_speed=0.5,
         reward_terms = {
-            "progress": {"weight": 0.5},   # COM progress in +x
+            "progress": {"weight": 10},   # COM progress in +x
             "speed": {"weight": 0.3},   # Gaussian around target_speed
             "upright": {"weight": 0.2},  # improved tilt-based
             "control_cost": {"weight": 1e-3},
@@ -336,7 +336,7 @@ class FlatWalk(rodent_base.RodentEnv):
             # value_at_margin default is fine, or set explicitly if you want
             # value_at_margin=0.0,
         )
-        
+
         reward = upright * weight
         metrics["rewards/upright"] = reward
         return reward
