@@ -302,7 +302,7 @@ class FlatWalk(rodent_base.RodentEnv):
         return reward
     
     @_named_reward("control_cost")
-    def _control_cost(self, data, info, metrics, imitation_reference, weight) -> float:
+    def _control_cost(self, data, info, metrics, weight) -> float:
         metrics["ctrl_sqr"] = ctrl_sqr = jp.sum(jp.square(info["action"]))
         cost = weight * ctrl_sqr
         metrics["rewards/control_cost"] = cost
@@ -321,7 +321,7 @@ class FlatWalk(rodent_base.RodentEnv):
 
     @_named_reward("energy_cost")
     def _energy_cost(
-        self, data, info, metrics, imitation_reference, weight, max_value
+        self, data, info, metrics, weight, max_value
     ) -> float:
         energy_use = jp.sum(jp.abs(data.qvel[6:]) * jp.abs(data.qfrc_actuator[6:]))
         metrics["energy_use"] = energy_use
