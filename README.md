@@ -1,5 +1,5 @@
-# vnl-mjx
-Virtual Neural Lab (VNL) in MJX. Tasks driven deep-RL learning in JAX
+# vnl-playground
+Virtual Neural Lab (VNL) in MJX. Deep reinforcement learning environments for neuroscience following the [MuJoCo Playground](https://github.com/google-deepmind/mujoco_playground) API
 
 ## Quick Start
 
@@ -73,18 +73,16 @@ python -c "import jax; print(f'JAX version: {jax.__version__}'); print(f'Availab
 python -m ipykernel install --user --name=track-mjx --display-name="Python (track-mjx)"
 ```
 
-## Features Implemented
+## Features
 
 ### `mujoco_playground`-style Environment Management
 
-We adopt the `mujoco_playground` approach to environment and task management. In our implementation, each **task is tied to a specific walker**, rather than treating tasks and walkers as separate entities.  
-In this repository, **a task encapsulates its associated walker**.
+We adopt the `mujoco_playground` approach to environment and task management. Here, each task is tied to a specific walker, rather than treating tasks and walkers as separate entities (as in dm_control Composer). This allows environments to make more assumptions about body model definitions at the cost of repeated environment logic.
 
-### Support for `mj_spec`-based Model Editing
+### Programmatic Model Editing
 
-Unlike `mujoco_playground`, which loads models directly from disk via XML files, `vnl-mjx` uses `mj_spec` to enable procedural model creation and dynamic model editing.  
-This allows us to generate environments with controlled randomness, such as varying the target location for reaching tasks (@ericleonardis) or randomizing terrain shapes (@scott-yj-yang).
+`vnl-playground` uses [`mujoco.Mjspec`](https://mujoco.readthedocs.io/en/stable/python.html#model-editing) during model creation and editing. This allows us to generate environments procedurally, such as adding target locations for reaching tasks or randomizing terrain shapes.
 
-### Out-of-the-Box Training Support
+### RL Training with Brax
 
-For simple policy architectures (e.g., MLPs and basic vision networks) already implemented by the `brax` team, environments created in this repository can be trained **directly out of the box**, without additional modifications.
+RL training can be done out of the box with [Brax](https://github.com/google/brax) and [RSL-RL](https://github.com/leggedrobotics/rsl_rl). Our demo notebooks: WIP. Also, check out the [MuJoCo Playground examples](https://github.com/google-deepmind/mujoco_playground/tree/main/learning). 
