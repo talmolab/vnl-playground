@@ -90,6 +90,9 @@ class FlatWalk(rodent_base.RodentEnv):
             "proprioceptive_obs_size": proprioceptive_obs_size,
         }
 
+        info["prev_action"] = self.null_action()
+        info["action"] = self.null_action()
+
         reward = self._get_reward(data, info, metrics)
         done = self._is_done(data, info, metrics)
 
@@ -106,6 +109,9 @@ class FlatWalk(rodent_base.RodentEnv):
         data = mjx_env.step(self.mjx_model, state.data, action)
         
         info = state.info
+
+        info["prev_action"] = state.info["action"]
+        info["action"] = action
 
         # Get the new observation.
         task_obs, proprioceptive_obs = self._get_obs(data)
@@ -214,6 +220,9 @@ class FlatWalk(rodent_base.RodentEnv):
     #        "upright_reward": upright_reward,
     #        "speed * upright": speed_reward * upright_reward,
     #    }
+
+    def null_action(self) -> jp.ndarray:
+        return jp.zeros(self.action_size)
     
     def _get_reward(
         self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
