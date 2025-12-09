@@ -2,6 +2,7 @@
 #SBATCH --job-name=train_intention_old
 #SBATCH --account=kempner_hms
 #SBATCH --partition=kempner
+#SBATCH --array=0-2
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
@@ -19,7 +20,13 @@ module load python
 # Activate conda environment
 source activate vnl
 
-pip install -e ../track-mjx/.
+# List of config names
+CONFIGS=("flat_arena_transfer" "flat_arena_transfer_nofreeze" "flat_arena_basic")
+
+# Pick the config for this array task
+CFG=${CONFIGS[$SLURM_ARRAY_TASK_ID]}
+
+echo "Running config: $CFG"
 
 # Run with correct Hydra flag
-MUJOCO_GL=egl python vnl_mjx/train_intention_old.py --config-name "flat_arena_transfer_nofreeze"
+MUJOCO_GL=egl python vnl_mjx/train_intention_old.py --config-name "$CFG"

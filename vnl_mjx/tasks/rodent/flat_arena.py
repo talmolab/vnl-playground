@@ -39,11 +39,11 @@ def default_config() -> config_dict.ConfigDict:
         energy_termination_threshold=np.inf,
         target_speed=0.5,
         reward_terms = {
-            "speed": {"weight": 0.75},
-            "upright": {"weight":0.25},
-            "control_cost": {"weight": 0.02},
-            "control_diff_cost": {"weight": 0.02},
-            "energy_cost": {"max_value": 50.0, "weight": 0.01},
+            "speed": {"weight": 0.5},
+            "upright": {"weight":0.5},
+            #"control_cost": {"weight": 0.02},
+            #"control_diff_cost": {"weight": 0.02},
+            #"energy_cost": {"max_value": 50.0, "weight": 0.01},
         },
         termination_criteria={
             "nan_termination": {},
