@@ -39,9 +39,9 @@ def default_config() -> config_dict.ConfigDict:
         energy_termination_threshold=np.inf,
         target_speed=0.5,
         reward_terms = {
-            "progress": {"weight": 10},   # COM progress in +x
-            "speed": {"weight": 0.3},   # Gaussian around target_speed
-            "upright": {"weight": 0.2},  # improved tilt-based
+            "progress": {"weight": 50},   # COM progress in +x
+            "speed": {"weight": 0.5},   # Gaussian around target_speed
+            "upright": {"weight": 0.1},  # improved tilt-based
             "control_cost": {"weight": 1e-3},
             "control_diff_cost": {"weight": 1e-3},
             "energy_cost": {"max_value": 50.0, "weight": 5e-4},
