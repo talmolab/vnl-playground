@@ -319,7 +319,7 @@ class FlatWalk(rodent_base.RodentEnv):
 
     @_named_reward("control_diff_cost")
     def _control_diff_cost(
-        self, data, info, metrics, imitation_reference, weight
+        self, data, info, metrics, weight
     ) -> float:
         metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(
             jp.square(info["action"] - info["prev_action"])
