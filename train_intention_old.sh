@@ -20,4 +20,4 @@ module load python
 source activate vnl
 
 # Run with correct Hydra flag
-MUJOCO_GL=egl python vnl_mjx/train_intention_old.py --config-name "flat_arena_transfer"
+MUJOCO_GL=egl python vnl_mjx/train_intention_old.py --config-name "flat_arena_transfer_nofreeze"
