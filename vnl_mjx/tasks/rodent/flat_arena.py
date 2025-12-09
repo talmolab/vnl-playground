@@ -324,13 +324,19 @@ class FlatWalk(rodent_base.RodentEnv):
         z_torso = R[:, 2]
         cos_angle = jp.dot(z_torso, z_world)  # 1 = upright, -1 = upside-down
 
-        deviation = jp.cos(jp.deg2rad(deviation_angle))
+        # IMPORTANT: use NumPy here so these are *Python floats*, not JAX tracers
+        deviation = float(np.cos(np.deg2rad(deviation_angle)))  # e.g. cos(30°)
+        margin = float(1.0 - deviation)                         # > 0 scalar
+
         upright = rw.tolerance(
             cos_angle,
-            bounds=(deviation, 1.0),
+            bounds=(deviation, 1.0),      # lower/upper as Python floats
             sigmoid="quadratic",
-            margin=1.0 - deviation,
+            margin=margin,                # Python float
+            # value_at_margin default is fine, or set explicitly if you want
+            # value_at_margin=0.0,
         )
+        
         reward = upright * weight
         metrics["rewards/upright"] = reward
         return reward
