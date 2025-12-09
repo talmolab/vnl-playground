@@ -17,8 +17,8 @@ network_config:
   decoder_layer_sizes: [512, 512, 256, 256]  # loaded from checkpoint
   critic_layer_sizes: [512, 512, 512, 256, 256]
   intention_size: 60 # recover from the checkpoint 
-  kl_schedule: False # Whether to use a ramping KL schedule
-  kl_weight: 5e-4 # The maximum weight if schedule is True
+  kl_schedule: True # Whether to use a ramping KL schedule
+  kl_weight: 1e-3 # The maximum weight if schedule is True
 
 train_setup:
   agent_name: rodent
@@ -36,9 +36,9 @@ train_setup:
     batch_size: 2048
     num_minibatches: 8
     num_updates_per_batch: 2
-    learning_rate: 1e-4
+    learning_rate: 5e-5
     clipping_epsilon: 0.2
-    discounting: 0.97
+    discounting: 0.99
     action_repeat: 1
     entropy_cost: 1e-2
     reward_scaling: 1

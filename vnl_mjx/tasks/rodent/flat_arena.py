@@ -24,8 +24,8 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         ctrl_dt=0.01,
         sim_dt=0.002,
-        iterations=8,
-        ls_iterations=8,
+        iterations=5,
+        ls_iterations=5,
         mujoco_impl="jax",
         solver = 'newton',
         nconmax=256,
@@ -39,11 +39,12 @@ def default_config() -> config_dict.ConfigDict:
         energy_termination_threshold=np.inf,
         target_speed=0.5,
         reward_terms = {
-            "speed": {"weight": 0.5},
-            "upright": {"weight":0.5},
-            #"control_cost": {"weight": 0.02},
-            #"control_diff_cost": {"weight": 0.02},
-            #"energy_cost": {"max_value": 50.0, "weight": 0.01},
+            "progress": {"weight": 0.5},   # COM progress in +x
+            "speed": {"weight": 0.3},   # Gaussian around target_speed
+            "upright": {"weight": 0.2},  # improved tilt-based
+            "control_cost": {"weight": 1e-3},
+            "control_diff_cost": {"weight": 1e-3},
+            "energy_cost": {"max_value": 50.0, "weight": 5e-4},
         },
         termination_criteria={
             "nan_termination": {},
@@ -92,6 +93,10 @@ class FlatWalk(rodent_base.RodentEnv):
 
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
+
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        cur_x = torso.xpos[0]
+        info["prev_x"] = cur_x  # jp.array(cur_x) is also fine
 
         reward = self._get_reward(data, info, metrics)
         done = self._is_done(data, info, metrics)
@@ -255,6 +260,30 @@ class FlatWalk(rodent_base.RodentEnv):
     #    metrics["rewards/speed"] = reward_value*weight
     #    return reward_value*weight
     
+    @_named_reward("progress")
+    def _progress_reward(self, data: mjx.Data, info, metrics, weight) -> jp.ndarray:
+        """Reward based on forward COM progress along world +x.
+
+        Only counts positive forward displacement (no reward for moving backward).
+        """
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        cur_x = torso.xpos[0]
+
+        # Get previous x; fall back to current x if not set (e.g. first step)
+        prev_x = info.get("prev_x", cur_x)
+
+        # Forward progress only
+        delta_x = jp.maximum(cur_x - prev_x, 0.0)
+
+        # Update prev_x for the next step
+        info["prev_x"] = cur_x
+
+        # Scale and log
+        reward = delta_x * weight
+        metrics["rewards/progress"] = reward
+        return reward
+
+
     @_named_reward("speed")
     def _speed_reward(
         self, data: mjx.Data, info, metrics, weight
@@ -265,49 +294,45 @@ class FlatWalk(rodent_base.RodentEnv):
         # xmat is a flattened 3×3 rotation matrix, row-major
         R = body.xmat.reshape(3, 3)
         # Assume local +x axis is "nose forward"
-        #forward_dir = R[:, 0]
-        forward_dir = jp.array([1.0, 0.0, 0.0])
+        forward_dir = R[:, 0]
+        #forward_dir = jp.array([1.0, 0.0, 0.0])
 
         forward_speed = jp.dot(vel_world, forward_dir)
         forward_speed = jp.maximum(forward_speed, 0.0)
 
         target_speed = self._config.target_speed
-        reward_value = rw.tolerance(
-            forward_speed,
-            bounds=(target_speed, target_speed),
-            margin=target_speed,
-        )
+        speed_error = (forward_speed - target_speed) / target_speed
+        reward_value = jp.exp(-0.5 * (speed_error ** 2) / 0.25)
+
+        #target_speed = self._config.target_speed
+        #reward_value = rw.tolerance(
+        #    forward_speed,
+        #    bounds=(target_speed, target_speed),
+        #    margin=target_speed,
+        #)
 
         metrics["rewards/forward_speed"] = reward_value * weight
         return reward_value * weight
 
     @_named_reward("upright")
-    def _upright_reward(self, data: mjx.Data, info, metrics, weight, deviation_angle=0):
-        """Returns a reward proportional to how upright the torso is.
+    def _upright_reward(self, data, info, metrics, weight, deviation_angle=30):
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        R = torso.xmat.reshape(3, 3)
+        # world z-axis:
+        z_world = jp.array([0., 0., 1.])
+        # torso's local z-axis in world frame:
+        z_torso = R[:, 2]
+        cos_angle = jp.dot(z_torso, z_world)  # 1 = upright, -1 = upside-down
 
-        Args:
-        physics: an instance of `Physics`.
-        walker: the focal walker.
-        deviation_angle: A float, in degrees. The reward is 0 when the torso is
-            exactly upside-down and 1 when the torso's z-axis is less than
-            `deviation_angle` away from the global z-axis.
-        """
-        deviation = np.cos(np.deg2rad(deviation_angle))
-        # xmat is the 3x3 rotation matrix of the current frame
-        upright_torso = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xmat[
-            -1, -1
-        ]
+        deviation = jp.cos(jp.deg2rad(deviation_angle))
         upright = rw.tolerance(
-            upright_torso,
-            bounds=(deviation, np.inf),
-            sigmoid="linear",
-            margin=1 + deviation,
-            value_at_margin=0,
+            cos_angle,
+            bounds=(deviation, 1.0),
+            sigmoid="quadratic",
+            margin=1.0 - deviation,
         )
-
-        reward = np.min(upright)*weight
+        reward = upright * weight
         metrics["rewards/upright"] = reward
-
         return reward
     
     @_named_reward("control_cost")
