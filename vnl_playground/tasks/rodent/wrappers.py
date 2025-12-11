@@ -54,6 +54,17 @@ class FlattenObsWrapper(wrapper.Wrapper):
         rec(metrics)
         return new_metrics
 
+    @property
+    def unwrapped(self) -> "MjxEnv":
+        return self
+    
+    @property
+    def _mjx_model(self):
+        return self.env._mjx_model
+
+    @_mjx_model.setter
+    def _mjx_model(self, value):
+        self.env._mjx_model = value
 
 class HighLevelWrapper(wrapper.Wrapper):
     """Takes a decoder inference function and uses it to get the ctrl used in the sim step.
