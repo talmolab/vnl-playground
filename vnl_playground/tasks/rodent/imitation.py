@@ -10,6 +10,7 @@ import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
+from jax import flatten_util
 
 from .. import utils
 from . import base as rodent_base
@@ -487,7 +488,7 @@ class Imitation(rodent_base.RodentEnv):
     @_named_termination_criterion("nan_termination")
     def _nan_termination(self, data, info) -> bool:
         # Handle nans during sim by resetting env
-        flattened_vals, _ = jax.flatten_util.ravel_pytree(data)
+        flattened_vals, _ = flatten_util.ravel_pytree(data)
         num_nans = jp.sum(jp.isnan(flattened_vals))
         return num_nans > 0
 
@@ -610,7 +611,7 @@ class Imitation(rodent_base.RodentEnv):
     @property
     def proprioceptive_obs_size(self) -> int:
         obs_size = self.non_flattened_observation_size
-        return jp.sum(jax.flatten_util.ravel_pytree(obs_size["proprioception"])[0])
+        return jp.sum(flatten_util.ravel_pytree(obs_size["proprioception"])[0])
 
     @property
     def non_proprioceptive_obs_size(self) -> int:
@@ -619,7 +620,7 @@ class Imitation(rodent_base.RodentEnv):
     @property
     def observation_size(self) -> mjx_env.ObservationSize:
         obs = self.non_flattened_observation_size
-        return jp.sum(jax.flatten_util.ravel_pytree(obs)[0])
+        return jp.sum(flatten_util.ravel_pytree(obs)[0])
 
     @property
     def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
