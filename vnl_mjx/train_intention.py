@@ -34,7 +34,6 @@ from omegaconf import DictConfig, OmegaConf
 import functools
 import wandb
 import orbax.checkpoint as ocp
-from track_mjx.agent.mlp_ppo import ppo, ppo_networks
 import warnings
 from pathlib import Path
 from datetime import datetime
@@ -43,6 +42,8 @@ import mujoco
 
 from vnl_mjx.tasks.rodent import flat_arena, bowl_escape, maze_forage
 
+
+from track_mjx.agent.mlp_ppo import ppo, ppo_networks
 from track_mjx.agent import checkpointing
 from track_mjx.agent import wandb_logging
 from track_mjx.analysis import render

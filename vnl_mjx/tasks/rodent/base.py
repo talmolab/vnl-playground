@@ -25,7 +25,7 @@ def get_assets() -> Dict[str, bytes]:
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.RODENT_XML_PATH,
-        arena_xml_path=consts.WHITE_ARENA_XML_PATH,
+        arena_xml_path=consts.ARENA_XML_PATH,#WHITE_ARENA_XML_PATH,
         sim_dt=0.002,
         ctrl_dt=0.01,
         solver="cg",

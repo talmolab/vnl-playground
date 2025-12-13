@@ -7,11 +7,11 @@
 
   <asset>
     <!-- <skin name="skin" file="rodent_walker_skin.skn"/> -->
-    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <texture name="grid" type="2d" builtin="checker" width="256" height="256" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
     <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
   </asset>
 
   <worldbody>
-    <geom name="floor" pos="0 0 -0.005" size="10 10 0.005" type="plane" material="grid"/>
+    <geom name="floor" pos="0 0 -0.0078" size="10 10 0.005" type="plane" material="grid"/>
   </worldbody>
 </mujoco>

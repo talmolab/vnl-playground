@@ -12,6 +12,6 @@
   </asset>
 
   <worldbody>
-    <geom name="floor" pos="0 0 -0.005" size="10 10 0.005" type="plane" material="grid"/>
+    <geom name="floor" type="plane" size="5 5 .1" material="grid" pos="0 0 -.13" />
   </worldbody>
 </mujoco>
