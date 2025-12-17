@@ -20,7 +20,12 @@ env_config:
     torque_actuators: False  # Changed from False for better performance
     rescale_factor: 1.04
     dim: 2
-    friction: [1.0, 0.1, 0.005, 0.0001, 0.0001]
+    friction: 
+      tan_floor: 1.0
+      tan_body: 0.1
+      tor: 0.005
+      roll_floor: 0.0001
+      roll_body: 0.0001
 
     root_body: torso13_body
 
@@ -131,30 +136,30 @@ logging_config:
   algo_name: ppo
   exp_name: test_vnl_playground
   rollout_metrics:
-    - root_pos_reward
-    - root_quat_reward
-    - joints_reward
-    - joints_vel_reward
-    - bodies_pos_reward
-    - end_eff_reward
-    - upright_reward
-    - control_cost
-    - control_diff_cost
-    - energy_cost
-    - fall
-    - root_too_far
-    - pose_error
-    - root_too_rotated
-    - root_pos_dist
-    - root_quat_dist
-    - joints_dist
-    - joints_vel_dist
-    - bodies_pos_dist
-    - end_eff_dist
-    - upright_dist
-    - control
-    - control_diff
-    - energy
+    - rewards/root_pos
+    - rewards/root_quat
+    - rewards/joints
+    - rewards/joints_vel
+    - rewards/bodies_pos
+    - rewards/end_eff
+    - rewards/upright
+    - costs/control
+    - costs/control_diff
+    - costs/energy
+    - terminations/fall
+    - terminations/root_too_far
+    - terminations/pose_error
+    - terminations/root_too_rotated
+    - dists/root_pos
+    - dists/root_quat
+    - dists/joints
+    - dists/joints_vel
+    - dists/bodies_pos
+    - dists/end_eff
+    - dists/upright
+    - magnitudes/control
+    - magnitudes/control_diff
+    - magnitudes/energy
   
 walker_config:
   xml_path: /home/aaprasad/mnt/projects/con3trol/src/track-mjx/track_mjx/environment/walker/assets/celegans/celegans_slide.xml

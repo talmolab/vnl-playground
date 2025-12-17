@@ -109,7 +109,7 @@ class CelegansEnv(mjx_env.MjxEnv):
                     "solver": self.config.solver,
                     "ls_iterations": self.config.ls_iterations,
                     "noslip_iterations": self.config.noslip_iterations,
-                    "nconmax": self.config.nconmax,
+                    "naconmax": self.config.naconmax,
                     "njmax": self.config.njmax,
                 },
                 "mujoco_impl": self.config.mujoco_impl,

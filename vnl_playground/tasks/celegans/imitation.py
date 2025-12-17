@@ -252,7 +252,8 @@ class Imitation(worm_base.CelegansEnv):
         reward = self._get_reward(data, info, metrics)
         cost = self._get_cost(data, info, metrics)
         net_reward = reward - cost
-
+        net_reward = jp.nan_to_num(net_reward)
+        
         done = self._is_done(data, info, metrics)
         
         return mjx_env.State(
@@ -299,7 +300,7 @@ class Imitation(worm_base.CelegansEnv):
         reward = self._get_reward(data, info, state.metrics)
         cost = self._get_cost(data, info, state.metrics)
         net_reward = reward - cost
-        net_reward = jp.nan_to_num(reward)
+        net_reward = jp.nan_to_num(net_reward)
 
         state = state.replace(
             data=data,
