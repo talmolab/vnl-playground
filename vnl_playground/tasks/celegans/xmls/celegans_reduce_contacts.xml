@@ -15,7 +15,7 @@
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="1000"/>
     </default>
     <default class="collision">
-       <geom type="sphere" contype="1" conaffinity="0" condim="3" group="4" density="0"/>
+       <geom type="sphere" contype="1" conaffinity="0" condim="3"/>
     </default>
   </default>
   <asset>
@@ -39,7 +39,7 @@
     <mesh name="ellipsoid13" file="Ellipsoid.013.stl" refpos="0.05032206119162645 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0" scale="0.416572 0.416572 0.416572" />
     <mesh name="ellipsoid14" file="Ellipsoid.014.stl" refpos="-0.05032206119162645 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0" scale="0.416572 0.416572 0.416572" />
     <mesh name="ellipsoid15" file="Ellipsoid.015.stl" refpos="-0.15096618357487912 0 0" refquat="1.0 0.0 0 0" scale="0.416572 0.416572 0.416572" />
-    <mesh name="ellipsoid16" file="Ellipsoid.016.stl" refpos="-0.25161030595813205 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0" scale="0.416572 0.416572 0.416572" />
+    <mesh name="ellipsoid16" file="Ellipsoid.016.stl" refpos="-0.25density="0"161030595813205 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0" scale="0.416572 0.416572 0.416572" />
     <mesh name="ellipsoid17" file="Ellipsoid.017.stl" refpos="-0.35225442834138493 0 0" refquat="1.0 0.0 0 0" scale="0.416572 0.416572 0.416572" />
     <mesh name="ellipsoid18" file="Ellipsoid.018.stl" refpos="-0.45289855072463764 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0" scale="0.416572 0.416572 0.416572" />
     <mesh name="ellipsoid19" file="Ellipsoid.019.stl" refpos="-0.5535426731078905 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0" scale="0.416572 0.416572 0.416572" />

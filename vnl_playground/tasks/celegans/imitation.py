@@ -631,7 +631,7 @@ class Imitation(worm_base.CelegansEnv):
         metrics["rewards/joints"] = reward
         metrics["dists/joints"] = distance
         for joint_name, joint_dist in zip(self.joint_names, error):
-            metrics[f"errors/joints/{joint_name}"] = joint_dist
+            metrics[f"errors/joints/{joint_name}"] = jp.abs(joint_dist)
         return reward
 
     @_named_reward("joints_vel")
