@@ -66,6 +66,7 @@ def default_config() -> config_dict.ConfigDict:
         ctrl_dt=0.01,
         sim_dt=0.002,
         solver="cg",
+        mujoco_impl="warp",
         iterations=10,
         ls_iterations=5,
         noslip_iterations=0,
@@ -80,6 +81,8 @@ def default_config() -> config_dict.ConfigDict:
         bowl_vsize=0.2,
         bowl_sigma=1.25,
         bowl_amplitude=-10,
+        nconmax=22*1024+1, # This heavily impacts the memory usage of the warp
+        njmax=650,
     )
 
 
@@ -109,17 +112,10 @@ class BowlEscape(rodent_base.RodentEnv):
             rng (jax.Array, optional): Random number generator key for reproducible randomness.
             config (config_dict.ConfigDict, optional): configs for the bowl escape. Defaults to default_config().
             config_overrides (Optional[Dict[str, Union[str, int, list[Any]]]], optional): overrides for the configuration. Defaults to None.
-
-        Raises:
-            NotImplementedError: Raised if vision is enabled.
         """
         # super has already init a spec with the provided arena xml path
         super().__init__(config, config_overrides)
         self._rng = rng
-        if self._config.vision:
-            raise NotImplementedError(
-                f"Vision not implemented for {self.__class__.__name__}."
-            )
         self._vision = self._config.vision
         self._initialize_noisy_bowl(self._rng)
         # Compute rodent initial pose on bowl
@@ -138,31 +134,16 @@ class BowlEscape(rodent_base.RodentEnv):
         self.compile()
 
         if self._vision:
-            try:
-                # pylint: disable=import-outside-toplevel
-                from madrona_mjx.renderer import (
-                    BatchRenderer,
-                )  # pytype: disable=import-error
-            except ImportError:
-                warnings.warn("Madrona MJX not installed. Cannot use vision with.")
-                return
-            self.renderer = BatchRenderer(
-                m=self._mjx_model,
-                gpu_id=self._config.vision_config.gpu_id,
-                num_worlds=self._config.vision_config.render_batch_size,
-                batch_render_view_width=self._config.vision_config.render_width,
-                batch_render_view_height=self._config.vision_config.render_height,
-                enabled_geom_groups=np.asarray(
-                    self._config.vision_config.enabled_geom_groups
-                ),
-                enabled_cameras=np.asarray(
-                    [
-                        0,
-                    ]
-                ),
-                add_cam_debug_geo=False,
-                use_rasterizer=self._config.vision_config.use_rasterizer,
-                viz_gpu_hdls=None,
+            # Initialize mujoco_warp renderer instead of Madrona
+            self.init_warp_renderer(
+                nworld=self._config.vision_config.render_batch_size,
+                width=self._config.vision_config.render_width,
+                height=self._config.vision_config.render_height,
+                render_rgb=True,
+                render_depth=False,
+                use_textures=True,
+                use_shadows=False,
+                enabled_geom_groups=self._config.vision_config.enabled_geom_groups,
             )
 
     def _initialize_noisy_bowl(self, rng: jax.Array) -> None:
@@ -192,10 +173,11 @@ class BowlEscape(rodent_base.RodentEnv):
         """
         info = {
             # need to use this name for compatibility with track-mjx training scripts
-            "last_act": jp.zeros(self.mjx_model.nu),
-            "last_last_act": jp.zeros(self.mjx_model.nu),
+            "prev_action": jp.zeros(self.mjx_model.nu),
+            "prev_prev_action": jp.zeros(self.mjx_model.nu),
         }
-        data = mjx_env.init(self.mjx_model)
+        data = mjx_env.make_data(self.mj_model, impl=self._config.mujoco_impl, nconmax=self._config.nconmax,
+        njmax=self._config.njmax,)
         task_obs, proprioceptive_obs = self._get_obs(data, info)
         task_obs_size = task_obs.shape[0]
         proprioceptive_obs_size = proprioceptive_obs.shape[0]
@@ -207,10 +189,12 @@ class BowlEscape(rodent_base.RodentEnv):
         # TODO: currently, this denotes the task specific inputs
 
         if self._vision:
-            # if vision, the observation is the rendered image
-            render_token, rgb, _ = self.renderer.init(data, self._mjx_model)
-            info.update({"render_token": render_token})
-            obs = _rgba_to_grayscale(rgb[0].astype(jp.float32)) / 255.0
+            # Sync state to mujoco_warp and render
+            self.sync_mjw_data_from_mjx(data)
+            render_result = self.render_warp(cam_idx=0, world_idx=0)
+            rgb = render_result['rgb']
+            # Convert to grayscale and normalize
+            obs = _rgba_to_grayscale(jp.array(rgb).astype(jp.float32)) / 255.0
             obs_history = jp.tile(obs, (self._config.vision_config.history, 1, 1))
             info.update({"obs_history": obs_history})
             obs = {"pixels/view_0": obs_history.transpose(1, 2, 0)}
@@ -233,19 +217,22 @@ class BowlEscape(rodent_base.RodentEnv):
         obs = jp.concatenate([task_obs, proprioceptive_obs])
         # Compute the reward.
         rewards = self._get_reward(data)
-        state.info["last_last_act"] = state.info["last_act"]
-        state.info["last_act"] = action
+        state.info["prev_prev_action"] = state.info["prev_action"]
+        state.info["prev_action"] = action
         reward = rewards["escape * upright"] + rewards["speed_reward"]
-        # if self._vision:
-        #     _, rgb, _ = self.renderer.render(state.info["render_token"], data)
-        #     # Update observation buffer
-        #     obs_history = state.info["obs_history"]
-        #     obs_history = jp.roll(obs_history, 1, axis=0)
-        #     obs_history = obs_history.at[0].set(
-        #         _rgba_to_grayscale(rgb[0].astype(jp.float32)) / 255.0
-        #     )
-        #     state.info["obs_history"] = obs_history
-        #     obs = {"pixels/view_0": obs_history.transpose(1, 2, 0)}
+        if self._vision:
+            # Sync state to mujoco_warp and render
+            self.sync_mjw_data_from_mjx(data)
+            render_result = self.render_warp(cam_idx=0, world_idx=0)
+            rgb = render_result['rgb']
+            # Update observation buffer
+            obs_history = state.info["obs_history"]
+            obs_history = jp.roll(obs_history, 1, axis=0)
+            obs_history = obs_history.at[0].set(
+                _rgba_to_grayscale(jp.array(rgb).astype(jp.float32)) / 255.0
+            )
+            state.info["obs_history"] = obs_history
+            obs = {"pixels/view_0": obs_history.transpose(1, 2, 0)}
         done = self._get_termination(data)
         # Handle nans during sim by resetting env
         reward = jp.nan_to_num(reward)
@@ -273,29 +260,39 @@ class BowlEscape(rodent_base.RodentEnv):
         Returns:
             jp.ndarray: The concatenated position and velocity observations.
         """
-        proprioception = self._get_proprioception(data)
+        proprioception = self._get_proprioception(data, info)
         kinematic_sensors = self._get_kinematic_sensors(data)
         touch_sensors = self._get_touch_sensors(data)
         appendages_pos = self._get_appendages_pos(data)
         origin = self._get_origin(data)
         task_obs = jp.concatenate(
             [
-                info["last_act"],
+                info["prev_action"],
                 proprioception,
                 kinematic_sensors,
                 touch_sensors,
                 origin,
             ]
         )
-
+        
+        qpos = data.qpos[7:]  # skip the root joint
+        qvel = data.qvel[6:]  # skip the root joint velocity
+        actuator_ctrl = data.qfrc_actuator
+        _, _, body_height = data.bind(
+            self._mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos
+        world_zaxis = data.bind(
+            self._mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xmat.flatten()[6:]
+        appendages_pos = self._get_appendages_pos(data)
         proprioceptive_obs = jp.concatenate(
             [
-                # align with the most recent checkpoint
-                data.qpos[7:],
-                data.qvel[6:],
-                data.qfrc_actuator,
+                qpos,
+                qvel,
+                actuator_ctrl,
+                jp.array([body_height]),
+                world_zaxis,
                 appendages_pos,
-                kinematic_sensors,
             ]
         )
         return task_obs, proprioceptive_obs

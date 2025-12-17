@@ -7,6 +7,7 @@ from etils import epath
 import logging
 import jax
 import jax.numpy as jp
+import jax.flatten_util
 import mujoco_playground
 import numpy as np
 from ml_collections import config_dict
@@ -16,6 +17,16 @@ from mujoco import mjx
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.rodent import consts
 from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
+
+# Optional mujoco_warp import for rendering
+try:
+    import warp as wp
+    import mujoco_warp as mjw
+    MUJOCO_WARP_AVAILABLE = True
+except ImportError:
+    MUJOCO_WARP_AVAILABLE = False
+    wp = None
+    mjw = None
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -35,7 +46,7 @@ def default_config() -> config_dict.ConfigDict:
         iterations=4,
         ls_iterations=4,
         noslip_iterations=0,
-        mujoco_impl="jax",
+        mujoco_impl="warp",
     )
 
 
