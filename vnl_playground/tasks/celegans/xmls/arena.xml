@@ -1,4 +1,6 @@
 <mujoco>
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true" meshdir="./meshes" />
+  <option density="1.2" solver="CG" iterations="6" ls_iterations="6" timestep="0.002" viscosity="0.1" cone="pyramidal" />
   <visual>
     <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
     <global offwidth="2048" offheight="1536"/>
@@ -12,6 +14,6 @@
   </asset>
 
   <worldbody>
-    <geom name="floor" pos="0 0 -0.005" size="10 10 0.005" type="plane" material="grid"/>
+    <geom contype="0" conaffinity="1" name="floor" pos="0 0 -0.005" size="10 10 0.005" type="plane" material="grid"/>
   </worldbody>
 </mujoco>
