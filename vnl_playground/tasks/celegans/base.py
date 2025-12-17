@@ -51,11 +51,12 @@ def default_config() -> config_dict.ConfigDict:
         sensors=consts.SENSORS,
         sim_dt=0.002,
         ctrl_dt=0.01,
+        integrator="euler",
         solver="cg",
         iterations=4,
         ls_iterations=4,
         noslip_iterations=0,
-        nconmax=256,
+        naconmax=16*256,
         njmax=256,
         mujoco_impl="jax",
     )
@@ -104,6 +105,7 @@ class CelegansEnv(mjx_env.MjxEnv):
                 "dt": {"sim": self.config.sim_dt, "ctrl": self.config.ctrl_dt},
                 "physics_iterations": self.config.iterations,
                 "solver_config": {
+                    "integrator": self.config.integrator,
                     "solver": self.config.solver,
                     "ls_iterations": self.config.ls_iterations,
                     "noslip_iterations": self.config.noslip_iterations,
@@ -215,7 +217,7 @@ class CelegansEnv(mjx_env.MjxEnv):
                         geomname2="floor",
                         condim=3,
                         friction=friction,
-                    )  # , solimp=solimp)
+                        solimp=solimp)
 
     def add_ghost(
         self,
@@ -305,13 +307,15 @@ class CelegansEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self.config.iterations
             self._mj_model.opt.ls_iterations = self.config.ls_iterations
+            self._mj_model.opt.integrator = {
+                "euler": mujoco.mjtIntegrator.mjINT_EULER,
+                "rk4": mujoco.mjtIntegrator.mjINT_RK4}[self._config.integrator.lower()]
             self._mj_model.opt.solver = {
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
             self._mjx_model = mjx.put_model(
-                self._mj_model
-            )  # , impl=self.config.mujoco_impl)
+                self._mj_model, impl=self.config.mujoco_impl)
             self._compiled = True
 
     def _get_root_pos(self, data: mjx.Data) -> jp.ndarray:
