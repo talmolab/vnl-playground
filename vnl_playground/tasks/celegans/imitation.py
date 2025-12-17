@@ -43,17 +43,19 @@ def default_config() -> config_dict.ConfigDict:
         mujoco_impl="jax",
         sim_dt=0.002,
         ctrl_dt=0.01,
+        integrator="euler",
         solver="cg",
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
-        nconmax=256,
+        naconmax=16*8192,
         njmax=256,
+        init_pos={"x": 0.0, "y": 0.0, "z": 0.05},
         torque_actuators=False,
         rescale_factor=1.0,
         dim=3,
-        friction=(1, 1, 0.005, 0.0001, 0.0001),
-        solimp=(0.9, 0.95, 0.001, 0.5, 2),
+        friction={"tan_floor":1, "tan_body":1, "tor": 0.005, "roll_floor":0.0001, "roll_body": 0.0001},
+        solimp={"d0":0.9, "dwidth":0.95, "width":0.001, "midpoint":0.5, "power":2},
         mocap_hz=20,
         reference_clips=ReferenceClips(
             data_path=consts.REFERENCE_H5_PATH, n_frames_per_clip=250
@@ -129,18 +131,24 @@ class Imitation(worm_base.CelegansEnv):
         """
         super().__init__(config, config_overrides)
 
+        #ConfigDict annoyingly sorts dictionary by keys
+        friction = [self.config.friction["tan_floor"], self.config.friction["tan_body"], self.config.friction["tor"], self.config.friction["roll_floor"], self.config.friction["roll_body"]] 
+        solimp = [self.config.solimp["d0"], self.config.solimp["dwidth"], self.config.solimp["width"], self.config.solimp["midpoint"], self.config.solimp["power"]]
+        
         self.add_worm(
+            pos=list(self._config.init_pos.values()),
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
             dim=self._config.dim,
-            friction=self._config.friction,
-            solimp=self._config.solimp,
+            friction=friction,
+            solimp=solimp,
         )
         if self._config.with_ghost:
             self.add_ghost_worm(
-                rescale_factor=self._config.rescale_factor, dim=self._config.dim
+                rescale_factor=self._config.rescale_factor, dim=self._config.dim, init_pos=list(self._config.init_pos.values())
             )
 
+        self.max_reward = sum([params["weight"] for params in self._config.reward_terms.values() if "weight" in params])
         self._config.termination_criteria["nan"] = {}  # nan termination always on
 
         self.compile()
@@ -217,7 +225,6 @@ class Imitation(worm_base.CelegansEnv):
         info: dict[str, Any] = {
             "start_frame": start_frame,
             "reference_clip": clip_idx,
-            "prev_ctrl": jp.zeros((self.action_size,)),
             "action_buffer": jp.zeros((self._config.var_window_size, self.action_size)),
             "buffer_index": 0,
         }
@@ -240,29 +247,14 @@ class Imitation(worm_base.CelegansEnv):
 
         obs = jax.flatten_util.ravel_pytree(obs)[0]  # TODO: Use wrapper instead.
 
-        rewards, dists = self._get_rewards(data, info)
-        total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
-        costs, magnitudes = self._get_costs(data, info)
-        cost = jp.sum(jax.flatten_util.ravel_pytree(costs)[0])
-        net_reward = total_reward - cost
+        metrics = {"current_frame": jp.astype(self._get_cur_frame(data, info), float)}
 
-        termination_conditions = self._get_termination_conditions(data, info)
-        terminated = jp.any(jax.flatten_util.ravel_pytree(termination_conditions)[0])
+        reward = self._get_reward(data, info, metrics)
+        cost = self._get_cost(data, info, metrics)
+        net_reward = reward - cost
 
-        done = jp.logical_or(terminated, info["truncated"])
-
-        metrics = {
-            **rewards,
-            **costs,
-            **{n: jp.astype(t, float) for n, t in termination_conditions.items()},
-            **dists,
-            **magnitudes,
-            "current_frame": jp.astype(self._get_cur_frame(data, info), float),
-            "total_reward": total_reward,
-            "total_cost": cost,
-            "net_reward": net_reward,
-            "terminated": jp.astype(terminated, float),
-        }
+        done = self._is_done(data, info, metrics)
+        
         return mjx_env.State(
             data, obs, net_reward, jp.astype(done, float), metrics, info
         )
@@ -302,38 +294,22 @@ class Imitation(worm_base.CelegansEnv):
         obs = self._get_obs(data, info)
         obs = jax.flatten_util.ravel_pytree(obs)[0]
 
-        termination_conditions = self._get_termination_conditions(data, info)
-        terminated = jp.any(jax.flatten_util.ravel_pytree(termination_conditions)[0])
+        done = self._is_done(data, info, state.metrics)
 
-        done = jp.logical_or(terminated, info["truncated"])
+        reward = self._get_reward(data, info, state.metrics)
+        cost = self._get_cost(data, info, state.metrics)
+        net_reward = reward - cost
+        net_reward = jp.nan_to_num(reward)
 
-        rewards, dists = self._get_rewards(data, info)
-        costs, magnitudes = self._get_costs(data, info)
-
-        total_reward = jp.sum(jax.flatten_util.ravel_pytree(rewards)[0])
-        cost = jp.sum(jax.flatten_util.ravel_pytree(costs)[0])
-        net_reward = total_reward - cost
         state = state.replace(
             data=data,
             obs=obs,
             info=info,
             reward=net_reward,
-            done=jp.astype(done, float),
+            done=done.astype(float),
         )
-
-        metrics = {
-            **rewards,
-            **costs,
-            **{n: jp.astype(t, float) for n, t in termination_conditions.items()},
-            **dists,
-            **magnitudes,
-            "current_frame": jp.astype(self._get_cur_frame(data, info), float),
-            "total_reward": total_reward,
-            "total_cost": cost,
-            "net_reward": net_reward,
-            "terminated": jp.astype(terminated, float),
-        }
-        state.metrics.update(metrics)
+        current_frame = self._get_cur_frame(data, info)
+        state.metrics["current_frame"] = jp.astype(current_frame, float)
 
         return state
 
@@ -352,9 +328,9 @@ class Imitation(worm_base.CelegansEnv):
             imitation_target=self._get_imitation_target(data, info),
         )
 
-    def _get_rewards(
-        self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> Tuple[Mapping[str, float], Mapping[str, float]]:
+    def _get_reward(
+        self, data: mjx.Data, info: Mapping[str, Any], metrics: Mapping[str, Any]
+    ) -> Mapping[str, float]:
         """Compute all reward terms for the current state.
 
         Args:
@@ -365,15 +341,15 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (reward_dict, distance_dict) where reward_dict contains
             computed rewards and distance_dict contains the corresponding distances.
         """
-        rewards, dists = dict(), dict()
+        total_reward = 0.0
         for name, kwargs in self.reward_terms.items():
-            r, d = _REWARD_FCN_REGISTRY[name](self, data, info, **kwargs)
-            rewards[f"{name}_reward"] = r
-            dists[f"{name}_dist"] = d
-        return rewards, dists
+            total_reward += _REWARD_FCN_REGISTRY[name](self, data, info, metrics, **kwargs)
+        metrics["rewards/total"] = total_reward
+        metrics["reward/normalized"] = total_reward/self.max_reward
+        return total_reward
 
-    def _get_termination_conditions(
-        self, data: mjx.Data, info: Mapping[str, Any]
+    def _is_done(
+        self, data: mjx.Data, info: Mapping[str, Any], metrics: Mapping[str, Any]
     ) -> Mapping[str, bool]:
         """Check all termination conditions for the current state.
 
@@ -384,15 +360,19 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Dictionary mapping termination condition names to boolean values.
         """
-        termination_reasons = dict()
-        for name, kwargs in self.termination_criteria.items():
+        any_terminated = False
+        for name, kwargs in self._config.termination_criteria.items():
             termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-            termination_reasons[name] = termination_fcn(self, data, info, **kwargs)
+            terminated = termination_fcn(self, data, info, **kwargs)
+            any_terminated = jp.logical_or(any_terminated, terminated)
+            # Also log terminations as floats so averaging -> hazard rate
+            metrics["terminations/" + name] = jp.astype(terminated, float)
+        metrics["terminations/terminated"] = jp.astype(any_terminated, float)
 
-        return termination_reasons
+        return jp.logical_or(any_terminated, info["truncated"])
 
-    def _get_costs(
-        self, data: mjx.Data, info: Mapping[str, Any]
+    def _get_cost(
+        self, data: mjx.Data, info: Mapping[str, Any], metrics: Mapping[str, Any]
     ) -> Tuple[Mapping[str, float], Mapping[str, float]]:
         """Compute all cost terms for the current state.
 
@@ -404,12 +384,11 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (cost_dict, magnitude_dict) where cost_dict contains
             computed costs and magnitude_dict contains the underlying magnitudes.
         """
-        costs, magnitudes = dict(), dict()
+        total_cost = 0.0
         for name, kwargs in self.cost_terms.items():
-            c, m = _COST_FCN_REGISTRY[name](self, data, info, **kwargs)
-            costs[f"{name}_cost"] = c
-            magnitudes[name] = m
-        return costs, magnitudes
+            total_cost += _COST_FCN_REGISTRY[name](self, data, info, metrics, **kwargs)
+        metrics["costs/total"] = total_cost
+        return total_cost
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         """Reset simulation data to a specific clip and frame.
@@ -421,11 +400,11 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Initialized MuJoCo simulation data.
         """
-        data = mjx.make_data(self.mj_model)  # ,
-        #     impl=self._config.mujoco_impl,
-        #     nconmax=self._config.nconmax,
-        #     njmax=self._config.nconmax,
-        # )
+        data = mjx.make_data(self.mj_model,
+            impl=self._config.mujoco_impl,
+            naconmax=self._config.naconmax,
+            njmax=self._config.njmax,
+        )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         data = data.replace(qpos=reference.qpos)
         if self._config.qvel_init == "default":
@@ -575,7 +554,7 @@ class Imitation(worm_base.CelegansEnv):
         return decorator
 
     @_named_reward("root_pos")
-    def _root_pos_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+    def _root_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching root position to reference.
 
         Args:
@@ -588,14 +567,19 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (reward_value, distance_to_target).
         """
         target = self._get_current_target(data, info)
+
         target_pos = target.body_xpos(self.root_name)
         root_pos = self._get_root_pos(data)
+
         distance = jp.linalg.norm(target_pos - root_pos)
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
-        return reward, distance
+
+        metrics["rewards/root_pos"] = reward
+        metrics["dists/root_pos"] = distance
+        return reward
 
     @_named_reward("root_quat")
-    def _root_quat_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+    def _root_quat_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching root orientation to reference.
 
         Args:
@@ -608,16 +592,22 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (reward_value, angular_distance_in_degrees).
         """
         target = self._get_current_target(data, info)
+
         target_quat = target.body_xquat(self.root_name)
         root_quat = self._get_root_quat(data)
+
         quat_dist = 2.0 * jp.dot(root_quat, target_quat) ** 2 - 1.0
         ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
         ang_dist = jp.rad2deg(ang_dist)
+
         reward = weight * jp.exp(-((ang_dist / exp_scale) ** 2) / 2)
-        return reward, ang_dist
+
+        metrics["rewards/root_quat"] = reward
+        metrics["dists/root_quat"] = ang_dist
+        return reward
 
     @_named_reward("joints")
-    def _joints_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+    def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching joint angles to reference.
 
         Args:
@@ -631,12 +621,20 @@ class Imitation(worm_base.CelegansEnv):
         """
         target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
-        distance = jp.linalg.norm(target.joints - joints)
+        
+        error = target.joints - joints
+        distance = jp.linalg.norm(error)
+
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
-        return reward, distance
+
+        metrics["rewards/joints"] = reward
+        metrics["dists/joints"] = distance
+        for joint_name, joint_dist in zip(self.joint_names, error):
+            metrics[f"errors/joints/{joint_name}"] = joint_dist
+        return reward
 
     @_named_reward("joints_vel")
-    def _joint_vels_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+    def _joint_vels_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching joint velocities to reference.
 
         Args:
@@ -652,10 +650,13 @@ class Imitation(worm_base.CelegansEnv):
         joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
-        return reward, distance
+
+        metrics["rewards/joints_vel"] = reward
+        metrics["dists/joints_vel"] = distance
+        return reward
 
     def _get_bodies_dist(
-        self, data: mjx.Data, info: Mapping[str, Any], bodies: List[str] = None
+        self, data: mjx.Data, info: Mapping[str, Any], metrics, bodies: List[str] = None
     ) -> float:
         """Calculate distance between current and target body positions.
 
@@ -674,11 +675,12 @@ class Imitation(worm_base.CelegansEnv):
         total_dist_sqr = 0.0
         for body_name in bodies:
             dist_sqr = jp.sum((body_pos[body_name] - target.body_xpos(body_name)) ** 2)
+            metrics[f"errors/bodies/{body_name}"] = jp.sqrt(dist_sqr)
             total_dist_sqr += dist_sqr
         return jp.sqrt(total_dist_sqr)
 
     @_named_reward("bodies_pos")
-    def _body_pos_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+    def _body_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching body positions to reference.
 
         Args:
@@ -690,12 +692,15 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Tuple of (reward_value, total_body_distance).
         """
-        total_dist = self._get_bodies_dist(data, info, bodies=self.body_names)
+        total_dist = self._get_bodies_dist(data, info, metrics, bodies=self.body_names)
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
-        return reward, total_dist
+
+        metrics["rewards/bodies_pos"] = reward
+        metrics["dists/bodies_pos"] = total_dist
+        return reward
 
     @_named_reward("end_eff")
-    def _end_eff_reward(self, data, info, weight, exp_scale) -> Tuple[float, float]:
+    def _end_eff_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching end effector positions to reference.
 
         Args:
@@ -707,14 +712,17 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Tuple of (reward_value, end_effector_distance).
         """
-        total_dist = self._get_bodies_dist(data, info, bodies=self.end_eff_names)
+        total_dist = self._get_bodies_dist(data, info, metrics, bodies=self.end_eff_names)
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
-        return reward, total_dist
+
+        metrics["rewards/end_eff"] = reward
+        metrics["dists/end_eff"] = total_dist
+        return reward
 
     @_named_reward("upright")
     def _upright_reward(
-        self, data, info, weight, healthy_z_range
-    ) -> Tuple[float, float]:
+        self, data, info, metrics, weight, healthy_z_range
+    ) -> float:
         """Reward for staying upright within a healthy height range.
 
         Args:
@@ -729,7 +737,10 @@ class Imitation(worm_base.CelegansEnv):
         torso_z = self._get_body_height(data)  # root_body(data).xpos[2]
         min_z, max_z = healthy_z_range
         in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
-        return weight * in_range.astype(float), torso_z
+        reward = weight * in_range.astype(float)
+        metrics["rewards/upright"] = reward
+        metrics["dists/upright"] = torso_z
+        return reward
 
     # Costs
     def _named_cost(name: str):
@@ -749,7 +760,7 @@ class Imitation(worm_base.CelegansEnv):
         return decorator
 
     @_named_cost("control")
-    def _control_cost(self, data, info, weight) -> Tuple[float, float]:
+    def _control_cost(self, data, info, metrics, weight) -> float:
         """Cost for control effort (action magnitude).
 
         Args:
@@ -761,10 +772,13 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (cost_value, control_magnitude).
         """
         ctrl_magnitude = jp.sum(jp.square(info["action"]))
-        return weight * ctrl_magnitude, ctrl_magnitude
+        cost = weight * ctrl_magnitude
+        metrics["costs/control"] = cost
+        metrics["magnitudes/control"] = ctrl_magnitude
+        return cost
 
     @_named_cost("control_diff")
-    def _control_diff_cost(self, data, info, weight) -> Tuple[float, float]:
+    def _control_diff_cost(self, data, info, metrics, weight) -> float:
         """Cost for control smoothness (action differences).
 
         Args:
@@ -776,10 +790,13 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (cost_value, control_difference).
         """
         ctrl_diff = jp.sum(jp.square(info["action"] - info["prev_action"]))
-        return weight * ctrl_diff, ctrl_diff
+        cost = weight * ctrl_diff
+        metrics["costs/control_diff"] = cost
+        metrics["magnitudes/control_diff"] = ctrl_diff
+        return cost
 
     @_named_cost("energy")
-    def _energy_cost(self, data, info, weight, max_value) -> Tuple[float, float]:
+    def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
         """Cost for energy consumption.
 
         Args:
@@ -794,10 +811,13 @@ class Imitation(worm_base.CelegansEnv):
         energy = jp.minimum(
             jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator)), max_value
         )
-        return weight * energy, energy
+        cost = weight * energy
+        metrics["costs/energy"] = cost
+        metrics["magnitudes/energy"] = energy
+        return cost
 
     @_named_cost("var")
-    def _var_cost(self, data, info, weight) -> Tuple[float, float]:
+    def _var_cost(self, data, info, metrics, weight) -> float:
         """Cost for action variance.
 
         Args:
@@ -812,12 +832,14 @@ class Imitation(worm_base.CelegansEnv):
         mean_act = jp.mean(buffer, axis=0)
         var_act = jp.mean((buffer - mean_act) ** 2, axis=0)
         var = jp.sum(var_act)
-        var_cost = weight * var
+        cost = weight * var
 
-        return var_cost, var
+        metrics['costs/var'] = cost
+        metrics['magnitudes/var'] = var
+        return cost
 
     @_named_cost("jerk")
-    def _jerk_cost(self, data, info, weight) -> Tuple[float, float]:
+    def _jerk_cost(self, data, info, metrics, weight) -> float:
         """Cost for jerk (third derivative of position).
 
         Args:
@@ -828,9 +850,6 @@ class Imitation(worm_base.CelegansEnv):
 
         Returns:
             Tuple of (cost_value, jerk_magnitude).
-
-        Raises:
-            NotImplementedError: This cost function is not yet implemented.
         """
         window_len = self._config.var_window_size
         buffer = info["action_buffer"]
@@ -840,8 +859,11 @@ class Imitation(worm_base.CelegansEnv):
         )
         jerks = ordered[2:] - 2 * ordered[1:-1] + ordered[:-2]
         jerk = jp.sum(jerks**2)
-        jerk_cost = weight * jerk
-        return jerk_cost, jerk
+        cost = weight * jerk
+
+        metrics["costs/jerk"] = cost
+        metrics["magnitudes/jerk"] = jerk
+        return cost
 
     # Termination
     def _named_termination_criterion(name: str):
@@ -1056,6 +1078,7 @@ class Imitation(worm_base.CelegansEnv):
     def render(
         self,
         trajectory: List[mjx_env.State],
+        render_ghost: bool = True,
         height: int = 240,
         width: int = 320,
         camera: Optional[str] = None,
@@ -1070,6 +1093,8 @@ class Imitation(worm_base.CelegansEnv):
 
         Args:
             trajectory (List[mjx_env.State]): Sequence of environment states to render.
+            render_ghost (bool, optional): Whether to render the ghost imitation target.
+                Defaults to True.
             height (int, optional): Height of the rendered frames in pixels. Defaults to 240.
             width (int, optional): Width of the rendered frames in pixels. Defaults to 320.
             camera (str, optional): Camera name or index to use for rendering.
@@ -1089,14 +1114,18 @@ class Imitation(worm_base.CelegansEnv):
             Sequence[np.ndarray]: List of rendered frames as numpy arrays.
         """
         # Create a new spec with a ghost, without modifying the existing one
-        spec, mj_model_with_ghost = self.add_ghost(
-            rescale_factor=self._config.rescale_factor,
-            dim=self._config.dim,
-            pos=(0, 0, 0.05),
-            ghost_rgba=(1.0, 1.0, 1.0, 0.2),
-            suffix="-ghost",
-            inplace=False,
-        )
+        if render_ghost:
+            spec, mj_model_with_ghost = self.add_ghost(
+                rescale_factor=self._config.rescale_factor,
+                dim=self._config.dim,
+                pos=list(self.config.init_pos.values()),
+                ghost_rgba=(1.0, 1.0, 1.0, 0.2),
+                suffix="-ghost",
+                inplace=False,
+            )
+        else:
+            spec = self.spec.copy()
+            mj_model_with_ghost = spec.compile()
 
         mj_model_with_ghost.vis.global_.offwidth = width
         mj_model_with_ghost.vis.global_.offheight = height
@@ -1116,13 +1145,18 @@ class Imitation(worm_base.CelegansEnv):
         print(f"Rendering with camera: {camera}")
         rendered_frames = []
         for i, state in enumerate(trajectory):
-            time_in_frames = state.data.time * self._config.mocap_hz
-            frame = jp.floor(time_in_frames + state.info["start_frame"]).astype(int)
-            clip = state.info["reference_clip"]
-            ref = self.reference_clips.at(clip=clip, frame=frame)
+            qpos = state.data.qpos
+            qvel = state.data.qvel
+            if render_ghost:
+                time_in_frames = state.data.time * self._config.mocap_hz
+                frame = jp.floor(time_in_frames + state.info["start_frame"]).astype(int)
+                clip = state.info["reference_clip"]
+                ref = self.reference_clips.at(clip=clip, frame=frame)
+                qpos = jp.concatenate((qpos, ref.qpos))
+                qvel = jp.concatenate((qvel, ref.qvel))
 
-            mj_data_with_ghost.qpos = jp.concatenate((state.data.qpos, ref.qpos))
-            mj_data_with_ghost.qvel = jp.concatenate((state.data.qvel, ref.qvel))
+            mj_data_with_ghost.qpos = qpos
+            mj_data_with_ghost.qvel = qvel
             mujoco.mj_forward(mj_model_with_ghost, mj_data_with_ghost)
 
             renderer.update_scene(
