@@ -15,7 +15,7 @@
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="1000"/>
     </default>
     <default class="collision">
-       <geom type="ellipsoid" contype="1" conaffinity="0" condim="3" group="4" density="1000"/>
+       <geom type="sphere" contype="1" conaffinity="0" condim="3" group="4" density="0"/>
     </default>
   </default>
   <asset>
@@ -66,7 +66,7 @@
       <joint axis="0 1 0" name="slider2" pos="0 0 0" type="slide"/>
       <joint axis="0 0 1" name="slider3" pos="0 0 0" type="slide"/>
       <joint axis="0 0 1" name="free_body_rot" pos="0 0 0" type="hinge"/> -->
-      <geom name="geom1" pos="-0.0148 0  0.0027" size="0.0084887" type="sphere" density="0"/>
+      <geom name="geom1" pos="-0.0148 0  0.0027" size="0.0084887" type="sphere" class="collision"/>
       <!-- <geom class="collision" name="torso1_collision" pos="-0.02 0 0.005" size="0.018 0.013 0.009" quat="0.99267578125 0.0 0.11907958984375 0.0" /> -->
       <site name="sidesite1_central" pos="0 0 0" size="0.00416572" rgba="0.8 0.2 0.1 1.0" />
       <site name="site_anterior_dbwml1" pos="-0.0209506 0.011664 0.00198955" />
@@ -76,7 +76,7 @@
       <body name="torso2_body" pos="-0.0374264 0 0.00937567">
         <geom class="mesh" name="torso2" mesh="ellipsoid2" quat="0.9970703125 0.0 0.07611083984375 0.0" />
         <joint axis="0 0 1" limited="true" name="motor1_rot" pos="-0.00305106 0 0.000470372" range="-70 70" type="hinge" />
-        <geom name="geom2" pos="-0.00305106 0 0.000470372" size="0.0160339" type="sphere" density="0" />
+        <geom name="geom2" pos="-0.00305106 0 0.000470372" size="0.0160339" type="sphere" class="collision" />
         <!-- <geom class="collision" name="torso2_collision" pos="-0.00305106 0 0.000470372" size="0.0160339"/> -->
         <site name="sidesite2_central" pos="-0.00305106 0 0.000470372" rgba="0.8 0.2 0.1 1.0" />
         <site name="sidesite2_dorsal" pos="-0.00305106 0.0160308 0.000470372" rgba="0.8 0.2 0.1 0" />
@@ -92,7 +92,7 @@
         <body name="torso3_body" pos="-0.0414182 0 0.00649622">
           <geom class="mesh" name="torso3" mesh="ellipsoid3" quat="0.99853515625 0.0 0.052459716796875 0.0" />
           <joint axis="0 0 1" limited="true" name="motor2_rot" pos="-0.00279681 0 0.000305106" range="-100 100" type="hinge" />
-          <geom name="geom3" pos="-0.00279681 0 0.000305106" size="0.0224275" type="sphere" density="0" />
+          <geom name="geom3" pos="-0.00279681 0 0.000305106" size="0.0224275" type="sphere" class="collision" />
           <!-- <geom class="collision" name="torso3_collision" pos="-0.00279681 0 0.000305106" size="0.0224275"/> -->
           <site name="sidesite3_central" pos="-0.00279681 0 0.000305106" rgba="0.8 0.2 0.1 1.0" />
           <site name="sidesite3_dorsal" pos="-0.00279681 0.0224253 0.000305106" rgba="0.8 0.2 0.1 0" />
@@ -108,7 +108,7 @@
           <body name="torso4_body" pos="-0.0416979 0 0.00444947">
             <geom class="mesh" name="torso4" mesh="ellipsoid4" quat="0.9990234375 0.0 0.0419921875 0.0" />
             <joint axis="0 0 1" limited="true" name="rot4" pos="-0.00254255 0 0.000203404" range="-100 100" type="hinge" />
-            <geom name="geom4" pos="-0.00254255 0 0.000203404" size="0.0269545" type="sphere" density="0" />
+            <geom name="geom4" pos="-0.00254255 0 0.000203404" size="0.0269545" type="sphere" class="collision" />
             <!-- <geom class="collision" name="torso4_collision" pos="-0.00254255 0 0.000203404" size="0.0269545"/> -->
             <site name="sidesite4_central" pos="-0.00254255 0 0.000203404" rgba="0.8 0.2 0.1 1.0" />
             <site name="sidesite4_dorsal" pos="-0.00254255 0.0269511 0.000203404" rgba="0.8 0.2 0.1 0" />
@@ -124,7 +124,7 @@
             <body name="torso5_body" pos="-0.0417996 0 0.00355958">
               <geom class="mesh" name="torso5" mesh="ellipsoid5" quat="0.99951171875 0.0 0.033447265625 0.0" />
               <joint axis="0 0 1" limited="true" name="rot5" pos="-0.00223745 0 0.000152553" range="-100 100" type="hinge" />
-              <geom name="geom5" pos="-0.00223745 0 0.000152553" size="0.0304588" type="sphere" density="0" />
+              <geom name="geom5" pos="-0.00223745 0 0.000152553" size="0.0304588" type="sphere" class="collision" />
               <!-- <geom class="collision" name="torso5_collision" pos="-0.00223745 0 0.000152553" size="0.0304588"/> -->
               <site name="sidesite5_central" pos="-0.00223745 0 0.000152553" rgba="0.8 0.2 0.1 1.0" />
               <site name="sidesite5_dorsal" pos="-0.00223745 0.0304598 0.000152553" rgba="0.8 0.2 0.1 0" />
@@ -140,7 +140,7 @@
               <body name="torso6_body" pos="-0.0417996 0 0.00282223">
                 <geom class="mesh" name="torso6" mesh="ellipsoid6" quat="0.99951171875 0.0 0.0270233154296875 0.0" />
                 <joint axis="0 0 1" limited="true" name="rot6" pos="-0.00203404 0 0.000101702" range="-100 100" type="hinge" />
-                <geom name="geom6" pos="-0.00203404 0 0.000101702" size="0.0332653" type="sphere" density="0" />
+                <geom name="geom6" pos="-0.00203404 0 0.000101702" size="0.0332653" type="sphere" class="collision" />
                 <!-- <geom class="collision" name="torso6_collision" pos="-0.00203404 0 0.000101702" size="0.0332653" type="sphere"/> -->
                 <site name="sidesite6_central" pos="-0.00203404 0 0.000101702" rgba="0.8 0.2 0.1 1.0" />
                 <site name="sidesite6_dorsal" pos="-0.00203404 0.0332566 0.000101702" rgba="0.8 0.2 0.1 0" />
@@ -156,7 +156,7 @@
                 <body name="torso7_body" pos="-0.0419013 0 0.0022883">
                   <geom class="mesh" name="torso7" mesh="ellipsoid7" quat="1.0 0.0 0.0220489501953125 0.0" />
                   <joint axis="0 0 1" limited="true" name="rot7" pos="-0.00162723 0 7.62766e-05" range="-100 100" type="hinge" />
-                  <geom name="geom7" pos="-0.00162723 0 7.62766e-05" size="0.0355397" type="sphere" density="0" />
+                  <geom name="geom7" pos="-0.00162723 0 7.62766e-05" size="0.0355397" type="sphere" class="collision" />
                   <!-- <geom class="collision" name="torso7_collision" pos="-0.00162723 0 7.62766e-05" size="0.0355397" type="sphere"/> -->
                   <site name="sidesite7_central" pos="-0.00162723 0 7.62766e-05" rgba="0.8 0.2 0.1 1.0" />
                   <site name="sidesite7_dorsal" pos="-0.00162723 0.0355449 7.62766e-05" rgba="0.8 0.2 0.1 0" />
@@ -172,7 +172,7 @@
                   <body name="torso8_body" pos="-0.0419013 0 0.00185606">
                     <geom class="mesh" name="torso8" mesh="ellipsoid8" quat="1.0 0.0 0.0172576904296875 0.0" />
                     <joint axis="0 0 1" limited="true" name="rot8" pos="-0.00142383 0 5.08511e-05" range="-100 100" type="hinge" />
-                    <geom name="geom8" pos="-0.00142383 0 5.08511e-05" size="0.0373791" type="sphere" density="0" />
+                    <geom name="geom8" pos="-0.00142383 0 5.08511e-05" size="0.0373791" type="sphere" class="collision" />
                     <!-- <geom class="collision" name="torso8_collision" pos="-0.00142383 0 5.08511e-05" size="0.0373791" type="sphere"/> -->
                     <site name="sidesite8_central" pos="-0.00142383 0 5.08511e-05" rgba="0.8 0.2 0.1 1.0" />
                     <site name="sidesite8_dorsal" pos="-0.00142383 0.0373755 5.08511e-05" rgba="0.8 0.2 0.1 0" />
@@ -188,7 +188,7 @@
                     <body name="torso9_body" pos="-0.0419013 0 0.00144926">
                       <geom class="mesh" name="torso9" mesh="ellipsoid9" quat="1.0 0.0 0.013885498046875 0.0" />
                       <joint axis="0 0 1" limited="true" name="rot9" pos="-0.00122043 0 5.08511e-05" range="-100 100" type="hinge" />
-                      <geom name="geom9" pos="-0.00122043 0 5.08511e-05" size="0.0388455" type="sphere" density="0" />
+                      <geom name="geom9" pos="-0.00122043 0 5.08511e-05" size="0.0388455" type="sphere" class="collision" />
                       <!-- <geom class="collision" name="torso9_collision" pos="-0.00122043 0 5.08511e-05" size="0.0388455" type="sphere"/> -->
                       <site name="sidesite9_central" pos="-0.00122043 0 5.08511e-05" rgba="0.8 0.2 0.1 1.0" />
                       <site name="sidesite9_dorsal" pos="-0.00122043 0.0388502 5.08511e-05" rgba="0.8 0.2 0.1 0" />
@@ -204,7 +204,7 @@
                       <body name="torso10_body" pos="-0.0419013 0 0.00116957">
                         <geom class="mesh" name="torso10" mesh="ellipsoid10" quat="1.0 0.0 0.0099334716796875 0.0" />
                         <joint axis="0 0 1" limited="true" name="rot10" pos="-0.000813617 0 2.54255e-05" range="-100 100" type="hinge" />
-                        <geom name="geom10" pos="-0.000813617 0 2.54255e-05" size="0.03998" type="sphere" density="0" />
+                        <geom name="geom10" pos="-0.000813617 0 2.54255e-05" size="0.03998" type="sphere" class="collision" />
                         <!-- <geom class="collision" name="torso10_collision" pos="-0.000813617 0 2.54255e-05" size="0.03998" type="sphere"/> -->
                         <site name="sidesite10_central" pos="-0.000813617 0 2.54255e-05" rgba="0.8 0.2 0.1 1.0" />
                         <site name="sidesite10_dorsal" pos="-0.000813617 0.0399689 2.54255e-05" rgba="0.8 0.2 0.1 0" />
@@ -220,7 +220,7 @@
                         <body name="torso11_body" pos="-0.0419013 0 0.000839043">
                           <geom class="mesh" name="torso11" mesh="ellipsoid11" quat="1.0 0.0 0.0063323974609375 0.0" />
                           <joint axis="0 0 1" limited="true" name="rot11" pos="-0.000610213 0 2.54255e-05" range="-100 100" type="hinge" />
-                          <geom name="geom11" pos="-0.000610213 0 2.54255e-05" size="0.0408101" type="sphere" density="0" />
+                          <geom name="geom11" pos="-0.000610213 0 2.54255e-05" size="0.0408101" type="sphere" class="collision" />
                           <!-- <geom class="collision" name="torso11_collision" pos="-0.000610213 0 2.54255e-05" size="0.0408101" type="sphere"/> -->
                           <site name="sidesite11_central" pos="-0.000610213 0 2.54255e-05" rgba="0.8 0.2 0.1 1.0" />
                           <site name="sidesite11_dorsal" pos="-0.000610213 0.040808 2.54255e-05" rgba="0.8 0.2 0.1 0" />
@@ -236,7 +236,7 @@
                           <body name="torso12_body" pos="-0.0416979 0 0.000533936">
                             <geom class="mesh" name="torso12" mesh="ellipsoid12" quat="1.0 0.0 0.0032062530517578125 0.0" />
                             <joint axis="0 0 1" limited="true" name="rot12" pos="-0.000406809 0 0" range="-100 100" type="hinge" />
-                            <geom name="geom12" pos="-0.000406809 0 0" size="0.0413542" type="sphere" density="0" />
+                            <geom name="geom12" pos="-0.000406809 0 0" size="0.0413542" type="sphere" class="collision" />
                             <!-- <geom class="collision" name="torso12_collision" pos="-0.000406809 0 0" size="0.0413542" type="sphere"/> -->
                             <site name="sidesite12_central" pos="-0.000406809 0 0" rgba="0.8 0.2 0.1 1.0" />
                             <site name="sidesite12_dorsal" pos="-0.000406809 0.0413419 0" rgba="0.8 0.2 0.1 0" />
@@ -252,7 +252,7 @@
                             <body name="torso13_body" pos="-0.0423081 0 0.000279681">
                               <geom class="mesh" name="torso13" mesh="ellipsoid13" quat="1.0 0.0 -8.404254913330078e-06 0.0" />
                               <joint axis="0 0 1" limited="true" name="rot13" pos="0 0 0" range="-100 100" type="hinge" />
-                              <geom name="geom13" pos="0 0 0" size="0.0416236" type="sphere" density="0" />
+                              <geom name="geom13" pos="0 0 0" size="0.0416236" type="sphere" class="collision" />
                               <!-- <geom class="collision" name="torso13_collision" pos="0 0 0" size="0.0416236" type="sphere"/> -->
                               <site name="sidesite13_central" pos="0 0 0" rgba="0.8 0.2 0.1 1.0" />
                               <site name="sidesite13_dorsal" pos="0 0.0416216 0" rgba="0.8 0.2 0.1 0" />
@@ -268,7 +268,7 @@
                               <body name="torso14_body" pos="-0.0419013 0 0">
                                 <geom class="mesh" name="torso14" mesh="ellipsoid14" quat="1.0 0.0 -0.003177642822265625 0.0" />
                                 <joint axis="0 0 1" limited="true" name="rot14" pos="0.000406809 0 0" range="-100 100" type="hinge" />
-                                <geom name="geom14" pos="0.000406809 0 0" size="0.0416236" type="sphere" density="0" />
+                                <geom name="geom14" pos="0.000406809 0 0" size="0.0416236" type="sphere" class="collision" />
                                 <!-- <geom class="collision" name="torso14_collision" pos="0.000406809 0 0" size="0.0416236" type="sphere"/> -->
                                 <site name="sidesite14_central" pos="0.000406809 0 0" rgba="0.8 0.2 0.1 1.0" />
                                 <site name="sidesite14_dorsal" pos="0.000406809 0.0416216 0" rgba="0.8 0.2 0.1 0" />
@@ -284,7 +284,7 @@
                                 <body name="torso15_body" pos="-0.0419013 0 -0.000279681">
                                   <geom class="mesh" name="torso15" mesh="ellipsoid15" quat="1.0 0.0 -0.006458282470703125 0.0" />
                                   <joint axis="0 0 1" limited="true" name="rot15" pos="0.000406809 0 2.54255e-05" range="-100 100" type="hinge" />
-                                  <geom name="geom15" pos="0.000406809 0 2.54255e-05" size="0.0413542" type="sphere" density="0" />
+                                  <geom name="geom15" pos="0.000406809 0 2.54255e-05" size="0.0413542" type="sphere" class="collision" />
                                   <!-- <geom class="collision" name="torso15_collision" pos="0.000406809 0 2.54255e-05" size="0.0413542"/> -->
                                   <site name="sidesite15_central" pos="0.000406809 0 2.54255e-05" rgba="0.8 0.2 0.1 1.0" />
                                   <site name="sidesite15_dorsal" pos="0.000406809 0.0413419 2.54255e-05" rgba="0.8 0.2 0.1 0" />
@@ -300,7 +300,7 @@
                                   <body name="torso16_body" pos="-0.0419013 0 -0.000533936">
                                     <geom class="mesh" name="torso16" mesh="ellipsoid16" quat="1.0 0.0 -0.00980377197265625 0.0" />
                                     <joint axis="0 0 1" limited="true" name="rot16" pos="0.000813617 0 0" range="-100 100" type="hinge" />
-                                    <geom name="geom16" pos="0.000813617 0 0" size="0.0408101" type="sphere" density="0" />
+                                    <geom name="geom16" pos="0.000813617 0 0" size="0.0408101" type="sphere" class="collision" />
                                     <!-- <geom class="collision" name="torso16_collision" pos="0.000813617 0 0" size="0.0408101"/> -->
                                     <site name="sidesite16_central" pos="0.000813617 0 0" rgba="0.8 0.2 0.1 1.0" />
                                     <site name="sidesite16_dorsal" pos="0.000813617 0.040808 0" rgba="0.8 0.2 0.1 0" />
@@ -316,7 +316,7 @@
                                     <body name="torso17_body" pos="-0.0419013 0 -0.000839043">
                                       <geom class="mesh" name="torso17" mesh="ellipsoid17" quat="1.0 0.0 -0.01375579833984375 0.0" />
                                       <joint axis="0 0 1" limited="true" name="rot17" pos="0.00122043 0 2.54255e-05" range="-100 100" type="hinge" />
-                                      <geom name="geom17" pos="0.00122043 0 2.54255e-05" size="0.03998" type="sphere" density="0" />
+                                      <geom name="geom17" pos="0.00122043 0 2.54255e-05" size="0.03998" type="sphere" class="collision" />
                                       <!-- <geom class="collision" name="torso17_collision" pos="0.00122043 0 2.54255e-05" size="0.03998"/> -->
                                       <site name="sidesite17_central" pos="0.00122043 0 2.54255e-05" rgba="0.8 0.2 0.1 1.0" />
                                       <site name="sidesite17_dorsal" pos="0.00122043 0.0399689 2.54255e-05" rgba="0.8 0.2 0.1 0" />
@@ -332,7 +332,7 @@
                                       <body name="torso18_body" pos="-0.0419013 0 -0.00114415">
                                         <geom class="mesh" name="torso18" mesh="ellipsoid18" quat="1.0 0.0 -0.0175933837890625 0.0" />
                                         <joint axis="0 0 1" limited="true" name="rot18" pos="0.00122043 0 2.54255e-05" range="-100 100" type="hinge" />
-                                        <geom name="geom18" pos="0.00122043 0 2.54255e-05" size="0.0388455" type="sphere" density="0" />
+                                        <geom name="geom18" pos="0.00122043 0 2.54255e-05" size="0.0388455" type="sphere" class="collision" />
                                         <!-- <geom class="collision" name="torso18_collision" pos="0.00122043 0 2.54255e-05" size="0.0388455"/> -->
                                         <site name="sidesite18_central" pos="0.00122043 0 2.54255e-05" rgba="0.8 0.2 0.1 1.0" />
                                         <site name="sidesite18_dorsal" pos="0.00122043 0.0388502 2.54255e-05" rgba="0.8 0.2 0.1 0" />
@@ -348,7 +348,7 @@
                                         <body name="torso19_body" pos="-0.0419013 0 -0.00150011">
                                           <geom class="mesh" name="torso19" mesh="ellipsoid19" quat="1.0 0.0 -0.0218353271484375 0.0" />
                                           <joint axis="0 0 1" limited="true" name="rot19" pos="0.00162723 0 7.62766e-05" range="-100 100" type="hinge" />
-                                          <geom name="geom19" pos="0.00162723 0 7.62766e-05" size="0.0373791" type="sphere" density="0" />
+                                          <geom name="geom19" pos="0.00162723 0 7.62766e-05" size="0.0373791" type="sphere" class="collision" />
                                           <!-- <geom class="collision" name="torso19_collision" pos="0.00162723 0 7.62766e-05" size="0.0373791"/> -->
                                           <site name="sidesite19_central" pos="0.00162723 0 7.62766e-05" rgba="0.8 0.2 0.1 1.0" />
                                           <site name="sidesite19_dorsal" pos="0.00162723 0.0373755 7.62766e-05" rgba="0.8 0.2 0.1 0" />
@@ -364,7 +364,7 @@
                                           <body name="torso20_body" pos="-0.0419013 0 -0.00185606">
                                             <geom class="mesh" name="torso20" mesh="ellipsoid20" quat="0.99951171875 0.0 -0.0270538330078125 0.0" />
                                             <joint axis="0 0 1" limited="true" name="rot20" pos="0.00203404 0 0.000101702" range="-100 100" type="hinge" />
-                                            <geom name="geom20" pos="0.00203404 0 0.000101702" size="0.0355397" type="sphere" density="0" />
+                                            <geom name="geom20" pos="0.00203404 0 0.000101702" size="0.0355397" type="sphere" class="collision" />
                                             <!-- <geom class="collision" name="torso20_collision" pos="0.00203404 0 0.000101702" size="0.0355397"/> -->
                                             <site name="sidesite20_central" pos="0.00203404 0 0.000101702" rgba="0.8 0.2 0.1 1.0" />
                                             <site name="sidesite20_dorsal" pos="0.00203404 0.0355449 0.000101702" rgba="0.8 0.2 0.1 0" />
@@ -380,7 +380,7 @@
                                             <body name="torso21_body" pos="-0.0419013 0 -0.0022883">
                                               <geom class="mesh" name="torso21" mesh="ellipsoid21" quat="0.99951171875 0.0 -0.033905029296875 0.0" />
                                               <joint axis="0 0 1" limited="true" name="rot21" pos="0.00203404 0 0.000127128" range="-100 100" type="hinge" />
-                                              <geom name="geom21" pos="0.00203404 0 0.000127128" size="0.0332653" type="sphere" density="0" />
+                                              <geom name="geom21" pos="0.00203404 0 0.000127128" size="0.0332653" type="sphere" class="collision" />
                                               <!-- <geom class="collision" name="torso21_collision" pos="0.00203404 0 0.000127128" size="0.0332653"/> -->
                                               <site name="sidesite21_central" pos="0.00203404 0 0.000127128" rgba="0.8 0.2 0.1 1.0" />
                                               <site name="sidesite21_dorsal" pos="0.00203404 0.0332566 0.000127128" rgba="0.8 0.2 0.1 0" />
@@ -396,7 +396,7 @@
                                               <body name="torso22_body" pos="-0.0414945 0 -0.00287309">
                                                 <geom class="mesh" name="torso22" mesh="ellipsoid22" quat="0.9990234375 0.0 -0.041168212890625 0.0" />
                                                 <joint axis="0 0 1" limited="true" name="rot22" pos="0.00244085 0 0.000177979" range="-100 100" type="hinge" />
-                                                <geom name="geom22" pos="0.00244085 0 0.000177979" size="0.0304588" type="sphere" density="0" />
+                                                <geom name="geom22" pos="0.00244085 0 0.000177979" size="0.0304588" type="sphere" class="collision" />
                                                 <!-- <geom class="collision" name="torso22_collision" pos="0.00244085 0 0.000177979" size="0.0304588"/> -->
                                                 <site name="sidesite22_central" pos="0.00244085 0 0.000177979" rgba="0.8 0.2 0.1 1.0" />
                                                 <site name="sidesite22_dorsal" pos="0.00244085 0.0304598 0.000177979" rgba="0.8 0.2 0.1 0" />
@@ -412,7 +412,7 @@
                                                 <body name="torso23_body" pos="-0.0423081 0 -0.00350872">
                                                   <geom class="mesh" name="torso23" mesh="ellipsoid23" quat="0.99853515625 0.0 -0.053253173828125 0.0" />
                                                   <joint axis="0 0 1" limited="true" name="rot23" pos="0.00325447 0 0.000279681" range="-100 100" type="hinge" />
-                                                  <geom name="geom23" pos="0.00325447 0 0.000279681" size="0.0269545" type="sphere" density="0" />
+                                                  <geom name="geom23" pos="0.00325447 0 0.000279681" size="0.0269545" type="sphere" class="collision" />
                                                   <!-- <geom class="collision" name="torso23_collision" pos="0.00325447 0 0.000279681" size="0.0269545"/> -->
                                                   <site name="sidesite23_central" pos="0.00325447 0 0.000279681" rgba="0.8 0.2 0.1 1.0" />
                                                   <site name="sidesite23_dorsal" pos="0.00325447 0.0269511 0.000279681" rgba="0.8 0.2 0.1 0" />
@@ -428,7 +428,7 @@
                                                   <body name="torso24_body" pos="-0.0414945 0 -0.00458931">
                                                     <geom class="mesh" name="torso24" mesh="ellipsoid24" quat="0.9970703125 0.0 -0.0755615234375 0.0" />
                                                     <joint axis="0 0 1" limited="true" name="rot24" pos="0.00325447 0 0.000432234" range="-100 100" type="hinge" />
-                                                    <geom name="geom24" pos="0.00325447 0 0.000432234" size="0.0224275" type="sphere" density="0" />
+                                                    <geom name="geom24" pos="0.00325447 0 0.000432234" size="0.0224275" type="sphere" class="collision" />
                                                     <!-- <geom class="collision" name="torso24_collision" pos="0.00325447 0 0.000432234" size="0.0224275"/> -->
                                                     <site name="sidesite24_central" pos="0.00325447 0 0.000432234" rgba="0.8 0.2 0.1 1.0" />
                                                     <site name="sidesite24_dorsal" pos="0.00325447 0.0224253 0.000432234" rgba="0.8 0.2 0.1 0" />
@@ -443,7 +443,7 @@
                                                     <body name="torso25_body" pos="-0.0414945 0 -0.00658521">
                                                       <geom class="mesh" name="torso25" mesh="ellipsoid25" quat="0.99267578125 0.0 -0.1195068359375 0.0" />
                                                       <joint axis="0 0 1" limited="true" name="rot25" pos="0.00325447 0 0.000737341" range="-70 70" type="hinge" />
-                                                      <geom name="geom25" pos="0.00325447 0 0.000737341" size="0.0160339" type="sphere" density="0" />
+                                                      <geom name="geom25" pos="0.00325447 0 0.000737341" size="0.0160339" type="sphere" class="collision" />
                                                       <!-- <geom class="collision" name="torso25_collision" pos="0.00325447 0 0.000737341" size="0.0160339"/> -->
                                                       <site name="sidesite25_central" pos="0.00325447 0 0.000737341" rgba="0.8 0.2 0.1 1.0" />
                                                       <site name="sidesite25_dorsal" pos="0.00325447 0.0160308 0.000737341" rgba="0.8 0.2 0.1 0" />
