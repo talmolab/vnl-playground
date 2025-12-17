@@ -167,7 +167,7 @@ def main(cfg: DictConfig):
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
-        wandb.log(metrics, commit=False)
+        wandb.log(metrics, commit=True)
 
     # # define the jit reset/step functions
     jit_reset = jax.jit(evaluator_env.reset)
