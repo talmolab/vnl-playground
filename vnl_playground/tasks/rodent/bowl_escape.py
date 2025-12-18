@@ -219,7 +219,7 @@ class BowlEscape(rodent_base.RodentEnv):
         rewards = self._get_reward(data)
         state.info["prev_prev_action"] = state.info["prev_action"]
         state.info["prev_action"] = action
-        reward = rewards["escape * upright"] + rewards["speed_reward"]
+        reward = rewards["escape_upright"] + rewards["speed_reward"]
         if self._vision:
             # Sync state to mujoco_warp and render
             self.sync_mjw_data_from_mjx(data)
@@ -246,6 +246,7 @@ class BowlEscape(rodent_base.RodentEnv):
             obs=obs,
             reward=reward,
             done=done,
+            metrics=rewards,
         )
         return state
 
@@ -274,7 +275,6 @@ class BowlEscape(rodent_base.RodentEnv):
                 origin,
             ]
         )
-        
         qpos = data.qpos[7:]  # skip the root joint
         qvel = data.qvel[6:]  # skip the root joint velocity
         actuator_ctrl = data.qfrc_actuator
@@ -295,6 +295,17 @@ class BowlEscape(rodent_base.RodentEnv):
                 appendages_pos,
             ]
         )
+        # proprioceptive_obs = jp.concatenate(
+        #     [
+        #         # align with the most recent checkpoint
+        #         data.qpos[7:],
+        #         data.qvel[6:],
+        #         data.qfrc_actuator,
+        #         appendages_pos,
+        #         kinematic_sensors,
+        #     ]
+        # )
+        
         return task_obs, proprioceptive_obs
 
     def _upright_reward(self, data: mjx.Data, deviation_angle: float = 0) -> float:
@@ -361,7 +372,7 @@ class BowlEscape(rodent_base.RodentEnv):
             "escape_reward": escape_reward,
             "upright_reward": upright_reward,
             "speed_reward": speed_reward,
-            "escape * upright": escape_reward * upright_reward,
+            "escape_upright": escape_reward * upright_reward,
         }
 
     def _interpolate_bowl_height(self, x: float, y: float) -> float:

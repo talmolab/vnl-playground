@@ -3,20 +3,22 @@ env_config:
   task_name: bowl_escape
   walker_name: rodent
   render_camera_name: close_profile
+  render_interval: 2
 
   env_args:
     # this will be passed to the env constructor as config overrides
     torque_actuators: True
     rescale_factor: 0.9
-    bowl_vsize: 0.6
+    bowl_vsize: 0.3
     bowl_amplitude: -20
-    target_speed: 2
+    target_speed: 1
     iterations: 10
+    mujoco_impl: "warp"
 
 network_config:
   arch_name: intention
   encoder_layer_sizes: [512, 512, 256, 256]
-  decoder_layer_sizes: [1024, 1024, 512]  # loaded from checkpoint
+  decoder_layer_sizes: [1024, 512, 512]  # loaded from checkpoint
   critic_layer_sizes: [512, 512, 512, 256, 256]
   intention_size: 16 # recover from the checkpoint 
   kl_schedule: False # Whether to use a ramping KL schedule
@@ -25,7 +27,7 @@ network_config:
 train_setup:
   agent_name: rodent
   run_name: bowl_escape
-  checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
+  checkpoint_to_restore: # /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
   # NEW: /root/vast/scott-yang/track-mjx/model_checkpoints/250725_181216_794171 # OLD: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
   freeze_decoder: True
   checkpoint_max_to_keep:
@@ -34,7 +36,7 @@ train_setup:
   reset_every: 50_000_000
   train_config:
     episode_length: 2000
-    num_envs: 4096
+    num_envs: 1024
     num_timesteps: 2_000_000_000
     batch_size: 1024
     num_minibatches: 16
@@ -51,15 +53,19 @@ train_setup:
 
 logging_config:
   project_name: vnl_playground
-  group_name: new_checkpoint
+  group_name: track_v0.0.1_transfer
   model_path: model_checkpoints
-  notes: "higher target speed"
+  notes: "this is to test the bowl escape task implementation -> if this is not working, revert back to the previous git commit of the playground"
   algo_name: ppo
-  exp_name: higher_speed
+  exp_name: pos_act_random_init_new_obs_large_net_DEBUG
   rollout_metrics:
+    - escape_reward
+    - upright_reward
+    - speed_reward
+    - escape_upright
   
 walker_config:
-  torque_actuators: True
+  torque_actuators: False
   rescale_factor: 0.9
   joint_names:
     - vertebra_1_extend
