@@ -186,11 +186,13 @@ class BowlEscape(rodent_base.RodentEnv):
         obs = jp.concatenate([task_obs, proprioceptive_obs])
         reward, done = jp.zeros(2)
         # Initialize metrics with same structure as _get_reward() returns
+        # Include 'reward' key as brax EvalWrapper expects it
         metrics = {
             "escape_reward": jp.zeros(()),
             "upright_reward": jp.zeros(()),
             "speed_reward": jp.zeros(()),
             "escape_upright": jp.zeros(()),
+            "reward": jp.zeros(()),
         }
 
         if self._vision:
@@ -246,12 +248,14 @@ class BowlEscape(rodent_base.RodentEnv):
         num_nans = jp.sum(jp.isnan(flattened_vals))
         nan = jp.where(num_nans > 0, 1.0, 0.0)
         done = jp.max(jp.array([nan, done]))
+        # Add 'reward' key to metrics as brax EvalWrapper expects it
+        metrics = {**rewards, "reward": reward}
         state = state.replace(
             data=data,
             obs=obs,
             reward=reward,
             done=done,
-            metrics=rewards,
+            metrics=metrics,
         )
         return state
 
