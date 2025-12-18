@@ -185,8 +185,13 @@ class BowlEscape(rodent_base.RodentEnv):
         info["proprioceptive_obs_size"] = proprioceptive_obs_size
         obs = jp.concatenate([task_obs, proprioceptive_obs])
         reward, done = jp.zeros(2)
-        metrics = {}
-        # TODO: currently, this denotes the task specific inputs
+        # Initialize metrics with same structure as _get_reward() returns
+        metrics = {
+            "escape_reward": jp.zeros(()),
+            "upright_reward": jp.zeros(()),
+            "speed_reward": jp.zeros(()),
+            "escape_upright": jp.zeros(()),
+        }
 
         if self._vision:
             # Sync state to mujoco_warp and render
