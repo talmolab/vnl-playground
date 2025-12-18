@@ -39,7 +39,7 @@ dependencies = [
     "matplotlib",
     "pandas",
     "numpy",
-    "playground",
+    "playground @ git+https://github.com/google-deepmind/mujoco_playground.git@1bd244fa9c51fa7074c7a449934f556d898f7a15", # updated to include
     "dvc",
     ]
 
@@ -69,13 +69,6 @@ dev = [
     "mkdocs-section-index",
     "mike",
     ]
-
-with-cuda = [
-    "vnl-playground[dev]",
-    "flax[all]",
-    "optax[all]==0.2.5",
-    "jax[cuda12]==0.6.2",
-]
 
 [project.urls]
 Repository = "https://github.com/talmolab/vnl-playground"

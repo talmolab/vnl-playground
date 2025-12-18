@@ -184,3 +184,6 @@ model_checkpoints/
 outputs/
 *.mp4
 *.png
+selected_checkpoints/
+*.tar.gz
+*.npz
