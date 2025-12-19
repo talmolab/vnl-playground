@@ -492,8 +492,7 @@ class BowlEscape(rodent_base.RodentEnv):
 
         # fetch bowl surface height at torso (x, y)
         height_z = self._interpolate_bowl_height(x, y)
-        # make stricter by adding a small threshold
-        done_bowl = jp.where(z <= height_z + 0.03, 1.0, 0.0)
+        done_bowl = jp.where(z <= height_z - 0.03, 1.0, 0.0)
         return done_bowl
 
 
