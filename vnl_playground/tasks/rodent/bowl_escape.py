@@ -37,8 +37,8 @@ def default_vision_config() -> config_dict.ConfigDict:
 
 def default_config() -> config_dict.ConfigDict:
     """Returns the default configuration for the BowlEscape environment.
-    
-    Since the resulting noise will be normalized by the bowl_vsize, the amplitude 
+
+    Since the resulting noise will be normalized by the bowl_vsize, the amplitude
     and the sigma interacting with each other.
 
     The configuration dictionary contains the following keys:
@@ -55,17 +55,20 @@ def default_config() -> config_dict.ConfigDict:
         bowl_hsize (int): Horizontal size of the bowl.
         bowl_vsize (int): Vertical size (depth) of the bowl.
         bowl_sigma (float): Standard deviation of the Gaussian bump on bowl, usually is the bowl_hsize / 4.
-        bowl_amplitude (float): Amplitude of the Gaussian bump on bowl, 
+        bowl_amplitude (float): Amplitude of the Gaussian bump on bowl,
 
     Returns:
         config_dict.ConfigDict: The default configuration dictionary.
     """
     return config_dict.create(
-        walker_xml_path=consts.RODENT_BOX_FEET_PATH,
+        walker_xml_path=consts.RODENT_XML_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
         ctrl_dt=0.01,
         sim_dt=0.002,
-        solver="cg",
+        solver="newton",
+        mujoco_impl="warp",
+        naconmax=16 * 8192,
+        njmax=128,
         iterations=10,
         ls_iterations=5,
         noslip_iterations=0,
@@ -138,32 +141,7 @@ class BowlEscape(rodent_base.RodentEnv):
         self.compile()
 
         if self._vision:
-            try:
-                # pylint: disable=import-outside-toplevel
-                from madrona_mjx.renderer import (
-                    BatchRenderer,
-                )  # pytype: disable=import-error
-            except ImportError:
-                warnings.warn("Madrona MJX not installed. Cannot use vision with.")
-                return
-            self.renderer = BatchRenderer(
-                m=self._mjx_model,
-                gpu_id=self._config.vision_config.gpu_id,
-                num_worlds=self._config.vision_config.render_batch_size,
-                batch_render_view_width=self._config.vision_config.render_width,
-                batch_render_view_height=self._config.vision_config.render_height,
-                enabled_geom_groups=np.asarray(
-                    self._config.vision_config.enabled_geom_groups
-                ),
-                enabled_cameras=np.asarray(
-                    [
-                        0,
-                    ]
-                ),
-                add_cam_debug_geo=False,
-                use_rasterizer=self._config.vision_config.use_rasterizer,
-                viz_gpu_hdls=None,
-            )
+            raise NotImplementedError("Vision is not implemented for BowlEscape.")
 
     def _initialize_noisy_bowl(self, rng: jax.Array) -> None:
         """Initialize the noisy bowl heightfield and store it in the environment."""
@@ -195,7 +173,12 @@ class BowlEscape(rodent_base.RodentEnv):
             "last_act": jp.zeros(self.mjx_model.nu),
             "last_last_act": jp.zeros(self.mjx_model.nu),
         }
-        data = mjx_env.init(self.mjx_model)
+        data = mjx.make_data(
+            self.mjx_model,
+            impl=self._config.mujoco_impl,
+            naconmax=self._config.naconmax,
+            njmax=self._config.njmax,
+        )
         task_obs, proprioceptive_obs = self._get_obs(data, info)
         task_obs_size = task_obs.shape[0]
         proprioceptive_obs_size = proprioceptive_obs.shape[0]
@@ -207,13 +190,8 @@ class BowlEscape(rodent_base.RodentEnv):
         # TODO: currently, this denotes the task specific inputs
 
         if self._vision:
-            # if vision, the observation is the rendered image
-            render_token, rgb, _ = self.renderer.init(data, self._mjx_model)
-            info.update({"render_token": render_token})
-            obs = _rgba_to_grayscale(rgb[0].astype(jp.float32)) / 255.0
-            obs_history = jp.tile(obs, (self._config.vision_config.history, 1, 1))
-            info.update({"obs_history": obs_history})
-            obs = {"pixels/view_0": obs_history.transpose(1, 2, 0)}
+            raise NotImplementedError("Vision is not implemented for BowlEscape.")
+
         return mjx_env.State(data, obs, reward, done, metrics, info)
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
@@ -236,16 +214,7 @@ class BowlEscape(rodent_base.RodentEnv):
         state.info["last_last_act"] = state.info["last_act"]
         state.info["last_act"] = action
         reward = rewards["escape * upright"] + rewards["speed_reward"]
-        # if self._vision:
-        #     _, rgb, _ = self.renderer.render(state.info["render_token"], data)
-        #     # Update observation buffer
-        #     obs_history = state.info["obs_history"]
-        #     obs_history = jp.roll(obs_history, 1, axis=0)
-        #     obs_history = obs_history.at[0].set(
-        #         _rgba_to_grayscale(rgb[0].astype(jp.float32)) / 255.0
-        #     )
-        #     state.info["obs_history"] = obs_history
-        #     obs = {"pixels/view_0": obs_history.transpose(1, 2, 0)}
+
         done = self._get_termination(data)
         # Handle nans during sim by resetting env
         reward = jp.nan_to_num(reward)
@@ -273,31 +242,20 @@ class BowlEscape(rodent_base.RodentEnv):
         Returns:
             jp.ndarray: The concatenated position and velocity observations.
         """
-        proprioception = self._get_proprioception(data)
+        proprioceptive_obs = self._get_proprioception(data, info, flatten=False)
         kinematic_sensors = self._get_kinematic_sensors(data)
         touch_sensors = self._get_touch_sensors(data)
-        appendages_pos = self._get_appendages_pos(data)
         origin = self._get_origin(data)
         task_obs = jp.concatenate(
             [
                 info["last_act"],
-                proprioception,
+                # proprioception,
                 kinematic_sensors,
                 touch_sensors,
                 origin,
             ]
         )
 
-        proprioceptive_obs = jp.concatenate(
-            [
-                # align with the most recent checkpoint
-                data.qpos[7:],
-                data.qvel[6:],
-                data.qfrc_actuator,
-                appendages_pos,
-                kinematic_sensors,
-            ]
-        )
         return task_obs, proprioceptive_obs
 
     def _upright_reward(self, data: mjx.Data, deviation_angle: float = 0) -> float:
@@ -398,7 +356,11 @@ class BowlEscape(rodent_base.RodentEnv):
         vel = jp.linalg.norm(body.subtree_linvel)
         target_speed = self._config.target_speed
         reward_value = reward.tolerance(
-            vel, bounds=(target_speed, target_speed), margin=target_speed, sigmoid="linear", value_at_margin=0.0
+            vel,
+            bounds=(target_speed, target_speed),
+            margin=target_speed,
+            sigmoid="linear",
+            value_at_margin=0.0,
         )
         return reward_value
 
@@ -701,12 +663,12 @@ def add_bowl_hfield(
     noise = noise + bowl
 
     # Smoothly blend central region to avoid bumps
-    inner_radius = 0.05 * size   # fraction of grid for fully smooth bowl
+    inner_radius = 0.05 * size  # fraction of grid for fully smooth bowl
     outer_radius = 0.25 * size  # fraction of grid where noise resumes
     center = size // 2
     y, x = np.ogrid[:size, :size]
     # distance from center in grid units
-    dist = np.sqrt((x - center)**2 + (y - center)**2)
+    dist = np.sqrt((x - center) ** 2 + (y - center) ** 2)
     # blend weight: 0 inside inner, 1 outside outer, smoothstep between
     w = np.clip((dist - inner_radius) / (outer_radius - inner_radius), 0.0, 1.0)
     w = w * w * (3.0 - 2.0 * w)
