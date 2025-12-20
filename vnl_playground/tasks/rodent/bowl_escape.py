@@ -13,6 +13,7 @@ from ml_collections import config_dict
 import mujoco
 from mujoco import mjx
 import warnings
+from jax import flatten_util
 
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward
@@ -440,6 +441,26 @@ class BowlEscape(rodent_base.RodentEnv):
         # make stricter by adding a small threshold
         done_bowl = jp.where(z <= height_z + 0.03, 1.0, 0.0)
         return done_bowl
+
+    @property
+    def proprioceptive_obs_size(self) -> int:
+        obs_size = self.non_flattened_observation_size
+        return jp.sum(flatten_util.ravel_pytree(obs_size["proprioception"])[0])
+
+    @property
+    def non_proprioceptive_obs_size(self) -> int:
+        return self.observation_size - self.proprioceptive_obs_size
+
+    @property
+    def observation_size(self) -> mjx_env.ObservationSize:
+        obs = self.non_flattened_observation_size
+        return jp.sum(flatten_util.ravel_pytree(obs)[0])
+
+    @property
+    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
+        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+        obs = abstract_state.obs
+        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
 
 class BowlEscapeRender(BowlEscape):
