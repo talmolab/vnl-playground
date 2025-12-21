@@ -20,7 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",]
 dependencies = [
-    "brax==0.13.0",
+    "brax>=0.13.0",
     "wandb",
     "mujoco",
     "dm_control",

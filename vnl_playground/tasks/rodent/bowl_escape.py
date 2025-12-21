@@ -62,14 +62,14 @@ def default_config() -> config_dict.ConfigDict:
         config_dict.ConfigDict: The default configuration dictionary.
     """
     return config_dict.create(
-        walker_xml_path=consts.RODENT_XML_PATH,
+        walker_xml_path=consts.RODENT_BOX_FEET_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
         ctrl_dt=0.01,
         sim_dt=0.002,
-        solver="newton",
-        mujoco_impl="warp",
+        solver="cg",
+        mujoco_impl="jax",
         naconmax=16 * 8192,
-        njmax=128,
+        njmax=512,
         iterations=10,
         ls_iterations=5,
         noslip_iterations=0,
