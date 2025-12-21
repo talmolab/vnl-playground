@@ -15,12 +15,11 @@ class FlattenObsWrapper(wrapper.Wrapper):
         super().__init__(env)
 
     def reset(
-            self, 
-            rng: jax.Array, 
-            clip_idx: Optional[int] = None,
-            start_frame: Optional[int] = None,
-        ) -> wrapper.mjx_env.State:
-        state = self.env.reset(rng, clip_idx=clip_idx, start_frame=start_frame)
+        self,
+        rng: jax.Array,
+        **kwargs: Any,
+    ) -> wrapper.mjx_env.State:
+        state = self.env.reset(rng, **kwargs)
         return self._flatten(state)
 
     def step(
@@ -55,9 +54,9 @@ class FlattenObsWrapper(wrapper.Wrapper):
         return new_metrics
 
     @property
-    def unwrapped(self) -> "MjxEnv":
+    def unwrapped(self) -> mjx_env.MjxEnv:
         return self
-    
+
     @property
     def _mjx_model(self):
         return self.env._mjx_model
@@ -65,6 +64,7 @@ class FlattenObsWrapper(wrapper.Wrapper):
     @_mjx_model.setter
     def _mjx_model(self, value):
         self.env._mjx_model = value
+
 
 class HighLevelWrapper(wrapper.Wrapper):
     """Takes a decoder inference function and uses it to get the ctrl used in the sim step.

@@ -367,7 +367,7 @@ class BowlEscape(rodent_base.RodentEnv):
         return decorator
 
     @_named_termination_criterion("fallen")
-    def _torso_too_low(self, data: mjx.Data) -> bool:
+    def _torso_too_low(self, data: mjx.Data, info) -> bool:
         """Check if the episode should terminate based on torso position relative to bowl surface.
 
         Args:
@@ -376,6 +376,7 @@ class BowlEscape(rodent_base.RodentEnv):
         Returns:
             jp.ndarray: 1.0 if torso is below the bowl surface height, else 0.0.
         """
+        del info
         # Torso (root) position
         torso_pos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
         x, y, z = torso_pos
@@ -386,7 +387,8 @@ class BowlEscape(rodent_base.RodentEnv):
         return z <= height_z + 0.03
 
     @_named_termination_criterion("nan_termination")
-    def _nan_termination(self, data) -> bool:
+    def _nan_termination(self, data, info) -> bool:
+        del info
         # Handle nans during sim by resetting env
         flattened_vals, _ = flatten_util.ravel_pytree(data)
         num_nans = jp.sum(jp.isnan(flattened_vals))
