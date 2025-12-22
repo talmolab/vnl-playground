@@ -13,7 +13,8 @@ ARENA_XML_PATH = RODENT_PATH / "xmls" / "arena.xml"
 WHITE_ARENA_XML_PATH = RODENT_PATH / "xmls" / "white_arena.xml"
 IMITATION_REFERENCE_PATH = RODENT_PATH / "reference_data" / "reference_clips.h5"
 
-END_EFFECTORS = ["lower_arm_R", "lower_arm_L", "foot_R", "foot_L", "skull"]
+# Why not read it out from the config?
+END_EFFECTORS = ["foot_L", "foot_R", "hand_L", "hand_R", "skull"]
 TOUCH_SENSORS = ["palm_L", "palm_R", "sole_L", "sole_R"]
 BODIES = [
     "torso",
