@@ -172,8 +172,8 @@ class FlatArenaEscape(rodent_base.RodentEnv):
             ]
         )
         return collections.OrderedDict(
-            proprioception=self._get_proprioception(data, info, flatten=False),
             task_obs=task_obs,
+            proprioception=self._get_proprioception(data, info, flatten=False),
         )
 
     def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
