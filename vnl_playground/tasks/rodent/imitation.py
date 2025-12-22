@@ -225,8 +225,8 @@ class Imitation(rodent_base.RodentEnv):
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
         return collections.OrderedDict(
-            proprioception=self._get_proprioception(data, info, flatten=False),
             imitation_target=self._get_imitation_target(data, info),
+            proprioception=self._get_proprioception(data, info, flatten=False),
         )
 
     def _get_reward(
