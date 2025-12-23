@@ -115,7 +115,8 @@ def main(cfg: DictConfig):
     logging.info(f"Training checkpoint path: {checkpoint_path}")
     print(cfg)
     ppo_params = cfg.train_setup.train_config
-    env_config = cfg.env_config.env_args
+    # Convert OmegaConf to plain Python dict to avoid type conflicts with ml_collections
+    env_config = OmegaConf.to_container(cfg.env_config.env_args, resolve=True)
 
     # Create environment based on task_name
     task_name = cfg.env_config.task_name
