@@ -83,6 +83,7 @@ def default_config() -> config_dict.ConfigDict:
         bowl_amplitude=-10,
         nconmax=22*1024+1, # This heavily impacts the memory usage of the warp
         njmax=650,
+        end_eff_names=consts.END_EFFECTORS,
     )
 
 

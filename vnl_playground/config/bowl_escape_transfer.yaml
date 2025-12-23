@@ -14,6 +14,12 @@ env_config:
     target_speed: 1
     iterations: 10
     mujoco_impl: "warp"
+    end_eff_names:
+      - foot_L
+      - foot_R
+      - hand_L
+      - hand_R
+      - skull
 
 network_config:
   arch_name: intention
@@ -27,7 +33,7 @@ network_config:
 train_setup:
   agent_name: rodent
   run_name: bowl_escape
-  checkpoint_to_restore: # /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
+  checkpoint_to_restore: /home/talmolab/vast/scott-yang/data/charles_track_ckpts_for_transfer/251218_115935_749462_1e-1_kl_normal_gaussian # /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
   # NEW: /root/vast/scott-yang/track-mjx/model_checkpoints/250725_181216_794171 # OLD: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
   freeze_decoder: True
   checkpoint_max_to_keep:
@@ -55,9 +61,9 @@ logging_config:
   project_name: vnl_playground
   group_name: track_v0.0.1_transfer
   model_path: model_checkpoints
-  notes: "this is to test the bowl escape task implementation -> if this is not working, revert back to the previous git commit of the playground"
+  notes: ""
   algo_name: ppo
-  exp_name: pos_act_random_init_new_obs_large_net_DEBUG
+  exp_name: warp+transfer+freeze
   rollout_metrics:
     - escape_reward
     - upright_reward
@@ -120,9 +126,3 @@ walker_config:
     - upper_arm_R
     - lower_arm_R
     - finger_R
-  end_eff_names:
-    - foot_L
-    - foot_R
-    - hand_L
-    - hand_R
-    - skull

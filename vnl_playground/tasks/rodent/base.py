@@ -47,6 +47,7 @@ def default_config() -> config_dict.ConfigDict:
         ls_iterations=4,
         noslip_iterations=0,
         mujoco_impl="jax",
+        end_eff_names=consts.END_EFFECTORS,
     )
 
 
@@ -167,7 +168,7 @@ class RodentEnv(mjx_env.MjxEnv):
         """Get _egocentric_ position of the appendages."""
         torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
         appendages_pos = collections.OrderedDict()
-        for apppendage_name in consts.END_EFFECTORS:
+        for apppendage_name in self._config.end_eff_names:
             global_xpos = data.bind(self.mjx_model, self._spec.body(f"{apppendage_name}{self._suffix}")).xpos
             egocentric_xpos = jp.dot(global_xpos - torso.xpos, torso.xmat)
             appendages_pos[apppendage_name] = egocentric_xpos
