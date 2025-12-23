@@ -66,7 +66,7 @@ def default_config() -> config_dict.ConfigDict:
         ctrl_dt=0.01,
         sim_dt=0.002,
         solver="cg",
-        mujoco_impl="warp",
+        mujoco_impl="jax",
         iterations=10,
         ls_iterations=5,
         noslip_iterations=0,
@@ -492,7 +492,8 @@ class BowlEscape(rodent_base.RodentEnv):
 
         # fetch bowl surface height at torso (x, y)
         height_z = self._interpolate_bowl_height(x, y)
-        done_bowl = jp.where(z <= height_z - 0.03, 1.0, 0.0)
+        # make the termination 0.03 higher than the bowl surface
+        done_bowl = jp.where(z <= height_z + 0.03, 1.0, 0.0)
         return done_bowl
 
 

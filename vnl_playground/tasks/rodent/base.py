@@ -46,7 +46,7 @@ def default_config() -> config_dict.ConfigDict:
         iterations=4,
         ls_iterations=4,
         noslip_iterations=0,
-        mujoco_impl="warp",
+        mujoco_impl="jax",
     )
 
 
