@@ -304,14 +304,11 @@ class BowlEscape(rodent_base.RodentEnv):
                 qpos,
                 qvel,
                 actuator_ctrl,
-        )
-        # NOTE: The following block describes the legacy layout of `proprioceptive_obs`
-        # used by older training runs/checkpoints. It is kept commented out for
-        # reference and reproducibility when analyzing or recreating those experiments.
                 world_zaxis,
                 appendages_pos,
             ]
         )
+        
         # proprioceptive_obs = jp.concatenate(
         #     [
         #         # align with the most recent checkpoint
