@@ -20,7 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",]
 dependencies = [
-    "brax==0.13.0",
+    "brax==0.14.0",
     "wandb",
     "mujoco",
     "dm_control",
@@ -72,6 +72,12 @@ dev = [
 
 [project.urls]
 Repository = "https://github.com/talmolab/vnl-playground"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"*" = ["*.xml"]
 
 [tool.setuptools.packages.find]
 exclude = ["site", "model_checkpoints*", "checkpoints*", "wandb*", "outputs"]

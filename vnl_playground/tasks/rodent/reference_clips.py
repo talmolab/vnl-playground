@@ -152,7 +152,7 @@ class ReferenceClips:
         """Each clip has a behavior name, e.g. "Walk", "FastWalk", "LGroom", etc. This
         function extracts these names from the config metadata of the h5 file."""
         original_filenames = config["model"]["snips_order"]
-        pattern = r"([A-Za-z]+)_\d+\.p"
+        pattern = r"([A-Za-z]+)_\d+(\.p)?"
         clip_names = []
         for fn in original_filenames:
             m = re.search(pattern, fn)
