@@ -168,10 +168,10 @@ class RodentEnv(mjx_env.MjxEnv):
         """Get _egocentric_ position of the appendages."""
         torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
         appendages_pos = collections.OrderedDict()
-        for apppendage_name in self._config.end_eff_names:
-            global_xpos = data.bind(self.mjx_model, self._spec.body(f"{apppendage_name}{self._suffix}")).xpos
+        for appendage_name in self._config.end_eff_names:
+            global_xpos = data.bind(self.mjx_model, self._spec.body(f"{appendage_name}{self._suffix}")).xpos
             egocentric_xpos = jp.dot(global_xpos - torso.xpos, torso.xmat)
-            appendages_pos[apppendage_name] = egocentric_xpos
+            appendages_pos[appendage_name] = egocentric_xpos
         if flatten:
             appendages_pos, _ = jax.flatten_util.ravel_pytree(appendages_pos)
         return appendages_pos

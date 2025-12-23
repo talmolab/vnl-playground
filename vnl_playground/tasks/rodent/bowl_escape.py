@@ -177,8 +177,12 @@ class BowlEscape(rodent_base.RodentEnv):
             "prev_action": jp.zeros(self.mjx_model.nu),
             "prev_prev_action": jp.zeros(self.mjx_model.nu),
         }
-        data = mjx_env.make_data(self.mj_model, impl=self._config.mujoco_impl, nconmax=self._config.nconmax,
-        njmax=self._config.njmax,)
+        data = mjx_env.make_data(
+            self.mj_model,
+            impl=self._config.mujoco_impl,
+            nconmax=self._config.nconmax,
+            njmax=self._config.njmax,
+        )
         task_obs, proprioceptive_obs = self._get_obs(data, info)
         task_obs_size = task_obs.shape[0]
         proprioceptive_obs_size = proprioceptive_obs.shape[0]
@@ -300,7 +304,10 @@ class BowlEscape(rodent_base.RodentEnv):
                 qpos,
                 qvel,
                 actuator_ctrl,
-                jp.array([body_height]),
+        )
+        # NOTE: The following block describes the legacy layout of `proprioceptive_obs`
+        # used by older training runs/checkpoints. It is kept commented out for
+        # reference and reproducibility when analyzing or recreating those experiments.
                 world_zaxis,
                 appendages_pos,
             ]
