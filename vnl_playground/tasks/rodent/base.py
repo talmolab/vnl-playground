@@ -218,6 +218,8 @@ class RodentEnv(mjx_env.MjxEnv):
             body_height=self._get_body_height(data).reshape(1),
             world_zaxis=self._get_world_zaxis(data),
             appendages_pos=self._get_appendages_pos(data, flatten=flatten),
+            kinematic_sensors=self._get_kinematic_sensors(data, flatten=flatten),
+            touch_sensors=self._get_touch_sensors(data),
             prev_action=info["prev_action"],
         )
         if flatten:

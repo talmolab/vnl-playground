@@ -77,16 +77,15 @@ def default_config() -> config_dict.ConfigDict:
         vision_config=default_vision_config(),
         torque_actuators=True,
         rescale_factor=0.9,
-        target_speed=0.75,
-        episode_length=1500,
+        target_speed=1.0,
+        episode_length=2000,
         action_repeat=1,  # is this action repeat based on sim dit or control dt?
         bowl_hsize=2,
         bowl_vsize=0.2,
         bowl_sigma=1.25,
         bowl_amplitude=-10,
         reward_terms={
-            "escape": {"weight": 1.0},
-            "upright": {"weight": 1.0},
+            "escape_x_upright": {"weight": 1.0},
             "speed": {"weight": 1.0},
         },
         termination_criteria={
@@ -284,8 +283,8 @@ class BowlEscape(rodent_base.RodentEnv):
 
         return decorator
 
-    @_named_reward("escape")
-    def _escape_reward(self, data, info, metrics, weight) -> float:
+    @_named_reward("escape_x_upright")
+    def _escape_x_upright_reward(self, data, info, metrics, weight) -> float:
         """Calculate escape reward based on torso position relative to terrain size.
 
         Args:
@@ -304,21 +303,7 @@ class BowlEscape(rodent_base.RodentEnv):
             value_at_margin=0,
             sigmoid="linear",
         )
-        reward = escape_reward * weight
-        metrics["rewards/escape"] = reward
-        return reward
 
-    @_named_reward("upright")
-    def _upright_reward(self, data, info, metrics, weight) -> float:
-        """Returns a reward proportional to how upright the torso is.
-
-        Args:
-            data (mjx.Data): The simulation data.
-
-        Returns:
-            float: Upright reward value.
-        """
-        del info
         deviation_angle = 0
         deviation = np.cos(np.deg2rad(deviation_angle))
         # xmat is the 3x3 rotation matrix of the current frame
@@ -335,8 +320,12 @@ class BowlEscape(rodent_base.RodentEnv):
             margin=1 + deviation,
             value_at_margin=0,
         )
-        reward = np.min(upright) * weight
-        metrics["rewards/upright"] = reward
+        upright_reward = np.min(upright)
+        metrics["rewards/upright"] = upright_reward
+        metrics["rewards/escape"] = escape_reward
+
+        reward = escape_reward * upright_reward * weight
+        metrics["rewards/uprightxescape"] = reward
         return reward
 
     @_named_reward("speed")
