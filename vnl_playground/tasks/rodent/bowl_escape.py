@@ -62,6 +62,7 @@ def default_config() -> config_dict.ConfigDict:
     """
     return config_dict.create(
         walker_xml_path=consts.RODENT_BOX_FEET_PATH,
+        # walker_xml_path=consts.RODENT_XML_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
         ctrl_dt=0.01,
         sim_dt=0.002,
@@ -299,6 +300,7 @@ class BowlEscape(rodent_base.RodentEnv):
             self._mjx_model, self._spec.body(f"torso{self._suffix}")
         ).xmat.flatten()[6:]
         appendages_pos = self._get_appendages_pos(data)
+        kinematic_sensors = self._get_kinematic_sensors(data)
         proprioceptive_obs = jp.concatenate(
             [
                 qpos,
@@ -307,6 +309,7 @@ class BowlEscape(rodent_base.RodentEnv):
                 jp.array([body_height]),
                 world_zaxis,
                 appendages_pos,
+                kinematic_sensors,
             ]
         )
         
