@@ -304,6 +304,7 @@ class BowlEscape(rodent_base.RodentEnv):
                 qpos,
                 qvel,
                 actuator_ctrl,
+                jp.array([body_height]),
                 world_zaxis,
                 appendages_pos,
             ]
