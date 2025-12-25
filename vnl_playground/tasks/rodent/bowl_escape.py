@@ -325,7 +325,7 @@ class BowlEscape(rodent_base.RodentEnv):
         metrics["rewards/escape"] = escape_reward
 
         reward = escape_reward * upright_reward * weight
-        metrics["rewards/uprightxescape"] = reward
+        metrics["rewards/escape_x_upright"] = reward
         return reward
 
     @_named_reward("speed")
