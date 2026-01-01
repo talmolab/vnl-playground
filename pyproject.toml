@@ -20,7 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",]
 dependencies = [
-    "brax>=0.13.0",
+    "brax==0.14.0",
     "wandb",
     "mujoco",
     "dm_control",
@@ -29,7 +29,6 @@ dependencies = [
     "mediapy",
     "jax>=0.7.2",
     "flax",
-    "optax",
     "imageio[ffmpeg]",
     "hydra-core",
     "h5py",
@@ -73,8 +72,7 @@ dev = [
 with-cuda = [
     "vnl-playground[dev]",
     "flax[all]",
-    "optax[all]==0.2.5",
-    "jax[cuda12]==0.6.2",
+    "jax[cuda12]>=0.7.2",
 ]
 
 [project.urls]
