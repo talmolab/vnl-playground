@@ -183,4 +183,5 @@ checkpoints/
 model_checkpoints/
 outputs/
 *.mp4
-*.pngvnl_playground/_version.py
+*.png
+vnl_playground/_version.py
