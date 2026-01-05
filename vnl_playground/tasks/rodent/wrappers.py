@@ -15,12 +15,11 @@ class FlattenObsWrapper(wrapper.Wrapper):
         super().__init__(env)
 
     def reset(
-            self, 
-            rng: jax.Array, 
-            clip_idx: Optional[int] = None,
-            start_frame: Optional[int] = None,
-        ) -> wrapper.mjx_env.State:
-        state = self.env.reset(rng, clip_idx=clip_idx, start_frame=start_frame)
+        self,
+        rng: jax.Array,
+        **kwargs: Any,
+    ) -> wrapper.mjx_env.State:
+        state = self.env.reset(rng, **kwargs)
         return self._flatten(state)
 
     def step(
@@ -55,9 +54,9 @@ class FlattenObsWrapper(wrapper.Wrapper):
         return new_metrics
 
     @property
-    def unwrapped(self) -> "MjxEnv":
+    def unwrapped(self) -> mjx_env.MjxEnv:
         return self
-    
+
     @property
     def _mjx_model(self):
         return self.env._mjx_model
@@ -65,6 +64,7 @@ class FlattenObsWrapper(wrapper.Wrapper):
     @_mjx_model.setter
     def _mjx_model(self, value):
         self.env._mjx_model = value
+
 
 class HighLevelWrapper(wrapper.Wrapper):
     """Takes a decoder inference function and uses it to get the ctrl used in the sim step.
@@ -77,24 +77,37 @@ class HighLevelWrapper(wrapper.Wrapper):
         env: wrapper.mjx_env.MjxEnv,
         decoder_inference_fn: Callable,
         latent_size: int,
-        non_proprioceptive_obs_size: int,
+        # non_proprioceptive_obs_size: int,
     ):
         self._decoder_inference_fn = decoder_inference_fn
         self._latent_size = latent_size
-        self.non_proprioceptive_obs_size = non_proprioceptive_obs_size
+        self._proprioceptive_obs_size = int(env.proprioceptive_obs_size)
+        _, self._dummy_decoder_extras = decoder_inference_fn(
+            jp.zeros(self._latent_size + self._proprioceptive_obs_size)
+        )
         super().__init__(env)
+
+    def reset(
+        self,
+        rng: jax.Array,
+        **kwargs: Any,
+    ) -> wrapper.mjx_env.State:
+        state = self.env.reset(rng, **kwargs)
+        state.info["decoder_extras"] = self._dummy_decoder_extras
+        return state
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
         obs = state.obs
 
         # Note: We assume the non proprioceptive obs are first indices in obs, followed by proprioceptive obs.
-        ctrl, _ = self._decoder_inference_fn(
+        ctrl, extras = self._decoder_inference_fn(
             jp.concatenate(
-                [action, obs[..., self.non_proprioceptive_obs_size :]],
+                [action, obs[..., -self._proprioceptive_obs_size :]],
                 axis=-1,
             ),
         )
-        return self.env.step(state, ctrl)
+        state.info["decoder_extras"] = extras
+        return super().step(state, ctrl)
 
     @property
     def action_size(self) -> int:

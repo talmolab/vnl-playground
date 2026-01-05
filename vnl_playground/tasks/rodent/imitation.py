@@ -140,11 +140,11 @@ class Imitation(rodent_base.RodentEnv):
             )
 
     def reset(
-            self, 
-            rng: jax.Array, 
-            clip_idx: Optional[int] = None, 
-            start_frame: Optional[int] = None
-        ) -> mjx_env.State:
+        self,
+        rng: jax.Array,
+        clip_idx: Optional[int] = None,
+        start_frame: Optional[int] = None,
+    ) -> mjx_env.State:
         """
         Resets the environment state: draws a new reference clip and initializes the rodent's pose to match.
         Args:
@@ -159,7 +159,9 @@ class Imitation(rodent_base.RodentEnv):
         if clip_idx is None:
             clip_idx = jax.random.choice(clip_rng, self._clip_set)
         if start_frame is None:
-            start_frame = jax.random.randint(start_rng, (), *self._config.start_frame_range)
+            start_frame = jax.random.randint(
+                start_rng, (), *self._config.start_frame_range
+            )
         data = self._reset_data(clip_idx, start_frame)
         info: dict[str, Any] = {
             "start_frame": start_frame,
@@ -223,8 +225,8 @@ class Imitation(rodent_base.RodentEnv):
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
         return collections.OrderedDict(
-            proprioception=self._get_proprioception(data, info, flatten=False),
             imitation_target=self._get_imitation_target(data, info),
+            proprioception=self._get_proprioception(data, info, flatten=False),
         )
 
     def _get_reward(
@@ -438,7 +440,9 @@ class Imitation(rodent_base.RodentEnv):
 
     @_named_reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
-        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(jp.square(info["action"] - info["prev_action"]))
+        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(
+            jp.square(info["action"] - info["prev_action"])
+        )
         cost = weight * ctrl_diff_sqr
         metrics["rewards/control_diff_cost"] = -cost
         return -cost
@@ -710,6 +714,7 @@ class Imitation(rodent_base.RodentEnv):
                     )
                     any_failed = True
         return not any_failed
+
 
 def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
     if isinstance(a, map):
