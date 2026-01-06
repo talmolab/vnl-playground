@@ -56,7 +56,8 @@ def default_config() -> config_dict.ConfigDict:
         iterations=4,
         ls_iterations=4,
         noslip_iterations=0,
-        naconmax=16*256,
+        impratio=1.0,
+        naconmax=16 * 256,
         njmax=256,
         mujoco_impl="jax",
     )
@@ -174,7 +175,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             pos=pos,
             quat=quat,
         )
-        root = worm.worldbody
+        root = worm.worldbody.first_body()
         spawn_body = spawn_site.attach_body(root, "", suffix=suffix)
         self._suffix = suffix
         self._n_worms += 1
@@ -217,7 +218,8 @@ class CelegansEnv(mjx_env.MjxEnv):
                         geomname2="floor",
                         condim=3,
                         friction=friction,
-                        solimp=solimp)
+                        solimp=solimp,
+                    )
 
     def add_ghost(
         self,
@@ -252,11 +254,15 @@ class CelegansEnv(mjx_env.MjxEnv):
         walker_spec = mujoco.MjSpec.from_string(
             epath.Path(self._walker_xml_path).read_text()
         )
-        # Scale and recolor the ghost body
-        for body in walker_spec.worldbody.bodies:
-            _scale_body_tree(body, rescale_factor)
-            _recolour_tree(body, rgba=ghost_rgba)
-        # Attach as ghost at the offset frame
+        if rescale_factor != 1.0:
+            logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
+            walker_spec = dm_scale_spec(walker_spec, rescale_factor)
+
+        # Recolor the body if rgba is specified
+        if ghost_rgba is not None:
+            for body in walker_spec.worldbody.bodies:
+                _recolour_tree(body, rgba=ghost_rgba)
+
         frame = spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         root = walker_spec.worldbody
         spawn_body = frame.attach_body(root, "", suffix=suffix)
@@ -307,15 +313,18 @@ class CelegansEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self.config.iterations
             self._mj_model.opt.ls_iterations = self.config.ls_iterations
+            self._mj_model.opt.impratio = self.config.impratio
             self._mj_model.opt.integrator = {
                 "euler": mujoco.mjtIntegrator.mjINT_EULER,
-                "rk4": mujoco.mjtIntegrator.mjINT_RK4}[self._config.integrator.lower()]
+                "rk4": mujoco.mjtIntegrator.mjINT_RK4,
+            }[self._config.integrator.lower()]
             self._mj_model.opt.solver = {
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
             self._mjx_model = mjx.put_model(
-                self._mj_model, impl=self.config.mujoco_impl)
+                self._mj_model, impl=self.config.mujoco_impl
+            )
             self._compiled = True
 
     def _get_root_pos(self, data: mjx.Data) -> jp.ndarray:

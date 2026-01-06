@@ -1,16 +1,15 @@
-<?xml version='1.0' encoding='utf-8'?>
 <mujoco model="celegans">
   <visual>
     <quality shadowsize="2048" />
     <global offwidth="1920" offheight="1200" elevation="-20" azimuth="120" />
   </visual>
   <compiler angle="degree" coordinate="local" inertiafromgeom="true" meshdir="./meshes" />
-  <option density="1.2" solver="CG" iterations="6" ls_iterations="6" timestep="0.002" viscosity="0.1" cone="pyramidal" />
+  <option density="1.2" solver="CG" iterations="6" ls_iterations="6" timestep="0.002" viscosity="0.1" cone="pyramidal" impratio="0.1"/>
   <default>
     <geom conaffinity="1" condim="3" contype="1" rgba="0.8 0.6 .4 1" />
     <joint armature="0.1" />
     <site type="sphere" size="0.00416572"/>
-    <muscle ctrllimited="true" ctrlrange="-1 1" />
+    <muscle ctrllimited="true" ctrlrange="0 1"/>
     <default class="mesh">
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="1000"/>
     </default>
@@ -981,101 +980,101 @@
     </spatial>
   </tendon>
   <actuator>
-    <muscle name="muscle_dbwml1" tendon="tendon_dbwml1" lengthrange="0.05 0.13" />
-    <muscle name="muscle_dbwml2" tendon="tendon_dbwml2" lengthrange="0.04 0.15" />
-    <muscle name="muscle_dbwml3" tendon="tendon_dbwml3" lengthrange="0.04 0.15" />
-    <muscle name="muscle_dbwml4" tendon="tendon_dbwml4" lengthrange="0.03 0.39" />
-    <muscle name="muscle_dbwml5" tendon="tendon_dbwml5" lengthrange="0.04 0.15" />
-    <muscle name="muscle_dbwml6" tendon="tendon_dbwml6" lengthrange="0.03 0.46" />
-    <muscle name="muscle_dbwml7" tendon="tendon_dbwml7" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwml8" tendon="tendon_dbwml8" lengthrange="0.04 0.50" />
-    <muscle name="muscle_dbwml9" tendon="tendon_dbwml9" lengthrange="0.06 0.15" />
-    <muscle name="muscle_dbwml10" tendon="tendon_dbwml10" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwml11" tendon="tendon_dbwml11" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwml12" tendon="tendon_dbwml12" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwml13" tendon="tendon_dbwml13" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwml14" tendon="tendon_dbwml14" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwml15" tendon="tendon_dbwml15" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwml16" tendon="tendon_dbwml16" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwml17" tendon="tendon_dbwml17" lengthrange="0.04 0.15" />
-    <muscle name="muscle_dbwml18" tendon="tendon_dbwml18" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwml19" tendon="tendon_dbwml19" lengthrange="0.04 0.16" />
-    <muscle name="muscle_dbwml20" tendon="tendon_dbwml20" lengthrange="0.04 0.16" />
-    <muscle name="muscle_dbwml21" tendon="tendon_dbwml21" lengthrange="0.03 0.16" />
-    <muscle name="muscle_dbwml22" tendon="tendon_dbwml22" lengthrange="0.04 0.15" />
-    <muscle name="muscle_dbwml23" tendon="tendon_dbwml23" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwml24" tendon="tendon_dbwml24" lengthrange="0.05 0.13" />
-    <muscle name="muscle_dbwmr1" tendon="tendon_dbwmr1" lengthrange="0.06 0.13" />
-    <muscle name="muscle_dbwmr2" tendon="tendon_dbwmr2" lengthrange="0.04 0.15" />
-    <muscle name="muscle_dbwmr3" tendon="tendon_dbwmr3" lengthrange="0.04 0.15" />
-    <muscle name="muscle_dbwmr4" tendon="tendon_dbwmr4" lengthrange="0.03 0.39" />
-    <muscle name="muscle_dbwmr5" tendon="tendon_dbwmr5" lengthrange="0.04 0.15" />
-    <muscle name="muscle_dbwmr6" tendon="tendon_dbwmr6" lengthrange="0.03 0.46" />
-    <muscle name="muscle_dbwmr7" tendon="tendon_dbwmr7" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwmr8" tendon="tendon_dbwmr8" lengthrange="0.04 0.50" />
-    <muscle name="muscle_dbwmr9" tendon="tendon_dbwmr9" lengthrange="0.06 0.15" />
-    <muscle name="muscle_dbwmr10" tendon="tendon_dbwmr10" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwmr11" tendon="tendon_dbwmr11" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwmr12" tendon="tendon_dbwmr12" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwmr13" tendon="tendon_dbwmr13" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwmr14" tendon="tendon_dbwmr14" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwmr15" tendon="tendon_dbwmr15" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwmr16" tendon="tendon_dbwmr16" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwmr17" tendon="tendon_dbwmr17" lengthrange="0.04 0.15" />
-    <muscle name="muscle_dbwmr18" tendon="tendon_dbwmr18" lengthrange="0.05 0.15" />
-    <muscle name="muscle_dbwmr19" tendon="tendon_dbwmr19" lengthrange="0.04 0.16" />
-    <muscle name="muscle_dbwmr20" tendon="tendon_dbwmr20" lengthrange="0.04 0.16" />
-    <muscle name="muscle_dbwmr21" tendon="tendon_dbwmr21" lengthrange="0.03 0.16" />
-    <muscle name="muscle_dbwmr22" tendon="tendon_dbwmr22" lengthrange="0.04 0.15" />
-    <muscle name="muscle_dbwmr23" tendon="tendon_dbwmr23" lengthrange="0.04 0.15" />
-    <muscle name="muscle_dbwmr24" tendon="tendon_dbwmr24" lengthrange="0.05 0.13" />
-    <muscle name="muscle_vbwml1" tendon="tendon_vbwml1" lengthrange="0.05 0.13" />
-    <muscle name="muscle_vbwml2" tendon="tendon_vbwml2" lengthrange="0.04 0.15" />
-    <muscle name="muscle_vbwml3" tendon="tendon_vbwml3" lengthrange="0.04 0.15" />
-    <muscle name="muscle_vbwml4" tendon="tendon_vbwml4" lengthrange="0.03 0.38" />
-    <muscle name="muscle_vbwml5" tendon="tendon_vbwml5" lengthrange="0.04 0.15" />
-    <muscle name="muscle_vbwml6" tendon="tendon_vbwml6" lengthrange="0.04 0.45" />
-    <muscle name="muscle_vbwml7" tendon="tendon_vbwml7" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwml8" tendon="tendon_vbwml8" lengthrange="0.04 0.50" />
-    <muscle name="muscle_vbwml9" tendon="tendon_vbwml9" lengthrange="0.05 0.14" />
-    <muscle name="muscle_vbwml10" tendon="tendon_vbwml10" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwml11" tendon="tendon_vbwml11" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwml12" tendon="tendon_vbwml12" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwml13" tendon="tendon_vbwml13" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwml14" tendon="tendon_vbwml14" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwml15" tendon="tendon_vbwml15" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwml16" tendon="tendon_vbwml16" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwml17" tendon="tendon_vbwml17" lengthrange="0.05 0.16" />
-    <muscle name="muscle_vbwml18" tendon="tendon_vbwml18" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwml19" tendon="tendon_vbwml19" lengthrange="0.04 0.16" />
-    <muscle name="muscle_vbwml20" tendon="tendon_vbwml20" lengthrange="0.04 0.16" />
-    <muscle name="muscle_vbwml21" tendon="tendon_vbwml21" lengthrange="0.03 0.16" />
-    <muscle name="muscle_vbwml22" tendon="tendon_vbwml22" lengthrange="0.04 0.16" />
-    <muscle name="muscle_vbwml23" tendon="tendon_vbwml23" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwmr1" tendon="tendon_vbwmr1" lengthrange="0.04 0.15" />
-    <muscle name="muscle_vbwmr2" tendon="tendon_vbwmr2" lengthrange="0.04 0.15" />
-    <muscle name="muscle_vbwmr3" tendon="tendon_vbwmr3" lengthrange="0.03 0.38" />
-    <muscle name="muscle_vbwmr4" tendon="tendon_vbwmr4" lengthrange="0.04 0.15" />
-    <muscle name="muscle_vbwmr5" tendon="tendon_vbwmr5" lengthrange="0.04 0.45" />
-    <muscle name="muscle_vbwmr6" tendon="tendon_vbwmr6" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwmr7" tendon="tendon_vbwmr7" lengthrange="0.04 0.50" />
-    <muscle name="muscle_vbwmr8" tendon="tendon_vbwmr8" lengthrange="0.05 0.14" />
-    <muscle name="muscle_vbwmr9" tendon="tendon_vbwmr9" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwmr10" tendon="tendon_vbwmr10" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwmr11" tendon="tendon_vbwmr11" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwmr12" tendon="tendon_vbwmr12" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwmr13" tendon="tendon_vbwmr13" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwmr14" tendon="tendon_vbwmr14" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwmr15" tendon="tendon_vbwmr15" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwmr16" tendon="tendon_vbwmr16" lengthrange="0.05 0.16" />
-    <muscle name="muscle_vbwmr17" tendon="tendon_vbwmr17" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwmr18" tendon="tendon_vbwmr18" lengthrange="0.04 0.16" />
-    <muscle name="muscle_vbwmr19" tendon="tendon_vbwmr19" lengthrange="0.04 0.16" />
-    <muscle name="muscle_vbwmr20" tendon="tendon_vbwmr20" lengthrange="0.03 0.16" />
-    <muscle name="muscle_vbwmr21" tendon="tendon_vbwmr21" lengthrange="0.04 0.16" />
-    <muscle name="muscle_vbwmr22" tendon="tendon_vbwmr22" lengthrange="0.05 0.15" />
-    <muscle name="muscle_vbwmr23" tendon="tendon_vbwmr23" lengthrange="0.07 0.13" />
-    <muscle name="muscle_vbwmr24" tendon="tendon_vbwmr24" lengthrange="0.07 0.13" />
+    <muscle name="muscle_dbwml1" tendon="tendon_dbwml1" lengthrange="0.05 0.13" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml2" tendon="tendon_dbwml2" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml3" tendon="tendon_dbwml3" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml4" tendon="tendon_dbwml4" lengthrange="0.03 0.39" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml5" tendon="tendon_dbwml5" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml6" tendon="tendon_dbwml6" lengthrange="0.03 0.46" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml7" tendon="tendon_dbwml7" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml8" tendon="tendon_dbwml8" lengthrange="0.04 0.50" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml9" tendon="tendon_dbwml9" lengthrange="0.06 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml10" tendon="tendon_dbwml10" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml11" tendon="tendon_dbwml11" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml12" tendon="tendon_dbwml12" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml13" tendon="tendon_dbwml13" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml14" tendon="tendon_dbwml14" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml15" tendon="tendon_dbwml15" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml16" tendon="tendon_dbwml16" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml17" tendon="tendon_dbwml17" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml18" tendon="tendon_dbwml18" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml19" tendon="tendon_dbwml19" lengthrange="0.04 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml20" tendon="tendon_dbwml20" lengthrange="0.04 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml21" tendon="tendon_dbwml21" lengthrange="0.03 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml22" tendon="tendon_dbwml22" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml23" tendon="tendon_dbwml23" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwml24" tendon="tendon_dbwml24" lengthrange="0.05 0.13" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr1" tendon="tendon_dbwmr1" lengthrange="0.06 0.13" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr2" tendon="tendon_dbwmr2" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr3" tendon="tendon_dbwmr3" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr4" tendon="tendon_dbwmr4" lengthrange="0.03 0.39" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr5" tendon="tendon_dbwmr5" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr6" tendon="tendon_dbwmr6" lengthrange="0.03 0.46" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr7" tendon="tendon_dbwmr7" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr8" tendon="tendon_dbwmr8" lengthrange="0.04 0.50" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr9" tendon="tendon_dbwmr9" lengthrange="0.06 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr10" tendon="tendon_dbwmr10" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr11" tendon="tendon_dbwmr11" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr12" tendon="tendon_dbwmr12" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr13" tendon="tendon_dbwmr13" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr14" tendon="tendon_dbwmr14" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr15" tendon="tendon_dbwmr15" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr16" tendon="tendon_dbwmr16" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr17" tendon="tendon_dbwmr17" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr18" tendon="tendon_dbwmr18" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr19" tendon="tendon_dbwmr19" lengthrange="0.04 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr20" tendon="tendon_dbwmr20" lengthrange="0.04 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr21" tendon="tendon_dbwmr21" lengthrange="0.03 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr22" tendon="tendon_dbwmr22" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr23" tendon="tendon_dbwmr23" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_dbwmr24" tendon="tendon_dbwmr24" lengthrange="0.05 0.13" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml1" tendon="tendon_vbwml1" lengthrange="0.05 0.13" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml2" tendon="tendon_vbwml2" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml3" tendon="tendon_vbwml3" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml4" tendon="tendon_vbwml4" lengthrange="0.03 0.38" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml5" tendon="tendon_vbwml5" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml6" tendon="tendon_vbwml6" lengthrange="0.04 0.45" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml7" tendon="tendon_vbwml7" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml8" tendon="tendon_vbwml8" lengthrange="0.04 0.50" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml9" tendon="tendon_vbwml9" lengthrange="0.05 0.14" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml10" tendon="tendon_vbwml10" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml11" tendon="tendon_vbwml11" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml12" tendon="tendon_vbwml12" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml13" tendon="tendon_vbwml13" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml14" tendon="tendon_vbwml14" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml15" tendon="tendon_vbwml15" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml16" tendon="tendon_vbwml16" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml17" tendon="tendon_vbwml17" lengthrange="0.05 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml18" tendon="tendon_vbwml18" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml19" tendon="tendon_vbwml19" lengthrange="0.04 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml20" tendon="tendon_vbwml20" lengthrange="0.04 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml21" tendon="tendon_vbwml21" lengthrange="0.03 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml22" tendon="tendon_vbwml22" lengthrange="0.04 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_vbwml23" tendon="tendon_vbwml23" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr1" tendon="tendon_vbwmr1" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr2" tendon="tendon_vbwmr2" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr3" tendon="tendon_vbwmr3" lengthrange="0.03 0.38" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr4" tendon="tendon_vbwmr4" lengthrange="0.04 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr5" tendon="tendon_vbwmr5" lengthrange="0.04 0.45" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr6" tendon="tendon_vbwmr6" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr7" tendon="tendon_vbwmr7" lengthrange="0.04 0.50" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr8" tendon="tendon_vbwmr8" lengthrange="0.05 0.14" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr9" tendon="tendon_vbwmr9" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr10" tendon="tendon_vbwmr10" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr11" tendon="tendon_vbwmr11" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr12" tendon="tendon_vbwmr12" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr13" tendon="tendon_vbwmr13" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr14" tendon="tendon_vbwmr14" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr15" tendon="tendon_vbwmr15" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr16" tendon="tendon_vbwmr16" lengthrange="0.05 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr17" tendon="tendon_vbwmr17" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr18" tendon="tendon_vbwmr18" lengthrange="0.04 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr19" tendon="tendon_vbwmr19" lengthrange="0.04 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr20" tendon="tendon_vbwmr20" lengthrange="0.03 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr21" tendon="tendon_vbwmr21" lengthrange="0.04 0.16" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr22" tendon="tendon_vbwmr22" lengthrange="0.05 0.15" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr23" tendon="tendon_vbwmr23" lengthrange="0.07 0.13" tausmooth="0.0"/>
+    <muscle name="muscle_vbwmr24" tendon="tendon_vbwmr24" lengthrange="0.07 0.13" tausmooth="0.0"/>
   </actuator>
   <sensor>
     <accelerometer name="accelerometer" site="sidesite1_central" />

@@ -48,14 +48,21 @@ def default_config() -> config_dict.ConfigDict:
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
-        naconmax=16*8192,
+        impratio=1.0,
+        naconmax=16 * 8192,
         njmax=256,
         init_pos={"x": 0.0, "y": 0.0, "z": 0.05},
         torque_actuators=False,
         rescale_factor=1.0,
         dim=3,
-        friction={"tan_floor":1, "tan_body":1, "tor": 0.005, "roll_floor":0.0001, "roll_body": 0.0001},
-        solimp={"d0":0.9, "dwidth":0.95, "width":0.001, "midpoint":0.5, "power":2},
+        friction={
+            "tan_floor": 1,
+            "tan_body": 1,
+            "tor": 0.005,
+            "roll_floor": 0.0001,
+            "roll_body": 0.0001,
+        },
+        solimp={"d0": 0.9, "dwidth": 0.95, "width": 0.001, "midpoint": 0.5, "power": 2},
         mocap_hz=20,
         reference_clips=ReferenceClips(
             data_path=consts.REFERENCE_H5_PATH, n_frames_per_clip=250
@@ -131,10 +138,22 @@ class Imitation(worm_base.CelegansEnv):
         """
         super().__init__(config, config_overrides)
 
-        #ConfigDict annoyingly sorts dictionary by keys
-        friction = [self.config.friction["tan_floor"], self.config.friction["tan_body"], self.config.friction["tor"], self.config.friction["roll_floor"], self.config.friction["roll_body"]] 
-        solimp = [self.config.solimp["d0"], self.config.solimp["dwidth"], self.config.solimp["width"], self.config.solimp["midpoint"], self.config.solimp["power"]]
-        
+        # ConfigDict annoyingly sorts dictionary by keys
+        friction = [
+            self.config.friction["tan_floor"],
+            self.config.friction["tan_body"],
+            self.config.friction["tor"],
+            self.config.friction["roll_floor"],
+            self.config.friction["roll_body"],
+        ]
+        solimp = [
+            self.config.solimp["d0"],
+            self.config.solimp["dwidth"],
+            self.config.solimp["width"],
+            self.config.solimp["midpoint"],
+            self.config.solimp["power"],
+        ]
+
         self.add_worm(
             pos=list(self._config.init_pos.values()),
             rescale_factor=self._config.rescale_factor,
@@ -145,10 +164,18 @@ class Imitation(worm_base.CelegansEnv):
         )
         if self._config.with_ghost:
             self.add_ghost_worm(
-                rescale_factor=self._config.rescale_factor, dim=self._config.dim, init_pos=list(self._config.init_pos.values())
+                rescale_factor=self._config.rescale_factor,
+                dim=self._config.dim,
+                init_pos=list(self._config.init_pos.values()),
             )
 
-        self.max_reward = sum([params["weight"] for params in self._config.reward_terms.values() if "weight" in params])
+        self.max_reward = sum(
+            [
+                params["weight"]
+                for params in self._config.reward_terms.values()
+                if "weight" in params
+            ]
+        )
         self._config.termination_criteria["nan"] = {}  # nan termination always on
 
         self.compile()
@@ -253,9 +280,9 @@ class Imitation(worm_base.CelegansEnv):
         cost = self._get_cost(data, info, metrics)
         net_reward = reward - cost
         net_reward = jp.nan_to_num(net_reward)
-        
+
         done = self._is_done(data, info, metrics)
-        
+
         return mjx_env.State(
             data, obs, net_reward, jp.astype(done, float), metrics, info
         )
@@ -344,9 +371,11 @@ class Imitation(worm_base.CelegansEnv):
         """
         total_reward = 0.0
         for name, kwargs in self.reward_terms.items():
-            total_reward += _REWARD_FCN_REGISTRY[name](self, data, info, metrics, **kwargs)
+            total_reward += _REWARD_FCN_REGISTRY[name](
+                self, data, info, metrics, **kwargs
+            )
         metrics["rewards/total"] = total_reward
-        metrics["reward/normalized"] = total_reward/self.max_reward
+        metrics["reward/normalized"] = total_reward / self.max_reward
         return total_reward
 
     def _is_done(
@@ -401,7 +430,8 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Initialized MuJoCo simulation data.
         """
-        data = mjx.make_data(self.mj_model,
+        data = mjx.make_data(
+            self.mj_model,
             impl=self._config.mujoco_impl,
             naconmax=self._config.naconmax,
             njmax=self._config.njmax,
@@ -622,7 +652,7 @@ class Imitation(worm_base.CelegansEnv):
         """
         target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
-        
+
         error = target.joints - joints
         distance = jp.linalg.norm(error)
 
@@ -713,7 +743,9 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Tuple of (reward_value, end_effector_distance).
         """
-        total_dist = self._get_bodies_dist(data, info, metrics, bodies=self.end_eff_names)
+        total_dist = self._get_bodies_dist(
+            data, info, metrics, bodies=self.end_eff_names
+        )
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
 
         metrics["rewards/end_eff"] = reward
@@ -721,9 +753,7 @@ class Imitation(worm_base.CelegansEnv):
         return reward
 
     @_named_reward("upright")
-    def _upright_reward(
-        self, data, info, metrics, weight, healthy_z_range
-    ) -> float:
+    def _upright_reward(self, data, info, metrics, weight, healthy_z_range) -> float:
         """Reward for staying upright within a healthy height range.
 
         Args:
@@ -835,8 +865,8 @@ class Imitation(worm_base.CelegansEnv):
         var = jp.sum(var_act)
         cost = weight * var
 
-        metrics['costs/var'] = cost
-        metrics['magnitudes/var'] = var
+        metrics["costs/var"] = cost
+        metrics["magnitudes/var"] = var
         return cost
 
     @_named_cost("jerk")

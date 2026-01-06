@@ -50,6 +50,8 @@ import orbax.checkpoint as ocp
 from omegaconf import DictConfig, OmegaConf
 from track_mjx.agent import checkpointing, wandb_logging, preemption
 from track_mjx.agent.mlp_ppo import ppo, ppo_networks
+from track_mjx.agent.distribution import NormalSigmoidDistribution
+from brax.training.distribution import NormalTanhDistribution
 from track_mjx.analysis import render
 
 import wandb
@@ -270,7 +272,12 @@ def main(cfg: DictConfig):
         checkpoint_path=checkpoint_path,
         wandb_run_id=wandb.run.id,
     )
-
+    if cfg.network_config.action_distribution == "sigmoid":
+        logging.info("Using sigmoid action distribution")
+        action_distribution = NormalSigmoidDistribution
+    else:
+        logging.info("Using tanh action distribution")
+        action_distribution = NormalTanhDistribution
     train_fn = functools.partial(
         ppo.train,
         **ppo_params,
@@ -282,6 +289,7 @@ def main(cfg: DictConfig):
         kl_weight=cfg.network_config.kl_weight,
         network_factory=functools.partial(
             ppo_networks.make_intention_ppo_networks,
+            action_distribution=action_distribution,
             encoder_hidden_layer_sizes=tuple(cfg.network_config.encoder_layer_sizes),
             decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_layer_sizes),
             value_hidden_layer_sizes=tuple(cfg.network_config.critic_layer_sizes),

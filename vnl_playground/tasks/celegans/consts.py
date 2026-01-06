@@ -60,6 +60,7 @@ BODIES: List[str] = [
     "torso25_body",
 ]
 JOINTS: List[str] = [
+    "free_body_rot",
     "motor1_rot",
     "motor2_rot",
     "rot4",
