@@ -27,12 +27,12 @@ env_config:
       roll_floor: 0.0001
       roll_body: 0.0001
     solimp: 
-      d0: 0.9
+      d0: 0.0
       dwidth: 0.95
       width: 0.001
       midpoint: 0.5
       power: 2
-    impratio: 1.0
+    impratio: 0.02
     root_body: torso13_body
 
     solver: "cg"
