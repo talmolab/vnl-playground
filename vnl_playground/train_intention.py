@@ -176,7 +176,7 @@ def main(cfg: DictConfig):
     mj_model = evaluator_env.mj_model
     mj_data = mujoco.MjData(mj_model)
     scene_option = mujoco.MjvOption()
-    scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
+    # scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
     renderer = mujoco.Renderer(mj_model, height=512, width=512)
     policy_params_fn = functools.partial(
         wandb_logging.rollout_logging_fn,
