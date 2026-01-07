@@ -63,6 +63,7 @@ def default_config() -> config_dict.ConfigDict:
             "roll_body": 0.0001,
         },
         solimp={"d0": 0.9, "dwidth": 0.95, "width": 0.001, "midpoint": 0.5, "power": 2},
+        muscle_config=None,
         mocap_hz=20,
         reference_clips=ReferenceClips(
             data_path=consts.REFERENCE_H5_PATH, n_frames_per_clip=250
@@ -161,6 +162,7 @@ class Imitation(worm_base.CelegansEnv):
             dim=self._config.dim,
             friction=friction,
             solimp=solimp,
+            muscle_config=self._config.muscle_config,
         )
         if self._config.with_ghost:
             self.add_ghost_worm(

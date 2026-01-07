@@ -134,6 +134,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         quat: Tuple[float, float, float, float] = (1, 0, 0, 0),
         friction: Tuple[float, ...] = (1, 1, 0.005, 0.0001, 0.0001),
         solimp: Tuple[float, ...] = (0.9, 0.95, 0.001, 0.5, 2),
+        muscle_config: Optional[Dict[str, Any]] = None,
         rgba: Optional[Tuple[float, float, float, float]] = None,
         suffix: str = "-worm",
     ) -> None:
@@ -220,6 +221,15 @@ class CelegansEnv(mjx_env.MjxEnv):
                         friction=friction,
                         solimp=solimp,
                     )
+        if muscle_config is not None:
+            for muscle in worm.actuators:
+                for key, value in muscle_config.items():
+                    if key == "dynprm":
+                        dynprm = np.zeros_like(muscle.dynprm)
+                        dynprm[0] = value.get("t_act", 0.01); dynprm[1] = value.get("t_deact", 0.04); dynprm[2] = value.get("tausmooth", 0)
+                        muscle.dynprm = dynprm
+                    else:
+                        setattr(muscle, key, value)
 
     def add_ghost(
         self,
