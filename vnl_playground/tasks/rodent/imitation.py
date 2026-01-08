@@ -251,12 +251,16 @@ class Imitation(rodent_base.RodentEnv):
         return any_terminated
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
-        data = mjx.make_data(
-            self.mj_model,
-            impl=self._config.mujoco_impl,
-            nconmax=self._config.nconmax,
-            njmax=self._config.njmax,
-        )
+        # Build kwargs for mjx.make_data(), using naconmax for warp backend if available
+        make_data_kwargs = {
+            "impl": self._config.mujoco_impl,
+            "njmax": self._config.njmax,
+        }
+        if hasattr(self._config, 'naconmax') and self._config.naconmax is not None:
+            make_data_kwargs["naconmax"] = self._config.naconmax
+        else:
+            make_data_kwargs["nconmax"] = self._config.nconmax
+        data = mjx.make_data(self.mj_model, **make_data_kwargs)
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         _assert_all_are_prefix(
             reference.joint_names,
