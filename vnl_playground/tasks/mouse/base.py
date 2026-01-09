@@ -26,7 +26,7 @@ def default_config() -> config_dict.ConfigDict:
     """Default sim + XML config for mouse tasks."""
     return config_dict.create(
         walker_xml_path=consts.MOUSE_XML_PATH,
-        arena_xml_path=consts.MOUSE_XML_PATH,    # required by arena-first base
+        arena_xml_path=consts.MOUSE_XML_PATH,  # required by arena-first base
         ctrl_dt=0.001,
         sim_dt=0.001,
         Kp=35.0,
@@ -99,7 +99,12 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         self,
         pos: Union[tuple[float, float, float], list[float]] = (0.2, 0.0, 0.02),
         suffix: str = "-ghost",
-        ghost_rgba: tuple[float, float, float, float] = (65/256, 181/256, 225/256, 0.54),
+        ghost_rgba: tuple[float, float, float, float] = (
+            65 / 256,
+            181 / 256,
+            225 / 256,
+            0.54,
+        ),
         no_collision: bool = True,
     ) -> None:
         """
@@ -131,7 +136,6 @@ class MouseBaseEnv(mjx_env.MjxEnv):
             if no_collision:
                 g.contype = 0
                 g.conaffinity = 0
-
 
     def add_multiple_mice(
         self,

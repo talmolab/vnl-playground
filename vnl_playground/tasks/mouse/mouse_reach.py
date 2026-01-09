@@ -12,7 +12,10 @@ import time
 
 from mujoco_playground._src import mjx_env, reward
 from vnl_playground.tasks.mouse import consts
-from vnl_playground.tasks.mouse.base import MouseBaseEnv, default_config  # <- import the base & config
+from vnl_playground.tasks.mouse.base import (
+    MouseBaseEnv,
+    default_config,
+)  # <- import the base & config
 
 
 class MouseEnv(MouseBaseEnv):
@@ -122,7 +125,9 @@ class MouseEnv(MouseBaseEnv):
             # Update spec site pos (by name) then recompile to reflect visuals.
             for i, site in enumerate(self._spec.worldbody.site):
                 if site.name == "target":
-                    self._spec.worldbody.site[i].pos = [float(x) for x in target_position]
+                    self._spec.worldbody.site[i].pos = [
+                        float(x) for x in target_position
+                    ]
                     break
             # Recompile visuals only; mjx model will be refreshed.
             self._mj_model = self._spec.compile()
@@ -196,7 +201,9 @@ class MouseEnv(MouseBaseEnv):
         wrist_marker_pos = data.geom_xpos[self._wrist_marker_geom_id]
         dist = jp.linalg.norm(wrist_marker_pos - target_position)
         return jp.asarray(
-            reward.tolerance(dist, bounds=(0, self._target_size), margin=0.006, sigmoid="hyperbolic"),
+            reward.tolerance(
+                dist, bounds=(0, self._target_size), margin=0.006, sigmoid="hyperbolic"
+            ),
             dtype=jp.float32,
         )
 
