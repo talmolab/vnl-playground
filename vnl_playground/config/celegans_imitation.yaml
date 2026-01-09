@@ -2,91 +2,90 @@
 #   - override hydra/launcher: submitit_slurm
 
 reference_config:
-    data_path: /home/aaprasad/mnt/projects/con3trol/run/results/stac/celegans_ik_only_04182019am_centerline_0-500_2d.h5
-    clip_length: 250
-    test_ratio: 0.2
+  data_path: /home/aaprasad/mnt/projects/con3trol/run/results/stac/celegans_ik_only_04182019am_centerline_0-500_2d.h5
+  clip_length: 250
+  test_ratio: 0.2
 
-env_config:
-  env_name: celegans
-  task_name: imitation
-  walker_name: celegans
-  render_camera_name: track-worm
+render_config:
+  render_camera_name: track
   render_fps: 20
   render_interval: 1
-  backend: playground
 
-  env_args:
-    walker_xml_path: /home/aaprasad/mnt/projects/con3trol/src/vnl-playground/vnl_playground/tasks/celegans/xmls/celegans_reduce_contacts.xml
-    torque_actuators: False  # Changed from False for better performance
-    rescale_factor: 1.04
-    dim: 2
-    friction: 
-      tan_floor: 1.0
-      tan_body: 0.1
-      tor: 0.005
-      roll_floor: 0.0001
-      roll_body: 0.0001
-    solimp: 
-      d0: 0.0
-      dwidth: 0.95
-      width: 0.001
-      midpoint: 0.5
-      power: 2
-    impratio: 0.02
-    root_body: torso13_body
+env_config:
+  walker_xml_path: /home/aaprasad/mnt/projects/con3trol/src/vnl-playground/vnl_playground/tasks/celegans/xmls/celegans_reduce_contacts.xml
+  torque_actuators: False  # Changed from False for better performance
+  rescale_factor: 1.04
+  dim: 2
+  friction: 
+    tan_floor: 1.0
+    tan_body: 0.1
+    tor: 0.005
+    roll_floor: 0.0001
+    roll_body: 0.0001
+  solimp: 
+    d0: 0.0
+    dwidth: 0.95
+    width: 0.001
+    midpoint: 0.5
+    power: 2
+  impratio: 0.02
+  muscle_config:
+    dynprm:
+      tausmooth: 0.0
+  root_body: torso13_body
+  end_effectors: ["torso1_body"]
+  solver: "cg"
+  iterations: 4
+  ls_iterations: 4
+  ctrl_dt: 0.1
+  sim_dt: 0.005
 
-    solver: "cg"
-    iterations: 4
-    ls_iterations: 4
-    ctrl_dt: 0.1
-    sim_dt: 0.005
+  mocap_hz: 20
+  reference_length: 5
+  start_frame_range: [0, 50]
+  mujoco_impl: jax
+    
 
-    mocap_hz: 20
-    reference_length: 5
-    start_frame_range: [0, 50]
-    mujoco_impl: jax
-      
+  reward_terms:
+    upright: 
+      healthy_z_range: [0.0, 1.0]
+      weight: 0.0
+    root_pos:
+      exp_scale: 0.1
+      weight: 1.0
+    root_quat:
+      exp_scale: 30
+      weight: 1.0
+    joints:
+      exp_scale: 1.0
+      weight: 2.0 #2.0
+    joints_vel:
+      exp_scale: 1.0
+      weight: 3.0 #3.0
+    bodies_pos:
+      exp_scale: 0.5
+      weight: 1.0
+    end_eff:
+      exp_scale: 0.1
+      weight: 1.0
+  cost_terms:
+    control:
+      weight: 0.02
+    control_diff:
+      weight: 0.02
+    energy:
+      max_value: 50.0
+      weight: 0.0
 
-    reward_terms:
-      upright: 
-        healthy_z_range: [0.0, 1.0]
-        weight: 0.0
-      root_pos:
-        exp_scale: 0.1
-        weight: 1.0
-      root_quat:
-        exp_scale: 30
-        weight: 1.0
-      joints:
-        exp_scale: 1.0
-        weight: 2.0 #2.0
-      joints_vel:
-        exp_scale: 1.0
-        weight: 3.0 #3.0
-      bodies_pos:
-        exp_scale: 0.5
-        weight: 1.0
-      end_eff:
-        exp_scale: 0.3
-        weight: 1.0
-    cost_terms:
-      control:
-        weight: 0.02
-      control_diff:
-        weight: 0.02
-      energy:
-        max_value: 50.0
-        weight: 0.0
-
-    termination_criteria:
-      fall:
-        healthy_z_range: [0.0, 1.0]
-      root_too_far:
-        max_distance: 0.1
-      root_too_rotated:
-        max_degrees: 60.0
-      pose_error:
-        max_l2_error: 4.5
+  termination_criteria:
+    fall:
+      healthy_z_range: [0.0, 1.0]
+    root_too_far:
+      max_distance: 0.1
+    root_too_rotated:
+      max_degrees: 60.0
+    pose_error:
+      max_l2_error: 4.5
       
   
 
@@ -111,8 +110,6 @@ train_setup:
   # Ratio of training data of the whole training dataset. Needs to be in the train_test_split_info["train_subset"] key. 
   # If not, please run the `notebooks/sample_efficiency_dev.ipynb` notebook to generate the train/test split file.
   train_subset_ratio: 0.8
-  checkpoint_max_to_keep: 
-  checkpoint_keep_period: 
   eval_every: 50_000_000
   episode_length: 200
   reset_every: 50_000_000
@@ -133,7 +130,6 @@ train_setup:
     unroll_length: 20
     seed: 0
     get_activation: False
-    use_lstm: False
     deterministic_eval: False
 
 logging_config:
