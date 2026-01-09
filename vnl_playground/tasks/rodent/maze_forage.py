@@ -15,6 +15,7 @@ from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
 
+
 # -----------------------------------------------------------------------------#
 # Maze‑height‑field utilities
 # -----------------------------------------------------------------------------#
@@ -68,15 +69,15 @@ def default_config() -> config_dict.ConfigDict:
         target_pos=(2.0, 2.0),  # example target
         target_radius=0.2,
         reward_scale=1.0,
-        target_speed=1.0,     # for speed-based reward
-        vision_num_rays=16,      # number of rays for rodent vision
-        vision_fov=np.pi,        # field of view in radians
-        vision_max_dist=6.0,     # maximum ray distance in metres
-        maze_hsize=3,          # horizontal half-size of the maze world
-        maze_vsize=0.4,       # wall height
-        maze_grid_size=6,      # number of *cells* along one edge (perfect maze will be 2*N+1)
-        maze_px_per_cell=8,    # resolution (pixels) per coarse maze cell
-        random_goal=True,      # resample goal every episode
+        target_speed=1.0,  # for speed-based reward
+        vision_num_rays=16,  # number of rays for rodent vision
+        vision_fov=np.pi,  # field of view in radians
+        vision_max_dist=6.0,  # maximum ray distance in metres
+        maze_hsize=3,  # horizontal half-size of the maze world
+        maze_vsize=0.4,  # wall height
+        maze_grid_size=6,  # number of *cells* along one edge (perfect maze will be 2*N+1)
+        maze_px_per_cell=8,  # resolution (pixels) per coarse maze cell
+        random_goal=True,  # resample goal every episode
     )
 
 
@@ -91,7 +92,9 @@ class MazeForage(rodent_base.RodentEnv):
         self._coarse_maze = maze_binary  # keep coarse version
         px_per_cell = int(self._config.maze_px_per_cell)
         if px_per_cell > 1:
-            maze_binary = np.kron(maze_binary, np.ones((px_per_cell, px_per_cell), dtype=np.float32))
+            maze_binary = np.kron(
+                maze_binary, np.ones((px_per_cell, px_per_cell), dtype=np.float32)
+            )
         size = maze_binary.shape[0]
         # height values: 1.0 for walls, 0.0 for floor
         hfield_data = maze_binary.astype(np.float32)
@@ -110,7 +113,9 @@ class MazeForage(rodent_base.RodentEnv):
         # )
         # mat = self._spec.add_material(name="maze_mat")
         # mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "maze_tex"
-        self._spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_HFIELD, hfieldname="maze")
+        self._spec.worldbody.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_HFIELD, hfieldname="maze"
+        )
         # Save numpy version for fast queries
         self._maze_array = maze_binary
 
@@ -129,7 +134,9 @@ class MazeForage(rodent_base.RodentEnv):
         height_norm = height_array[row, col]
         return float(height_norm * vsize)
 
-    def _raycast_lengths(self, agent_xy: jp.ndarray, forward_xy: jp.ndarray) -> jp.ndarray:
+    def _raycast_lengths(
+        self, agent_xy: jp.ndarray, forward_xy: jp.ndarray
+    ) -> jp.ndarray:
         """Return array of ray lengths to first wall for each vision ray."""
         maze = jp.array(self._maze_array)
         size = maze.shape[0]
@@ -139,13 +146,14 @@ class MazeForage(rodent_base.RodentEnv):
         n_rays = self._config.vision_num_rays
         fov = self._config.vision_fov
         base_ang = jp.arctan2(forward_xy[1], forward_xy[0])
-        rels = jp.linspace(-fov/2, fov/2, n_rays)
+        rels = jp.linspace(-fov / 2, fov / 2, n_rays)
         angles = base_ang + rels
 
         def ray_fn(angle):
             def cond_fn(state):
                 dist, hit = state
                 return jp.logical_and(dist < max_d, jp.logical_not(hit))
+
             def body_fn(state):
                 dist, hit = state
                 dist = dist + cell * 0.25
@@ -155,8 +163,10 @@ class MazeForage(rodent_base.RodentEnv):
                 gy = jp.clip(jp.round((y + hsize) / cell).astype(jp.int32), 0, size - 1)
                 hit_wall = maze[gy, gx] > 0.5
                 return dist, hit_wall
+
             dist, hit = lax.while_loop(cond_fn, body_fn, (0.0, False))
             return jp.minimum(dist, max_d)
+
         print(angles)
         return jax.vmap(ray_fn)(angles)
 
@@ -179,7 +189,7 @@ class MazeForage(rodent_base.RodentEnv):
             self._config.torque_actuators,
             self._config.rescale_factor,
             [init_x, init_y, init_z],
-            quat=(0.70710678, 0.0, 0.0, 0.70710678)
+            quat=(0.70710678, 0.0, 0.0, 0.70710678),
         )
         # Visualize target as a sphere
         tx, ty = self._config.target_pos
@@ -187,7 +197,11 @@ class MazeForage(rodent_base.RodentEnv):
         self._spec.worldbody.add_geom(
             type=mujoco.mjtGeom.mjGEOM_SPHERE,
             pos=[tx, ty, tz],
-            size=[self._config.target_radius, self._config.target_radius, self._config.target_radius],
+            size=[
+                self._config.target_radius,
+                self._config.target_radius,
+                self._config.target_radius,
+            ],
             rgba=[1.0, 0.0, 0.0, 0.8],
             contype=0,
             conaffinity=0,
@@ -248,10 +262,14 @@ class MazeForage(rodent_base.RodentEnv):
         origin = self._get_origin(data)
         # Optionally, could include goal position relative to agent
         target_pos = jp.array(self._config.target_pos)
-        agent_pos = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xpos[:2]
+        agent_pos = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos[:2]
         rel_goal = target_pos - agent_pos
         # Vision: ray lengths to nearest wall
-        torso_mat = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xmat
+        torso_mat = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xmat
         agent_pos = jp.array(agent_pos)
         forward_vec = jp.array(torso_mat[0, :2])
         ray_lengths = self._raycast_lengths(agent_pos, forward_vec)
@@ -272,12 +290,16 @@ class MazeForage(rodent_base.RodentEnv):
         """Compute rewards: distance-to-goal, upright posture, and speed."""
         # Distance-based reward
         target_pos = jp.array(self._config.target_pos)
-        agent_pos = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xpos[:2]
+        agent_pos = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos[:2]
         dist = jp.linalg.norm(target_pos - agent_pos)
         if self._config.reward_type == "dense":
             distance_reward = self._config.reward_scale * (1.0 - jp.tanh(dist))
         else:
-            distance_reward = self._config.reward_scale * jp.where(dist < self._config.target_radius, 1.0, 0.0)
+            distance_reward = self._config.reward_scale * jp.where(
+                dist < self._config.target_radius, 1.0, 0.0
+            )
 
         # Upright reward
         upright_reward = self._upright_reward(data)
@@ -292,15 +314,16 @@ class MazeForage(rodent_base.RodentEnv):
             "distance * upright": distance_reward * upright_reward,
         }
 
-
     def _get_termination(self, data: mjx.Data) -> jp.ndarray:
         """Episode is done if agent reaches the target."""
         target_pos = jp.array(self._config.target_pos)
-        agent_pos = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xpos[:2]
+        agent_pos = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos[:2]
         dist = jp.linalg.norm(target_pos - agent_pos)
         done = jp.where(dist < self._config.target_radius, 1.0, 0.0)
         return done
-    
+
     def _upright_reward(self, data: mjx.Data) -> jax.Array:
         """Reward torso for maintaining upright orientation."""
         # dot product between torso z-axis and global z-axis
@@ -311,7 +334,9 @@ class MazeForage(rodent_base.RodentEnv):
 
     def _get_speed_reward(self, data: mjx.Data) -> jax.Array:
         """Reward proportional to forward speed up to a target using tolerance."""
-        linvel = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).subtree_linvel
+        linvel = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).subtree_linvel
         speed = jp.linalg.norm(linvel)
         ts = float(self._config.target_speed)
         return reward.tolerance(

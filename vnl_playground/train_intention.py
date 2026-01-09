@@ -21,6 +21,7 @@ os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 import jax
+
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
@@ -84,7 +85,9 @@ def main(cfg: DictConfig):
                 cfg_loaded.network_config.decoder_layer_sizes,
             )
         )
-        cfg.network_config.decoder_layer_sizes = cfg_loaded.network_config.decoder_layer_sizes
+        cfg.network_config.decoder_layer_sizes = (
+            cfg_loaded.network_config.decoder_layer_sizes
+        )
         print(
             "Overwriting intention size from checkpoint from {} to {}".format(
                 cfg.network_config.intention_size,
