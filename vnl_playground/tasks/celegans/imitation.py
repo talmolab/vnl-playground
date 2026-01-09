@@ -191,12 +191,12 @@ class Imitation(worm_base.CelegansEnv):
         else:
             raise NotImplementedError("'all' is the only implemented set of clips.")
 
-        self._mocap_dt = 1 / self._config.mocap_hz
-        self._steps_for_cur_frame = self._mocap_dt / self._config.ctrl_dt
-        self._n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
+        self._mocap_dt = 1 / self.mocap_hz
+        self._steps_for_cur_frame = self._mocap_dt / self.ctrl_dt
+        self._n_steps = int(self.ctrl_dt / self.sim_dt)
         if self._n_steps == 0:
             warnings.warn(
-                f"Simulation will not advance! Please increase `ctrl_dt` from {self._config.ctrl_dt} to at least {self._config.sim_dt}."
+                f"Simulation will not advance! Please increase `ctrl_dt` from {self.ctrl_dt} to at least {self.sim_dt}."
             )
 
     def __repr__(self) -> str:
@@ -266,15 +266,6 @@ class Imitation(worm_base.CelegansEnv):
         info["action"] = self.null_action()
 
         obs = self._get_obs(data, info)
-        # Used to initialize our intention network
-        info["reference_obs_size"] = jax.flatten_util.ravel_pytree(
-            obs["imitation_target"]
-        )[0].shape[-1]  # TODO: use getter functions
-        info["proprioceptive_obs_size"] = jax.flatten_util.ravel_pytree(
-            obs["proprioception"]
-        )[0].shape[-1]  # TODO: use getter functions
-
-        obs = jax.flatten_util.ravel_pytree(obs)[0]  # TODO: Use wrapper instead.
 
         metrics = {"current_frame": jp.astype(self._get_cur_frame(data, info), float)}
 
@@ -322,7 +313,6 @@ class Imitation(worm_base.CelegansEnv):
         info["buffer_index"] = idx
 
         obs = self._get_obs(data, info)
-        obs = jax.flatten_util.ravel_pytree(obs)[0]
 
         done = self._is_done(data, info, state.metrics)
 
@@ -354,8 +344,8 @@ class Imitation(worm_base.CelegansEnv):
             Dictionary containing proprioception and imitation target data.
         """
         return collections.OrderedDict(
-            proprioception=self._get_proprioception(data, flatten=False),
             imitation_target=self._get_imitation_target(data, info),
+            proprioception=self._get_proprioception(data, flatten=False),
         )
 
     def _get_reward(
@@ -999,6 +989,25 @@ class Imitation(worm_base.CelegansEnv):
         return num_nans > 0
 
     # Properties for cleaner access
+    @property
+    def proprioceptive_obs_size(self) -> int:
+        obs_size = self.non_flattened_observation_size
+        return jp.sum(jax.flatten_util.ravel_pytree(obs_size["proprioception"])[0])
+
+    @property
+    def non_proprioceptive_obs_size(self) -> int:
+        return self.observation_size - self.proprioceptive_obs_size
+
+    @property
+    def observation_size(self) -> mjx_env.ObservationSize:
+        obs = self.non_flattened_observation_size
+        return jp.sum(jax.flatten_util.ravel_pytree(obs)[0])
+
+    @property
+    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
+        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+        obs = abstract_state.obs
+        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     @property
     def clip_length(self) -> int:
@@ -1026,6 +1035,15 @@ class Imitation(worm_base.CelegansEnv):
             Time step for motion capture data.
         """
         return self._mocap_dt
+
+    @property
+    def mocap_hz(self) -> float:
+        """Get the motion capture time step.
+
+        Returns:
+            Time step for motion capture data.
+        """
+        return self._config.mocap_hz
 
     @property
     def steps_for_cur_frame(self) -> int:
@@ -1111,7 +1129,6 @@ class Imitation(worm_base.CelegansEnv):
     def render(
         self,
         trajectory: List[mjx_env.State],
-        render_ghost: bool = True,
         height: int = 240,
         width: int = 320,
         camera: Optional[str] = None,
@@ -1119,6 +1136,7 @@ class Imitation(worm_base.CelegansEnv):
         modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
         add_labels: bool = False,
         termination_extra_frames: int = 0,
+        render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """
         Renders a sequence of states (trajectory). The video includes the imitation
@@ -1160,8 +1178,12 @@ class Imitation(worm_base.CelegansEnv):
             spec = self.spec.copy()
             mj_model_with_ghost = spec.compile()
 
-        mj_model_with_ghost.vis.global_.offwidth = width
-        mj_model_with_ghost.vis.global_.offheight = height
+        try:
+            mj_model_with_ghost.vis.global_.offwidth = width
+            mj_model_with_ghost.vis.global_.offheight = height
+        except TypeError as e:
+            print(width, height)
+            raise e
         mj_data_with_ghost = mujoco.MjData(mj_model_with_ghost)
 
         renderer = mujoco.Renderer(mj_model_with_ghost, height=height, width=width)

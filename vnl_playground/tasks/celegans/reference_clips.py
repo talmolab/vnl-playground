@@ -139,6 +139,7 @@ class ReferenceClips:
         cls,
         data_path: str,
         n_frames_per_clip: int,
+        split_key: jax.random.PRNGKey,
         test_ratio: float = 0.1,
     ) -> Tuple["ReferenceClips", "ReferenceClips"]:
         """Generate train and test splits from the clips.
@@ -166,10 +167,9 @@ class ReferenceClips:
                 "No test set found, please increase the test ratio! Train set and test set will be the same."
             )
         else:
-            split_rng = jax.random.PRNGKey(0)
             indices = jp.arange(num_clips)
             test_idx = jax.random.choice(
-                split_rng, indices, shape=(test_size,), replace=False
+                split_key, indices, shape=(test_size,), replace=False
             )
             train_idx = indices[~jp.isin(indices, test_idx)]
 

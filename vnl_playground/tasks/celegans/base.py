@@ -103,7 +103,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         )
         sim_config = pformat(
             {
-                "dt": {"sim": self.config.sim_dt, "ctrl": self.config.ctrl_dt},
+                "dt": {"sim": self.sim_dt, "ctrl": self.ctrl_dt},
                 "physics_iterations": self.config.iterations,
                 "solver_config": {
                     "integrator": self.config.integrator,
@@ -226,7 +226,9 @@ class CelegansEnv(mjx_env.MjxEnv):
                 for key, value in muscle_config.items():
                     if key == "dynprm":
                         dynprm = np.zeros_like(muscle.dynprm)
-                        dynprm[0] = value.get("t_act", 0.01); dynprm[1] = value.get("t_deact", 0.04); dynprm[2] = value.get("tausmooth", 0)
+                        dynprm[0] = value.get("t_act", 0.01)
+                        dynprm[1] = value.get("t_deact", 0.04)
+                        dynprm[2] = value.get("tausmooth", 0)
                         muscle.dynprm = dynprm
                     else:
                         setattr(muscle, key, value)
@@ -673,6 +675,24 @@ class CelegansEnv(mjx_env.MjxEnv):
             String path to the arena XML specification.
         """
         return self._arena_xml_path
+
+    @property
+    def ctrl_dt(self) -> float:
+        """Get the control time step.
+
+        Returns:
+            Control time step.
+        """
+        return self._config.ctrl_dt
+
+    @property
+    def sim_dt(self) -> float:
+        """Get the simulation time step.
+
+        Returns:
+            Simulation time step.
+        """
+        return self._config.sim_dt
 
     @property
     def mj_model(self) -> mujoco.MjModel:
