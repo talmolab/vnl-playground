@@ -68,7 +68,7 @@ def default_config() -> config_dict.ConfigDict:
         sim_dt=0.002,
         solver="cg",
         mujoco_impl="jax",
-        naconmax=16 * 8192,
+        nconmax=20,
         njmax=512,
         iterations=10,
         ls_iterations=5,
@@ -181,7 +181,7 @@ class BowlEscape(rodent_base.RodentEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            naconmax=self._config.naconmax,
+            nconmax=self._config.nconmax,
             njmax=self._config.njmax,
         )
         metrics = {}
