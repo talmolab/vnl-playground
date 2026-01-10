@@ -13,7 +13,6 @@ env_config:
   env_name: rodent
   task_name: bowl_escape
   walker_name: rodent
-  render_camera_name: close_profile
 
   # ---------------------------------------------------------------------------
   # Environment Arguments
@@ -22,14 +21,58 @@ env_config:
   env_args:
     torque_actuators: true
     rescale_factor: 0.9
-    bowl_vsize: 0.3
-    bowl_amplitude: -20
-    target_speed: 2
-    iterations: 10
+
+    # -----------------------------------------------------------------------------
+    # Timing Configuration
+    # -----------------------------------------------------------------------------
+    sim_dt: 0.002           # Simulation timestep (500 Hz physics)
+    ctrl_dt: 0.01           # Control timestep (100 Hz policy)
+
+    # -----------------------------------------------------------------------------
+    # Physics Solver Settings
+    # -----------------------------------------------------------------------------
+    solver: "cg"            # Solver type: "cg" or "newton"
+    iterations: 10          # Max solver iterations per step
+    ls_iterations: 5        # Line search iterations
+    noslip_iterations: 0    # No-slip solver iterations (0 = disabled)
     mujoco_impl: "warp"
-    nconmax: 20             # Max contacts (increase if contact clipping occurs)
+    nconmax: 32             # Max contacts
+    naconmax: 65536         # Max active contacts (used for warp backend with parallel envs)
     njmax: 200              # Max constraint rows
 
+    # -----------------------------------------------------------------------------
+    # Bowl Configuration
+    # -----------------------------------------------------------------------------
+    bowl_hsize: 2           # Horizontal size of the bowl
+    bowl_vsize: 0.3         # Vertical size (depth) of the bowl
+    bowl_sigma: 1.25        # Standard deviation of the Gaussian bump
+    bowl_amplitude: -20     # Amplitude of the Gaussian bump
+    target_speed: 2         # Target speed for speed reward
+
+
+  # -----------------------------------------------------------------------------
+  # Reward Terms
+  # -----------------------------------------------------------------------------
+  # Reward functions for the bowl escape task
+  reward_terms:
+    # Escape reward combined with upright posture
+    escape_x_upright:
+      weight: 1.0
+
+    # Speed towards target velocity
+    speed:
+      weight: 1.0
+
+  # -----------------------------------------------------------------------------
+  # Termination Criteria
+  # -----------------------------------------------------------------------------
+  # Episode ends early if any of these conditions are met
+  termination_criteria:
+    # Torso falls below bowl surface
+    fallen: {}
+
+    # Terminate on NaN detection (numerical instability)
+    nan_termination: {}
 
   # -----------------------------------------------------------------------------
   # Domain Randomization Settings
@@ -43,6 +86,15 @@ env_config:
     link_mass_scale: [0.9, 1.1]         # Scale for link masses
     torso_mass_jitter: [-0.02, 0.02]    # Jitter for torso mass
     qpos0_jitter: [-0.05, 0.05]         # Jitter for initial joint positions
+
+# =============================================================================
+# Rendering Configuration
+# =============================================================================
+# Settings for video rendering during evaluation
+render_config:
+  render_camera_name: close_profile   # Camera view for rendering
+  render_fps: 50                      # Output video framerate
+  render_interval: 1                  # Render every N eval episodes
 
 # =============================================================================
 # Network Architecture
@@ -113,7 +165,7 @@ logging_config:
   model_path: model_checkpoints
   notes: "v1 transfer warp"
   algo_name: ppo
-  exp_name: higher_speed
+  exp_name: v1_transfer_warp
   rollout_metrics: null
 
 # =============================================================================

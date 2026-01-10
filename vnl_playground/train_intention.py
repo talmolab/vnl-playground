@@ -5,6 +5,8 @@ import os
 # Must set rendering backend before importing MuJoCo
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
+# Disable JAX VRAM preallocation (must be set before importing JAX)
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import functools
 import logging
@@ -17,6 +19,8 @@ from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig, OmegaConf
 
 from vnl_playground.tasks.rodent import flat_arena, bowl_escape, maze_forage
+from vnl_playground.tasks.rodent import wrappers as vnl_wrappers
+from vnl_playground.config.utils import prepare_config
 
 from track_mjx.agent import checkpointing, wandb_logging
 from track_mjx.agent.mlp_ppo import ppo, ppo_networks
@@ -28,7 +32,14 @@ def _setup_environment() -> None:
     xla_flags = os.environ.get("XLA_FLAGS", "")
     xla_flags += " --xla_gpu_triton_gemm_any=True"
     os.environ["XLA_FLAGS"] = xla_flags
-    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
+
+# Task name to environment class mapping
+_TASK_ENV_MAP = {
+    "maze_forage": maze_forage.MazeForage,
+    "bowl_escape": bowl_escape.BowlEscape,
+    "flat_arena": flat_arena.FlatWalk,
+}
 
 
 def _create_task_environment(task_name: str, env_config: DictConfig):
@@ -39,24 +50,19 @@ def _create_task_environment(task_name: str, env_config: DictConfig):
         env_config: Environment configuration to pass as overrides.
 
     Returns:
-        Tuple of (train_env, eval_env).
+        Tuple of (train_env, eval_env) wrapped with FlattenObsWrapper.
 
     Raises:
         ValueError: If task_name is not recognized.
     """
-    if task_name == "maze_forage":
-        env = maze_forage.MazeForage(config_overrides=env_config)
-        eval_env = maze_forage.MazeForage(config_overrides=env_config)
-    elif task_name == "bowl_escape":
-        env = bowl_escape.BowlEscape(config_overrides=env_config)
-        eval_env = bowl_escape.BowlEscape(config_overrides=env_config)
-    elif task_name == "flat_arena":
-        env = flat_arena.FlatWalk(config_overrides=env_config)
-        eval_env = flat_arena.FlatWalk(config_overrides=env_config)
-    else:
+    if task_name not in _TASK_ENV_MAP:
         raise ValueError(
-            f"Unknown task_name: {task_name}. Must be one of: maze_forage, bowl_escape, flat_arena"
+            f"Unknown task_name: {task_name}. Must be one of: {list(_TASK_ENV_MAP.keys())}"
         )
+
+    env_cls = _TASK_ENV_MAP[task_name]
+    env = vnl_wrappers.FlattenObsWrapper(env_cls(config_overrides=env_config))
+    eval_env = vnl_wrappers.FlattenObsWrapper(env_cls(config_overrides=env_config))
     return env, eval_env
 
 
@@ -124,10 +130,14 @@ def main(cfg: DictConfig) -> None:
 
     # Load checkpoint config if restoring
     cfg = _load_checkpoint_config(cfg)
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+
+    # Prepare config by resolving walker paths and creating config variants
+    cfg, cfg_dict, env_cfg_ml = prepare_config(cfg)
 
     # Determine how to load from checkpoint
-    run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(cfg)
+    run_id, checkpoint_path, existing_run_state = checkpointing.load_from_run_state(
+        cfg, freeze_decoder=cfg.train_setup.freeze_decoder
+    )
 
     # Initialize checkpoint manager
     mgr_options = ocp.CheckpointManagerOptions(
@@ -199,7 +209,7 @@ def main(cfg: DictConfig) -> None:
         freeze_decoder=cfg.train_setup.freeze_decoder,
         checkpoint_callback=checkpoint_callback,
                 wrap_for_training=functools.partial(
-            playground_wrappers.wrap_for_brax_training, full_reset=False
+            playground_wrappers.wrap_for_brax_training
         ),
         randomization_fn=(
             domain_randomization_maker(

@@ -69,6 +69,7 @@ def default_config() -> config_dict.ConfigDict:
         solver="cg",
         mujoco_impl="jax",
         nconmax=20,
+        naconmax=None,  # For warp backend; if None, nconmax is used
         njmax=512,
         iterations=10,
         ls_iterations=5,
@@ -178,12 +179,16 @@ class BowlEscape(rodent_base.RodentEnv):
             "prev_action": self.null_action(),
             "action": self.null_action(),
         }
-        data = mjx.make_data(
-            self.mj_model,
-            impl=self._config.mujoco_impl,
-            nconmax=self._config.nconmax,
-            njmax=self._config.njmax,
-        )
+        # Build kwargs for mjx.make_data(), using naconmax for warp backend if available
+        make_data_kwargs = {
+            "impl": self._config.mujoco_impl,
+            "njmax": self._config.njmax,
+        }
+        if hasattr(self._config, 'naconmax') and self._config.naconmax is not None:
+            make_data_kwargs["naconmax"] = self._config.naconmax
+        else:
+            make_data_kwargs["nconmax"] = self._config.nconmax
+        data = mjx.make_data(self.mj_model, **make_data_kwargs)
         metrics = {}
 
         obs = self._get_obs(data, info)
