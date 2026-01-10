@@ -8,10 +8,13 @@ env_config:
     # this will be passed to the env constructor as config overrides
     torque_actuators: True
     rescale_factor: 0.9
-    bowl_vsize: 0.6
+    bowl_vsize: 0.3
     bowl_amplitude: -20
     target_speed: 2
     iterations: 10
+    mujoco_impl: "warp"
+    nconmax: 20            # Max contacts (increase if contact clipping occurs)
+    njmax: 600              # Max constraint rows
 
 network_config:
   arch_name: intention
@@ -25,7 +28,7 @@ network_config:
 train_setup:
   agent_name: rodent
   run_name: bowl_escape
-  checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
+  checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/260108_195543_368807
   # NEW: /root/vast/scott-yang/track-mjx/model_checkpoints/250725_181216_794171 # OLD: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
   freeze_decoder: True
   checkpoint_max_to_keep:
@@ -53,7 +56,7 @@ logging_config:
   project_name: vnl_playground
   group_name: new_checkpoint
   model_path: model_checkpoints
-  notes: "higher target speed"
+  notes: "v1 transfer warp"
   algo_name: ppo
   exp_name: higher_speed
   rollout_metrics:
