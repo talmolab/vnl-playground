@@ -153,7 +153,8 @@ def main(cfg: DictConfig) -> None:
 
     # Create environments
     task_name = cfg.env_config.task_name
-    env_config = cfg.env_config.env_args
+    # Convert to plain dict - ml_collections can't handle OmegaConf DictConfig
+    env_config = OmegaConf.to_container(cfg.env_config.env_args, resolve=True)
     env, eval_env = _create_task_environment(task_name, env_config)
 
     logging.info(f"Environment config: {cfg.env_config}")
