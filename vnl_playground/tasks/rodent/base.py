@@ -35,6 +35,7 @@ def default_config() -> config_dict.ConfigDict:
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
+        ccd_iterations=50,
         mujoco_impl="jax",
     )
 
@@ -145,6 +146,7 @@ class RodentEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
+            self._mj_model.opt.ccd_iterations = self._config.ccd_iterations
             self._mj_model.opt.solver = {
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
