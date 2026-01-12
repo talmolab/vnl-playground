@@ -1,10 +1,12 @@
 """Base classes for fruitfly"""
 
-from typing import Any, Dict, Optional, Union
+import collections
+from typing import Any, Dict, Mapping, Optional, Union
 
 from etils import epath
-import logging
+import jax
 import jax.numpy as jp
+import logging
 import numpy as np
 from ml_collections import config_dict
 import mujoco
@@ -135,9 +137,115 @@ class FruitflyEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
+            self._mj_model.opt.solver = {
+                "cg": mujoco.mjtSolver.mjSOL_CG,
+                "newton": mujoco.mjtSolver.mjSOL_NEWTON,
+            }[self._config.solver.lower()]
             if mjx_model:
                 self._mjx_model = mjx.put_model(self._mj_model)
         self._compiled = True
+
+    def _get_appendages_pos(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+        """Get _egocentric_ position of the appendages (claws)."""
+        thorax = data.bind(self.mjx_model, self._spec.body(f"thorax{self._suffix}"))
+        appendages_pos = collections.OrderedDict()
+        for appendage_name in consts.END_EFFECTORS:
+            global_xpos = data.bind(
+                self.mjx_model, self._spec.body(f"{appendage_name}{self._suffix}")
+            ).xpos
+            egocentric_xpos = jp.dot(global_xpos - thorax.xpos, thorax.xmat)
+            appendages_pos[appendage_name] = egocentric_xpos
+        if flatten:
+            appendages_pos, _ = jax.flatten_util.ravel_pytree(appendages_pos)
+        return appendages_pos
+
+    def _get_bodies_pos(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+        """Get _global_ positions of the body parts."""
+        bodies_pos = collections.OrderedDict()
+        for body_name in consts.BODIES:
+            global_xpos = data.bind(
+                self.mjx_model, self._spec.body(f"{body_name}{self._suffix}")
+            ).xpos
+            bodies_pos[body_name] = global_xpos
+        if flatten:
+            bodies_pos, _ = jax.flatten_util.ravel_pytree(bodies_pos)
+        return bodies_pos
+
+    def _get_joint_angles(self, data: mjx.Data) -> jp.ndarray:
+        """Extract 36 joint angles from qpos (after 7 DoF for free joint)."""
+        return data.qpos[7:]
+
+    def _get_joint_ang_vels(self, data: mjx.Data) -> jp.ndarray:
+        """Extract 36 joint velocities from qvel (after 6 DoF for free joint)."""
+        return data.qvel[6:]
+
+    def _get_actuator_ctrl(self, data: mjx.Data) -> jp.ndarray:
+        """Get actuator control forces."""
+        return data.qfrc_actuator
+
+    def _get_body_height(self, data: mjx.Data) -> jp.ndarray:
+        """Get thorax Z position."""
+        thorax_pos = data.bind(
+            self.mjx_model, self._spec.body(f"thorax{self._suffix}")
+        ).xpos
+        thorax_z = thorax_pos[2]
+        return thorax_z
+
+    def _get_world_zaxis(self, data: mjx.Data) -> jp.ndarray:
+        """Get gravity direction in body frame."""
+        return self.root_body(data).xmat.flatten()[6:]
+
+    def _get_proprioception(
+        self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True
+    ) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
+        """Get proprioception data from the environment."""
+        proprioception = collections.OrderedDict(
+            joint_angles=self._get_joint_angles(data),
+            joint_ang_vels=self._get_joint_ang_vels(data),
+            actuator_ctrl=self._get_actuator_ctrl(data),
+            body_height=self._get_body_height(data).reshape(1),
+            world_zaxis=self._get_world_zaxis(data),
+            appendages_pos=self._get_appendages_pos(data, flatten=flatten),
+            kinematic_sensors=self._get_kinematic_sensors(data, flatten=flatten),
+            prev_action=info["prev_action"],
+        )
+        if flatten:
+            proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)
+        return proprioception
+
+    def _get_kinematic_sensors(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
+        """Get kinematic sensors data from the environment."""
+        accelerometer = data.bind(
+            self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")
+        ).sensordata
+        velocimeter = data.bind(
+            self.mjx_model, self._spec.sensor(f"velocimeter{self._suffix}")
+        ).sensordata
+        gyro = data.bind(
+            self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")
+        ).sensordata
+        sensors = collections.OrderedDict(
+            accelerometer=accelerometer,
+            velocimeter=velocimeter,
+            gyro=gyro,
+        )
+        if flatten:
+            sensors, _ = jax.flatten_util.ravel_pytree(sensors)
+        return sensors
+
+    def get_joint_names(self):
+        """Get joint names from the model specification."""
+        return map(lambda j: j.name, self._spec.joints[1:])
+
+    def root_body(self, data: mjx.Data):
+        """Return thorax body as root reference."""
+        return data.bind(self.mjx_model, self._spec.body(f"thorax{self._suffix}"))
 
     @property
     def action_size(self) -> int:
