@@ -8,7 +8,7 @@ import jax.numpy as jp
 
 
 class RodentRender(rodent_base.RodentEnv):
-    
+
     def reset(self, rng: jax.Array) -> mjx_env.State:
         data = mjx_env.init(self.mjx_model)
         reward, done, obs = jp.zeros(3)

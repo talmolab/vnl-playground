@@ -10,6 +10,15 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 import functools
 import logging
+import jax
+
+# Enable persistent compilation cache.
+jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+jax.config.update(
+    "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
+)
 
 import hydra
 import jax
@@ -153,6 +162,7 @@ def main(cfg: DictConfig) -> None:
 
     # Create environments
     task_name = cfg.env_config.task_name
+    # TODO: use the env_cfg_ml here instead of the env_args in the config file
     # Convert to plain dict - ml_collections can't handle OmegaConf DictConfig
     env_config = OmegaConf.to_container(cfg.env_config.env_args, resolve=True)
     env, eval_env = _create_task_environment(task_name, env_config)
