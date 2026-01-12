@@ -34,6 +34,7 @@ def default_config() -> config_dict.ConfigDict:
         iterations=4,
         ls_iterations=4,
         noslip_iterations=0,
+        mujoco_impl="jax",
     )
 
 
@@ -126,7 +127,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
         spawn_frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         spawn_body = spawn_frame.attach_body(fly_spec.body("thorax"), "", suffix=suffix)
 
-    def compile(self, forced=False, mjx_model=False) -> None:
+    def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and put models to mjx"""
         if not self._compiled or forced:
             self._spec.option.noslip_iterations = self._config.noslip_iterations
@@ -141,9 +142,10 @@ class FruitflyEnv(mjx_env.MjxEnv):
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
-            if mjx_model:
-                self._mjx_model = mjx.put_model(self._mj_model)
-        self._compiled = True
+            self._mjx_model = mjx.put_model(
+                self._mj_model, impl=self._config.mujoco_impl
+            )
+            self._compiled = True
 
     def _get_appendages_pos(
         self, data: mjx.Data, flatten: bool = True
@@ -238,6 +240,15 @@ class FruitflyEnv(mjx_env.MjxEnv):
         if flatten:
             sensors, _ = jax.flatten_util.ravel_pytree(sensors)
         return sensors
+
+    def _get_touch_sensors(self, data: mjx.Data) -> jp.ndarray:
+        """Get touch sensors data from the environment.
+
+        Note: Touch sensors are currently commented out in fruitfly XMLs,
+        so this returns an empty array. Enable touch sensors in the XML
+        to get actual touch data.
+        """
+        return jp.array([])
 
     def get_joint_names(self):
         """Get joint names from the model specification."""

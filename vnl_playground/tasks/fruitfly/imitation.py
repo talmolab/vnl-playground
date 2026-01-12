@@ -89,7 +89,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
             torque_actuators=self._config.torque_actuators,
             rgba=(0.5, 0.3, 0.1, 1),  # Brown color for fly
         )
-        self.compile(mjx_model=True)
+        self.compile()
 
         if clips is not None:
             self.reference_clips = clips
@@ -226,7 +226,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
         return any_terminated
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
-        data = mjx.make_data(self.mjx_model)
+        data = mjx.make_data(self.mj_model, impl=self._config.mujoco_impl)
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
 
         data = data.replace(qpos=reference.qpos)
