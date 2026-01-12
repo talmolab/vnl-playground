@@ -254,8 +254,8 @@ class Imitation(rodent_base.RodentEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            nconmax=self._config.nconmax,
             njmax=self._config.njmax,
+            naconmax=self._config.naconmax,
         )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         _assert_all_are_prefix(
