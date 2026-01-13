@@ -482,13 +482,33 @@ class Imitation(fruitfly_base.FruitflyEnv):
         ghost_fly = mujoco.MjSpec.from_file(self._walker_xml_path)
         ghost_rescale = self._config.rescale_factor
         if ghost_rescale != 1.0:
-            ghost_fly = utils.dm_scale_spec(ghost_fly, ghost_rescale)
+            ghost_fly = self._scale_fly_spec(ghost_fly, ghost_rescale)
         for body in ghost_fly.worldbody.bodies:
             utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
-        spawn_frame = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
+
+        # Recursively disable collision for ALL ghost geoms (body tree + worldbody)
+        def disable_collision_recursive(body):
+            """Recursively disable collisions for all geoms in body tree."""
+            for geom in body.geoms:
+                geom.contype = 0
+                geom.conaffinity = 0
+            for child in body.bodies:
+                disable_collision_recursive(child)
+
+        # Disable on worldbody-level geoms (e.g., floor in ghost)
+        for geom in ghost_fly.worldbody.geoms:
+            geom.contype = 0
+            geom.conaffinity = 0
+
+        # Disable recursively on body tree
+        for body in ghost_fly.worldbody.bodies:
+            disable_collision_recursive(body)
+
+        spawn_frame = spec.worldbody.add_frame(pos=(0, 0, 0.0), quat=(1, 0, 0, 0))
         spawn_body = spawn_frame.attach_body(
             ghost_fly.body("thorax"), "", suffix="-ghost"
         )
+
 
         mj_model_with_ghost = spec.compile()
         mj_model_with_ghost.vis.global_.offwidth = width
