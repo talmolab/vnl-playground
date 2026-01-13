@@ -310,7 +310,7 @@
   </asset>
 
   <worldbody>
-    <geom name="floor" type="plane" size="5 5 .1" material="grid" pos="0 0 -.13"/>
+    <!-- <geom name="floor" type="plane" size="5 5 .1" material="grid" pos="0 0 -.13"/> -->
     <body name="thorax" childclass="body">
       <freejoint name="free"/>
       <light name="right" mode="trackcom" pos="0 -1 1" dir="0 1 -1" diffuse="0.3 0.3 0.3"/>

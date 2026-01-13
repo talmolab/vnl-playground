@@ -23,8 +23,9 @@ from .reference_clips import ReferenceClips
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.FRUITFLY_XML_PATH,
-        arena_xml_path=consts.WHITE_ARENA_XML_PATH,
+        arena_xml_path=consts.ARENA_XML_PATH,
         mujoco_impl="warp",  # Use warp backend for faster testing
+        naconmax=1024 * 10,
         sim_dt=0.0002,  # 5000 Hz physics
         ctrl_dt=0.002,  # 500 Hz control
         solver="cg",
@@ -54,9 +55,9 @@ def default_config() -> config_dict.ConfigDict:
             "energy_cost": {"max_value": 50.0, "weight": 0.005},
         },
         termination_criteria={
-            "root_too_far": {"max_distance": 0.01},
-            "root_too_rotated": {"max_degrees": 4.3},  # 0.075 rad
-            "pose_error": {"max_l2_error": 5.0},
+            "root_too_far": {"max_distance": 0.5},
+            "root_too_rotated": {"max_degrees": 15},
+            "pose_error": {"max_l2_error": 20},
             "nan_termination": {},
         },
     )
@@ -87,7 +88,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
         self.add_fly(
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
-            rgba=(0.5, 0.3, 0.1, 1),  # Brown color for fly
+            pos=(0, 0, 0),
         )
         self.compile()
 
@@ -226,7 +227,9 @@ class Imitation(fruitfly_base.FruitflyEnv):
         return any_terminated
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
-        data = mjx.make_data(self.mj_model, impl=self._config.mujoco_impl)
+        data = mjx.make_data(
+            self.mj_model, impl=self._config.mujoco_impl, naconmax=self._config.naconmax
+        )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
 
         data = data.replace(qpos=reference.qpos)
@@ -483,7 +486,9 @@ class Imitation(fruitfly_base.FruitflyEnv):
         for body in ghost_fly.worldbody.bodies:
             utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
         spawn_frame = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
-        spawn_body = spawn_frame.attach_body(ghost_fly.body("thorax"), "", suffix="-ghost")
+        spawn_body = spawn_frame.attach_body(
+            ghost_fly.body("thorax"), "", suffix="-ghost"
+        )
 
         mj_model_with_ghost = spec.compile()
         mj_model_with_ghost.vis.global_.offwidth = width
@@ -545,11 +550,11 @@ class Imitation(fruitfly_base.FruitflyEnv):
                         2,
                         cv2.LINE_AA,
                     )
-                for t in range(termination_extra_frames):
-                    rel_t = t / termination_extra_frames
-                    fade_factor = 1 / (1 + np.exp(10 * (rel_t - 0.5)))
-                    faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
-                    rendered_frames.append(faded_frame)
+                    for t in range(termination_extra_frames):
+                        rel_t = t / termination_extra_frames
+                        fade_factor = 1 / (1 + np.exp(10 * (rel_t - 0.5)))
+                        faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
+                        rendered_frames.append(faded_frame)
         return rendered_frames
 
     @property
