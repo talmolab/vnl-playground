@@ -506,6 +506,7 @@ class Imitation(rodent_base.RodentEnv):
         modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
         add_labels=False,
         termination_extra_frames=0,
+        render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """
         Renders a sequence of states (trajectory). The video includes the imitation
@@ -528,26 +529,31 @@ class Imitation(rodent_base.RodentEnv):
                 Additionally, a simple fade-out effect is applied during those frames
                 to smooth the tranisition between clips. If this is larger than 0, the
                 number of returned frames might be larger than `len(trajectory)`.
+            render_ghost (bool, optional): Whether to render the ghost model showing
+                the imitation target. Defaults to True.
         Returns:
             Sequence[np.ndarray]: List of rendered frames as numpy arrays.
         """
-        # Create a new spec with a ghost, without modifying the existing one
-        spec = self._spec.copy()
-        ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
-        ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
-        if ghost_rescale != 1.0:
-            ghost_rodent = utils.dm_scale_spec(ghost_rodent, ghost_rescale)
-        for body in ghost_rodent.worldbody.bodies:
-            utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
-        spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
-        spawn_body = spawn_site.attach_body(ghost_rodent.worldbody, "", suffix="-ghost")
-        spawn_body.add_freejoint()
-        mj_model_with_ghost = spec.compile()
-        mj_model_with_ghost.vis.global_.offwidth = width
-        mj_model_with_ghost.vis.global_.offheight = height
-        mj_data_with_ghost = mujoco.MjData(mj_model_with_ghost)
+        if render_ghost:
+            # Create a new spec with a ghost, without modifying the existing one
+            spec = self._spec.copy()
+            ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
+            ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
+            if ghost_rescale != 1.0:
+                ghost_rodent = utils.dm_scale_spec(ghost_rodent, ghost_rescale)
+            for body in ghost_rodent.worldbody.bodies:
+                utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
+            spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
+            spawn_body = spawn_site.attach_body(ghost_rodent.worldbody, "", suffix="-ghost")
+            spawn_body.add_freejoint()
+            mj_model = spec.compile()
+        else:
+            mj_model = self.mj_model
+        mj_model.vis.global_.offwidth = width
+        mj_model.vis.global_.offheight = height
+        mj_data = mujoco.MjData(mj_model)
 
-        renderer = mujoco.Renderer(mj_model_with_ghost, height=height, width=width)
+        renderer = mujoco.Renderer(mj_model, height=height, width=width)
         if camera is None:
             camera = -1
 
@@ -558,11 +564,15 @@ class Imitation(rodent_base.RodentEnv):
             clip = state.info["reference_clip"]
             ref = self.reference_clips.at(clip=clip, frame=frame)
 
-            mj_data_with_ghost.qpos = jp.concatenate((state.data.qpos, ref.qpos))
-            mj_data_with_ghost.qvel = jp.concatenate((state.data.qvel, ref.qvel))
-            mujoco.mj_forward(mj_model_with_ghost, mj_data_with_ghost)
+            if render_ghost:
+                mj_data.qpos = jp.concatenate((state.data.qpos, ref.qpos))
+                mj_data.qvel = jp.concatenate((state.data.qvel, ref.qvel))
+            else:
+                mj_data.qpos = state.data.qpos
+                mj_data.qvel = state.data.qvel
+            mujoco.mj_forward(mj_model, mj_data)
             renderer.update_scene(
-                mj_data_with_ghost, camera=camera, scene_option=scene_option
+                mj_data, camera=camera, scene_option=scene_option
             )
             if modify_scene_fns is not None:
                 modify_scene_fns[i](renderer.scene)
