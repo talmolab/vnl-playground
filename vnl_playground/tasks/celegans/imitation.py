@@ -164,9 +164,11 @@ class Imitation(worm_base.CelegansEnv):
             friction=friction,
             solimp=solimp,
             muscle_config=self._config.muscle_config,
-            contact_geom=mujoco.mjtGeom.mjGEOM_MESH
-            if self.config.contact_geom.lower() == "mesh"
-            else mujoco.mjtGeom.mjGEOM_SPHERE,
+            contact_geom=(
+                mujoco.mjtGeom.mjGEOM_MESH
+                if self.config.contact_geom.lower() == "mesh"
+                else mujoco.mjtGeom.mjGEOM_SPHERE
+            ),
         )
         if self._config.with_ghost:
             self.add_ghost_worm(
