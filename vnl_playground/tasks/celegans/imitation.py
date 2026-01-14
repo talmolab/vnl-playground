@@ -51,6 +51,7 @@ def default_config() -> config_dict.ConfigDict:
         impratio=1.0,
         naconmax=16 * 8192,
         njmax=256,
+        ccd_iterations=35,
         init_pos={"x": 0.0, "y": 0.0, "z": 0.05},
         torque_actuators=False,
         rescale_factor=1.0,
@@ -64,6 +65,7 @@ def default_config() -> config_dict.ConfigDict:
         },
         solimp={"d0": 0.9, "dwidth": 0.95, "width": 0.001, "midpoint": 0.5, "power": 2},
         muscle_config=None,
+        contact_geom="sphere",
         mocap_hz=20,
         reference_clips=ReferenceClips(
             data_path=consts.REFERENCE_H5_PATH, n_frames_per_clip=250
@@ -154,7 +156,6 @@ class Imitation(worm_base.CelegansEnv):
             self.config.solimp["midpoint"],
             self.config.solimp["power"],
         ]
-
         self.add_worm(
             pos=list(self._config.init_pos.values()),
             rescale_factor=self._config.rescale_factor,
@@ -163,6 +164,9 @@ class Imitation(worm_base.CelegansEnv):
             friction=friction,
             solimp=solimp,
             muscle_config=self._config.muscle_config,
+            contact_geom=mujoco.mjtGeom.mjGEOM_MESH
+            if self.config.contact_geom.lower() == "mesh"
+            else mujoco.mjtGeom.mjGEOM_SPHERE,
         )
         if self._config.with_ghost:
             self.add_ghost_worm(
@@ -348,6 +352,41 @@ class Imitation(worm_base.CelegansEnv):
             proprioception=self._get_proprioception(data, flatten=False),
         )
 
+    def _insert_metric(
+        self,
+        metrics: Mapping[str, Any],
+        name: str,
+        reward=None,
+        distance=None,
+        cost=None,
+        magnitude=None,
+    ) -> None:
+        """Helper function to insert reward, cost, and magnitude metrics.
+
+        Args:
+            metrics: Metrics dictionary to update.
+            name: Base name for the metric.
+            reward: Reward value to insert (if any).
+            distance: Distance value to insert (if any).
+            cost: Cost value to insert (if any).
+            magnitude: Magnitude value to insert (if any).
+        """
+        if reward is not None:
+            metrics[f"rewards/{name}"] = metrics[f"rewards/per_step/{name}"] = reward
+            metrics[f"rewards/per_step/normalized/{name}"] = (
+                reward / self._config.reward_terms[name].get("weight", 1.0)
+            )
+        if distance is not None:
+            metrics[f"distances/{name}"] = metrics[f"distances/per_step/{name}"] = (
+                distance
+            )
+        if cost is not None:
+            metrics[f"costs/{name}"] = metrics[f"costs/per_step/{name}"] = cost
+        if magnitude is not None:
+            metrics[f"magnitudes/{name}"] = metrics[f"magnitudes/per_step/{name}"] = (
+                magnitude
+            )
+
     def _get_reward(
         self, data: mjx.Data, info: Mapping[str, Any], metrics: Mapping[str, Any]
     ) -> Mapping[str, float]:
@@ -366,8 +405,8 @@ class Imitation(worm_base.CelegansEnv):
             total_reward += _REWARD_FCN_REGISTRY[name](
                 self, data, info, metrics, **kwargs
             )
-        metrics["rewards/total"] = total_reward
-        metrics["reward/normalized"] = total_reward / self.max_reward
+        metrics["rewards/total"] = metrics["rewards/per_step/total"] = total_reward
+        metrics["reward/per_step/normalized"] = total_reward / self.max_reward
         return total_reward
 
     def _is_done(
@@ -409,7 +448,7 @@ class Imitation(worm_base.CelegansEnv):
         total_cost = 0.0
         for name, kwargs in self.cost_terms.items():
             total_cost += _COST_FCN_REGISTRY[name](self, data, info, metrics, **kwargs)
-        metrics["costs/total"] = total_cost
+        metrics["costs/total"] = metrics["costs/per_step/total"] = total_cost
         return total_cost
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
@@ -597,8 +636,7 @@ class Imitation(worm_base.CelegansEnv):
         distance = jp.linalg.norm(target_pos - root_pos)
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
 
-        metrics["rewards/root_pos"] = reward
-        metrics["dists/root_pos"] = distance
+        self._insert_metric(metrics, "root_pos", reward=reward, distance=distance)
         return reward
 
     @_named_reward("root_quat")
@@ -625,8 +663,7 @@ class Imitation(worm_base.CelegansEnv):
 
         reward = weight * jp.exp(-((ang_dist / exp_scale) ** 2) / 2)
 
-        metrics["rewards/root_quat"] = reward
-        metrics["dists/root_quat"] = ang_dist
+        self._insert_metric(metrics, "root_quat", reward=reward, distance=ang_dist)
         return reward
 
     @_named_reward("joints")
@@ -650,10 +687,11 @@ class Imitation(worm_base.CelegansEnv):
 
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
 
-        metrics["rewards/joints"] = reward
-        metrics["dists/joints"] = distance
+        self._insert_metric(metrics, "joints", reward=reward, distance=distance)
         for joint_name, joint_dist in zip(self.joint_names, error):
-            metrics[f"errors/joints/{joint_name}"] = jp.abs(joint_dist)
+            metrics[f"errors/joints/{joint_name}"] = metrics[
+                f"errors/per_step/joints/{joint_name}"
+            ] = jp.abs(joint_dist)
         return reward
 
     @_named_reward("joints_vel")
@@ -674,8 +712,7 @@ class Imitation(worm_base.CelegansEnv):
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
 
-        metrics["rewards/joints_vel"] = reward
-        metrics["dists/joints_vel"] = distance
+        self._insert_metric(metrics, "joints_vel", reward=reward, distance=distance)
         return reward
 
     def _get_bodies_dist(
@@ -698,7 +735,9 @@ class Imitation(worm_base.CelegansEnv):
         total_dist_sqr = 0.0
         for body_name in bodies:
             dist_sqr = jp.sum((body_pos[body_name] - target.body_xpos(body_name)) ** 2)
-            metrics[f"errors/bodies/{body_name}"] = jp.sqrt(dist_sqr)
+            metrics[f"errors/bodies/{body_name}"] = metrics[
+                f"errors/per_step/bodies/{body_name}"
+            ] = jp.sqrt(dist_sqr)
             total_dist_sqr += dist_sqr
         return jp.sqrt(total_dist_sqr)
 
@@ -718,8 +757,7 @@ class Imitation(worm_base.CelegansEnv):
         total_dist = self._get_bodies_dist(data, info, metrics, bodies=self.body_names)
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
 
-        metrics["rewards/bodies_pos"] = reward
-        metrics["dists/bodies_pos"] = total_dist
+        self._insert_metric(metrics, "bodies_pos", reward=reward, distance=total_dist)
         return reward
 
     @_named_reward("end_eff")
@@ -740,8 +778,7 @@ class Imitation(worm_base.CelegansEnv):
         )
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
 
-        metrics["rewards/end_eff"] = reward
-        metrics["dists/end_eff"] = total_dist
+        self._insert_metric(metrics, "end_eff", reward=reward, distance=total_dist)
         return reward
 
     @_named_reward("upright")
@@ -761,8 +798,7 @@ class Imitation(worm_base.CelegansEnv):
         min_z, max_z = healthy_z_range
         in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
         reward = weight * in_range.astype(float)
-        metrics["rewards/upright"] = reward
-        metrics["dists/upright"] = torso_z
+        self._insert_metric(metrics, "upright", reward=reward, magnitude=torso_z)
         return reward
 
     # Costs
@@ -796,8 +832,7 @@ class Imitation(worm_base.CelegansEnv):
         """
         ctrl_magnitude = jp.sum(jp.square(info["action"]))
         cost = weight * ctrl_magnitude
-        metrics["costs/control"] = cost
-        metrics["magnitudes/control"] = ctrl_magnitude
+        self._insert_metric(metrics, "control", cost=cost, magnitude=ctrl_magnitude)
         return cost
 
     @_named_cost("control_diff")
@@ -814,8 +849,7 @@ class Imitation(worm_base.CelegansEnv):
         """
         ctrl_diff = jp.sum(jp.square(info["action"] - info["prev_action"]))
         cost = weight * ctrl_diff
-        metrics["costs/control_diff"] = cost
-        metrics["magnitudes/control_diff"] = ctrl_diff
+        self._insert_metric(metrics, "control_diff", cost=cost, magnitude=ctrl_diff)
         return cost
 
     @_named_cost("energy")
@@ -835,8 +869,7 @@ class Imitation(worm_base.CelegansEnv):
             jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator)), max_value
         )
         cost = weight * energy
-        metrics["costs/energy"] = cost
-        metrics["magnitudes/energy"] = energy
+        self._insert_metric(metrics, "energy", cost=cost, magnitude=energy)
         return cost
 
     @_named_cost("var")
@@ -857,8 +890,7 @@ class Imitation(worm_base.CelegansEnv):
         var = jp.sum(var_act)
         cost = weight * var
 
-        metrics["costs/var"] = cost
-        metrics["magnitudes/var"] = var
+        self._insert_metric(metrics, "var", cost=cost, magnitude=var)
         return cost
 
     @_named_cost("jerk")
@@ -884,8 +916,7 @@ class Imitation(worm_base.CelegansEnv):
         jerk = jp.sum(jerks**2)
         cost = weight * jerk
 
-        metrics["costs/jerk"] = cost
-        metrics["magnitudes/jerk"] = jerk
+        self._insert_metric(metrics, "jerk", cost=cost, magnitude=jerk)
         return cost
 
     # Termination
@@ -1125,6 +1156,14 @@ class Imitation(worm_base.CelegansEnv):
             reference_clips: Reference clips.
         """
         self._reference_clips = reference_clips
+
+    def _clip_length(self) -> int:
+        """Get the length of each clip.
+
+        Returns:
+            Number of frames per clip.
+        """
+        return self.reference_clips.n_frames_per_clip
 
     def render(
         self,
