@@ -56,6 +56,7 @@ def default_config() -> config_dict.ConfigDict:
         iterations=4,
         ls_iterations=4,
         noslip_iterations=0,
+        ccd_iterations=35,
         impratio=1.0,
         naconmax=16 * 256,
         njmax=256,
@@ -135,6 +136,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         friction: Tuple[float, ...] = (1, 1, 0.005, 0.0001, 0.0001),
         solimp: Tuple[float, ...] = (0.9, 0.95, 0.001, 0.5, 2),
         muscle_config: Optional[Dict[str, Any]] = None,
+        contact_geom: Optional[mujoco.mjtGeom] = mujoco.mjtGeom.mjGEOM_SPHERE,
         rgba: Optional[Tuple[float, float, float, float]] = None,
         suffix: str = "-worm",
     ) -> None:
@@ -209,10 +211,11 @@ class CelegansEnv(mjx_env.MjxEnv):
                 pos=[0, 0, 0],
             )
 
+        print(f"Adding contacts between floor and worm {contact_geom}s")
         for body_name in self.body_names:
             body = worm.body(f"{body_name}{suffix}")
             for geom in body.geoms:
-                if geom.type == mujoco.mjtGeom.mjGEOM_SPHERE:
+                if geom.type == contact_geom:
                     self._spec.add_pair(
                         name=f"{body_name}_floor",
                         geomname1=geom.name,
@@ -325,6 +328,8 @@ class CelegansEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self.config.iterations
             self._mj_model.opt.ls_iterations = self.config.ls_iterations
+            self._mj_model.opt.noslip_iterations = self.config.noslip_iterations
+            self._mj_model.opt.ccd_iterations = self.config.ccd_iterations
             self._mj_model.opt.impratio = self.config.impratio
             self._mj_model.opt.integrator = {
                 "euler": mujoco.mjtIntegrator.mjINT_EULER,
