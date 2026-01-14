@@ -38,7 +38,7 @@ dependencies = [
     "matplotlib",
     "pandas",
     "numpy",
-    "playground>=0.1.0",
+    "playground",
     "dvc",
     ]
 
