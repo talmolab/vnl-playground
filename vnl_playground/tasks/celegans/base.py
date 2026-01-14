@@ -522,7 +522,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             joint_angles=self._get_joint_angles(data),
             joint_ang_vels=self._get_joint_ang_vels(data),
             actuator_ctrl=self._get_actuator_ctrl(data),
-            body_height=self._get_body_height(data),
+            body_height=self._get_body_height(data).reshape(1),
             world_zaxis=self._get_world_zaxis(data),
             appendages_pos=self._get_appendages_pos(data, flatten=flatten),
             kinematic_sensors=self._get_kinematic_sensors(data, flatten=flatten),
