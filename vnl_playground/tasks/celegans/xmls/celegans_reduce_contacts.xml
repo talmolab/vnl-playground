@@ -14,7 +14,7 @@
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="1000"/>
     </default>
     <default class="collision">
-       <geom type="sphere" contype="1" conaffinity="0" condim="3"/>
+       <geom type="sphere" contype="1" conaffinity="0" condim="3" density="0"/>
     </default>
   </default>
   <asset>
