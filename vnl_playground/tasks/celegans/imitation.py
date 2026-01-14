@@ -351,7 +351,7 @@ class Imitation(worm_base.CelegansEnv):
         """
         return collections.OrderedDict(
             imitation_target=self._get_imitation_target(data, info),
-            proprioception=self._get_proprioception(data, flatten=False),
+            proprioception=self._get_proprioception(data, info, flatten=False),
         )
 
     def _insert_metric(

@@ -58,7 +58,6 @@ import wandb
 from vnl_playground.tasks.celegans import imitation
 from vnl_playground.tasks.celegans.reference_clips import ReferenceClips
 from mujoco_playground import wrapper as playground_wrappers
-from vnl_playground.wrappers.flatten_observation import FlattenObsWrapper
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -131,9 +130,6 @@ def main(cfg: DictConfig):
         config_overrides=OmegaConf.to_container(env_config, resolve=True)
     )
     evaluator_env.reference_clips = test_set
-
-    env = FlattenObsWrapper(env)
-    evaluator_env = FlattenObsWrapper(evaluator_env)
 
     logging.info(f"Training on {len(env.reference_clips)} clips")
     logging.info(f"Testing on {len(evaluator_env.reference_clips)} clips")

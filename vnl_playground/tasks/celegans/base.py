@@ -6,7 +6,7 @@ creating and managing C. elegans simulation environments using MuJoCo.
 
 import collections
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Mapping
 from xml.etree import ElementTree as ET
 from pprint import pformat
 
@@ -506,7 +506,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         return self.root_body(data).xmat.flatten()[6:]
 
     def _get_proprioception(
-        self, data: mjx.Data, flatten: bool = True
+        self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True
     ) -> Union[jp.ndarray, Dict[str, Any]]:
         """Get proprioception data from the environment.
 
@@ -526,6 +526,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             world_zaxis=self._get_world_zaxis(data),
             appendages_pos=self._get_appendages_pos(data, flatten=flatten),
             kinematic_sensors=self._get_kinematic_sensors(data, flatten=flatten),
+            prev_action=info["prev_action"],
         )
         if flatten:
             proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)
