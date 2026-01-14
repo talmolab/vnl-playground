@@ -85,11 +85,13 @@ class Imitation(fruitfly_base.FruitflyEnv):
             clips: Pre-loaded ReferenceClips object.
         """
         super().__init__(config, config_overrides)
-        self.add_fly(
-            rescale_factor=self._config.rescale_factor,
-            torque_actuators=self._config.torque_actuators,
-            pos=(0, 0, 0),
-        )
+        # self.add_fly(
+        #     rescale_factor=self._config.rescale_factor,
+        #     torque_actuators=self._config.torque_actuators,
+        #     pos=(0, 0, 0),
+        # )
+        self._spec = mujoco.MjSpec.from_file(str(self._config.walker_xml_path))
+        self._suffix = ""
         self.compile()
 
         if clips is not None:
