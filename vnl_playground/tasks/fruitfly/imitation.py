@@ -17,7 +17,7 @@ from jax import flatten_util
 from .. import utils
 from . import base as fruitfly_base
 from . import consts
-from .reference_clips import ReferenceClips
+from vnl_playground.tasks.reference_clips import ReferenceClips
 
 
 def default_config() -> config_dict.ConfigDict:

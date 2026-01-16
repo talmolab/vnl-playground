@@ -9,16 +9,11 @@ from typing import Any, Callable, Optional, Type
 from ml_collections import config_dict
 
 from vnl_playground.tasks.rodent import imitation as rodent_imitation
-from vnl_playground.tasks.rodent import wrappers as rodent_wrappers
-from vnl_playground.tasks.rodent.reference_clips import (
-    ReferenceClips as RodentReferenceClips,
-)
-
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
-from vnl_playground.tasks.fruitfly import wrappers as fruitfly_wrappers
-from vnl_playground.tasks.fruitfly.reference_clips import (
-    ReferenceClips as FruitflyReferenceClips,
-)
+
+# Unified wrappers and reference clips
+from vnl_playground.tasks.wrappers import FlattenObsWrapper
+from vnl_playground.tasks.reference_clips import ReferenceClips
 
 
 # Registry dicts (like locomotion's _envs, _cfgs)
@@ -32,14 +27,16 @@ _cfgs = {
     "FruitflyImitation": fruitfly_imitation.default_config,
 }
 
+# Single wrapper class for all environments
 _wrappers = {
-    "RodentImitation": rodent_wrappers.FlattenObsWrapper,
-    "FruitflyImitation": fruitfly_wrappers.FlattenObsWrapper,
+    "RodentImitation": FlattenObsWrapper,
+    "FruitflyImitation": FlattenObsWrapper,
 }
 
+# Single ReferenceClips class for all environments
 _reference_clips = {
-    "RodentImitation": RodentReferenceClips,
-    "FruitflyImitation": FruitflyReferenceClips,
+    "RodentImitation": ReferenceClips,
+    "FruitflyImitation": ReferenceClips,
 }
 
 
@@ -110,6 +107,8 @@ def load_reference_clips(
     data_path: str,
     n_frames_per_clip: int,
     keep_clips_idx=None,
+    joint_names: Optional[list[str]] = None,
+    body_names: Optional[list[str]] = None,
 ):
     """Load reference clips for an imitation environment.
 
@@ -118,6 +117,8 @@ def load_reference_clips(
         data_path: Path to HDF5 reference data.
         n_frames_per_clip: Number of frames per clip.
         keep_clips_idx: Optional indices to keep.
+        joint_names: Optional list of joint names. If None, read from H5 or use indices.
+        body_names: Optional list of body names. If None, read from H5 or use indices.
 
     Returns:
         Instantiated ReferenceClips object.
@@ -130,4 +131,6 @@ def load_reference_clips(
         data_path=data_path,
         n_frames_per_clip=n_frames_per_clip,
         keep_clips_idx=keep_clips_idx,
+        joint_names=joint_names,
+        body_names=body_names,
     )

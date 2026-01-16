@@ -1,4 +1,10 @@
-from typing import Any, Callable, Mapping, Optional
+"""Common wrappers for MjxEnv-based environments.
+
+These wrappers are generic and work with any MjxEnv-based environment,
+including rodent, fruitfly, and future organisms.
+"""
+
+from typing import Any, Callable, Mapping
 
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
@@ -10,6 +16,11 @@ from mujoco_playground import wrapper
 
 
 class FlattenObsWrapper(wrapper.Wrapper):
+    """Wrapper that flattens hierarchical observations to 1D arrays.
+
+    Converts nested observation dictionaries into flat JAX arrays,
+    handling NaN values and flattening nested metrics dictionaries.
+    """
 
     def __init__(self, env: wrapper.mjx_env.MjxEnv):
         super().__init__(env)
@@ -67,9 +78,13 @@ class FlattenObsWrapper(wrapper.Wrapper):
 
 
 class HighLevelWrapper(wrapper.Wrapper):
-    """Takes a decoder inference function and uses it to get the ctrl used in the sim step.
+    """Wrapper that uses a decoder to convert latent actions to control signals.
 
-    The environment wrapped in this must use the same set of proprioceptive obs as the decoder.
+    Takes a decoder inference function and uses it to map high-level latent
+    actions to low-level control signals for the environment.
+
+    The environment wrapped in this must use the same set of proprioceptive
+    observations as the decoder.
     """
 
     def __init__(
@@ -77,7 +92,6 @@ class HighLevelWrapper(wrapper.Wrapper):
         env: wrapper.mjx_env.MjxEnv,
         decoder_inference_fn: Callable,
         latent_size: int,
-        # non_proprioceptive_obs_size: int,
     ):
         self._decoder_inference_fn = decoder_inference_fn
         self._latent_size = latent_size
@@ -99,7 +113,8 @@ class HighLevelWrapper(wrapper.Wrapper):
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
         obs = state.obs
 
-        # Note: We assume the non proprioceptive obs are first indices in obs, followed by proprioceptive obs.
+        # Note: We assume the non proprioceptive obs are first indices in obs,
+        # followed by proprioceptive obs.
         ctrl, extras = self._decoder_inference_fn(
             jp.concatenate(
                 [action, obs[..., -self._proprioceptive_obs_size :]],
