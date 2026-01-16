@@ -28,7 +28,7 @@ def default_config() -> config_dict.ConfigDict:
         solver="cg",
         iterations=5,
         ls_iterations=5,
-        nconmax=256,
+        naconmax=256,
         njmax=128,
         noslip_iterations=0,
         torque_actuators=True,
