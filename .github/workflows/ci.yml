@@ -26,4 +26,4 @@ jobs:
 
       - name: Run Black
         run: |
-          black --check vnl_playground/ notebooks/
+          black --check --diff vnl_playground/ notebooks/
