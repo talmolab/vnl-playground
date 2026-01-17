@@ -11,7 +11,13 @@ ARENA_XML_PATH = FRUITFLY_PATH / "xmls" / "arena.xml"
 WHITE_ARENA_XML_PATH = FRUITFLY_PATH / "xmls" / "white_arena.xml"
 
 # Reference data path for imitation learning
-IMITATION_REFERENCE_PATH = epath.Path(__file__).parent.parent.parent.parent.parent / "track-mjx" / "data" / "fruitfly" / "fly_reference_clip.h5"
+IMITATION_REFERENCE_PATH = (
+    epath.Path(__file__).parent.parent.parent.parent.parent
+    / "track-mjx"
+    / "data"
+    / "fruitfly"
+    / "fly_reference_clip.h5"
+)
 
 # 36 joints (6 per leg × 3 legs × 2 sides)
 JOINTS = [

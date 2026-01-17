@@ -66,9 +66,7 @@ def register_environment(
 def get_default_config(env_name: str) -> config_dict.ConfigDict:
     """Get the default configuration for an environment."""
     if env_name not in _cfgs:
-        raise ValueError(
-            f"Env '{env_name}' not found. Available: {list(_cfgs.keys())}"
-        )
+        raise ValueError(f"Env '{env_name}' not found. Available: {list(_cfgs.keys())}")
     return _cfgs[env_name]()
 
 
@@ -90,9 +88,7 @@ def load(
         Instantiated environment.
     """
     if env_name not in _envs:
-        raise ValueError(
-            f"Env '{env_name}' not found. Available: {list(_envs.keys())}"
-        )
+        raise ValueError(f"Env '{env_name}' not found. Available: {list(_envs.keys())}")
     config = config or get_default_config(env_name)
     env = _envs[env_name](config=config, clips=clips)
 

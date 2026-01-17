@@ -511,7 +511,6 @@ class Imitation(fruitfly_base.FruitflyEnv):
             ghost_fly.body("thorax"), "", suffix="-ghost"
         )
 
-
         mj_model_with_ghost = spec.compile()
         mj_model_with_ghost.vis.global_.offwidth = width
         mj_model_with_ghost.vis.global_.offheight = height

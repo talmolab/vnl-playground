@@ -283,9 +283,7 @@ class ReferenceClips:
         for fn in original_filenames:
             m = re.search(pattern, fn)
             if m is None:
-                raise ValueError(
-                    f"Clip name {fn} does not match pattern {pattern}."
-                )
+                raise ValueError(f"Clip name {fn} does not match pattern {pattern}.")
             clip_names.append(m.group(1))
         return np.array(clip_names)
 
@@ -449,9 +447,7 @@ class ReferenceClips:
         """Joint positions array."""
         if self._is_legacy_format:
             return self._data_arrays["qpos"]
-        return jp.concatenate(
-            [self.position, self.quaternion, self.joints], axis=-1
-        )
+        return jp.concatenate([self.position, self.quaternion, self.joints], axis=-1)
 
     @property
     def qvel(self) -> jp.ndarray:
