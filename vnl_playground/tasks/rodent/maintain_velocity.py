@@ -51,6 +51,8 @@ def default_config() -> config_dict.ConfigDict:
         action_repeat=1,
         reward_terms={
             "forward_velocity": {"weight": 1.0},
+            "lateral_velocity": {"weight": 0.5},
+            "angular_velocity_z": {"weight": 0.1},
         },
         termination_criteria={
             "fallen": {"min_torso_z": 0.03, "max_torso_angle": 60},
@@ -267,6 +269,47 @@ class MaintainVelocity(rodent_base.RodentEnv):
         metrics["rewards/forward_velocity"] = weighted_reward
 
         return weighted_reward
+
+    @_named_reward("lateral_velocity")
+    def _lateral_velocity_cost(self, data, info, metrics, weight) -> float:
+        """Cost for lateral (y-direction) velocity to encourage straight-line motion.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            metrics: Metrics dict for logging.
+            weight: Cost weight multiplier (positive value).
+
+        Returns:
+            Negative weighted cost (penalty for lateral movement).
+        """
+        del info
+        body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        lateral_vel = body.subtree_linvel[1]  # y-direction velocity
+        cost = -weight * jp.square(lateral_vel)  # negative to penalize
+        metrics["rewards/lateral_velocity"] = cost
+        return cost
+
+    @_named_reward("angular_velocity_z")
+    def _angular_velocity_z_cost(self, data, info, metrics, weight) -> float:
+        """Cost for yaw rate (z-axis angular velocity) to prevent turning.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            metrics: Metrics dict for logging.
+            weight: Cost weight multiplier (positive value).
+
+        Returns:
+            Negative weighted cost (penalty for turning).
+        """
+        del info
+        # Use gyro sensor for angular velocity
+        gyro = data.bind(self.mjx_model, self._spec.sensor("gyro-rodent")).sensordata
+        yaw_rate = gyro[2]  # z-axis angular velocity
+        cost = -weight * jp.square(yaw_rate)  # negative to penalize
+        metrics["rewards/angular_velocity_z"] = cost
+        return cost
 
     def _named_termination_criterion(name: str):
         """Decorator to register termination functions."""
