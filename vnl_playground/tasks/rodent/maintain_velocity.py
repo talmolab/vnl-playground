@@ -51,8 +51,8 @@ def default_config() -> config_dict.ConfigDict:
         action_repeat=1,
         reward_terms={
             "forward_velocity": {"weight": 1.0},
-            "lateral_velocity": {"weight": 0.5},
-            "angular_velocity_z": {"weight": 0.1},
+            "lateral_velocity": {"weight": 0.0},
+            "angular_velocity_z": {"weight": 0.0},
         },
         termination_criteria={
             "fallen": {"min_torso_z": 0.03, "max_torso_angle": 60},
