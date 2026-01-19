@@ -65,7 +65,7 @@ def default_config() -> config_dict.ConfigDict:
         },
         solimp={"d0": 0.9, "dwidth": 0.95, "width": 0.001, "midpoint": 0.5, "power": 2},
         muscle_config=None,
-        joint_config=None,
+        joint_config={"slide": {"armature": 0.1}, "hinge": {"armature": 0.1}},
         contact_geom="sphere",
         mocap_hz=20,
         reference_clips=ReferenceClips(

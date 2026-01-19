@@ -136,7 +136,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         friction: Tuple[float, ...] = (1, 1, 0.005, 0.0001, 0.0001),
         solimp: Tuple[float, ...] = (0.9, 0.95, 0.001, 0.5, 2),
         muscle_config: Optional[Dict[str, Any]] = None,
-        joint_config: Optional[Dict[str, Any]] = None,
+        joint_config: Optional[Dict[str, Any]] = {"hinge":{"armature":0.1}, "slide":{"armature":0.1}},
         contact_geom: Optional[mujoco.mjtGeom] = mujoco.mjtGeom.mjGEOM_SPHERE,
         rgba: Optional[Tuple[float, float, float, float]] = None,
         suffix: str = "-worm",
@@ -183,7 +183,8 @@ class CelegansEnv(mjx_env.MjxEnv):
         spawn_body = spawn_site.attach_body(root, "", suffix=suffix)
         self._suffix = suffix
         self._n_worms += 1
-
+        slide_config = joint_config.get("slide", {"armature": 0.1})
+        hinge_config = joint_config.get("hinge", {"armature": 0.1})
         if dim == 3:
             spawn_body.add_freejoint()
         elif dim == 2:
@@ -192,28 +193,28 @@ class CelegansEnv(mjx_env.MjxEnv):
                 name="rootx" + suffix,
                 type=mujoco.mjtJoint.mjJNT_SLIDE,
                 pos=[0, 0, 0],
-                armature=0.0,
-            )
+                **slide_config)
+            
             spawn_body.add_joint(
                 axis=(0, 1, 0),
                 name="rooty" + suffix,
                 type=mujoco.mjtJoint.mjJNT_SLIDE,
                 pos=[0, 0, 0],
-                armature=0.0,
-            )
+                **slide_config)
+            
             spawn_body.add_joint(
                 axis=(0, 0, 1),
                 name="rootz" + suffix,
                 type=mujoco.mjtJoint.mjJNT_SLIDE,
                 pos=[0, 0, 0],
-                armature=0.0,
-            )
+                **slide_config)
+            
             spawn_body.add_joint(
                 axis=(0, 0, 1),
                 name="free_body_rot" + suffix,
                 type=mujoco.mjtJoint.mjJNT_HINGE,
                 pos=[0, 0, 0],
-            )
+                **hinge_config)
 
         print(f"Adding contacts between floor and worm {contact_geom}s")
         for body_name in self.body_names:
@@ -250,9 +251,11 @@ class CelegansEnv(mjx_env.MjxEnv):
                     else:
                         setattr(muscle, key, value)
         if joint_config is not None:
+            hinge_config = joint_config.get("hinge", {"armature": 0.1})
             for joint in worm.joints:
-                for key, value in joint_config.items():
-                    setattr(joint, key, value)
+                if joint.type == mujoco.mjtJoint.mjJNT_HINGE:
+                    for key, value in hinge_config.items():
+                        setattr(joint, key, value)
 
     def add_ghost(
         self,
