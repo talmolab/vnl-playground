@@ -162,9 +162,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
         )
         return state
 
-    def _get_obs(
-        self, data: mjx.Data, info: dict[str, Any]
-    ) -> collections.OrderedDict:
+    def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> collections.OrderedDict:
         """Get the current observation from the simulation data.
 
         Args:
@@ -178,12 +176,14 @@ class MaintainVelocity(rodent_base.RodentEnv):
         touch_sensors = self._get_touch_sensors(data)
         origin = self._get_origin(data)
 
-        task_obs = jp.concatenate([
-            info["prev_action"],
-            kinematic_sensors,
-            touch_sensors,
-            origin,
-        ])
+        task_obs = jp.concatenate(
+            [
+                info["prev_action"],
+                kinematic_sensors,
+                touch_sensors,
+                origin,
+            ]
+        )
 
         return collections.OrderedDict(
             task_obs=task_obs,
@@ -232,9 +232,11 @@ class MaintainVelocity(rodent_base.RodentEnv):
 
     def _named_reward(name: str):
         """Decorator to register reward functions."""
+
         def decorator(reward_fcn: Callable):
             _REWARD_FCN_REGISTRY[name] = reward_fcn
             return reward_fcn
+
         return decorator
 
     @_named_reward("forward_velocity")
@@ -313,14 +315,20 @@ class MaintainVelocity(rodent_base.RodentEnv):
 
     def _named_termination_criterion(name: str):
         """Decorator to register termination functions."""
+
         def decorator(termination_fcn: Callable):
             _TERMINATION_FCN_REGISTRY[name] = termination_fcn
             return termination_fcn
+
         return decorator
 
     @_named_termination_criterion("fallen")
     def _fallen_termination(
-        self, data: mjx.Data, info, min_torso_z: float = 0.03, max_torso_angle: float = 60
+        self,
+        data: mjx.Data,
+        info,
+        min_torso_z: float = 0.03,
+        max_torso_angle: float = 60,
     ) -> bool:
         """Check if rodent has fallen.
 
