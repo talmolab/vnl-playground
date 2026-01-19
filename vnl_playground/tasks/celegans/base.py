@@ -136,6 +136,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         friction: Tuple[float, ...] = (1, 1, 0.005, 0.0001, 0.0001),
         solimp: Tuple[float, ...] = (0.9, 0.95, 0.001, 0.5, 2),
         muscle_config: Optional[Dict[str, Any]] = None,
+        joint_config: Optional[Dict[str, Any]] = None,
         contact_geom: Optional[mujoco.mjtGeom] = mujoco.mjtGeom.mjGEOM_SPHERE,
         rgba: Optional[Tuple[float, float, float, float]] = None,
         suffix: str = "-worm",
@@ -228,13 +229,27 @@ class CelegansEnv(mjx_env.MjxEnv):
             for muscle in worm.actuators:
                 for key, value in muscle_config.items():
                     if key == "dynprm":
+                        default_dynprm = {"t_act": 0.01, "t_deact": 0.04, "tausmooth": 0}
                         dynprm = np.zeros_like(muscle.dynprm)
-                        dynprm[0] = value.get("t_act", 0.01)
-                        dynprm[1] = value.get("t_deact", 0.04)
-                        dynprm[2] = value.get("tausmooth", 0)
+                        for i, (key, default) in enumerate(default_dynprm.items()):
+                            dynprm[i] = value.get(key, default)
                         muscle.dynprm = dynprm
+                    elif key == "gainprm":
+                        gainprm = np.zeros_like(muscle.gainprm)
+                        default_gainprm = {"range": {"min":0.75, "max":1.05}, "force": -1, "scale": 200, "lmin": 0.5, "lmax":1.6, "vmax":1.5, "fpmax":1.3, "fvmax":1.2}
+                        for i, (key, default) in enumerate(default_gainprm.items()):
+                            if key == "range":
+                                gainprm[i] = value.get(key, default).get("min", default["min"])
+                                gainprm[i+1] = value.get(key, default).get("max", default["max"])
+                            else:
+                                gainprm[i] = value.get(key, default)
+                        muscle.gainprm = gainprm
                     else:
                         setattr(muscle, key, value)
+        if joint_config is not None:
+            for joint in worm.joints:
+                for key, value in joint_config.items():
+                    setattr(joint, key, value)
 
     def add_ghost(
         self,

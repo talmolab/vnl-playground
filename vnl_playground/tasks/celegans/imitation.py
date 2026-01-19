@@ -65,6 +65,7 @@ def default_config() -> config_dict.ConfigDict:
         },
         solimp={"d0": 0.9, "dwidth": 0.95, "width": 0.001, "midpoint": 0.5, "power": 2},
         muscle_config=None,
+        joint_config=None,
         contact_geom="sphere",
         mocap_hz=20,
         reference_clips=ReferenceClips(
@@ -164,6 +165,7 @@ class Imitation(worm_base.CelegansEnv):
             friction=friction,
             solimp=solimp,
             muscle_config=self._config.muscle_config,
+            joint_config=self._config.joint_config,
             contact_geom=(
                 mujoco.mjtGeom.mjGEOM_MESH
                 if self.config.contact_geom.lower() == "mesh"
