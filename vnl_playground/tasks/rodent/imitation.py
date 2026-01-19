@@ -544,7 +544,9 @@ class Imitation(rodent_base.RodentEnv):
             for body in ghost_rodent.worldbody.bodies:
                 utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
             spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
-            spawn_body = spawn_site.attach_body(ghost_rodent.worldbody, "", suffix="-ghost")
+            spawn_body = spawn_site.attach_body(
+                ghost_rodent.worldbody, "", suffix="-ghost"
+            )
             spawn_body.add_freejoint()
             mj_model = spec.compile()
         else:
@@ -571,9 +573,7 @@ class Imitation(rodent_base.RodentEnv):
                 mj_data.qpos = state.data.qpos
                 mj_data.qvel = state.data.qvel
             mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(
-                mj_data, camera=camera, scene_option=scene_option
-            )
+            renderer.update_scene(mj_data, camera=camera, scene_option=scene_option)
             if modify_scene_fns is not None:
                 modify_scene_fns[i](renderer.scene)
             rendered_frame = renderer.render()
