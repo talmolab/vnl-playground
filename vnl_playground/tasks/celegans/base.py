@@ -192,18 +192,21 @@ class CelegansEnv(mjx_env.MjxEnv):
                 name="rootx" + suffix,
                 type=mujoco.mjtJoint.mjJNT_SLIDE,
                 pos=[0, 0, 0],
+                armature=0.0,
             )
             spawn_body.add_joint(
                 axis=(0, 1, 0),
                 name="rooty" + suffix,
                 type=mujoco.mjtJoint.mjJNT_SLIDE,
                 pos=[0, 0, 0],
+                armature=0.0,
             )
             spawn_body.add_joint(
                 axis=(0, 0, 1),
                 name="rootz" + suffix,
                 type=mujoco.mjtJoint.mjJNT_SLIDE,
                 pos=[0, 0, 0],
+                armature=0.0,
             )
             spawn_body.add_joint(
                 axis=(0, 0, 1),
