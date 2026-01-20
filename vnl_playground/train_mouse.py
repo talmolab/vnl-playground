@@ -38,7 +38,6 @@ from vnl_playground.tasks.mouse import mouse_reach
 from brax.envs.wrappers import training as brax_training
 from mujoco_playground import mjx_env, locomotion, wrapper
 
-
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
