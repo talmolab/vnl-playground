@@ -273,6 +273,10 @@ class CelegansEnv(mjx_env.MjxEnv):
                             else:
                                 gainprm[i] = value.get(key, default)
                         muscle.gainprm = gainprm
+                    elif key == "gear":
+                        gear = np.zeros_like(muscle.gear)
+                        gear[0] = value
+                        muscle.gear = gear
                     else:
                         setattr(muscle, key, value)
 
