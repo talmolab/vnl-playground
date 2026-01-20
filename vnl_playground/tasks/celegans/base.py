@@ -136,7 +136,10 @@ class CelegansEnv(mjx_env.MjxEnv):
         friction: Tuple[float, ...] = (1, 1, 0.005, 0.0001, 0.0001),
         solimp: Tuple[float, ...] = (0.9, 0.95, 0.001, 0.5, 2),
         muscle_config: Optional[Dict[str, Any]] = None,
-        joint_config: Optional[Dict[str, Any]] = {"hinge":{"armature":0.1}, "slide":{"armature":0.1}},
+        joint_config: Optional[Dict[str, Any]] = {
+            "hinge": {"armature": 0.1},
+            "slide": {"armature": 0.1},
+        },
         contact_geom: Optional[mujoco.mjtGeom] = mujoco.mjtGeom.mjGEOM_SPHERE,
         rgba: Optional[Tuple[float, float, float, float]] = None,
         suffix: str = "-worm",
@@ -185,6 +188,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         self._n_worms += 1
         slide_config = joint_config.get("slide", {"armature": 0.1})
         hinge_config = joint_config.get("hinge", {"armature": 0.1})
+        free_body_rot_config = joint_config.get("hinge", {"armature": 0.0})
         if dim == 3:
             spawn_body.add_freejoint()
         elif dim == 2:
@@ -193,28 +197,32 @@ class CelegansEnv(mjx_env.MjxEnv):
                 name="rootx" + suffix,
                 type=mujoco.mjtJoint.mjJNT_SLIDE,
                 pos=[0, 0, 0],
-                **slide_config)
-            
+                **slide_config,
+            )
+
             spawn_body.add_joint(
                 axis=(0, 1, 0),
                 name="rooty" + suffix,
                 type=mujoco.mjtJoint.mjJNT_SLIDE,
                 pos=[0, 0, 0],
-                **slide_config)
-            
+                **slide_config,
+            )
+
             spawn_body.add_joint(
                 axis=(0, 0, 1),
                 name="rootz" + suffix,
                 type=mujoco.mjtJoint.mjJNT_SLIDE,
                 pos=[0, 0, 0],
-                **slide_config)
-            
+                **slide_config,
+            )
+
             spawn_body.add_joint(
                 axis=(0, 0, 1),
                 name="free_body_rot" + suffix,
                 type=mujoco.mjtJoint.mjJNT_HINGE,
                 pos=[0, 0, 0],
-                **hinge_config)
+                **free_body_rot_config,
+            )
 
         print(f"Adding contacts between floor and worm {contact_geom}s")
         for body_name in self.body_names:
@@ -233,25 +241,41 @@ class CelegansEnv(mjx_env.MjxEnv):
             for muscle in worm.actuators:
                 for key, value in muscle_config.items():
                     if key == "dynprm":
-                        default_dynprm = {"t_act": 0.01, "t_deact": 0.04, "tausmooth": 0}
+                        default_dynprm = {
+                            "t_act": 0.01,
+                            "t_deact": 0.04,
+                            "tausmooth": 0,
+                        }
                         dynprm = np.zeros_like(muscle.dynprm)
                         for i, (key, default) in enumerate(default_dynprm.items()):
                             dynprm[i] = value.get(key, default)
                         muscle.dynprm = dynprm
                     elif key == "gainprm":
                         gainprm = np.zeros_like(muscle.gainprm)
-                        default_gainprm = {"range": {"min":0.75, "max":1.05}, "force": -1, "scale": 200, "lmin": 0.5, "lmax":1.6, "vmax":1.5, "fpmax":1.3, "fvmax":1.2}
+                        default_gainprm = {
+                            "range": {"min": 0.75, "max": 1.05},
+                            "force": -1,
+                            "scale": 200,
+                            "lmin": 0.5,
+                            "lmax": 1.6,
+                            "vmax": 1.5,
+                            "fpmax": 1.3,
+                            "fvmax": 1.2,
+                        }
                         for i, (key, default) in enumerate(default_gainprm.items()):
                             if key == "range":
-                                gainprm[i] = value.get(key, default).get("min", default["min"])
-                                gainprm[i+1] = value.get(key, default).get("max", default["max"])
+                                gainprm[i] = value.get(key, default).get(
+                                    "min", default["min"]
+                                )
+                                gainprm[i + 1] = value.get(key, default).get(
+                                    "max", default["max"]
+                                )
                             else:
                                 gainprm[i] = value.get(key, default)
                         muscle.gainprm = gainprm
                     else:
                         setattr(muscle, key, value)
         if joint_config is not None:
-            hinge_config = joint_config.get("hinge", {"armature": 0.1})
             for joint in worm.joints:
                 if joint.type == mujoco.mjtJoint.mjJNT_HINGE:
                     for key, value in hinge_config.items():
@@ -527,7 +551,11 @@ class CelegansEnv(mjx_env.MjxEnv):
         return self.root_body(data).xmat.flatten()[6:]
 
     def _get_proprioception(
-        self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True
+        self,
+        data: mjx.Data,
+        info: Mapping[str, Any],
+        filter_keys: List[str] = [],
+        flatten: bool = True,
     ) -> Union[jp.ndarray, Dict[str, Any]]:
         """Get proprioception data from the environment.
 
@@ -549,6 +577,8 @@ class CelegansEnv(mjx_env.MjxEnv):
             kinematic_sensors=self._get_kinematic_sensors(data, flatten=flatten),
             prev_action=info["prev_action"],
         )
+        for key in filter_keys:
+            proprioception.pop(key)
         if flatten:
             proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)
         return proprioception

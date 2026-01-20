@@ -77,6 +77,7 @@ def default_config() -> config_dict.ConfigDict:
         qvel_init="zeros",
         with_ghost=False,
         var_window_size=10,
+        proprioceptive_filter=[],
         reward_terms={
             # Imitation rewards
             "root_pos": {"exp_scale": 0.05, "weight": 1.0},  # Meters
@@ -353,7 +354,12 @@ class Imitation(worm_base.CelegansEnv):
         """
         return collections.OrderedDict(
             imitation_target=self._get_imitation_target(data, info),
-            proprioception=self._get_proprioception(data, info, flatten=False),
+            proprioception=self._get_proprioception(
+                data,
+                info,
+                filter_keys=self._config.proprioceptive_filter,
+                flatten=False,
+            ),
         )
 
     def _insert_metric(
