@@ -41,7 +41,6 @@ from mujoco_playground.config import locomotion_params
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent import wrappers as rodent_wrappers
 
-
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
