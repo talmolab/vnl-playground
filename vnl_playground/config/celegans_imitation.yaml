@@ -32,6 +32,8 @@ env_config:
   muscle_config:
     dynprm:
       tausmooth: 0.0
+  proprioceptive_filter:
+    - prev_action
   root_body: torso13_body
   end_effectors: ["torso1_body"]
   solver: "cg"

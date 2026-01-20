@@ -188,7 +188,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         self._n_worms += 1
         slide_config = joint_config.get("slide", {"armature": 0.0})
         hinge_config = joint_config.get("hinge", {"armature": 0.1})
-        free_body_rot_config = joint_config.get("hinge", {"armature": 0.0})
+        free_body_rot_config = joint_config.get("free_body_rot", {"armature": 0.0})
         if dim == 3:
             spawn_body.add_freejoint()
         elif dim == 2:
@@ -275,9 +275,13 @@ class CelegansEnv(mjx_env.MjxEnv):
                         muscle.gainprm = gainprm
                     else:
                         setattr(muscle, key, value)
+
         if joint_config is not None:
             for joint in worm.joints:
-                if joint.type == mujoco.mjtJoint.mjJNT_HINGE:
+                if (
+                    joint.type == mujoco.mjtJoint.mjJNT_HINGE
+                    and "free_body_rot" not in joint.name
+                ):
                     for key, value in hinge_config.items():
                         setattr(joint, key, value)
 
