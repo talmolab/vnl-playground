@@ -138,7 +138,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         muscle_config: Optional[Dict[str, Any]] = None,
         joint_config: Optional[Dict[str, Any]] = {
             "hinge": {"armature": 0.1},
-            "slide": {"armature": 0.1},
+            "slide": {"armature": 0.0},
         },
         contact_geom: Optional[mujoco.mjtGeom] = mujoco.mjtGeom.mjGEOM_SPHERE,
         rgba: Optional[Tuple[float, float, float, float]] = None,
@@ -186,7 +186,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         spawn_body = spawn_site.attach_body(root, "", suffix=suffix)
         self._suffix = suffix
         self._n_worms += 1
-        slide_config = joint_config.get("slide", {"armature": 0.1})
+        slide_config = joint_config.get("slide", {"armature": 0.0})
         hinge_config = joint_config.get("hinge", {"armature": 0.1})
         free_body_rot_config = joint_config.get("hinge", {"armature": 0.0})
         if dim == 3:
