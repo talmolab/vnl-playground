@@ -15,7 +15,6 @@ from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
 from vnl_playground.tasks.reference_clips import ReferenceClips
 
-
 # Registry dicts (like locomotion's _envs, _cfgs)
 _envs = {
     "RodentImitation": rodent_imitation.Imitation,
