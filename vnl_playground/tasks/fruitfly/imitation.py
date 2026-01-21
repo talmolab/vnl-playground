@@ -49,8 +49,14 @@ def default_config() -> config_dict.ConfigDict:
         reward_terms={
             # Imitation rewards
             "root_pos": {"exp_scale": 400.0, "weight": 1.0},  # Root position tolerance
-            "root_quat": {"exp_scale": 4.0, "weight": 1.0},  # Root orientation tolerance (degrees)
-            "joints": {"exp_scale": 0.25, "weight": 1.0},  # Joint angle tolerance (radians)
+            "root_quat": {
+                "exp_scale": 4.0,
+                "weight": 1.0,
+            },  # Root orientation tolerance (degrees)
+            "joints": {
+                "exp_scale": 0.25,
+                "weight": 1.0,
+            },  # Joint angle tolerance (radians)
             "end_eff": {"exp_scale": 100.0, "weight": 1.0},  # End effector tolerance
             # Costs / regularizers
             "thorax_z_range": {"healthy_z_range": (-0.03, 0.1), "weight": 1.0},
