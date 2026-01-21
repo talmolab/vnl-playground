@@ -54,7 +54,7 @@ version_file = "vnl_playground/_version.py"
 cuda12 = ["jax[cuda12]>=0.7.2 ; sys_platform == 'linux'"]
 cuda13 = ["jax[cuda13]>=0.7.2 ; sys_platform == 'linux'"]
 dev = [
-    "black[jupyter]",
+    "black[jupyter]>=26.1.0",
 ]
 
 with-cuda = [
