@@ -42,12 +42,16 @@ def default_config() -> config_dict.ConfigDict:
         start_frame_range=[0, 50],  # random_init_range from config
         qvel_init="zeros",
         keep_clips_idx=None,
+        # Reward terms configuration.
+        # For imitation rewards, the formula is: weight * exp(-((error / exp_scale)^2) / 2)
+        # exp_scale acts as a tolerance parameter: larger values = more lenient rewards,
+        # smaller values = sharper penalty for deviations from reference.
         reward_terms={
-            # Imitation rewards (from fly-mc-intention.yaml)
-            "root_pos": {"exp_scale": 400.0, "weight": 1.0},
-            "root_quat": {"exp_scale": 4.0, "weight": 1.0},
-            "joints": {"exp_scale": 0.25, "weight": 1.0},
-            "end_eff": {"exp_scale": 100.0, "weight": 1.0},
+            # Imitation rewards
+            "root_pos": {"exp_scale": 400.0, "weight": 1.0},  # Root position tolerance
+            "root_quat": {"exp_scale": 4.0, "weight": 1.0},  # Root orientation tolerance (degrees)
+            "joints": {"exp_scale": 0.25, "weight": 1.0},  # Joint angle tolerance (radians)
+            "end_eff": {"exp_scale": 100.0, "weight": 1.0},  # End effector tolerance
             # Costs / regularizers
             "thorax_z_range": {"healthy_z_range": (-0.03, 0.1), "weight": 1.0},
             "control_cost": {"weight": 0.02},
