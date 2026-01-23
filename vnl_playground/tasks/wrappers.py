@@ -85,6 +85,17 @@ class HighLevelWrapper(wrapper.Wrapper):
 
     The environment wrapped in this must use the same set of proprioceptive
     observations as the decoder.
+
+    The environment must return observations as a dict/OrderedDict with separate
+    keys for task observations and proprioception. Only task observations are
+    exposed to the high-level policy; proprioception is passed to the decoder.
+
+    Args:
+        env: The base environment to wrap.
+        decoder_inference_fn: Function that maps (latent + proprioception) -> ctrl.
+        latent_size: Size of the latent action space.
+        highlvl_obs_key: Key for high-level policy observations (default: 'task_obs').
+        decoder_obs_key: Key for decoder observations (default: 'proprioception').
     """
 
     def __init__(
@@ -92,14 +103,49 @@ class HighLevelWrapper(wrapper.Wrapper):
         env: wrapper.mjx_env.MjxEnv,
         decoder_inference_fn: Callable,
         latent_size: int,
+        highlvl_obs_key: str = "task_obs",
+        decoder_obs_key: str = "proprioception",
     ):
         self._decoder_inference_fn = decoder_inference_fn
         self._latent_size = latent_size
+        self._highlvl_obs_key = highlvl_obs_key
+        self._decoder_obs_key = decoder_obs_key
         self._proprioceptive_obs_size = int(env.proprioceptive_obs_size)
+
+        super().__init__(env)
+        sample_state = env.reset(jax.random.PRNGKey(0))
+        if not isinstance(sample_state.obs, Mapping):
+            raise ValueError(
+                "HighLevelWrapper requires dict observations. "
+                f"Got {type(sample_state.obs).__name__} instead."
+            )
+
+        # Compute observation size from the task_obs key
+        task_obs = sample_state.obs[self._highlvl_obs_key]
+        self._task_obs_size = int(
+            jax.flatten_util.ravel_pytree(task_obs)[0].shape[0]
+        )
+
         _, self._dummy_decoder_extras = decoder_inference_fn(
             jp.zeros(self._latent_size + self._proprioceptive_obs_size)
         )
-        super().__init__(env)
+
+    def _flatten_obs_value(self, obs_value: Any) -> jax.Array:
+        """Flatten an observation value (handles nested dicts)."""
+        flat, _ = jax.flatten_util.ravel_pytree(obs_value)
+        return jp.nan_to_num(flat)
+
+    def _process_state(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
+        """Process state to extract task obs for high-level policy."""
+        task_obs = self._flatten_obs_value(state.obs[self._highlvl_obs_key])
+        # Store full dict obs in info for decoder access
+        state.info["_full_obs"] = state.obs
+        return state.replace(obs=task_obs)
+
+    def _get_decoder_obs(self, state: wrapper.mjx_env.State) -> jax.Array:
+        """Get proprioceptive observations for the decoder."""
+        full_obs = state.info["_full_obs"]
+        return self._flatten_obs_value(full_obs[self._decoder_obs_key])
 
     def reset(
         self,
@@ -108,22 +154,29 @@ class HighLevelWrapper(wrapper.Wrapper):
     ) -> wrapper.mjx_env.State:
         state = self.env.reset(rng, **kwargs)
         state.info["decoder_extras"] = self._dummy_decoder_extras
-        return state
+        return self._process_state(state)
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
-        obs = state.obs
+        # Get proprioceptive observations for decoder
+        decoder_obs = self._get_decoder_obs(state)
 
-        # Note: We assume the non proprioceptive obs are first indices in obs,
-        # followed by proprioceptive obs.
+        # Decode latent action to control signal
         ctrl, extras = self._decoder_inference_fn(
-            jp.concatenate(
-                [action, obs[..., -self._proprioceptive_obs_size :]],
-                axis=-1,
-            ),
+            jp.concatenate([action, decoder_obs], axis=-1),
         )
-        state.info["decoder_extras"] = extras
-        return super().step(state, ctrl)
+
+        # Step the underlying environment
+        # Note: MjxEnv.step uses state.pipeline_state for physics, not state.obs,
+        # so passing the processed state is safe.
+        next_state = self.env.step(state, ctrl)
+        next_state.info["decoder_extras"] = extras
+        return self._process_state(next_state)
 
     @property
     def action_size(self) -> int:
         return self._latent_size
+
+    @property
+    def observation_size(self) -> int:
+        """Return observation size for the high-level policy."""
+        return self._task_obs_size
