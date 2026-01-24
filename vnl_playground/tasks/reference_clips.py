@@ -43,7 +43,7 @@ Usage
 See Also
 --------
 - `vnl_playground.tasks.wrappers` : Environment wrappers
-- `vnl_playground.env_loader` : High-level environment loading API
+- `vnl_playground.registry` : High-level environment loading API
 """
 
 import copy
