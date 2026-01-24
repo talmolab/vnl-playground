@@ -164,7 +164,6 @@ class Rearing(rodent_base.RodentEnv):
     def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> collections.OrderedDict:
         kinematic_sensors = self._get_kinematic_sensors(data)
         touch_sensors = self._get_touch_sensors(data)
-        origin = self._get_origin(data)
 
         # Include relative head height in observation
         relative_height = self._get_relative_head_height(data)
@@ -174,7 +173,6 @@ class Rearing(rodent_base.RodentEnv):
                 info["prev_action"],
                 kinematic_sensors,
                 touch_sensors,
-                origin,
                 jp.array([relative_height]),  # Add head height info
             ]
         )
