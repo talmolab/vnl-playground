@@ -35,17 +35,8 @@ _cfgs = {
     "FruitflyImitation": fruitfly_imitation.default_config,
 }
 
-# Single wrapper class for all environments
-_wrappers = {
-    "RodentImitation": FlattenObsWrapper,
-    "RodentRearing": FlattenObsWrapper,
-    "RodentBowlEscape": FlattenObsWrapper,
-    "RodentMaintainVelocity": FlattenObsWrapper,
-    "FruitflyImitation": FlattenObsWrapper,
-}
-
 # ReferenceClips class for imitation environments (not all envs use clips)
-_reference_clips = {
+_reference_clips_classes = {
     "RodentImitation": ReferenceClips,
     "FruitflyImitation": ReferenceClips,
 }
@@ -68,16 +59,17 @@ def register_environment(
     """Register a new environment at runtime."""
     _envs[env_name] = env_class
     _cfgs[env_name] = cfg_class
-    if wrapper_class:
-        _wrappers[env_name] = wrapper_class
     if reference_clips_class:
-        _reference_clips[env_name] = reference_clips_class
+        _reference_clips_classes[env_name] = reference_clips_class
 
 
 def get_default_config(env_name: str) -> config_dict.ConfigDict:
     """Get the default configuration for an environment."""
     if env_name not in _cfgs:
-        raise ValueError(f"Env '{env_name}' not found. Available: {list(_cfgs.keys())}")
+        raise ValueError(
+            f"Env '{env_name}' not found in default configs. Available configs:"
+            f" {list(_cfgs.keys())}"
+        )
     return _cfgs[env_name]()
 
 
@@ -106,13 +98,13 @@ def load(
     config = config or get_default_config(env_name)
 
     # Imitation envs use clips, locomotion envs use rng
-    if env_name in _reference_clips:
+    if env_name in _reference_clips_classes:
         env = _envs[env_name](config=config, clips=clips, **kwargs)
     else:
         env = _envs[env_name](config=config, **kwargs)
 
-    if flatten_obs and env_name in _wrappers:
-        env = _wrappers[env_name](env)
+    if flatten_obs:
+        env = FlattenObsWrapper(env)
 
     return env
 
@@ -138,11 +130,11 @@ def load_reference_clips(
     Returns:
         Instantiated ReferenceClips object.
     """
-    if env_name not in _reference_clips:
+    if env_name not in _reference_clips_classes:
         raise ValueError(
-            f"Env '{env_name}' not found. Available: {list(_reference_clips.keys())}"
+            f"Env '{env_name}' not found in reference clips classes. Available: {list(_reference_clips_classes.keys())}"
         )
-    return _reference_clips[env_name](
+    return ReferenceClips(
         data_path=data_path,
         n_frames_per_clip=n_frames_per_clip,
         keep_clips_idx=keep_clips_idx,

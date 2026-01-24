@@ -3,16 +3,16 @@
 Like mujoco_playground's registry.py - combines all task categories.
 
 Usage:
-    from vnl_playground import env_loader
+    from vnl_playground import registry
 
     # List all environments
-    print(env_loader.ALL_ENVS)
+    print(registry.ALL_ENVS)
 
     # Load environment by name
-    env = env_loader.load("RodentImitation", config=cfg, clips=clips)
+    env = registry.load("RodentImitation", config=cfg, clips=clips)
 
     # Load reference clips
-    clips = env_loader.load_reference_clips("RodentImitation", data_path, ...)
+    clips = registry.load_reference_clips("RodentImitation", data_path, ...)
 """
 
 from typing import Any, Optional

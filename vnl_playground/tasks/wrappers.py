@@ -122,9 +122,7 @@ class HighLevelWrapper(wrapper.Wrapper):
 
         # Compute observation size from the task_obs key
         task_obs = sample_state.obs[self._highlvl_obs_key]
-        self._task_obs_size = int(
-            jax.flatten_util.ravel_pytree(task_obs)[0].shape[0]
-        )
+        self._task_obs_size = int(jax.flatten_util.ravel_pytree(task_obs)[0].shape[0])
 
         _, self._dummy_decoder_extras = decoder_inference_fn(
             jp.zeros(self._latent_size + self._proprioceptive_obs_size)

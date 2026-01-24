@@ -38,18 +38,21 @@ def default_config() -> config_dict.ConfigDict:
         rescale_factor=0.9,
         # Rearing-specific config
         target_relative_height=0.05,  # Target skull-torso height difference
-        episode_length=1000,
+        rearing_hold_duration=1.0,  # Seconds to hold rearing pose for success
+        episode_length=500,  # 5 seconds at ctrl_dt=0.01
         action_repeat=1,
-        # Reward terms (both dense and sparse available)
+        # Reward terms: shaping rewards are low, success bonus dominates
         reward_terms={
-            "head_height_dense": {"weight": 1.0},  # Dense: progress toward target
-            "head_height_sparse": {"weight": 1.0},  # Sparse: binary above threshold
-            "upright": {"healthy_z_range": (0.02, 0.5), "weight": 0.5},
+            "head_height_dense": {"weight": 0.5},  # Shaping: progress toward target
+            "head_height_sparse": {"weight": 0.5},  # Shaping: binary above threshold
+            "upright": {"healthy_z_range": (0.02, 0.5), "weight": 0.2},
             "energy_cost": {"max_value": 50.0, "weight": 0.01},
+            "rearing_success": {"weight": 500.0},  # Large bonus for completing task
         },
         termination_criteria={
             "fallen": {"min_torso_z": 0.02, "max_torso_angle": 80},
             "nan_termination": {},
+            "rearing_complete": {},  # Terminate on successful sustained rearing
         },
     )
 
@@ -107,6 +110,7 @@ class Rearing(rodent_base.RodentEnv):
         info = {
             "prev_action": self.null_action(),
             "action": self.null_action(),
+            "rearing_steps": jp.array(0),  # Track consecutive steps in rearing pose
         }
 
         data = mjx.make_data(
@@ -134,6 +138,15 @@ class Rearing(rodent_base.RodentEnv):
 
         info["prev_action"] = info["action"]
         info["action"] = action
+
+        # Update rearing step counter
+        relative_height = self._get_relative_head_height(data)
+        is_rearing = relative_height >= self._config.target_relative_height
+        info["rearing_steps"] = jp.where(
+            is_rearing,
+            info["rearing_steps"] + 1,
+            jp.array(0),  # Reset counter if not rearing
+        )
 
         done = self._is_done(data, info, state.metrics)
         reward = self._get_reward(data, info, state.metrics)
@@ -278,6 +291,20 @@ def _energy_cost(env, data, info, metrics, weight, max_value) -> float:
     return -cost
 
 
+@_named_reward("rearing_success")
+def _rearing_success_reward(env, data, info, metrics, weight) -> float:
+    """Large reward when rearing pose is held for the required duration."""
+    required_steps = int(env._config.rearing_hold_duration / env._config.ctrl_dt)
+    rearing_steps = info["rearing_steps"]
+
+    # Give reward only on the exact step when threshold is reached
+    success = rearing_steps == required_steps
+    weighted_reward = jp.astype(success, float) * weight
+    metrics["rewards/rearing_success"] = weighted_reward
+    metrics["rearing_steps"] = rearing_steps
+    return weighted_reward
+
+
 # --- Termination Functions ---
 
 
@@ -306,3 +333,11 @@ def _nan_termination(env, data, info) -> bool:
     flattened_vals, _ = flatten_util.ravel_pytree(data)
     num_nans = jp.sum(jp.isnan(flattened_vals))
     return num_nans > 0
+
+
+@_named_termination_criterion("rearing_complete")
+def _rearing_complete_termination(env, data, info) -> bool:
+    """Terminate episode when rearing pose has been held for required duration."""
+    del data
+    required_steps = int(env._config.rearing_hold_duration / env._config.ctrl_dt)
+    return info["rearing_steps"] >= required_steps
