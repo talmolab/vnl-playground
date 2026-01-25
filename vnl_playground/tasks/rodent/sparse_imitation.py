@@ -1,9 +1,13 @@
-"""Sparse-reward imitation environment for rodent.
+"""Sparse-reward imitation environment for rodent using elastic sequence matching.
 
-This environment provides sparse rewards based on whether joint angles match
-the reference clip within a tolerance threshold. Unlike the dense imitation
-environment, rewards are binary (1.0 if matched, 0.0 otherwise) and episodes
-run for a fixed duration without early termination.
+This environment provides sparse rewards for producing the reference clip motion
+sequence multiple times within each episode using online elastic DP matching.
+
+Key behavior:
+- Samples agent joint angles at a fixed rate (mocap_hz) independent of reference phase
+- Uses elastic dynamic programming to allow time-warp (agent can be faster or slower)
+- Emits sparse reward only when full clip matches, then resets DP for next detection
+- Supports configurable speed tolerance via min_ratio/max_ratio parameters
 """
 
 import collections
@@ -22,6 +26,9 @@ from .. import utils
 from . import base as rodent_base
 from . import consts
 from vnl_playground.tasks.reference_clips import ReferenceClips
+
+_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
+_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -46,37 +53,34 @@ def default_config() -> config_dict.ConfigDict:
         mocap_hz=50,
         clip_length=250,
         clip_set="all",
-        reference_length=5,
         qvel_init="zeros",
         keep_clips_idx=None,
+        clip_range=(75,200),  # (start, end) frame indices or None for full clip. defaults to a rear
+        default_clip_idx=1,  # Fixed clip index to use (None to sample randomly). defaults idx 1 is a rear
         # Episode params
-        episode_length=1000,  # 10 seconds at ctrl_dt=0.01
-        default_clip_idx=0,  # Fixed clip index to use (None to sample randomly)
-        # Reward params
+        episode_length=2500,  # 25 seconds to allow multiple sequence matches
+        # Elastic matching params
+        min_ratio=0.9,  # Agent can complete clip in 0.9x time (faster)
+        max_ratio=1.1,  # Agent can take up to 1.1x time (slower)
+        tolerance=0.5,  # Per-frame joint angle L2 threshold (radians)
+        use_wrapped_angles=True,  # Use atan2(sin,cos) for angle diff
+        # Reward params (sparse only)
         reward_terms={
-            # Small per-frame reward for matching
-            "frame_match": {
-                "tolerance": 1.0,  # L2 norm threshold for match
-                "weight": 0.01,  # Small reward per matched frame
-            },
-            # Large terminal bonus for matching entire trajectory
-            "trajectory_match": {
-                "tolerance": 1.0,  # L2 norm threshold (max error must be below)
-                "weight": 1.0,  # Large bonus at episode end
-            },
+            "sequence_match": {"weight": 1.0},
         },
-        # No termination conditions (empty dict)
-        termination_criteria={},
+        # Termination conditions
+        termination_criteria={
+            "fallen": {"min_torso_z": 0.03, "max_torso_angle": 60},
+            "nan_termination": {},
+        },
     )
 
 
-_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
-
-
 class SparseImitation(rodent_base.RodentEnv):
-    """Sparse-reward imitation environment.
+    """Sparse-reward imitation environment with elastic sequence matching.
 
-    Rewards are binary: 1.0 if joint angle error is below tolerance, 0.0 otherwise.
+    Uses online dynamic programming to detect when the agent's joint angles
+    match the reference clip, allowing for time-warped playback (faster or slower).
     Episodes run for a fixed duration (episode_length steps) without early termination.
     """
 
@@ -126,6 +130,30 @@ class SparseImitation(rodent_base.RodentEnv):
                 f" or a behavior name. Got {self._config.clip_set}."
             )
 
+        # Compute effective clip range
+        full_clip_length = self.reference_clips.qpos.shape[1]
+        if self._config.clip_range is not None:
+            self._clip_start = self._config.clip_range[0]
+            self._clip_end = self._config.clip_range[1]
+            if self._clip_start < 0 or self._clip_end > full_clip_length:
+                raise ValueError(
+                    f"clip_range ({self._clip_start}, {self._clip_end}) out of bounds "
+                    f"for clip length {full_clip_length}"
+                )
+            if self._clip_start >= self._clip_end:
+                raise ValueError(
+                    f"clip_range start ({self._clip_start}) must be less than "
+                    f"end ({self._clip_end})"
+                )
+        else:
+            self._clip_start = 0
+            self._clip_end = full_clip_length
+
+        # Compute elastic matching bounds from config
+        clip_length = self._clip_length()
+        self._min_len = int(np.ceil(self._config.min_ratio * clip_length))
+        self._max_len = int(np.floor(self._config.max_ratio * clip_length))
+
     def reset(
         self,
         rng: jax.Array,
@@ -157,30 +185,37 @@ class SparseImitation(rodent_base.RodentEnv):
 
         data = self._reset_data(reset_rng)
 
+        # Initialize elastic DP state
+        clip_length = self._clip_length()
+        INF = jp.iinfo(jp.int32).max // 4  # Large value for unreachable states
+
         info: dict[str, Any] = {
             "start_frame": start_frame,
             "reference_clip": clip_idx,
-            "max_error": 0.0,  # Track max joint error across episode
+            # Elastic DP state: min/max steps to reach each reference frame
+            "min_steps": jp.full((clip_length,), INF, dtype=jp.int32),
+            "max_steps": jp.full((clip_length,), -INF, dtype=jp.int32),
+            "sample_phase": jp.array(0.0, dtype=jp.float32),
+            "prev_final_reachable": jp.array(False),
+            "match_count": jp.array(0, dtype=jp.int32),
+            "sequence_matched_this_step": jp.array(False),
         }
 
-        # Check for truncation (episode length based on frames or clip end)
-        last_valid_frame = self._clip_length() - 1
-        current_frame = self._get_cur_frame(data, info)
-        episode_ended = jp.logical_or(
-            current_frame >= start_frame + self._config.episode_length,
-            current_frame > last_valid_frame,
-        )
+        # Check for truncation (episode length based on control steps)
+        episode_ended = data.time >= self._config.episode_length * self._config.ctrl_dt
         info["truncated"] = jp.astype(episode_ended, float)
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
 
         metrics = {
-            "current_frame": jp.astype(current_frame, float),
-            "max_error": 0.0,
+            "match_count": 0.0,
+            "sequence_matched": 0.0,
+            "sample_phase": 0.0,
         }
         obs = self._get_obs(data, info)
         reward = self._get_reward(data, info, metrics)
-        done = episode_ended  # Only truncation, no early termination
+        terminated = self._is_done(data, info, metrics)
+        done = jp.logical_or(episode_ended, terminated)
 
         return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
 
@@ -203,41 +238,32 @@ class SparseImitation(rodent_base.RodentEnv):
 
         info = state.info.copy()
 
-        # Compute current joint error and update max_error
-        current_error = self._compute_joint_error(data, info)
-        info["max_error"] = jp.maximum(state.info["max_error"], current_error)
-
-        # Check for truncation (episode length based on frames or clip end)
-        last_valid_frame = self._clip_length() - 1
-        current_frame = self._get_cur_frame(data, info)
-        episode_ended = jp.logical_or(
-            current_frame >= info["start_frame"] + self._config.episode_length,
-            current_frame > last_valid_frame,
-        )
+        # Check for truncation (episode length based on time)
+        episode_ended = data.time >= self._config.episode_length * self._config.ctrl_dt
         info["truncated"] = jp.astype(episode_ended, float)
         info["prev_action"] = state.info["action"]
         info["action"] = action
 
         obs = self._get_obs(data, info)
-        done = episode_ended  # Only truncation, no early termination
 
         metrics = state.metrics.copy()
-        metrics["current_error"] = current_error
-        metrics["max_error"] = info["max_error"]
         reward = self._get_reward(data, info, metrics)
 
         # Handle nans during sim
         reward = jp.nan_to_num(reward)
 
-        state = state.replace(
+        # Check for termination (fallen, NaN, etc.)
+        terminated = self._is_done(data, info, metrics)
+        done = jp.logical_or(episode_ended, terminated)
+
+        return state.replace(
             data=data,
             obs=obs,
             info=info,
             reward=reward,
-            done=done.astype(float),
+            done=jp.astype(done, float),
+            metrics=metrics,
         )
-        state.metrics["current_frame"] = jp.astype(current_frame, float)
-        return state
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
         """Get observations."""
@@ -259,13 +285,290 @@ class SparseImitation(rodent_base.RodentEnv):
     def _get_reward(
         self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
     ) -> float:
-        """Compute total reward from configured reward terms."""
+        """Compute total reward.
+
+        Args:
+            data: Simulation data.
+            info: State info dictionary.
+            metrics: Metrics dictionary for logging.
+
+        Returns:
+            Total reward value.
+        """
         net_reward = 0.0
         for name, kwargs in self._config.reward_terms.items():
             net_reward += _REWARD_FCN_REGISTRY[name](
                 self, data, info, metrics, **kwargs
             )
         return net_reward
+
+    def _named_reward(name: str):
+        """Decorator to register reward functions."""
+
+        def decorator(reward_fcn: Callable):
+            _REWARD_FCN_REGISTRY[name] = reward_fcn
+            return reward_fcn
+
+        return decorator
+
+    @_named_reward("sequence_match")
+    def _sequence_match_reward(self, data, info, metrics, weight) -> float:
+        """Reward for completing a sequence match.
+
+        Performs elastic DP matching: advances sampling phase, runs DP updates
+        for new samples, updates info fields, and returns sparse reward.
+
+        Args:
+            data: Simulation data (for joint angles).
+            info: State info containing DP state (min_steps, max_steps, etc.).
+            metrics: Metrics dict for logging.
+            weight: Reward weight multiplier.
+
+        Returns:
+            Weighted sequence match reward.
+        """
+        # Advance sampling phase
+        sample_phase = info["sample_phase"] + self._config.ctrl_dt * self._config.mocap_hz
+        n_new_samples = jp.floor(sample_phase).astype(jp.int32)
+        sample_phase = sample_phase - n_new_samples.astype(jp.float32)
+
+        # Pull DP state
+        INF = jp.iinfo(jp.int32).max // 4
+        min_steps = info["min_steps"]
+        max_steps = info["max_steps"]
+        prev_final_reachable = info["prev_final_reachable"]
+        match_count = info["match_count"]
+
+        current_joints = self._get_joint_angles(data)
+        # Slice reference joints to the effective clip range
+        ref_joints = self.reference_clips.joints[
+            info["reference_clip"], self._clip_start : self._clip_end
+        ]
+
+        # Static upper bound per control step (compile-time constant).
+        # +2 is a small safety margin for floating error.
+        max_updates = int(np.ceil(self._config.ctrl_dt * self._config.mocap_hz) + 2)
+
+        def body(i, carry):
+            min_s, max_s, prev_reach, m_count, matched_any = carry
+
+            do_update = i < n_new_samples
+
+            def do(c):
+                min_s2, max_s2, prev_reach2, m_count2, matched_any2 = c
+                new_min, new_max, complete = self._dp_update(
+                    min_s2, max_s2, current_joints, ref_joints
+                )
+
+                matched_now = complete & (~prev_reach2)
+                m_count2 = m_count2 + jp.where(matched_now, 1, 0)
+
+                # Reset DP state on match to detect next sequence
+                new_min = jp.where(matched_now, jp.full_like(new_min, INF), new_min)
+                new_max = jp.where(matched_now, jp.full_like(new_max, -INF), new_max)
+
+                return (new_min, new_max, complete, m_count2, matched_any2 | matched_now)
+
+            return jax.lax.cond(do_update, do, lambda c: c, (min_s, max_s, prev_reach, m_count, matched_any))
+
+        min_steps, max_steps, prev_final_reachable, match_count, matched_any = jax.lax.fori_loop(
+            0,
+            max_updates,
+            body,
+            (min_steps, max_steps, prev_final_reachable, match_count, jp.array(False)),
+        )
+
+        # Write back into info
+        info["min_steps"] = min_steps
+        info["max_steps"] = max_steps
+        info["sample_phase"] = sample_phase
+        info["prev_final_reachable"] = prev_final_reachable
+        info["match_count"] = match_count
+        info["sequence_matched_this_step"] = matched_any
+
+        # Update metrics
+        metrics["match_count"] = jp.astype(match_count, float)
+        metrics["sequence_matched"] = jp.astype(matched_any, float)
+        metrics["sample_phase"] = jp.astype(sample_phase, float)
+
+        # Sparse reward
+        reward_value = jp.where(matched_any, 1.0, 0.0)
+        weighted_reward = reward_value * weight
+        metrics["rewards/sequence_match"] = weighted_reward
+        return weighted_reward
+
+    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict) -> bool:
+        """Check if episode should terminate.
+
+        Args:
+            data: Simulation data.
+            info: State info dictionary.
+            metrics: Metrics dictionary for logging.
+
+        Returns:
+            Boolean indicating if episode should terminate.
+        """
+        any_terminated = False
+        for name, kwargs in self._config.termination_criteria.items():
+            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
+            terminated = termination_fcn(self, data, info, **kwargs)
+            any_terminated = jp.logical_or(any_terminated, terminated)
+            metrics["terminations/" + name] = jp.astype(terminated, float)
+        metrics["terminations/any"] = jp.astype(any_terminated, float)
+        return any_terminated
+
+    def _named_termination_criterion(name: str):
+        """Decorator to register termination functions."""
+
+        def decorator(termination_fcn: Callable):
+            _TERMINATION_FCN_REGISTRY[name] = termination_fcn
+            return termination_fcn
+
+        return decorator
+
+    @_named_termination_criterion("fallen")
+    def _fallen_termination(
+        self,
+        data: mjx.Data,
+        info,
+        min_torso_z: float = 0.03,
+        max_torso_angle: float = 60,
+    ) -> bool:
+        """Check if rodent has fallen.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            min_torso_z: Minimum z height threshold.
+            max_torso_angle: Maximum angle from vertical in degrees.
+
+        Returns:
+            Boolean indicating if fallen.
+        """
+        del info
+
+        torso_body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        torso_z = torso_body.xpos[2]
+
+        below_ground = torso_z < min_torso_z
+
+        # xmat is 3x3 rotation matrix, [-1, -1] is element (2,2) = cos(angle from vertical)
+        upright_z = torso_body.xmat[-1, -1]
+        max_cos_angle = np.cos(np.deg2rad(max_torso_angle))
+        too_tilted = upright_z < max_cos_angle
+
+        return jp.logical_or(below_ground, too_tilted)
+
+    @_named_termination_criterion("nan_termination")
+    def _nan_termination(self, data, info) -> bool:
+        """Check for NaN values in simulation data.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+
+        Returns:
+            Boolean indicating if NaN detected.
+        """
+        del info
+        flattened_vals, _ = flatten_util.ravel_pytree(data)
+        num_nans = jp.sum(jp.isnan(flattened_vals))
+        return num_nans > 0
+
+    def _wrapped_angle_distance(
+        self, angles1: jax.Array, angles2: jax.Array
+    ) -> jax.Array:
+        """Compute L2 norm of wrapped angle differences.
+
+        Uses atan2(sin(a-b), cos(a-b)) to handle angle wrapping at ±π.
+        """
+        diff = angles1 - angles2
+        wrapped_diff = jp.arctan2(jp.sin(diff), jp.cos(diff))
+        return jp.linalg.norm(wrapped_diff)
+
+    def _dp_update(
+        self,
+        prev_min: jax.Array,
+        prev_max: jax.Array,
+        current_joints: jax.Array,
+        ref_joints: jax.Array,
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        """Single step of elastic sequence matching DP.
+
+        For each reference frame i, we track the min/max number of agent steps
+        that could reach that frame. Transitions allowed:
+        - stay (i → i): agent is slower, repeats frames
+        - advance +1 (i-1 → i): normal speed
+        - advance +2 (i-2 → i): agent is faster, skips reference frames
+
+        Args:
+            prev_min: Previous min_steps array, shape (L,)
+            prev_max: Previous max_steps array, shape (L,)
+            current_joints: Current agent joint angles, shape (n_joints,)
+            ref_joints: Reference joint angles for all frames, shape (L, n_joints)
+
+        Returns:
+            new_min: Updated min_steps array
+            new_max: Updated max_steps array
+            complete: Boolean, True if full sequence matched
+        """
+        L = ref_joints.shape[0]
+        INF = jp.iinfo(jp.int32).max // 4
+        NINF = -INF
+        tolerance = self._config.tolerance
+        min_len = self._min_len
+        max_len = self._max_len
+
+        # Compute per-frame emission match (does current_joints match each ref frame?)
+        if self._config.use_wrapped_angles:
+            diff = current_joints[None, :] - ref_joints  # (L, n_joints)
+            wrapped_diff = jp.arctan2(jp.sin(diff), jp.cos(diff))
+            frame_distances = jp.linalg.norm(wrapped_diff, axis=1)  # (L,)
+        else:
+            frame_distances = jp.linalg.norm(
+                current_joints[None, :] - ref_joints, axis=1
+            )  # (L,)
+        ok = frame_distances < tolerance  # (L,) boolean mask
+
+        # Shift helpers for transitions from i-1 and i-2
+        prev_min_m1 = jp.concatenate([jp.array([INF], dtype=jp.int32), prev_min[:-1]])
+        prev_min_m2 = jp.concatenate(
+            [jp.array([INF, INF], dtype=jp.int32), prev_min[:-2]]
+        )
+        prev_max_m1 = jp.concatenate([jp.array([NINF], dtype=jp.int32), prev_max[:-1]])
+        prev_max_m2 = jp.concatenate(
+            [jp.array([NINF, NINF], dtype=jp.int32), prev_max[:-2]]
+        )
+
+        # Candidate min/max from each transition (+1 agent step)
+        cand_min_stay = jp.where(prev_min < INF, prev_min + 1, INF)
+        cand_min_1 = jp.where(prev_min_m1 < INF, prev_min_m1 + 1, INF)
+        cand_min_2 = jp.where(prev_min_m2 < INF, prev_min_m2 + 1, INF)
+
+        cand_max_stay = jp.where(prev_max > NINF, prev_max + 1, NINF)
+        cand_max_1 = jp.where(prev_max_m1 > NINF, prev_max_m1 + 1, NINF)
+        cand_max_2 = jp.where(prev_max_m2 > NINF, prev_max_m2 + 1, NINF)
+
+        # Take min/max across all transitions
+        cand_min = jp.minimum(jp.minimum(cand_min_stay, cand_min_1), cand_min_2)
+        cand_max = jp.maximum(jp.maximum(cand_max_stay, cand_max_1), cand_max_2)
+
+        # Allow starting a new match at reference frame 0
+        cand_min = cand_min.at[0].set(jp.minimum(cand_min[0], 1))
+        cand_max = cand_max.at[0].set(jp.maximum(cand_max[0], 1))
+
+        # Gate by emission match (only update if frame matches)
+        new_min = jp.where(ok, cand_min, INF)
+        new_max = jp.where(ok, cand_max, NINF)
+
+        # Enforce max_len bound (prune paths that are too long)
+        new_min = jp.where(new_min <= max_len, new_min, INF)
+        new_max = jp.where(new_min <= max_len, jp.minimum(new_max, max_len), NINF)
+
+        # Check completion: final frame reachable within [min_len, max_len]
+        complete = (new_min[-1] <= max_len) & (new_max[-1] >= min_len)
+
+        return new_min, new_max, complete
 
     def _reset_data(self, rng: jax.Array) -> mjx.Data:
         """Initialize MuJoCo data with default pose, joint noise, and random yaw.
@@ -324,8 +627,8 @@ class SparseImitation(rodent_base.RodentEnv):
         return jp.zeros(self.action_size)
 
     def _clip_length(self):
-        """Return the number of frames per clip."""
-        return self.reference_clips.qpos.shape[1]
+        """Return the number of frames in the effective clip range."""
+        return self._clip_end - self._clip_start
 
     def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
         """Compute current frame from simulation time (like dense imitation)."""
@@ -335,10 +638,9 @@ class SparseImitation(rodent_base.RodentEnv):
     def _get_current_target(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> ReferenceClips:
-        """Get the reference data at the current frame."""
-        return self.reference_clips.at(
-            clip=info["reference_clip"], frame=self._get_cur_frame(data, info)
-        )
+        """Get the reference data at the current frame (offset by clip_start)."""
+        frame = self._get_cur_frame(data, info) + self._clip_start
+        return self.reference_clips.at(clip=info["reference_clip"], frame=frame)
 
     def _compute_joint_error(
         self, data: mjx.Data, info: Mapping[str, Any]
@@ -348,43 +650,13 @@ class SparseImitation(rodent_base.RodentEnv):
         joints = self._get_joint_angles(data)
         return jp.linalg.norm(target.joints - joints)
 
-    # Reward function decorator and registry
-    def _named_reward(name: str):
-        def decorator(reward_fcn: Callable):
-            _REWARD_FCN_REGISTRY[name] = reward_fcn
-            return reward_fcn
+    def _get_cyclic_ref_frame(self, data: mjx.Data) -> jax.Array:
+        """Compute current reference frame with cyclic wrap (for rendering).
 
-        return decorator
-
-    @_named_reward("frame_match")
-    def _frame_match_reward(self, data, info, metrics, weight, tolerance) -> float:
-        """Small per-frame reward: weight if current frame matches, else 0."""
-        current_error = metrics.get(
-            "current_error", self._compute_joint_error(data, info)
-        )
-        matched = current_error < tolerance
-        reward = weight * jp.astype(matched, float)
-        metrics["rewards/frame_match"] = reward
-        metrics["frame_matched"] = jp.astype(matched, float)
-        return reward
-
-    @_named_reward("trajectory_match")
-    def _trajectory_match_reward(self, data, info, metrics, weight, tolerance) -> float:
-        """Terminal bonus: weight if max_error < tolerance at episode end, else 0."""
-        del data  # Unused, reward depends only on tracked max_error
-        is_terminal = info["truncated"] > 0.5
-        max_error = info["max_error"]
-        trajectory_matched = max_error < tolerance
-
-        # Only give reward at terminal state
-        reward = jp.where(
-            is_terminal,
-            weight * jp.astype(trajectory_matched, float),
-            0.0,
-        )
-        metrics["rewards/trajectory_match"] = reward
-        metrics["trajectory_matched"] = jp.astype(trajectory_matched, float)
-        return reward
+        Returns the frame index into the full clip (offset by clip_start).
+        """
+        time_in_frames = data.time * self._config.mocap_hz
+        return jp.floor(time_in_frames).astype(int) % self._clip_length() + self._clip_start
 
     def render(
         self,
@@ -436,10 +708,11 @@ class SparseImitation(rodent_base.RodentEnv):
             camera = -1
 
         rendered_frames = []
+        clip_length = self._clip_length()
         for i, state in enumerate(trajectory):
-            # Use time-based frame indexing (like dense imitation)
+            # Use cyclic time-based frame indexing (offset by clip_start)
             time_in_frames = state.data.time * self._config.mocap_hz
-            frame = jp.floor(time_in_frames + state.info["start_frame"]).astype(int)
+            frame = jp.floor(time_in_frames).astype(int) % clip_length + self._clip_start
             clip = state.info["reference_clip"]
             ref = self.reference_clips.at(clip=clip, frame=frame)
 
