@@ -64,9 +64,11 @@ def default_config() -> config_dict.ConfigDict:
         max_ratio=1.1,  # Agent can take up to 1.1x time (slower)
         tolerance=0.5,  # Per-frame joint angle L2 threshold (radians)
         use_wrapped_angles=True,  # Use atan2(sin,cos) for angle diff
-        # Reward params (sparse only)
+        # Reward params
+        # Note: sequence_match must come before dp_progress (order matters for DP state)
         reward_terms={
             "sequence_match": {"weight": 1.0},
+            "dp_progress": {"weight": 0.1},
         },
         # Termination conditions
         termination_criteria={
@@ -199,6 +201,7 @@ class SparseImitation(rodent_base.RodentEnv):
             "prev_final_reachable": jp.array(False),
             "match_count": jp.array(0, dtype=jp.int32),
             "sequence_matched_this_step": jp.array(False),
+            "dp_progress": jp.array(0.0, dtype=jp.float32),
         }
 
         # Check for truncation (episode length based on control steps)
@@ -211,6 +214,7 @@ class SparseImitation(rodent_base.RodentEnv):
             "match_count": 0.0,
             "sequence_matched": 0.0,
             "sample_phase": 0.0,
+            "dp_progress": 0.0,
         }
         obs = self._get_obs(data, info)
         reward = self._get_reward(data, info, metrics)
@@ -313,10 +317,11 @@ class SparseImitation(rodent_base.RodentEnv):
 
     @_named_reward("sequence_match")
     def _sequence_match_reward(self, data, info, metrics, weight) -> float:
-        """Reward for completing a sequence match.
+        """Sparse reward for completing a sequence match.
 
         Performs elastic DP matching: advances sampling phase, runs DP updates
-        for new samples, updates info fields, and returns sparse reward.
+        for new samples, updates info fields, and returns sparse reward only
+        when the full sequence is matched.
 
         Args:
             data: Simulation data (for joint angles).
@@ -325,7 +330,7 @@ class SparseImitation(rodent_base.RodentEnv):
             weight: Reward weight multiplier.
 
         Returns:
-            Weighted sequence match reward.
+            Weighted sequence match reward (sparse).
         """
         # Advance sampling phase
         sample_phase = info["sample_phase"] + self._config.ctrl_dt * self._config.mocap_hz
@@ -392,10 +397,62 @@ class SparseImitation(rodent_base.RodentEnv):
         metrics["sample_phase"] = jp.astype(sample_phase, float)
 
         # Sparse reward
-        reward_value = jp.where(matched_any, 1.0, 0.0)
-        weighted_reward = reward_value * weight
-        metrics["rewards/sequence_match"] = weighted_reward
-        return weighted_reward
+        reward = jp.where(matched_any, 1.0, 0.0) * weight
+        metrics["rewards/sequence_match"] = reward
+
+        return reward
+
+    @_named_reward("dp_progress")
+    def _dp_progress_reward(self, data, info, metrics, weight) -> float:
+        """Dense reward for advancing through the reference sequence.
+
+        Computes the furthest reachable reference frame from the DP state and
+        rewards positive progress (advancement) through the sequence. Progress
+        resets to 0 when a full sequence match occurs.
+
+        Note: This reward function must run AFTER sequence_match in the config
+        order, as it depends on the updated DP state from sequence_match.
+
+        Args:
+            data: Simulation data (unused, but required by interface).
+            info: State info containing DP state (min_steps, sequence_matched_this_step).
+            metrics: Metrics dict for logging.
+            weight: Reward weight multiplier.
+
+        Returns:
+            Weighted progress reward (dense).
+        """
+        del data  # Unused, progress is computed from DP state
+
+        INF = jp.iinfo(jp.int32).max // 4
+        min_steps = info["min_steps"]
+        matched_any = info["sequence_matched_this_step"]
+
+        # Compute furthest reachable frame index
+        L = min_steps.shape[0]
+        reachable = min_steps < INF  # already pruned by max_len inside _dp_update
+        # Find furthest reachable frame index (-1 if none reachable)
+        best_idx = jp.max(jp.where(reachable, jp.arange(L, dtype=jp.int32), -1))
+        progress = (best_idx + 1).astype(jp.float32) / jp.array(L, jp.float32)  # in [0,1]
+
+        # Compute progress delta from previous step
+        prev_progress = info["dp_progress"]
+        progress_delta = jp.maximum(progress - prev_progress, 0.0)
+
+        # Reset progress on sequence match (so next sequence starts from 0)
+        progress = jp.where(matched_any, jp.array(0.0, dtype=jp.float32), progress)
+
+        # Write back into info
+        info["dp_progress"] = progress
+
+        # Update metrics
+        metrics["dp_progress"] = progress
+
+        # Dense progress reward
+        reward = weight * progress_delta
+        metrics["rewards/dp_progress"] = reward
+
+        return reward
 
     def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict) -> bool:
         """Check if episode should terminate.
