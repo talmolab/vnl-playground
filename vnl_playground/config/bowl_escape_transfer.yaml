@@ -1,85 +1,212 @@
+# =============================================================================
+# Bowl Escape Transfer Configuration
+# =============================================================================
+# Configuration for training a rodent agent to escape from a bowl environment
+# using transfer learning from a pre-trained imitation learning checkpoint.
+# =============================================================================
+
+# =============================================================================
+# VNL Environment Configuration
+# =============================================================================
+# Settings for the MuJoCo simulation environment and bowl escape task.
 env_config:
   env_name: rodent
   task_name: bowl_escape
   walker_name: rodent
-  render_camera_name: close_profile
 
+  # ---------------------------------------------------------------------------
+  # Environment Arguments
+  # ---------------------------------------------------------------------------
+  # These will be passed to the env constructor as config overrides
   env_args:
-    # this will be passed to the env constructor as config overrides
-    torque_actuators: True
+    torque_actuators: true
     rescale_factor: 0.9
-    bowl_vsize: 0.6
-    bowl_amplitude: -20
-    target_speed: 2
-    iterations: 10
 
+    # -----------------------------------------------------------------------------
+    # Timing Configuration
+    # -----------------------------------------------------------------------------
+    sim_dt: 0.002           # Simulation timestep (500 Hz physics)
+    ctrl_dt: 0.01           # Control timestep (100 Hz policy)
+
+    # -----------------------------------------------------------------------------
+    # Physics Solver Settings
+    # -----------------------------------------------------------------------------
+    solver: "cg"            # Solver type: "cg" or "newton"
+    iterations: 10          # Max solver iterations per step
+    ls_iterations: 5        # Line search iterations
+    noslip_iterations: 0    # No-slip solver iterations (0 = disabled)
+    ccd_iterations: 50      # Convex collision detection iterations (increase if warning appears)
+    mujoco_impl: "warp"
+    nconmax: 32             # Max contacts
+    naconmax: 32768         # Max active contacts (used for warp backend with parallel envs)
+    njmax: 200              # Max constraint rows
+
+    # -----------------------------------------------------------------------------
+    # Bowl Configuration
+    # -----------------------------------------------------------------------------
+    bowl_hsize: 3           # Horizontal size of the bowl
+    bowl_vsize: 0.3         # Vertical size (depth) of the bowl
+    bowl_sigma: 1.25        # Standard deviation of the Gaussian bump
+    bowl_amplitude: -20     # Amplitude of the Gaussian bump
+    target_speed: 1         # Target speed for speed reward
+
+
+    # -----------------------------------------------------------------------------
+    # Reward Terms
+    # -----------------------------------------------------------------------------
+    # Reward functions for the bowl escape task
+    reward_terms:
+      # Multiplicative reward: escape * upright * speed
+      # Forces agent to both move AND escape to get reward (breaks plateau behavior)
+      escape_x_upright_x_speed:
+        weight: 1.0
+      # Old reward terms kept with weight 0 for logging/comparison
+      escape_x_upright:
+        weight: 0.0
+      speed:
+        weight: 0.0
+
+    # -----------------------------------------------------------------------------
+    # Termination Criteria
+    # -----------------------------------------------------------------------------
+    # Episode ends early if any of these conditions are met
+    termination_criteria:
+      # Torso falls below bowl surface
+      fallen: {}
+
+      # Terminate on NaN detection (numerical instability)
+      nan_termination: {}
+
+  # -----------------------------------------------------------------------------
+  # Domain Randomization Settings
+  # -----------------------------------------------------------------------------
+  domain_randomization:
+    use_domain_randomization: true      # Enable/disable domain randomization
+    floor_friction: [0.4, 1.0]          # Uniform range for floor friction
+    static_friction_scale: [0.9, 1.1]   # Scale for static friction coeffs
+    armature_scale: [1.0, 1.05]         # Scale for joint armature values
+    com_jitter: [-0.05, 0.05]           # Center of mass position jitter (m)
+    link_mass_scale: [0.9, 1.1]         # Scale for link masses
+    torso_mass_jitter: [-0.02, 0.02]    # Jitter for torso mass
+    qpos0_jitter: [-0.05, 0.05]         # Jitter for initial joint positions
+
+# =============================================================================
+# Rendering Configuration
+# =============================================================================
+# Settings for video rendering during evaluation
+render_config:
+  render_camera_name: close_profile   # Camera view for rendering
+  render_fps: 100                      # Output video framerate
+  render_interval: 1                  # Render every N eval episodes
+  rollout_episode_length: 2000        # Episode length for wandb rollout videos
+
+# =============================================================================
+# Network Architecture
+# =============================================================================
+# Intention-based architecture with VAE-style latent encoding
 network_config:
   arch_name: intention
   encoder_layer_sizes: [512, 512, 256, 256]
-  decoder_layer_sizes: [1024, 1024, 512]  # loaded from checkpoint
+  decoder_layer_sizes: [1024, 1024, 512]    # Loaded from checkpoint
   critic_layer_sizes: [512, 512, 512, 256, 256]
-  intention_size: 16 # recover from the checkpoint 
-  kl_schedule: False # Whether to use a ramping KL schedule
-  kl_weight: 0 # The maximum weight if schedule is True
+  intention_size: 16                        # Recovered from the checkpoint
+  kl_schedule: true                    # Anneal KL divergence weight over training
+  latent_kl_weight: 1e-1               # Weight for KL divergence to standard Gaussian prior
+  latent_ar1_weight: 0.0              # Weight for AR(1) temporal smoothness loss
 
+# =============================================================================
+# Training Setup
+# =============================================================================
 train_setup:
   agent_name: rodent
   run_name: bowl_escape
-  checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
-  # NEW: /root/vast/scott-yang/track-mjx/model_checkpoints/250725_181216_794171 # OLD: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
-  freeze_decoder: True
-  checkpoint_max_to_keep:
-  checkpoint_keep_period:
-  eval_every: 15_000_000
-  reset_every: 50_000_000
-  train_config:
-    episode_length: 2000
-    num_envs: 4096
-    num_timesteps: 2_000_000_000
-    batch_size: 1024
-    num_minibatches: 16
-    num_updates_per_batch: 4
-    learning_rate: 1e-4
-    clipping_epsilon: 0.1
-    discounting: 0.98
-    action_repeat: 1
-    entropy_cost: 1e-4
-    reward_scaling: 1
-    normalize_observations: True
-    unroll_length: 20
-    seed: 0
 
+  # ---------------------------------------------------------------------------
+  # Checkpointing and Restoration
+  # ---------------------------------------------------------------------------
+  checkpoint_to_restore: /root/vast/scott-yang/track-mjx/model_checkpoints/260108_195543_368807
+  # NEW: /root/vast/scott-yang/track-mjx/model_checkpoints/250725_181216_794171
+  # OLD: /root/vast/scott-yang/track-mjx/model_checkpoints/250611_163603
+  freeze_decoder: true
+  checkpoint_max_to_keep: null
+  checkpoint_keep_period: null
+  restore_from_run_state: null        # Path to restore full training state
+
+
+  # ---------------------------------------------------------------------------
+  # Evaluation and Resets
+  # ---------------------------------------------------------------------------
+  eval_every: 15_000_000                    # Eval frequency (env steps)
+  reset_every: 50_000_000                   # JIT recompilation frequency (memory mgmt)
+
+  # ---------------------------------------------------------------------------
+  # PPO Training Hyperparameters
+  # ---------------------------------------------------------------------------
+  train_config:
+    episode_length: 2000                    # Max steps per episode
+    num_envs: 2048                          # Parallel environments
+    num_timesteps: 2_000_000_000            # Total training steps
+    batch_size: 1024                        # Samples per gradient update
+    num_minibatches: 16                     # Minibatches per epoch
+    num_updates_per_batch: 4                # Epochs per PPO update
+    learning_rate: 1e-4                     # Adam learning rate
+    clipping_epsilon: 0.1                   # PPO clip range
+    discounting: 0.98                       # Discount factor (gamma)
+    action_repeat: 1                        # Actions repeated per step
+    entropy_cost: 1e-4                      # Entropy bonus coefficient
+    reward_scaling: 1                       # Reward multiplier
+    normalize_observations: true            # Running mean/std normalization
+    unroll_length: 20                       # Rollout length before update
+    seed: 0                                 # Random seed
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+# Weights & Biases logging settings
 logging_config:
   project_name: vnl_playground
   group_name: new_checkpoint
   model_path: model_checkpoints
-  notes: "higher target speed"
+  notes: "v1 transfer warp"
   algo_name: ppo
-  exp_name: higher_speed
-  rollout_metrics:
-  
+  exp_name: v1_composited_reward
+  rollout_metrics: null
+
+# =============================================================================
+# Walker Configuration
+# =============================================================================
+# Rodent morphology and actuator settings
 walker_config:
-  torque_actuators: True
+  torque_actuators: true
   rescale_factor: 0.9
+  # Walker XML type: "original", "box_feet", or "full_collision"
+  walker_xml_type: original
+
+  # Joint names for tracking (order must match reference data)
   joint_names:
+    # Spine
     - vertebra_1_extend
+    # Left hind leg
     - hip_L_supinate
     - hip_L_abduct
     - hip_L_extend
     - knee_L
     - ankle_L
     - toe_L
+    # Right hind leg
     - hip_R_supinate
     - hip_R_abduct
     - hip_R_extend
     - knee_R
     - ankle_R
     - toe_R
+    # Neck and head
     - vertebra_C11_extend
     - vertebra_cervical_1_bend
     - vertebra_axis_twist
     - atlas
     - mandible
+    # Left front leg
     - scapula_L_supinate
     - scapula_L_abduct
     - scapula_L_extend
@@ -87,6 +214,7 @@ walker_config:
     - shoulder_sup_L
     - elbow_L
     - wrist_L
+    # Right front leg
     - scapula_R_supinate
     - scapula_R_abduct
     - scapula_R_extend
@@ -95,25 +223,34 @@ walker_config:
     - elbow_R
     - wrist_R
     - finger_R
+
+  # Body segment names for tracking
   body_names:
     - torso
     - pelvis
+    # Left hind leg
     - upper_leg_L
     - lower_leg_L
     - foot_L
+    # Right hind leg
     - upper_leg_R
     - lower_leg_R
     - foot_R
+    # Head
     - skull
     - jaw
+    # Left front leg
     - scapula_L
     - upper_arm_L
     - lower_arm_L
     - finger_L
+    # Right front leg
     - scapula_R
     - upper_arm_R
     - lower_arm_R
     - finger_R
+
+  # End effector names for tracking (extremities)
   end_eff_names:
     - foot_L
     - foot_R

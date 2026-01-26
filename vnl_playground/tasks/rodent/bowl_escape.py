@@ -62,24 +62,26 @@ def default_config() -> config_dict.ConfigDict:
         config_dict.ConfigDict: The default configuration dictionary.
     """
     return config_dict.create(
-        walker_xml_path=consts.RODENT_BOX_FEET_PATH,
+        walker_xml_path=consts.RODENT_XML_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
         ctrl_dt=0.01,
         sim_dt=0.002,
         solver="cg",
-        mujoco_impl="jax",
-        naconmax=16 * 8192,
+        mujoco_impl="warp",
+        nconmax=20,
+        naconmax=None,  # For warp backend; if None, nconmax is used
         njmax=512,
         iterations=10,
         ls_iterations=5,
         noslip_iterations=0,
+        ccd_iterations=50,
         vision=False,
         vision_config=default_vision_config(),
         torque_actuators=True,
         rescale_factor=0.9,
         target_speed=1.0,
         episode_length=2000,
-        action_repeat=1,  # is this action repeat based on sim dit or control dt?
+        action_repeat=1,  
         bowl_hsize=2,
         bowl_vsize=0.2,
         bowl_sigma=1.25,
@@ -178,12 +180,16 @@ class BowlEscape(rodent_base.RodentEnv):
             "prev_action": self.null_action(),
             "action": self.null_action(),
         }
-        data = mjx.make_data(
-            self.mj_model,
-            impl=self._config.mujoco_impl,
-            naconmax=self._config.naconmax,
-            njmax=self._config.njmax,
-        )
+        # Build kwargs for mjx.make_data(), using naconmax for warp backend if available
+        make_data_kwargs = {
+            "impl": self._config.mujoco_impl,
+            "njmax": self._config.njmax,
+        }
+        if hasattr(self._config, 'naconmax') and self._config.naconmax is not None:
+            make_data_kwargs["naconmax"] = self._config.naconmax
+        else:
+            make_data_kwargs["nconmax"] = self._config.nconmax
+        data = mjx.make_data(self.mj_model, **make_data_kwargs)
         metrics = {}
 
         obs = self._get_obs(data, info)
@@ -326,6 +332,75 @@ class BowlEscape(rodent_base.RodentEnv):
 
         reward = escape_reward * upright_reward * weight
         metrics["rewards/escape_x_upright"] = reward
+        return reward
+
+    @_named_reward("escape_x_upright_x_speed")
+    def _escape_x_upright_x_speed_reward(self, data, info, metrics, weight) -> float:
+        """Calculate multiplicative reward combining escape, upright, and speed.
+
+        This reward structure forces the agent to both move AND escape to get reward,
+        breaking plateau behavior where the agent stays stationary at intermediate positions.
+
+        Args:
+            data (mjx.Data): The simulation data.
+            info: Environment info dict (unused).
+            metrics: Dict to log reward components.
+            weight: Reward weight multiplier.
+
+        Returns:
+            float: Combined escape * upright * speed reward value.
+        """
+        del info
+        terrain_size = float(self._config.bowl_hsize)
+        body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        torso_xpos = body.xpos
+
+        # Escape reward: linear from 0 at center to 1 at bowl edge
+        escape_reward = reward_fns.tolerance(
+            jp.linalg.norm(torso_xpos),
+            bounds=(terrain_size, float("inf")),
+            margin=terrain_size,
+            value_at_margin=0,
+            sigmoid="linear",
+        )
+
+        # Upright reward: based on torso and head orientation
+        deviation_angle = 0
+        deviation = np.cos(np.deg2rad(deviation_angle))
+        upright_torso = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xmat[
+            -1, -1
+        ]
+        upright_head = data.bind(self.mjx_model, self._spec.body("skull-rodent")).xmat[
+            -1, -1
+        ]
+        upright = reward_fns.tolerance(
+            jp.stack([upright_torso, upright_head]),
+            bounds=(deviation, np.inf),
+            sigmoid="linear",
+            margin=1 + deviation,
+            value_at_margin=0,
+        )
+        upright_reward = np.min(upright)
+
+        # Speed reward: tolerance around target speed
+        vel = jp.linalg.norm(body.subtree_linvel)
+        target_speed = self._config.target_speed
+        speed_reward = reward_fns.tolerance(
+            vel,
+            bounds=(target_speed, target_speed),
+            margin=target_speed,
+            sigmoid="linear",
+            value_at_margin=0.0,
+        )
+
+        # Log individual components for debugging
+        metrics["rewards/escape"] = escape_reward
+        metrics["rewards/upright"] = upright_reward
+        metrics["rewards/speed"] = speed_reward
+
+        # Multiplicative combination: zero movement = zero reward
+        reward = escape_reward * upright_reward * speed_reward * weight
+        metrics["rewards/escape_x_upright_x_speed"] = reward
         return reward
 
     @_named_reward("speed")
