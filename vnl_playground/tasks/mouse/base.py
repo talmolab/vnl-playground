@@ -26,12 +26,17 @@ def default_config() -> config_dict.ConfigDict:
     """Default sim + XML config for mouse tasks."""
     return config_dict.create(
         walker_xml_path=consts.MOUSE_XML_PATH,
-        arena_xml_path=consts.MOUSE_XML_PATH,  # required by arena-first base
-        ctrl_dt=0.001,
-        sim_dt=0.001,
+        arena_xml_path=consts.MOUSE_ARENA_XML_PATH,  # separate empty arena
+        ctrl_dt=0.0025,  # physics_steps_per_control_step=2 -> 0.00125*2
+        sim_dt=0.00125,  # mj_model_timestep from imitation settings
+        solver="cg",  # CG solver as in imitation settings
+        iterations=6,
+        ls_iterations=6,
+        noslip_iterations=0,
         Kp=35.0,
         Kd=0.5,
-        episode_length=300,
+        episode_length=150,
+        mujoco_impl="jax",
     )
 
 
@@ -79,16 +84,17 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         Returns:
             None
         """
-        mouse_spec = mujoco.MjSpec.from_string(
-            epath.Path(self._walker_xml_path).read_text()
+        mouse_spec = mujoco.MjSpec.from_file(
+            self._walker_xml_path
         )
 
-        site = self._spec.worldbody.add_site(
-            name=f"mouse_spawn{suffix}",
+        # Attach using a frame (like rodent) instead of site for better positioning
+        spawn_frame = self._spec.worldbody.add_frame(
             pos=list(pos),
             quat=[1, 0, 0, 0],
         )
-        body = site.attach_body(mouse_spec.worldbody, "", suffix)
+        # Attach the clavicle body (root of arm hierarchy), not entire worldbody
+        body = spawn_frame.attach_body(mouse_spec.body("clavicle"), "", suffix)
         if freejoint:
             body.add_freejoint()
         if rgba is not None:
@@ -123,12 +129,13 @@ class MouseBaseEnv(mjx_env.MjxEnv):
             epath.Path(self._walker_xml_path).read_text()
         )
 
-        site = self._spec.worldbody.add_site(
-            name=f"ghost_spawn{suffix}",
+        # Attach using a frame for consistent positioning
+        spawn_frame = self._spec.worldbody.add_frame(
             pos=list(pos),
             quat=[1, 0, 0, 0],
         )
-        body = site.attach_body(mouse_spec.worldbody, "", suffix)
+        # Attach the clavicle body (root of arm hierarchy), not entire worldbody
+        body = spawn_frame.attach_body(mouse_spec.body("clavicle"), "", suffix)
         # Intentionally NO freejoint: kinematically tied through the attached tree.
 
         for g in getattr(body, "geom", []):
@@ -176,11 +183,27 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         """
         if not self._compiled:
             self._mj_model = self._spec.compile()
+            
+            # Set timestep
             self._mj_model.opt.timestep = self._config.sim_dt
+            
+            # Set solver type and iterations (critical for performance!)
+            self._mj_model.opt.solver = {
+                "cg": mujoco.mjtSolver.mjSOL_CG,
+                "newton": mujoco.mjtSolver.mjSOL_NEWTON,
+            }[self._config.solver.lower()]
+            self._mj_model.opt.iterations = self._config.iterations
+            self._mj_model.opt.ls_iterations = self._config.ls_iterations
+            self._mj_model.opt.noslip_iterations = self._config.noslip_iterations
+            
             # High-res offscreen buffer for nice renders
             self._mj_model.vis.global_.offwidth = 3840
             self._mj_model.vis.global_.offheight = 2160
-            self._mjx_model = mjx.put_model(self._mj_model)
+            
+            # Use configured implementation (warp/jax)
+            self._mjx_model = mjx.put_model(
+                self._mj_model, impl=self._config.mujoco_impl
+            )
             self._compiled = True
 
     @property
@@ -206,3 +229,8 @@ class MouseBaseEnv(mjx_env.MjxEnv):
     @property
     def mjx_model(self) -> mjx.Model:
         return self._mjx_model
+
+    @property
+    def dt(self) -> float:
+        """Control timestep (ctrl_dt)."""
+        return self._config.ctrl_dt
