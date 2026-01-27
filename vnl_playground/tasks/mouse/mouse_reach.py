@@ -4,7 +4,6 @@ from typing import Any, Dict, Optional, Union, Tuple
 
 import jax
 import jax.numpy as jp
-from jax import flatten_util
 from ml_collections import config_dict
 import mujoco
 from mujoco import mjx
@@ -18,8 +17,15 @@ from vnl_playground.tasks.mouse.base import MouseBaseEnv, default_config as base
 def default_config() -> config_dict.ConfigDict:
     """Default config for mouse reaching task."""
     cfg = base_default_config()
-    cfg.target_size = 0.003  # reaching radius tolerance
-    cfg.target_margin = 0.006  # margin for reward shaping
+    cfg.target_size = 0.001  # reaching radius tolerance
+    cfg.target_margin = 0.003  # margin for reward shaping
+    cfg.ctrl_cost_weight = 0.001  # penalty on action magnitude
+    # Target sampling: "fixed_list" or "random_volume"
+    cfg.target_mode = "random_volume"
+    # Volume bounds for random sampling (min and max corners)
+    # Derived from fixed target positions: x in [-0.003, 0.007], y ~ 0.010, z in [-0.011, -0.001]
+    cfg.target_volume_min = (-0.003, 0.010, -0.011)
+    cfg.target_volume_max = (0.007, 0.010, -0.001)
     return cfg
 
 
@@ -46,7 +52,7 @@ class MouseReach(MouseBaseEnv):
         target_body.add_geom(
             name="target_geom",
             type=mujoco.mjtGeom.mjGEOM_SPHERE,
-            size=[0.003, 0, 0],
+            size=[0.001, 0, 0],
             rgba=[0, 1, 0, 0.5],
             contype=0,
             conaffinity=0,
@@ -77,16 +83,29 @@ class MouseReach(MouseBaseEnv):
             dtype=jp.float32,
         )
 
+    def _sample_target_from_list(self, rng: jax.Array) -> jp.ndarray:
+        """Sample a target from the fixed list of positions."""
+        target_positions = self.get_target_positions()
+        idx = jax.random.randint(rng, (), 0, target_positions.shape[0])
+        return target_positions[idx]
+
+    def _sample_target_from_volume(self, rng: jax.Array) -> jp.ndarray:
+        """Sample a target uniformly from the configured cubic volume."""
+        vol_min = jp.array(self._config.target_volume_min, dtype=jp.float32)
+        vol_max = jp.array(self._config.target_volume_max, dtype=jp.float32)
+        return jax.random.uniform(rng, shape=(3,), minval=vol_min, maxval=vol_max)
+
     def reset(self, rng: jax.Array) -> mjx_env.State:
         """Reset the environment and sample a target for this episode."""
-        # Sample a target position
-        target_positions = self.get_target_positions()
+        # Sample a target position based on mode
         rng, key = jax.random.split(rng)
-        idx = jax.random.randint(key, (), 0, target_positions.shape[0])
-        target_position = target_positions[idx]
+        if self._config.target_mode == "random_volume":
+            target_position = self._sample_target_from_volume(key)
+        else:  # "fixed_list"
+            target_position = self._sample_target_from_list(key)
 
-        # Initialize physics data
-        data = mjx.make_data(self.mjx_model)
+        # Initialize physics data (pass impl for warp/jax compatibility)
+        data = mjx.make_data(self.mj_model, impl=self._config.mujoco_impl)
 
         # Set mocap target position
         data = data.replace(
@@ -131,7 +150,7 @@ class MouseReach(MouseBaseEnv):
         obs = jp.concatenate([task_obs, proprio_obs])
 
         # Compute reward
-        rew = self._get_reward(data, target_position)
+        rew = self._get_reward(data, target_position, action)
 
         # Check termination
         done = self._get_termination(data)
@@ -166,19 +185,21 @@ class MouseReach(MouseBaseEnv):
 
         return task_obs, proprio_obs
 
-    def _get_reward(self, data: mjx.Data, target_position: jp.ndarray) -> jp.ndarray:
+    def _get_reward(self, data: mjx.Data, target_position: jp.ndarray, action: jax.Array) -> jp.ndarray:
         """Distance-based tolerance reward from wrist marker to target."""
         wrist_marker_pos = data.geom_xpos[self._wrist_marker_geom_id]
         dist = jp.linalg.norm(wrist_marker_pos - target_position)
-        return jp.asarray(
-            reward.tolerance(
-                dist,
-                bounds=(0, self._config.target_size),
-                margin=self._config.target_margin,
-                sigmoid="hyperbolic",
-            ),
-            dtype=jp.float32,
+        distance_reward = reward.tolerance(
+            dist,
+            bounds=(0, self._config.target_size),
+            margin=self._config.target_margin,
+            sigmoid="hyperbolic",
         )
+
+        # Control cost: penalize large actions
+        ctrl_cost = self._config.ctrl_cost_weight * jp.sum(jp.square(action))
+
+        return jp.asarray(distance_reward - ctrl_cost, dtype=jp.float32)
 
     def _get_termination(self, data: mjx.Data) -> jax.Array:
         """No early termination by default."""
@@ -186,13 +207,22 @@ class MouseReach(MouseBaseEnv):
 
     @property
     def observation_size(self) -> int:
-        """Compute observation size using jax.eval_shape (no actual execution)."""
-        obs = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs)[0])
+        """Compute observation size from model dimensions.
+
+        Observation = [to_target(3), qpos(nq), qvel(nv), wrist_pos(3)]
+        """
+        # task_obs: to_target (3)
+        # proprio_obs: qpos (nq) + qvel (nv) + wrist_pos (3)
+        nq = self._mj_model.nq
+        nv = self._mj_model.nv
+        return 3 + nq + nv + 3
 
     @property
     def non_flattened_observation_size(self) -> Dict[str, int]:
-        """Get observation sizes without executing reset."""
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        obs = abstract_state.obs
-        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
+        """Get observation sizes by component."""
+        nq = self._mj_model.nq
+        nv = self._mj_model.nv
+        return {
+            "task_obs": 3,  # to_target
+            "proprio_obs": nq + nv + 3,  # qpos + qvel + wrist_pos
+        }

@@ -18,17 +18,16 @@ os.environ["PYOPENGL_PLATFORM"] = "egl"
 import functools
 import json
 import numpy as np
-import cv2
+import imageio
 from datetime import datetime
 
 import jax
 import jax.numpy as jp
-import matplotlib.pyplot as plt
-import mediapy as media
 import mujoco
 import wandb
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
+from brax.training.acme import running_statistics
 from etils import epath
 from flax.training import orbax_utils
 from orbax import checkpoint as ocp
@@ -47,7 +46,7 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 ppo_params = config_dict.create(
     num_timesteps=1_000_000_000,
-    num_evals=10,
+    num_evals=20,
     reward_scaling=1.0,
     episode_length=150,
     normalize_observations=True,
@@ -58,7 +57,7 @@ ppo_params = config_dict.create(
     discounting=0.97,
     learning_rate=1e-4,
     entropy_cost=1e-4,
-    num_envs=4096,  # Increased for better GPU utilization
+    num_envs=8192,  # Increased for better GPU utilization
     batch_size=512,  # Increased proportionally with num_envs
     max_grad_norm=1.0,
     network_factory=config_dict.create(
@@ -132,65 +131,111 @@ def progress(num_steps, metrics):
         wandb.log(metrics, step=num_steps)
 
 
+def make_logging_inference_fn(ppo_network):
+    """Creates a logging inference function that supports deterministic evaluation.
+
+    Args:
+        ppo_network: The PPO network containing policy_network and parametric_action_distribution.
+
+    Returns:
+        A function that creates a logging policy with deterministic option.
+    """
+    def make_logging_policy(deterministic=False):
+        policy_network = ppo_network.policy_network
+        parametric_action_distribution = ppo_network.parametric_action_distribution
+
+        def logging_policy(params, observations, key_sample):
+            param_subset = (params[0], params[1])
+            logits = policy_network.apply(*param_subset, observations)
+
+            if deterministic:
+                # Use mode (mean) of distribution for deterministic evaluation
+                return (
+                    jp.array(parametric_action_distribution.mode(logits)),
+                    {},
+                )
+
+            # Stochastic: sample from distribution
+            raw_actions = parametric_action_distribution.sample_no_postprocessing(
+                logits, key_sample
+            )
+            log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
+            postprocessed_actions = parametric_action_distribution.postprocess(raw_actions)
+            return jp.array(postprocessed_actions), {
+                "log_prob": log_prob,
+                "raw_action": raw_actions,
+            }
+
+        return logging_policy
+
+    return make_logging_policy
+
+
 # Create renderer and jit functions for video generation (setup before training)
-def create_video_logging_fn(env, ckpt_path, episode_length):
-    """Create a function for generating and logging rollout videos."""
+def create_video_logging_fn(env, ckpt_path, episode_length, ppo_network):
+    """Create a function for generating and logging rollout videos.
+
+    Args:
+        env: The environment to run rollouts in.
+        ckpt_path: Path to save checkpoints and videos.
+        episode_length: Length of rollout episodes.
+        ppo_network: The PPO network for creating deterministic inference.
+    """
     mj_model = env._mj_model
     mj_data = mujoco.MjData(mj_model)
     renderer = mujoco.Renderer(mj_model, height=512, width=512)
 
-    # JIT-compiled rollout generation using jax.lax.scan
-    @functools.partial(jax.jit, static_argnums=(1,))
-    def generate_rollout(rng, inference_fn):
-        """Generate a full rollout in one JIT-compiled function."""
-        state = env.reset(rng)
+    # Create deterministic logging policy
+    # Normalization happens inside policy_network.apply via preprocess_observations_fn
+    # params structure: (normalizer_params, policy_params, value_params)
+    # policy_network.apply takes (normalizer_params, policy_params, observations)
+    make_logging_policy = make_logging_inference_fn(ppo_network)
+    jit_deterministic_policy = jax.jit(make_logging_policy(deterministic=True))
 
-        def step_fn(carry, _):
-            state, rng = carry
-            act_rng, rng = jax.random.split(rng)
-            ctrl, _ = inference_fn(state.obs, act_rng)
-            next_state = env.step(state, ctrl)
-            return (next_state, rng), state.data.qpos
-
-        # Scan over episode length to collect all qpos
-        (final_state, _), qposes = jax.lax.scan(
-            step_fn, (state, rng), None, length=episode_length
-        )
-        # Prepend initial state qpos
-        all_qposes = jp.concatenate([state.data.qpos[None], qposes], axis=0)
-        return all_qposes
+    # JIT env functions (only for jax impl, warp handles its own compilation)
+    if env._config.mujoco_impl == "jax":
+        jit_reset = jax.jit(env.reset)
+        jit_step = jax.jit(env.step)
+    else:
+        jit_reset = env.reset
+        jit_step = env.step
 
     def policy_params_fn(current_step, make_policy, params):
         print(f"Generating rollout video and saving checkpoint at step {current_step}")
+        del make_policy  # Unused, we use deterministic_policy instead
 
-        # Create inference function
-        inference_fn = make_policy(params)
-
-        # Generate rollout using JIT-compiled scan
+        # Generate rollout (matching train_imitation.py style)
         rng = jax.random.PRNGKey(current_step)
-        qposes_rollout = generate_rollout(rng, inference_fn)
-        qposes_rollout = np.asarray(qposes_rollout)  # Convert to numpy for rendering
-        
-        # Render and save video using mujoco renderer + opencv
+        state = jit_reset(rng)
+        rollout_qpos = [np.array(state.data.qpos)]
+
+        # Capture mocap_pos for target rendering (set once in reset, constant throughout episode)
+        target_mocap_pos = np.array(state.data.mocap_pos)
+
+        for _ in range(episode_length):
+            _, rng = jax.random.split(rng)
+            # Pass raw obs - normalization happens inside policy via preprocess_observations_fn
+            action, _ = jit_deterministic_policy(params, state.obs, rng)
+            state = jit_step(state, action)
+            rollout_qpos.append(np.array(state.data.qpos))
+
+        qposes_rollout = np.array(rollout_qpos)
+
+        # Render and save video using mujoco renderer + imageio
         video_path = f"{ckpt_path}/{current_step}.mp4"
-        
+
         try:
-            # Setup opencv video writer
             fps = int(1.0 / env.dt)
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            video_writer = cv2.VideoWriter(video_path, fourcc, fps, (512, 512))
-            
-            # Render frames using mujoco renderer
-            for qpos in qposes_rollout:
-                mj_data.qpos = qpos
-                mujoco.mj_forward(mj_model, mj_data)
-                renderer.update_scene(mj_data)
-                frame = renderer.render()
-                # Convert RGB to BGR for opencv
-                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                video_writer.write(frame_bgr)
-            
-            video_writer.release()
+
+            # Use imageio for browser-compatible H.264 codec
+            with imageio.get_writer(video_path, fps=fps) as video:
+                for qpos in qposes_rollout:
+                    mj_data.qpos = qpos
+                    mj_data.mocap_pos[:] = target_mocap_pos  # Set target position for rendering
+                    mujoco.mj_forward(mj_model, mj_data)
+                    renderer.update_scene(mj_data)
+                    frame = renderer.render()
+                    video.append_data(frame)
             
             # Log to wandb (don't commit because progress_fn is called after)
             if USE_WANDB:
@@ -226,23 +271,39 @@ if __name__ == "__main__":
     print("=" * 80)
     print("Starting Mouse Reaching Training")
     print("=" * 80)
-    
+
     print(f"Creating environments...")
-    env = mouse_reach.MouseReach()
-    eval_env = mouse_reach.MouseReach()
+    env = mouse_reach.MouseReach(config_overrides={"target_mode": "random_volume"})
+    eval_env = mouse_reach.MouseReach(config_overrides={"target_mode": "random_volume"})
     print(f"Environment action size: {env.action_size}")
     print(f"Environment observation size: {env.observation_size}")
-    
-    # Create video logging function with environment context
-    policy_params_fn = create_video_logging_fn(env, ckpt_path, ppo_params.episode_length)
-    
+
+    # Create normalization function
+    normalize = running_statistics.normalize
+
+    # Create PPO network for deterministic logging inference
+    # Use env.observation_size directly (computed from model dimensions, works with jax/warp)
+    obs_size = env.observation_size
+
+    network_factory = functools.partial(
+        ppo_networks.make_ppo_networks, **ppo_params.network_factory
+    )
+    ppo_network = network_factory(
+        obs_size,
+        env.action_size,
+        preprocess_observations_fn=normalize,
+    )
+
+    # Create video logging function with environment context and deterministic policy
+    policy_params_fn = create_video_logging_fn(
+        env, ckpt_path, ppo_params.episode_length, ppo_network
+    )
+
     # Create train function with video logging
     train_fn = functools.partial(
         ppo.train,
         **training_params,
-        network_factory=functools.partial(
-            ppo_networks.make_ppo_networks, **ppo_params.network_factory
-        ),
+        network_factory=network_factory,
         restore_checkpoint_path=restore_checkpoint_path,
         progress_fn=progress,
         wrap_env_fn=functools.partial(wrapper.wrap_for_brax_training, full_reset=True),
