@@ -310,7 +310,7 @@
   </asset>
 
   <worldbody>
-    <geom name="floor" type="plane" size="5 5 .1" material="grid" pos="0 0 -.13"/>
+    <geom name="floor" type="plane" size="5 5 .1" material="grid" pos="0 0 -.131"/>
     <body name="thorax" childclass="body">
       <freejoint name="free"/>
       <light name="right" mode="trackcom" pos="0 -1 1" dir="0 1 -1" diffuse="0.3 0.3 0.3"/>
@@ -322,7 +322,7 @@
       <camera name="bottom" mode="track" pos="0.01 0 -0.516" xyaxes="0 1 0 0.991 0 0.136"/>
       <camera name="hero" mode="track" pos="0.271 0.27 -0.044" xyaxes="-0.641 0.767 0 -0.045 -0.037 0.998"/>
       <light name="left" mode="trackcom" pos="0 1 1" dir="0 -1 -1" diffuse="0.3 0.3 0.3"/>
-      <!-- <light name="tracking" mode="trackcom" pos="0 0 1"/> -->
+      <light name="tracking" mode="trackcom" pos="0 0 1"/>
       <site name="thorax"/>
       <site name="hover_up_dir" pos="0.0262 0 0.0262" quat="0.915 0 0.403 0"/>
       <geom name="thorax" mass="0.00034" pos="-0.00791 0 -0.123" quat="0 0 0 -1" mesh="thorax"/>
@@ -912,9 +912,9 @@
   </actuator>
 
   <sensor>
-    <!-- <accelerometer name="accelerometer" site="thorax"/>
+    <accelerometer name="accelerometer" site="thorax"/>
     <gyro name="gyro" site="thorax"/>
-    <velocimeter name="velocimeter" site="thorax"/> -->
+    <velocimeter name="velocimeter" site="thorax"/>
     <!-- <force name="force_tarsus_T1_left" site="tracking[claw_T1_left]"/>
     <force name="force_tarsus_T1_right" site="tracking[claw_T1_right]"/>
     <force name="force_tarsus_T2_left" site="tracking[claw_T2_left]"/>
