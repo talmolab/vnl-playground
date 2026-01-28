@@ -1,7 +1,9 @@
 """
 Training script for mouse arm imitation task.
+Loads all configuration from YAML file.
 """
 
+import argparse
 import os
 import sys
 
@@ -19,6 +21,7 @@ import functools
 import json
 import numpy as np
 import imageio
+import yaml
 from datetime import datetime
 
 import jax
@@ -36,7 +39,7 @@ from pprint import pprint
 
 from mujoco_playground import wrapper
 
-from vnl_playground.tasks.mouse.imitation import MouseImitation, default_config
+from vnl_playground.tasks.mouse.imitation import MouseImitation, load_config
 from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
 from vnl_playground.tasks.mouse import consts
 
@@ -46,91 +49,23 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 
-ppo_params = config_dict.create(
-    num_timesteps=500_000_000,
-    num_evals=50,
-    reward_scaling=1.0,
-    episode_length=80,  # ~clip_length - start_frame_range - reference_length
-    normalize_observations=True,
-    action_repeat=1,
-    unroll_length=10,
-    num_minibatches=32,
-    num_updates_per_batch=4,
-    discounting=0.97,
-    learning_rate=3e-4,
-    entropy_cost=1e-3,
-    num_envs=4096,
-    batch_size=256,
-    max_grad_norm=1.0,
-    network_factory=config_dict.create(
-        policy_hidden_layer_sizes=(256, 256, 256),
-        value_hidden_layer_sizes=(256, 256, 256),
-    ),
-)
-
-env_name = "mouse-imitation"
-
-SUFFIX = None
-FINETUNE_PATH = None
-
-# Generate unique experiment name.
-now = datetime.now()
-timestamp = now.strftime("%Y%m%d-%H%M%S")
-exp_name = f"{env_name}-{timestamp}"
-if SUFFIX is not None:
-    exp_name += f"-{SUFFIX}"
-print(f"Experiment name: {exp_name}")
-
-# Possibly restore from the latest checkpoint.
-if FINETUNE_PATH is not None:
-    FINETUNE_PATH = epath.Path(FINETUNE_PATH)
-    latest_ckpts = list(FINETUNE_PATH.glob("*"))
-    latest_ckpts = [ckpt for ckpt in latest_ckpts if ckpt.is_dir()]
-    latest_ckpts.sort(key=lambda x: int(x.name))
-    latest_ckpt = latest_ckpts[-1]
-    restore_checkpoint_path = latest_ckpt
-    print(f"Restoring from: {restore_checkpoint_path}")
-else:
-    restore_checkpoint_path = None
+def load_full_config(yaml_path: str) -> dict:
+    """Load the full YAML config file and return all sections."""
+    with open(yaml_path, "r") as f:
+        cfg = yaml.safe_load(f)
+    return cfg
 
 
-ckpt_path = epath.Path("checkpoints").resolve() / exp_name
-ckpt_path.mkdir(parents=True, exist_ok=True)
-print(f"{ckpt_path}")
-
-# Get env config for logging
-env_cfg = default_config()
-
-# Convert config to dict and handle non-serializable types (e.g., PosixGPath)
-env_cfg_dict = env_cfg.to_dict()
-for k, v in env_cfg_dict.items():
-    if hasattr(v, "__fspath__"):  # Path-like objects
-        env_cfg_dict[k] = str(v)
-
-with open(ckpt_path / "config.json", "w") as fp:
-    json.dump(env_cfg_dict, fp, indent=4, default=str)
-
-# Setup wandb logging.
-USE_WANDB = True
-
-if USE_WANDB:
-    wandb.init(project="vnl-mjx-rl", config=env_cfg, id=f"mouse-imitation-{exp_name}")
-    wandb.config.update(
-        {
-            "env_name": env_name,
-        }
-    )
-
-x_data, y_data, y_dataerr = [], [], []
-times = [datetime.now()]
-
-
-def progress(num_steps, metrics):
-    pprint(f"Step {num_steps}")
-    pprint(metrics)
-    # Log to wandb.
-    if USE_WANDB:
-        wandb.log(metrics, step=num_steps)
+def flatten_obs(obs):
+    """Flatten nested observation dict to a single array."""
+    flat_parts = []
+    for key in sorted(obs.keys()):
+        val = obs[key]
+        if isinstance(val, dict):
+            flat_parts.append(flatten_obs(val))
+        else:
+            flat_parts.append(val.flatten())
+    return jp.concatenate(flat_parts)
 
 
 def make_logging_inference_fn(ppo_network):
@@ -164,19 +99,7 @@ def make_logging_inference_fn(ppo_network):
     return make_logging_policy
 
 
-def flatten_obs(obs):
-    """Flatten nested observation dict to a single array."""
-    flat_parts = []
-    for key in sorted(obs.keys()):
-        val = obs[key]
-        if isinstance(val, dict):
-            flat_parts.append(flatten_obs(val))
-        else:
-            flat_parts.append(val.flatten())
-    return jp.concatenate(flat_parts)
-
-
-def create_video_logging_fn(env, ckpt_path, episode_length, ppo_network):
+def create_video_logging_fn(env, ckpt_path, episode_length, ppo_network, use_wandb):
     """Create a function for generating and logging rollout videos."""
     mj_model = env._mj_model
     mj_data = mujoco.MjData(mj_model)
@@ -225,7 +148,7 @@ def create_video_logging_fn(env, ckpt_path, episode_length, ppo_network):
                 for frame in frames:
                     video.append_data(frame)
 
-            if USE_WANDB:
+            if use_wandb:
                 wandb.log({"eval/rollout": wandb.Video(video_path, format="mp4")}, commit=False)
             print(f"Video saved to {video_path}")
         except Exception as e:
@@ -243,25 +166,132 @@ def create_video_logging_fn(env, ckpt_path, episode_length, ppo_network):
     return policy_params_fn
 
 
-training_params = dict(ppo_params)
-del training_params["network_factory"]
+def main(config_path: str):
+    print("=" * 80)
+    print(f"Loading config from: {config_path}")
+    print("=" * 80)
 
-if __name__ == "__main__":
-    print("=" * 80)
-    print("Starting Mouse Arm Imitation Training")
-    print("=" * 80)
+    # Load full YAML config
+    full_cfg = load_full_config(config_path)
+
+    # Extract sections
+    train_setup = full_cfg.get("train_setup", {})
+    train_config = train_setup.get("train_config", {})
+    network_config = full_cfg.get("network_config", {})
+    logging_config = full_cfg.get("logging_config", {})
+
+    # Load env config using the existing load_config function
+    env_cfg = load_config(config_path)
+
+    # Print loaded config for verification
+    print("\n" + "=" * 40)
+    print("TRAIN CONFIG (from YAML)")
+    print("=" * 40)
+    for k, v in train_config.items():
+        print(f"  {k}: {v}")
+
+    print("\n" + "=" * 40)
+    print("NETWORK CONFIG (from YAML)")
+    print("=" * 40)
+    for k, v in network_config.items():
+        print(f"  {k}: {v}")
+
+    # Build PPO params from YAML config
+    ppo_params = config_dict.create(
+        num_timesteps=train_config.get("num_timesteps", 500_000_000),
+        num_evals=train_config.get("num_timesteps", 500_000_000) // train_setup.get("eval_every", 10_000_000),
+        reward_scaling=train_config.get("reward_scaling", 1.0),
+        episode_length=train_setup.get("episode_length", 80),
+        normalize_observations=train_config.get("normalize_observations", True),
+        action_repeat=train_config.get("action_repeat", 1),
+        unroll_length=train_config.get("unroll_length", 10),
+        num_minibatches=train_config.get("num_minibatches", 32),
+        num_updates_per_batch=train_config.get("num_updates_per_batch", 4),
+        discounting=train_config.get("discounting", 0.97),
+        learning_rate=train_config.get("learning_rate", 3e-4),
+        entropy_cost=train_config.get("entropy_cost", 1e-3),
+        clipping_epsilon=train_config.get("clipping_epsilon", 0.2),
+        num_envs=train_config.get("num_envs", 4096),
+        batch_size=train_config.get("batch_size", 256),
+        max_grad_norm=train_config.get("max_grad_norm", 1.0),
+        seed=train_config.get("seed", 0),
+        deterministic_eval=train_config.get("deterministic_eval", True),
+        network_factory=config_dict.create(
+            policy_hidden_layer_sizes=tuple(network_config.get("policy_hidden_layer_sizes", [256, 256, 256])),
+            value_hidden_layer_sizes=tuple(network_config.get("value_hidden_layer_sizes", [256, 256, 256])),
+        ),
+    )
+
+    print("\n" + "=" * 40)
+    print("PPO PARAMS (built from YAML)")
+    print("=" * 40)
+    pprint(dict(ppo_params))
+
+    # Setup experiment naming
+    env_name = "mouse-imitation"
+    run_name = train_setup.get("run_name", "imitation")
+    now = datetime.now()
+    timestamp = now.strftime("%Y%m%d-%H%M%S")
+    exp_name = f"{run_name}-{timestamp}"
+    print(f"\nExperiment name: {exp_name}")
+
+    # Checkpoint path
+    model_path = logging_config.get("model_path", "checkpoints")
+    ckpt_path = epath.Path(model_path).resolve() / exp_name
+    ckpt_path.mkdir(parents=True, exist_ok=True)
+    print(f"Checkpoint path: {ckpt_path}")
+
+    # Restore checkpoint if specified
+    restore_path = train_setup.get("checkpoint_to_restore")
+    if restore_path:
+        restore_path = epath.Path(restore_path)
+        if restore_path.exists():
+            latest_ckpts = list(restore_path.glob("*"))
+            latest_ckpts = [ckpt for ckpt in latest_ckpts if ckpt.is_dir()]
+            latest_ckpts.sort(key=lambda x: int(x.name))
+            restore_checkpoint_path = latest_ckpts[-1] if latest_ckpts else None
+            print(f"Restoring from: {restore_checkpoint_path}")
+        else:
+            restore_checkpoint_path = None
+            print(f"Warning: checkpoint path {restore_path} does not exist")
+    else:
+        restore_checkpoint_path = None
+
+    # Save config to checkpoint directory
+    with open(ckpt_path / "config.yaml", "w") as fp:
+        yaml.dump(full_cfg, fp, default_flow_style=False)
+
+    # Setup wandb logging
+    USE_WANDB = True
+    project_name = logging_config.get("project_name", "vnl-mjx-rl")
+
+    if USE_WANDB:
+        wandb.init(
+            project=project_name,
+            config=full_cfg,
+            name=exp_name,
+            id=f"{run_name}-{exp_name}",
+        )
+
+    def progress(num_steps, metrics):
+        pprint(f"Step {num_steps}")
+        pprint(metrics)
+        if USE_WANDB:
+            wandb.log(metrics, step=num_steps)
 
     # Load reference clips
-    print(f"Loading reference clips from {consts.MOUSE_REFERENCE_DATA_PATH}...")
+    reference_data_path = env_cfg.reference_data_path
+    print(f"\nLoading reference clips from {reference_data_path}...")
     reference_clips = MouseReferenceClips(
-        str(consts.MOUSE_REFERENCE_DATA_PATH),
+        str(reference_data_path),
         n_frames_per_clip=env_cfg.clip_length,
     )
 
     # Split into train/test
-    train_clips, test_clips = reference_clips.split(train_ratio=0.8, seed=42)
+    train_ratio = train_setup.get("train_subset_ratio", 0.8)
+    train_clips, test_clips = reference_clips.split(train_ratio=train_ratio, seed=42)
 
-    print(f"Creating environments...")
+    print(f"\nCreating environments...")
     env = MouseImitation(config=env_cfg, clips=train_clips)
     eval_env = MouseImitation(config=env_cfg, clips=test_clips)
     print(f"Environment action size: {env.action_size}")
@@ -275,13 +305,15 @@ if __name__ == "__main__":
     )
     print(f"Computed episode length: {computed_episode_length}")
 
-    # Update episode length in training params
+    # Build training params dict
+    training_params = dict(ppo_params)
+    del training_params["network_factory"]
     training_params["episode_length"] = computed_episode_length
 
     # Create normalization function
     normalize = running_statistics.normalize
 
-    # Create PPO network for deterministic logging inference
+    # Create PPO network
     obs_size = env.observation_size
 
     network_factory = functools.partial(
@@ -295,7 +327,7 @@ if __name__ == "__main__":
 
     # Create video logging function
     policy_params_fn = create_video_logging_fn(
-        env, ckpt_path, computed_episode_length, ppo_network
+        env, ckpt_path, computed_episode_length, ppo_network, USE_WANDB
     )
 
     # Wrapper that flattens dict observations
@@ -307,12 +339,10 @@ if __name__ == "__main__":
             return state.replace(obs=flat_obs)
 
         def wrapped_step(state, action):
-            # Temporarily restore dict obs structure for env step
             new_state = env_fn.step(state, action)
             flat_obs = flatten_obs(new_state.obs)
             return new_state.replace(obs=flat_obs)
 
-        # Create a wrapper object
         class FlattenedEnv:
             def __init__(self, base_env):
                 self._base_env = base_env
@@ -340,7 +370,7 @@ if __name__ == "__main__":
 
         return FlattenedEnv(env_fn)
 
-    # Wrap environments to flatten observations
+    # Wrap environments
     wrapped_env = flatten_obs_wrapper(env)
     wrapped_eval_env = flatten_obs_wrapper(eval_env)
 
@@ -355,6 +385,7 @@ if __name__ == "__main__":
         policy_params_fn=policy_params_fn,
     )
 
+    print("\n" + "=" * 80)
     print("Starting PPO training...")
     print("=" * 80)
     make_inference_fn, params, _ = train_fn(environment=wrapped_env, eval_env=wrapped_eval_env)
@@ -362,3 +393,16 @@ if __name__ == "__main__":
     print("=" * 80)
     print("Training complete!")
     print("=" * 80)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Train mouse imitation")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="vnl_playground/config/mouse_imitation.yaml",
+        help="Path to YAML config file",
+    )
+    args = parser.parse_args()
+
+    main(args.config)

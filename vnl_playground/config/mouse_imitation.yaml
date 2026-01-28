@@ -1,22 +1,13 @@
-# Data path - comma-separated list of h5 files or directory path
-data_path: null  # Will use default from consts if null
+# Mouse Arm Imitation Config
+# All fields in this file are actively used by the training pipeline
 
 env_config:
-  task_type: imitation
-  env_name: mouse_arm_multi_clip
-  task_name: imitation
-  reacher_name: mouse_arm
-  render_camera_name: close-profile
-  render_fps: 12
-  render_interval: 1
-
   env_args:
     solver: "cg"
     iterations: 6
     ls_iterations: 6
     noslip_iterations: 0
     physics_steps_per_control_step: 2
-    reset_noise_scale: 1e-5
     mj_model_timestep: 0.00125
     mocap_hz: 200
     Kp: 35.0
@@ -26,19 +17,19 @@ env_config:
   # Reward terms
   reward_terms:
     joints:
-      exp_scale: 0.2
-      weight: 2.0
+      exp_scale: 0.005
+      weight: 4.0
     joints_vel:
-      exp_scale: 0.2
-      weight: 1.0
+      exp_scale: 0.005
+      weight: 0.5
     wrist_pos:
       exp_scale: 0.005
-      weight: 1.0
+      weight: 0.5
     bodies_pos:
-      exp_scale: 0.02
+      exp_scale: 0.005
       weight: 1.0
     control_cost:
-      weight: 0.00
+      weight: 0.01
     control_diff_cost:
       weight: 0.00
 
@@ -50,40 +41,21 @@ env_config:
 
 reference_config:
   clip_length: 60
-  random_init_range: 0
-  traj_length: 1
   reference_length: 5
   start_frame_range: [0, 1]
   qvel_init: "zeros"
   clip_set: "all"
-  keep_clips_idx: null
 
 network_config:
-  arch_name: intention
-  encoder_layer_sizes: [512, 512, 512]
-  decoder_layer_sizes: [512, 512, 512]
-  critic_layer_sizes: [512, 512, 512]
-  intention_size: 4
-  kl_schedule: true
-  kl_weight: 1e-5
-  hidden_state_size: 512
-  hidden_layer_num: 3
-  # Simple MLP alternative
   policy_hidden_layer_sizes: [512, 512, 512]
   value_hidden_layer_sizes: [512, 512, 512]
 
 train_setup:
-  agent_name: mouse_arm
   run_name: imitation
   checkpoint_to_restore: null
-  restore_from_run_state: null
-  train_test_split_info: null
   train_subset_ratio: 0.8
-  checkpoint_max_to_keep: null
-  checkpoint_keep_period: null
   eval_every: 100_000_000
   episode_length: 60
-  reset_every: 100_000_000
   train_config:
     num_envs: 4096
     num_timesteps: 800_000_000
@@ -100,57 +72,21 @@ train_setup:
     unroll_length: 20
     max_grad_norm: 1.0
     seed: 0
-    get_activation: true
-    use_lstm: true
     deterministic_eval: true
 
 logging_config:
   project_name: vnl-mjx-rl
-  group_name: mouse_imitation
-  exp_name: imitation
-  clip_id: -1
   model_path: model_checkpoints
-  algo_name: ppo
-  notes: ""
-  rollout_metrics:
-    - joint_reward
-    - endeff_reward
-    - joint_distance
-    - ctrl_cost
-    - ctrl_diff_cost
-    - energy_cost
 
 reacher_config:
-  torque_actuators: false
-  rescale_factor: 1.0
-
-  # Joint names (order matches qpos in reference data)
-  joint_names:
-    - sh_elv
-    - sh_rotation
-    - sh_extension
-    - elbow
-
-  # Body names in the mouse arm model
-  body_names:
-    - world
-    - ground
-    - clavicle
-    - scapula
-    - humerus
-    - ulna
-    - elbow
-    - radius
-    - wrist_body
-
-  # End effector names
-  end_eff_names:
-    - wrist_body
-
-  # Bodies to track for imitation (excluding world/ground)
+  # Bodies to track for imitation reward
   tracked_bodies:
     - scapula
     - humerus
     - ulna
     - radius
+    - wrist_body
+
+  # End effector for wrist tracking reward
+  end_eff_names:
     - wrist_body
