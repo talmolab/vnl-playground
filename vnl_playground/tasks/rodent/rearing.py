@@ -38,6 +38,7 @@ def default_config() -> config_dict.ConfigDict:
         rescale_factor=0.9,
         # Rearing-specific config
         target_relative_height=0.05,  # Target skull-torso height difference
+        reset_height_threshold=0.01,  # Must return below this to earn another reward
         rearing_hold_duration=1.0,  # Seconds to hold rearing pose for success
         episode_length=500,  # 5 seconds at ctrl_dt=0.01
         action_repeat=1,
@@ -52,7 +53,6 @@ def default_config() -> config_dict.ConfigDict:
         termination_criteria={
             "fallen": {"min_torso_z": 0.02, "max_torso_angle": 80},
             "nan_termination": {},
-            "rearing_complete": {},  # Terminate on successful sustained rearing
         },
     )
 
@@ -111,6 +111,8 @@ class Rearing(rodent_base.RodentEnv):
             "prev_action": self.null_action(),
             "action": self.null_action(),
             "rearing_steps": jp.array(0),  # Track consecutive steps in rearing pose
+            "rearing_success": jp.array(False),  # Whether rearing was just completed
+            "can_earn_rearing": jp.array(True),  # Must reset before earning again
         }
 
         data = mjx.make_data(
@@ -139,13 +141,44 @@ class Rearing(rodent_base.RodentEnv):
         info["prev_action"] = info["action"]
         info["action"] = action
 
-        # Update rearing step counter
+        # Update rearing step counter with reset requirement
         relative_height = self._get_relative_head_height(data)
         is_rearing = relative_height >= self._config.target_relative_height
-        info["rearing_steps"] = jp.where(
+        is_reset_position = relative_height <= self._config.reset_height_threshold
+
+        # Increment counter only while rearing
+        new_rearing_steps = jp.where(
             is_rearing,
             info["rearing_steps"] + 1,
-            jp.array(0),  # Reset counter if not rearing
+            jp.array(0),
+        )
+
+        required_steps = int(self._config.rearing_hold_duration / self._config.ctrl_dt)
+        reached_threshold = new_rearing_steps >= required_steps
+
+        # Only award if we've reset since last success
+        can_earn = info["can_earn_rearing"]
+        rearing_success = jp.logical_and(reached_threshold, can_earn)
+        info["rearing_success"] = rearing_success
+
+        # State machine for can_earn_rearing:
+        # - After success: must reset before earning again
+        # - At reset position: become eligible again
+        info["can_earn_rearing"] = jp.where(
+            rearing_success,
+            jp.array(False),  # Just succeeded, need to go back down
+            jp.where(
+                is_reset_position,
+                jp.array(True),  # Returned to low position, can earn again
+                info["can_earn_rearing"],  # Otherwise keep current state
+            ),
+        )
+
+        # Reset step counter when threshold reached
+        info["rearing_steps"] = jp.where(
+            reached_threshold,
+            jp.array(0),
+            new_rearing_steps,
         )
 
         done = self._is_done(data, info, state.metrics)
@@ -292,14 +325,11 @@ def _energy_cost(env, data, info, metrics, weight, max_value) -> float:
 @_named_reward("rearing_success")
 def _rearing_success_reward(env, data, info, metrics, weight) -> float:
     """Large reward when rearing pose is held for the required duration."""
-    required_steps = int(env._config.rearing_hold_duration / env._config.ctrl_dt)
-    rearing_steps = info["rearing_steps"]
-
-    # Give reward only on the exact step when threshold is reached
-    success = rearing_steps == required_steps
-    weighted_reward = jp.astype(success, float) * weight
+    rearing_success = info["rearing_success"]
+    weighted_reward = jp.astype(rearing_success, float) * weight
     metrics["rewards/rearing_success"] = weighted_reward
-    metrics["rearing_steps"] = rearing_steps
+    metrics["rearing_steps"] = info["rearing_steps"]
+    metrics["can_earn_rearing"] = jp.astype(info["can_earn_rearing"], float)
     return weighted_reward
 
 
@@ -333,9 +363,3 @@ def _nan_termination(env, data, info) -> bool:
     return num_nans > 0
 
 
-@_named_termination_criterion("rearing_complete")
-def _rearing_complete_termination(env, data, info) -> bool:
-    """Terminate episode when rearing pose has been held for required duration."""
-    del data
-    required_steps = int(env._config.rearing_hold_duration / env._config.ctrl_dt)
-    return info["rearing_steps"] >= required_steps

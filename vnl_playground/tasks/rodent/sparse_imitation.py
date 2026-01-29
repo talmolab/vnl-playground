@@ -62,13 +62,14 @@ def default_config() -> config_dict.ConfigDict:
         # Elastic matching params
         min_ratio=0.9,  # Agent can complete clip in 0.9x time (faster)
         max_ratio=1.1,  # Agent can take up to 1.1x time (slower)
-        tolerance=0.5,  # Per-frame joint angle L2 threshold (radians)
+        tolerance=1.5,  # Per-frame joint angle L2 threshold (radians) - relaxed for high-level matching
         use_wrapped_angles=True,  # Use atan2(sin,cos) for angle diff
         # Reward params
         # Note: sequence_match must come before dp_progress (order matters for DP state)
         reward_terms={
             "sequence_match": {"weight": 1.0},
             "dp_progress": {"weight": 0.1},
+            "survival": {"weight": 0.001},  # Small reward for staying alive
         },
         # Termination conditions
         termination_criteria={
@@ -452,6 +453,34 @@ class SparseImitation(rodent_base.RodentEnv):
         reward = weight * progress_delta
         metrics["rewards/dp_progress"] = reward
 
+        return reward
+
+    @_named_reward("survival")
+    def _survival_reward(self, data, info, metrics, weight) -> float:
+        """Small constant reward for staying alive (not given on termination step).
+
+        Encourages the agent to avoid termination conditions and keep
+        attempting to match the sequence.
+
+        Args:
+            data: Simulation data.
+            info: State info.
+            metrics: Metrics dict for logging.
+            weight: Reward weight multiplier.
+
+        Returns:
+            Weighted survival reward (0 if terminated, weight otherwise).
+        """
+        # Check if this step results in termination
+        terminated = False
+        for name, kwargs in self._config.termination_criteria.items():
+            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
+            terminated = jp.logical_or(
+                terminated, termination_fcn(self, data, info, **kwargs)
+            )
+
+        reward = jp.where(terminated, 0.0, weight)
+        metrics["rewards/survival"] = reward
         return reward
 
     def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict) -> bool:
