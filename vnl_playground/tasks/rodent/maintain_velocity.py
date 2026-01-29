@@ -90,7 +90,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
 
         # Initialize rodent at origin facing forward (+x direction)
         # quat (1, 0, 0, 0) = identity = facing +x by default
-        init_x, init_y, init_z = 0.0, 0.0, 0.03
+        init_x, init_y, init_z = 0.0, 0.0, 0.0
         init_quat = (1, 0, 0, 0)
 
         self.add_rodent(
