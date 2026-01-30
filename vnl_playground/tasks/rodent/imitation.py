@@ -224,9 +224,13 @@ class Imitation(rodent_base.RodentEnv):
         return state
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
-        return collections.OrderedDict(
+        obs = collections.OrderedDict(
             imitation_target=self._get_imitation_target(data, info),
             proprioception=self._get_proprioception(data, info, flatten=False),
+        )
+        return collections.OrderedDict(
+            state=obs,
+            privileged_state=obs,
         )
 
     def _get_reward(
@@ -625,7 +629,7 @@ class Imitation(rodent_base.RodentEnv):
     @property
     def proprioceptive_obs_size(self) -> int:
         obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["proprioception"])[0])
+        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
 
     @property
     def non_proprioceptive_obs_size(self) -> int:

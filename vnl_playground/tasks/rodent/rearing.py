@@ -44,8 +44,8 @@ def default_config() -> config_dict.ConfigDict:
         action_repeat=1,
         # Reward terms: shaping rewards are low, success bonus dominates
         reward_terms={
-            "head_height_dense": {"weight": 0.5},  # Shaping: progress toward target
-            "head_height_sparse": {"weight": 0.5},  # Shaping: binary above threshold
+            "head_height_dense": {"weight": 0.0},  # Shaping: progress toward target
+            "head_height_sparse": {"weight": 0.0},  # Shaping: binary above threshold
             "upright": {"healthy_z_range": (0.02, 0.5), "weight": 0.2},
             "energy_cost": {"max_value": 50.0, "weight": 0.01},
             "rearing_success": {"weight": 500.0},  # Large bonus for completing task
@@ -210,9 +210,28 @@ class Rearing(rodent_base.RodentEnv):
             ]
         )
 
-        return collections.OrderedDict(
+        obs = collections.OrderedDict(
             task_obs=task_obs,
             proprioception=self._get_proprioception(data, info, flatten=False),
+        )
+
+        # Privileged observations include rearing progress info
+        required_steps = int(self._config.rearing_hold_duration / self._config.ctrl_dt)
+        privileged_task_obs = jp.concatenate(
+            [
+                task_obs,
+                jp.array([info["rearing_steps"] / required_steps]),  # Normalized progress
+                jp.array([info["can_earn_rearing"]], dtype=float),  # Eligibility
+            ]
+        )
+        privileged_obs = collections.OrderedDict(
+            task_obs=privileged_task_obs,
+            proprioception=self._get_proprioception(data, info, flatten=False),
+        )
+
+        return collections.OrderedDict(
+            state=obs,
+            privileged_state=privileged_obs,
         )
 
     def _get_relative_head_height(self, data: mjx.Data) -> float:
@@ -247,7 +266,7 @@ class Rearing(rodent_base.RodentEnv):
     @property
     def proprioceptive_obs_size(self) -> int:
         obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["proprioception"])[0])
+        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
 
     @property
     def non_proprioceptive_obs_size(self) -> int:
@@ -361,5 +380,3 @@ def _nan_termination(env, data, info) -> bool:
     flattened_vals, _ = flatten_util.ravel_pytree(data)
     num_nans = jp.sum(jp.isnan(flattened_vals))
     return num_nans > 0
-
-

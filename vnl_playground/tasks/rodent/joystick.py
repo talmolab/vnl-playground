@@ -282,7 +282,7 @@ class Joystick(rodent_base.RodentEnv):
             info: State info dictionary.
 
         Returns:
-            OrderedDict with task_obs and proprioception keys.
+            OrderedDict with state and privileged_state keys.
         """
         kinematic_sensors = self._get_kinematic_sensors(data)
         touch_sensors = self._get_touch_sensors(data)
@@ -298,9 +298,13 @@ class Joystick(rodent_base.RodentEnv):
             ]
         )
 
-        return collections.OrderedDict(
+        obs = collections.OrderedDict(
             task_obs=task_obs,
             proprioception=self._get_proprioception(data, info, flatten=False),
+        )
+        return collections.OrderedDict(
+            state=obs,
+            privileged_state=obs,
         )
 
     def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
@@ -350,7 +354,7 @@ class Joystick(rodent_base.RodentEnv):
     @property
     def proprioceptive_obs_size(self) -> int:
         obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["proprioception"])[0])
+        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
 
     @property
     def non_proprioceptive_obs_size(self) -> int:
