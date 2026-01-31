@@ -13,6 +13,7 @@ from vnl_playground.tasks.rodent import rearing as rodent_rearing
 from vnl_playground.tasks.rodent import bowl_escape as rodent_bowl_escape
 from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_velocity
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
+from vnl_playground.tasks.sprout import maintain_velocity as sprout_maintain_velocity
 
 # Unified wrappers and reference clips
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
@@ -25,6 +26,7 @@ _envs = {
     "RodentBowlEscape": rodent_bowl_escape.BowlEscape,
     "RodentMaintainVelocity": rodent_maintain_velocity.MaintainVelocity,
     "FruitflyImitation": fruitfly_imitation.Imitation,
+    "SproutMaintainVelocity": sprout_maintain_velocity.MaintainVelocity,
 }
 
 _cfgs = {
@@ -33,6 +35,7 @@ _cfgs = {
     "RodentBowlEscape": rodent_bowl_escape.default_config,
     "RodentMaintainVelocity": rodent_maintain_velocity.default_config,
     "FruitflyImitation": fruitfly_imitation.default_config,
+    "SproutMaintainVelocity": sprout_maintain_velocity.default_config,
 }
 
 # ReferenceClips class for imitation environments (not all envs use clips)
