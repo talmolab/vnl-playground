@@ -1,7 +1,10 @@
 """Joystick velocity tracking task for virtual rodent.
 
-The rodent tracks joystick-style velocity commands: linear velocity (x, y) and
+The rodent tracks joystick-style velocity commands: forward velocity and
 angular velocity (yaw). Commands are periodically resampled during the episode.
+
+Only forward movement and turning are supported since strafing and backwards
+movement don't work well with the rodent morphology.
 
 Modeled after locomotion joystick tasks (e.g., G1 humanoid) but simplified for
 rodent-scale velocities and reward structure.
@@ -48,8 +51,8 @@ def default_config() -> config_dict.ConfigDict:
         episode_length=1000,
         action_repeat=1,
         # Command ranges (rodent-scale velocities)
-        lin_vel_x=(-0.5, 0.5),  # m/s
-        lin_vel_y=(-0.3, 0.3),  # m/s
+        # Forward-only (no backwards) + turning
+        lin_vel_x=(0.0, 0.5),  # m/s, forward only
         ang_vel_yaw=(-1.0, 1.0),  # rad/s
         # Command sampling
         command_config=config_dict.create(
@@ -64,16 +67,17 @@ def default_config() -> config_dict.ConfigDict:
         reward_terms={
             # Tracking rewards
             "tracking_lin_vel": {"weight": 1.0},
-            "tracking_ang_vel": {"weight": 0.75},
-            # Energy rewards
-            "torques": {"weight": -0.0001},
-            "action_rate": {"weight": -0.01},
-            "energy": {"weight": -0.001},
-            "dof_acc": {"weight": -1e-7, "max_value": 1e5},
+            "tracking_ang_vel": {"weight": 1.5},  # Higher weight - turning is harder
+            # Energy rewards (lowered to allow more aggressive turning)
+            "torques": {"weight": -0.00002},
+            "action_rate": {"weight": -0.002},
+            "energy": {"weight": -0.0002},
+            "dof_acc": {"weight": -2e-8, "max_value": 1e5},
             # Other rewards
             "alive": {"weight": 0.1},
             "termination": {"weight": -100.0},
             "stand_still": {"weight": -0.5},
+            "lateral_velocity": {"weight": -0.1},  # Penalize sideways drift
         },
         termination_criteria={
             "fallen": {"min_torso_z": 0.03, "max_torso_angle": 60},
@@ -230,9 +234,9 @@ class Joystick(rodent_base.RodentEnv):
             rng: Random number generator key.
 
         Returns:
-            Array of shape (3,) with [vx, vy, vyaw].
+            Array of shape (2,) with [vx, vyaw] (forward velocity and yaw rate).
         """
-        rng, zero_rng, vx_rng, vy_rng, vyaw_rng = jax.random.split(rng, 5)
+        rng, zero_rng, vx_rng, vyaw_rng = jax.random.split(rng, 4)
 
         # Sample velocities from uniform ranges
         vx = jax.random.uniform(
@@ -240,22 +244,17 @@ class Joystick(rodent_base.RodentEnv):
             minval=self._config.lin_vel_x[0],
             maxval=self._config.lin_vel_x[1],
         )
-        vy = jax.random.uniform(
-            vy_rng,
-            minval=self._config.lin_vel_y[0],
-            maxval=self._config.lin_vel_y[1],
-        )
         vyaw = jax.random.uniform(
             vyaw_rng,
             minval=self._config.ang_vel_yaw[0],
             maxval=self._config.ang_vel_yaw[1],
         )
 
-        command = jp.array([vx, vy, vyaw])
+        command = jp.array([vx, vyaw])
 
         # With zero_prob, set command to zeros
         is_zero = jax.random.uniform(zero_rng) < self._config.command_config.zero_prob
-        command = jp.where(is_zero, jp.zeros(3), command)
+        command = jp.where(is_zero, jp.zeros(2), command)
 
         return command
 
@@ -294,7 +293,7 @@ class Joystick(rodent_base.RodentEnv):
                 kinematic_sensors,
                 touch_sensors,
                 origin,
-                info["command"],  # Include command (3,) in observation
+                info["command"],  # Include command (2,): [vx, vyaw]
             ]
         )
 
@@ -377,7 +376,7 @@ class Joystick(rodent_base.RodentEnv):
 
 @_named_reward("tracking_lin_vel")
 def _tracking_lin_vel_reward(env, data, info, metrics, weight) -> float:
-    """Exponential reward for matching commanded x/y velocity.
+    """Exponential reward for matching commanded forward velocity.
 
     Args:
         env: Environment instance.
@@ -389,11 +388,11 @@ def _tracking_lin_vel_reward(env, data, info, metrics, weight) -> float:
     Returns:
         Weighted tracking reward.
     """
-    command = info["command"]
+    command = info["command"]  # [vx, vyaw]
     local_vel = env._get_local_linvel(data)
 
-    # Squared error in x/y
-    lin_vel_error = jp.sum(jp.square(command[:2] - local_vel[:2]))
+    # Squared error in forward (x) velocity only
+    lin_vel_error = jp.square(command[0] - local_vel[0])
     sigma = env._config.reward_config.tracking_sigma
 
     reward_value = jp.exp(-lin_vel_error / sigma)
@@ -401,9 +400,7 @@ def _tracking_lin_vel_reward(env, data, info, metrics, weight) -> float:
 
     metrics["rewards/tracking_lin_vel"] = weighted_reward
     metrics["local_vel_x"] = local_vel[0]
-    metrics["local_vel_y"] = local_vel[1]
     metrics["command_vx"] = command[0]
-    metrics["command_vy"] = command[1]
 
     return weighted_reward
 
@@ -422,12 +419,12 @@ def _tracking_ang_vel_reward(env, data, info, metrics, weight) -> float:
     Returns:
         Weighted tracking reward.
     """
-    command = info["command"]
+    command = info["command"]  # [vx, vyaw]
     # Use gyro sensor z-component for yaw rate
     gyro = data.bind(env.mjx_model, env._spec.sensor("gyro-rodent")).sensordata
     yaw_rate = gyro[2]
 
-    ang_vel_error = jp.square(command[2] - yaw_rate)
+    ang_vel_error = jp.square(command[1] - yaw_rate)
     sigma = env._config.reward_config.tracking_sigma
 
     reward_value = jp.exp(-ang_vel_error / sigma)
@@ -435,7 +432,7 @@ def _tracking_ang_vel_reward(env, data, info, metrics, weight) -> float:
 
     metrics["rewards/tracking_ang_vel"] = weighted_reward
     metrics["yaw_rate"] = yaw_rate
-    metrics["command_vyaw"] = command[2]
+    metrics["command_vyaw"] = command[1]
 
     return weighted_reward
 
@@ -582,7 +579,10 @@ def _termination_penalty(env, data, info, metrics, weight) -> float:
 
 @_named_reward("stand_still")
 def _stand_still_penalty(env, data, info, metrics, weight) -> float:
-    """Penalty for moving when command is zero.
+    """Penalty for unwanted movement (moving when that axis command is zero).
+
+    Decoupled: penalizes forward velocity only when vx command is ~0,
+    and penalizes yaw rate only when vyaw command is ~0.
 
     Args:
         env: Environment instance.
@@ -592,23 +592,52 @@ def _stand_still_penalty(env, data, info, metrics, weight) -> float:
         weight: Penalty weight (negative).
 
     Returns:
-        Penalty for unwanted movement when command is zero.
+        Penalty for unwanted movement.
     """
-    command = info["command"]
+    command = info["command"]  # [vx, vyaw]
     local_vel = env._get_local_linvel(data)
     gyro = data.bind(env.mjx_model, env._spec.sensor("gyro-rodent")).sensordata
     yaw_rate = gyro[2]
 
-    # Check if command is zero
-    cmd_norm = jp.sum(jp.abs(command))
-    is_zero_cmd = cmd_norm < 1e-6
+    # Penalize forward movement only when forward command is ~0
+    vx_cmd_zero = jp.abs(command[0]) < 0.05
+    lin_penalty = jp.where(vx_cmd_zero, jp.square(local_vel[0]), 0.0)
 
-    # Compute velocity magnitude
-    vel_magnitude = jp.sum(jp.square(local_vel[:2])) + jp.square(yaw_rate)
+    # Penalize turning only when turn command is ~0
+    vyaw_cmd_zero = jp.abs(command[1]) < 0.1
+    ang_penalty = jp.where(vyaw_cmd_zero, jp.square(yaw_rate), 0.0)
 
-    # Penalty only when command is zero but moving
-    penalty = jp.where(is_zero_cmd, weight * vel_magnitude, 0.0)
+    penalty = weight * (lin_penalty + ang_penalty)
     metrics["rewards/stand_still"] = penalty
+
+    return penalty
+
+
+@_named_reward("lateral_velocity")
+def _lateral_velocity_penalty(env, data, info, metrics, weight) -> float:
+    """Penalty for lateral (sideways) velocity.
+
+    The rodent shouldn't strafe - any lateral velocity is undesired drift.
+    This is especially important during turning where the rodent might
+    otherwise slide sideways.
+
+    Args:
+        env: Environment instance.
+        data: Simulation data.
+        info: State info (unused).
+        metrics: Metrics dict for logging.
+        weight: Penalty weight (negative).
+
+    Returns:
+        Weighted lateral velocity penalty.
+    """
+    del info
+    local_vel = env._get_local_linvel(data)
+    lateral_vel_sq = jp.square(local_vel[1])  # y-velocity in local frame
+
+    penalty = weight * lateral_vel_sq
+    metrics["rewards/lateral_velocity"] = penalty
+    metrics["local_vel_y"] = local_vel[1]
 
     return penalty
 
