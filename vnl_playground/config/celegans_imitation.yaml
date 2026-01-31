@@ -17,8 +17,8 @@ env_config:
   rescale_factor: 1.04
   dim: 2
   friction: 
-    tan_floor: 1.0
-    tan_body: 0.1
+    tan_floor: 0.7
+    tan_body: 0.6
     tor: 0.005
     roll_floor: 0.0001
     roll_body: 0.0001
@@ -28,19 +28,24 @@ env_config:
     width: 0.001
     midpoint: 0.5
     power: 2
-  impratio: 0.02
+  impratio: 0.2
   muscle_config:
     dynprm:
       tausmooth: 0.0
-  proprioceptive_filter:
-    - prev_action
+    gear: 1.5
+  joint_config:
+    hinge:
+      damping: 0
+      armature: 0.1
+  proprioceptive_filter: []
   root_body: torso13_body
-  end_effectors: ["torso1_body"]
+  end_effectors: ["torso1_body", "torso25_body"]
   solver: "cg"
+  integrator: "rk4"
   iterations: 4
   ls_iterations: 4
   ctrl_dt: 0.1
-  sim_dt: 0.005
+  sim_dt: 0.025
 
   mocap_hz: 20
   reference_length: 5
@@ -63,10 +68,10 @@ env_config:
       weight: 2.0 #2.0
     joints_vel:
       exp_scale: 1.0
-      weight: 3.0 #3.0
+      weight: 0.0 #3.0
     bodies_pos:
       exp_scale: 0.5
-      weight: 1.0
+      weight: 0.0
     end_eff:
       exp_scale: 0.1
       weight: 1.0
@@ -81,7 +86,7 @@ env_config:
 
   termination_criteria:
     fall:
-      healthy_z_range: [0.0, 1.0]
+      healthy_z_range: [-1.0, 1.0]
     root_too_far:
       max_distance: 0.1
     root_too_rotated:
@@ -157,13 +162,12 @@ logging_config:
     - terminations/root_too_far
     - terminations/pose_error
     - terminations/root_too_rotated
-    - dists/root_pos
-    - dists/root_quat
-    - dists/joints
-    - dists/joints_vel
-    - dists/bodies_pos
-    - dists/end_eff
-    - dists/upright
+    - distances/root_pos
+    - distances/root_quat
+    - distances/joints
+    - distances/joints_vel
+    - distances/bodies_pos
+    - distances/end_eff
     - magnitudes/control
     - magnitudes/control_diff
     - magnitudes/energy

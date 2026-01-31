@@ -158,8 +158,10 @@ class Imitation(worm_base.CelegansEnv):
             self.config.solimp["midpoint"],
             self.config.solimp["power"],
         ]
+        pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.05})
+        pos = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.05)]
         self.add_worm(
-            pos=list(self._config.init_pos.values()),
+            pos=pos,
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
             dim=self._config.dim,
@@ -177,7 +179,7 @@ class Imitation(worm_base.CelegansEnv):
             self.add_ghost_worm(
                 rescale_factor=self._config.rescale_factor,
                 dim=self._config.dim,
-                init_pos=list(self._config.init_pos.values()),
+                init_pos=pos,
             )
 
         self.max_reward = sum(
@@ -580,7 +582,7 @@ class Imitation(worm_base.CelegansEnv):
         root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
         root_targets = jax.vmap(
-            lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat)
+            lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat)[: self.config.dim]
         )(reference.body_xpos(self.root_name))
         quat_targets = jax.vmap(
             lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat)
@@ -640,8 +642,8 @@ class Imitation(worm_base.CelegansEnv):
         """
         target = self._get_current_target(data, info)
 
-        target_pos = target.body_xpos(self.root_name)
-        root_pos = self._get_root_pos(data)
+        target_pos = target.body_xpos(self.root_name)[: self.config.dim]
+        root_pos = self._get_root_pos(data)[: self.config.dim]
 
         distance = jp.linalg.norm(target_pos - root_pos)
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
@@ -744,7 +746,7 @@ class Imitation(worm_base.CelegansEnv):
         body_pos = self._get_bodies_pos(data, flatten=False)
         total_dist_sqr = 0.0
         for body_name in bodies:
-            dist_sqr = jp.sum((body_pos[body_name] - target.body_xpos(body_name)) ** 2)
+            dist_sqr = jp.sum((body_pos[body_name][:self.config.dim] - target.body_xpos(body_name)[:self.config.dim]) ** 2)
             metrics[f"errors/bodies/{body_name}"] = metrics[
                 f"errors/per_step/bodies/{body_name}"
             ] = jp.sqrt(dist_sqr)
@@ -975,8 +977,8 @@ class Imitation(worm_base.CelegansEnv):
             Boolean indicating if root is too far from reference.
         """
         target = self._get_current_target(data, info)
-        target_pos = target.body_xpos(self.root_name)
-        root_pos = self._get_root_pos(data)
+        target_pos = target.body_xpos(self.root_name)[:self.config.dim]
+        root_pos = self._get_root_pos(data)[:self.config.dim]
         distance = jp.linalg.norm(target_pos - root_pos)
         return distance > max_distance
 
@@ -1186,6 +1188,7 @@ class Imitation(worm_base.CelegansEnv):
         add_labels: bool = False,
         termination_extra_frames: int = 0,
         render_ghost: bool = True,
+        vid_path: Optional[str] = None,
     ) -> Sequence[np.ndarray]:
         """
         Renders a sequence of states (trajectory). The video includes the imitation
@@ -1214,18 +1217,20 @@ class Imitation(worm_base.CelegansEnv):
             Sequence[np.ndarray]: List of rendered frames as numpy arrays.
         """
         # Create a new spec with a ghost, without modifying the existing one
+        pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.05})
+        pos = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.05)]
         if render_ghost:
             spec, mj_model_with_ghost = self.add_ghost(
                 rescale_factor=self._config.rescale_factor,
                 dim=self._config.dim,
-                pos=list(self.config.init_pos.values()),
+                pos=pos,
                 ghost_rgba=(1.0, 1.0, 1.0, 0.2),
                 suffix="-ghost",
                 inplace=False,
             )
         else:
-            spec = self.spec.copy()
-            mj_model_with_ghost = spec.compile()
+            spec = self.spec
+            mj_model_with_ghost = self.mj_model
 
         try:
             mj_model_with_ghost.vis.global_.offwidth = width
@@ -1309,6 +1314,12 @@ class Imitation(worm_base.CelegansEnv):
                     )  # Logistic fade-out
                     faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
                     rendered_frames.append(faded_frame)
+        if vid_path is not None:
+            import imageio
+
+            with imageio.get_writer(vid_path, fps=self.mocap_hz) as writer:
+                for frame in rendered_frames:
+                    writer.append_data(frame)
         return rendered_frames
 
     def verify_reference_data(self, atol: float = 5e-3) -> bool:
@@ -1336,8 +1347,8 @@ class Imitation(worm_base.CelegansEnv):
             reference = self.reference_clips.at(clip=clip_idx, frame=frame)
             checks = collections.OrderedDict()
             checks["root_pos"] = jp.allclose(
-                self.root_body(data).xpos[..., : self._config.dim],
-                reference.body_xpos(self.root_name)[..., : self._config.dim],
+                self.root_body(data).xpos,
+                reference.body_xpos(self.root_name),
                 atol=atol,
             )
             checks["root_quat"] = jp.allclose(
@@ -1351,8 +1362,8 @@ class Imitation(worm_base.CelegansEnv):
             body_pos = self._get_bodies_pos(data, flatten=False)
             for body_name, body_pos in body_pos.items():
                 checks[f"body_xpos/{body_name}"] = jp.allclose(
-                    body_pos[..., : self._config.dim],
-                    reference.body_xpos(body_name)[..., : self._config.dim],
+                    body_pos,
+                    reference.body_xpos(body_name),
                     atol=atol,
                 )
             if self._config.qvel_init == "reference":
@@ -1403,7 +1414,7 @@ class Imitation(worm_base.CelegansEnv):
                             f"Root position: {self.root_body(data).xpos} != {reference.body_xpos(self.root_name)}"
                         )
                         warnings.warn(
-                            f"diff: {jp.linalg.norm(self.root_body(data).xpos[..., : self._config.dim] - reference.body_xpos(self.root_name)[..., : self._config.dim])}"
+                            f"diff: {jp.linalg.norm(self.root_body(data).xpos - reference.body_xpos(self.root_name))}"
                         )
                     elif name == "root_quat":
                         warnings.warn(
@@ -1429,10 +1440,10 @@ class Imitation(worm_base.CelegansEnv):
                     elif "body_xpos" in name:
                         body_name = name.split("/")[-1]
                         warnings.warn(
-                            f"Bodies pos: {self._get_bodies_pos(data, flatten=False)[body_name][..., : self._config.dim]} != {reference.body_xpos(body_name)[..., : self._config.dim]}"
+                            f"Body {body_name} pos: {self._get_bodies_pos(data, flatten=False)[body_name]}(Sim) != {reference.body_xpos(body_name)} (Ref)"
                         )
                         warnings.warn(
-                            f"diff: {jp.linalg.norm(self._get_bodies_pos(data, flatten=False)[body_name][..., : self._config.dim] - reference.body_xpos(body_name)[..., : self._config.dim])}"
+                            f"diff: {jp.linalg.norm(self._get_bodies_pos(data, flatten=False)[body_name] - reference.body_xpos(body_name))}"
                         )
                     any_failed = True
         return not any_failed
