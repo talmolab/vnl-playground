@@ -1,0 +1,8 @@
+newmtl M_sprout_SG
+illum 4
+Kd 0.00 0.00 0.00
+Ka 0.00 0.00 0.00
+Tf 1.00 1.00 1.00
+map_Kd ../../textures/robot_D.png
+bump  -bm 0.354839 robot_N.png
+Ni 1.00
