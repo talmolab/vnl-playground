@@ -8,6 +8,8 @@ RODENT_PATH = epath.Path(__file__).parent
 
 RODENT_XML_PATH = RODENT_PATH / "xmls" / "rodent.xml"
 RODENT_BOX_FEET_PATH = RODENT_PATH / "xmls" / "rodent_box_feet.xml"
+RODENT_FULL_COLLISION_XML = RODENT_PATH / "xmls" / "rodent_full_collisions.xml"
+RODENT_NO_TAIL_COLLISION_XML = RODENT_PATH / "xmls" / "rodent_no_tail_collisions.xml"
 ARENA_XML_PATH = RODENT_PATH / "xmls" / "arena.xml"
 WHITE_ARENA_XML_PATH = RODENT_PATH / "xmls" / "white_arena.xml"
 IMITATION_REFERENCE_PATH = RODENT_PATH / "reference_data" / "reference_clips.h5"
