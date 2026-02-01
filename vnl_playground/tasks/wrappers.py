@@ -124,7 +124,9 @@ class HighLevelWrapper(wrapper.Wrapper):
             )
 
         self._task_obs_size = int(
-            jax.flatten_util.ravel_pytree(sample_state.obs[obs_key][highlvl_obs_key])[0].shape[0]
+            jax.flatten_util.ravel_pytree(sample_state.obs[obs_key][highlvl_obs_key])[
+                0
+            ].shape[0]
         )
         _, self._dummy_decoder_extras = decoder_inference_fn(
             jp.zeros(latent_size + self._proprioceptive_obs_size)
@@ -133,7 +135,9 @@ class HighLevelWrapper(wrapper.Wrapper):
     def _process_state(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
         """Process state to extract task obs for high-level policy."""
         task_obs = jp.nan_to_num(
-            jax.flatten_util.ravel_pytree(state.obs[self._obs_key][self._highlvl_obs_key])[0]
+            jax.flatten_util.ravel_pytree(
+                state.obs[self._obs_key][self._highlvl_obs_key]
+            )[0]
         )
         # Store full dict obs in info for decoder access
         state.info["_full_obs"] = state.obs

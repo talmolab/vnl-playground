@@ -19,6 +19,9 @@ from mujoco_playground._src import reward as reward_fns
 
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
+from vnl_playground.tasks.task_registry import TaskRegistry
+
+_registry = TaskRegistry()
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -57,32 +60,10 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
-_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
-_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
-
-
-def _named_reward(name: str):
-    """Decorator to register a reward function."""
-
-    def decorator(reward_fcn: Callable):
-        _REWARD_FCN_REGISTRY[name] = reward_fcn
-        return reward_fcn
-
-    return decorator
-
-
-def _named_termination_criterion(name: str):
-    """Decorator to register a termination criterion."""
-
-    def decorator(termination_fcn: Callable):
-        _TERMINATION_FCN_REGISTRY[name] = termination_fcn
-        return termination_fcn
-
-    return decorator
-
-
 class Rearing(rodent_base.RodentEnv):
     """Rearing environment - rodent must raise head above target height."""
+
+    _registry = _registry
 
     def __init__(
         self,
@@ -220,7 +201,9 @@ class Rearing(rodent_base.RodentEnv):
         privileged_task_obs = jp.concatenate(
             [
                 task_obs,
-                jp.array([info["rearing_steps"] / required_steps]),  # Normalized progress
+                jp.array(
+                    [info["rearing_steps"] / required_steps]
+                ),  # Normalized progress
                 jp.array([info["can_earn_rearing"]], dtype=float),  # Eligibility
             ]
         )
@@ -239,26 +222,6 @@ class Rearing(rodent_base.RodentEnv):
         skull_body = data.bind(self.mjx_model, self._spec.body(f"skull{self._suffix}"))
         torso_body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         return skull_body.xpos[2] - torso_body.xpos[2]
-
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
-        any_terminated = False
-        for name, kwargs in self._config.termination_criteria.items():
-            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-            terminated = termination_fcn(self, data, info, **kwargs)
-            any_terminated = jp.logical_or(any_terminated, terminated)
-            metrics["terminations/" + name] = jp.astype(terminated, float)
-        metrics["terminations/any"] = jp.astype(any_terminated, float)
-        return any_terminated
-
-    def _get_reward(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
-    ) -> float:
-        net_reward = 0.0
-        for name, kwargs in self._config.reward_terms.items():
-            net_reward += _REWARD_FCN_REGISTRY[name](
-                self, data, info, metrics, **kwargs
-            )
-        return net_reward
 
     def null_action(self) -> jp.ndarray:
         return jp.zeros(self.action_size)
@@ -287,7 +250,7 @@ class Rearing(rodent_base.RodentEnv):
 # --- Reward Functions ---
 
 
-@_named_reward("head_height_dense")
+@_registry.reward("head_height_dense")
 def _head_height_dense_reward(env, data, info, metrics, weight) -> float:
     """Dense reward: smooth increase as head approaches target height."""
     relative_height = env._get_relative_head_height(data)
@@ -307,7 +270,7 @@ def _head_height_dense_reward(env, data, info, metrics, weight) -> float:
     return weighted_reward
 
 
-@_named_reward("head_height_sparse")
+@_registry.reward("head_height_sparse")
 def _head_height_sparse_reward(env, data, info, metrics, weight) -> float:
     """Sparse reward: binary reward when head exceeds target height."""
     relative_height = env._get_relative_head_height(data)
@@ -319,7 +282,7 @@ def _head_height_sparse_reward(env, data, info, metrics, weight) -> float:
     return weighted_reward
 
 
-@_named_reward("upright")
+@_registry.reward("upright")
 def _upright_reward(env, data, info, metrics, weight, healthy_z_range) -> float:
     """Reward for keeping torso in healthy z range (staying upright)."""
     torso_z = env._get_body_height(data)
@@ -331,7 +294,7 @@ def _upright_reward(env, data, info, metrics, weight, healthy_z_range) -> float:
     return weighted_reward
 
 
-@_named_reward("energy_cost")
+@_registry.reward("energy_cost")
 def _energy_cost(env, data, info, metrics, weight, max_value) -> float:
     """Penalize energy consumption."""
     energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
@@ -341,7 +304,7 @@ def _energy_cost(env, data, info, metrics, weight, max_value) -> float:
     return -cost
 
 
-@_named_reward("rearing_success")
+@_registry.reward("rearing_success")
 def _rearing_success_reward(env, data, info, metrics, weight) -> float:
     """Large reward when rearing pose is held for the required duration."""
     rearing_success = info["rearing_success"]
@@ -355,7 +318,7 @@ def _rearing_success_reward(env, data, info, metrics, weight) -> float:
 # --- Termination Functions ---
 
 
-@_named_termination_criterion("fallen")
+@_registry.termination("fallen")
 def _fallen_termination(
     env, data: mjx.Data, info, min_torso_z: float, max_torso_angle: float
 ) -> bool:
@@ -373,7 +336,7 @@ def _fallen_termination(
     return jp.logical_or(below_ground, too_tilted)
 
 
-@_named_termination_criterion("nan_termination")
+@_registry.termination("nan_termination")
 def _nan_termination(env, data, info) -> bool:
     """Check for NaN values in simulation data."""
     del info

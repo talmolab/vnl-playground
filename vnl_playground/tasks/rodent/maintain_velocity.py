@@ -24,6 +24,9 @@ from mujoco_playground._src import reward as reward_fns
 
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
+from vnl_playground.tasks.task_registry import TaskRegistry
+
+_registry = TaskRegistry()
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -62,16 +65,14 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
-_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
-_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
-
-
 class MaintainVelocity(rodent_base.RodentEnv):
     """Maintain velocity environment.
 
     The rodent must maintain a target forward velocity in the +x direction.
     Initialized in neutral standing pose facing forward.
     """
+
+    _registry = _registry
 
     def __init__(
         self,
@@ -195,56 +196,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
             privileged_state=obs,
         )
 
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
-        """Check if episode should terminate.
-
-        Args:
-            data: Simulation data.
-            info: State info dictionary.
-            metrics: Metrics dictionary for logging.
-
-        Returns:
-            Boolean indicating if episode should terminate.
-        """
-        any_terminated = False
-        for name, kwargs in self._config.termination_criteria.items():
-            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-            terminated = termination_fcn(self, data, info, **kwargs)
-            any_terminated = jp.logical_or(any_terminated, terminated)
-            metrics["terminations/" + name] = jp.astype(terminated, float)
-        metrics["terminations/any"] = jp.astype(any_terminated, float)
-        return any_terminated
-
-    def _get_reward(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
-    ) -> float:
-        """Compute total reward.
-
-        Args:
-            data: Simulation data.
-            info: State info dictionary.
-            metrics: Metrics dictionary for logging.
-
-        Returns:
-            Total reward value.
-        """
-        net_reward = 0.0
-        for name, kwargs in self._config.reward_terms.items():
-            net_reward += _REWARD_FCN_REGISTRY[name](
-                self, data, info, metrics, **kwargs
-            )
-        return net_reward
-
-    def _named_reward(name: str):
-        """Decorator to register reward functions."""
-
-        def decorator(reward_fcn: Callable):
-            _REWARD_FCN_REGISTRY[name] = reward_fcn
-            return reward_fcn
-
-        return decorator
-
-    @_named_reward("forward_velocity")
+    @_registry.reward("forward_velocity")
     def _forward_velocity_reward(self, data, info, metrics, weight) -> float:
         """Reward for maintaining target forward velocity in +x direction.
 
@@ -277,7 +229,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
 
         return weighted_reward
 
-    @_named_reward("lateral_velocity")
+    @_registry.reward("lateral_velocity")
     def _lateral_velocity_cost(self, data, info, metrics, weight) -> float:
         """Cost for lateral (y-direction) velocity to encourage straight-line motion.
 
@@ -297,7 +249,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
         metrics["rewards/lateral_velocity"] = cost
         return cost
 
-    @_named_reward("angular_velocity_z")
+    @_registry.reward("angular_velocity_z")
     def _angular_velocity_z_cost(self, data, info, metrics, weight) -> float:
         """Cost for yaw rate (z-axis angular velocity) to prevent turning.
 
@@ -318,16 +270,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
         metrics["rewards/angular_velocity_z"] = cost
         return cost
 
-    def _named_termination_criterion(name: str):
-        """Decorator to register termination functions."""
-
-        def decorator(termination_fcn: Callable):
-            _TERMINATION_FCN_REGISTRY[name] = termination_fcn
-            return termination_fcn
-
-        return decorator
-
-    @_named_termination_criterion("fallen")
+    @_registry.termination("fallen")
     def _fallen_termination(
         self,
         data: mjx.Data,
@@ -360,7 +303,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
 
         return jp.logical_or(below_ground, too_tilted)
 
-    @_named_termination_criterion("nan_termination")
+    @_registry.termination("nan_termination")
     def _nan_termination(self, data, info) -> bool:
         """Check for NaN values in simulation data.
 

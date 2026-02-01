@@ -24,6 +24,9 @@ from mujoco_playground._src import mjx_env
 
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
+from vnl_playground.tasks.task_registry import TaskRegistry
+
+_registry = TaskRegistry()
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -86,36 +89,14 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
-_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
-_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
-
-
-def _named_reward(name: str):
-    """Decorator to register a reward function."""
-
-    def decorator(reward_fcn: Callable):
-        _REWARD_FCN_REGISTRY[name] = reward_fcn
-        return reward_fcn
-
-    return decorator
-
-
-def _named_termination_criterion(name: str):
-    """Decorator to register a termination criterion."""
-
-    def decorator(termination_fcn: Callable):
-        _TERMINATION_FCN_REGISTRY[name] = termination_fcn
-        return termination_fcn
-
-    return decorator
-
-
 class Joystick(rodent_base.RodentEnv):
     """Joystick velocity tracking environment.
 
     The rodent must track commanded linear and angular velocities.
     Commands are periodically resampled during the episode.
     """
+
+    _registry = _registry
 
     def __init__(
         self,
@@ -306,46 +287,6 @@ class Joystick(rodent_base.RodentEnv):
             privileged_state=obs,
         )
 
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> jax.Array:
-        """Check if episode should terminate.
-
-        Args:
-            data: Simulation data.
-            info: State info dictionary.
-            metrics: Metrics dictionary for logging.
-
-        Returns:
-            Boolean indicating if episode should terminate.
-        """
-        any_terminated = False
-        for name, kwargs in self._config.termination_criteria.items():
-            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-            terminated = termination_fcn(self, data, info, **kwargs)
-            any_terminated = jp.logical_or(any_terminated, terminated)
-            metrics["terminations/" + name] = jp.astype(terminated, float)
-        metrics["terminations/any"] = jp.astype(any_terminated, float)
-        return any_terminated
-
-    def _get_reward(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
-    ) -> jax.Array:
-        """Compute total reward.
-
-        Args:
-            data: Simulation data.
-            info: State info dictionary.
-            metrics: Metrics dictionary for logging.
-
-        Returns:
-            Total reward value.
-        """
-        net_reward = 0.0
-        for name, kwargs in self._config.reward_terms.items():
-            net_reward += _REWARD_FCN_REGISTRY[name](
-                self, data, info, metrics, **kwargs
-            )
-        return net_reward
-
     def null_action(self) -> jp.ndarray:
         """Return zero action."""
         return jp.zeros(self.action_size)
@@ -374,7 +315,7 @@ class Joystick(rodent_base.RodentEnv):
 # --- Reward Functions ---
 
 
-@_named_reward("tracking_lin_vel")
+@_registry.reward("tracking_lin_vel")
 def _tracking_lin_vel_reward(env, data, info, metrics, weight) -> jax.Array:
     """Exponential reward for matching commanded forward velocity.
 
@@ -405,7 +346,7 @@ def _tracking_lin_vel_reward(env, data, info, metrics, weight) -> jax.Array:
     return weighted_reward
 
 
-@_named_reward("tracking_ang_vel")
+@_registry.reward("tracking_ang_vel")
 def _tracking_ang_vel_reward(env, data, info, metrics, weight) -> jax.Array:
     """Exponential reward for matching commanded yaw rate.
 
@@ -437,7 +378,7 @@ def _tracking_ang_vel_reward(env, data, info, metrics, weight) -> jax.Array:
     return weighted_reward
 
 
-@_named_reward("torques")
+@_registry.reward("torques")
 def _torques_cost(env, data, info, metrics, weight) -> jax.Array:
     """Cost for actuator forces.
 
@@ -461,7 +402,7 @@ def _torques_cost(env, data, info, metrics, weight) -> jax.Array:
     return weighted_cost
 
 
-@_named_reward("action_rate")
+@_registry.reward("action_rate")
 def _action_rate_cost(env, data, info, metrics, weight) -> jax.Array:
     """Cost for action changes between timesteps.
 
@@ -486,7 +427,7 @@ def _action_rate_cost(env, data, info, metrics, weight) -> jax.Array:
     return weighted_cost
 
 
-@_named_reward("energy")
+@_registry.reward("energy")
 def _energy_cost(env, data, info, metrics, weight) -> jax.Array:
     """Cost for mechanical work (velocity * force).
 
@@ -510,7 +451,7 @@ def _energy_cost(env, data, info, metrics, weight) -> jax.Array:
     return weighted_cost
 
 
-@_named_reward("dof_acc")
+@_registry.reward("dof_acc")
 def _dof_acc_cost(env, data, info, metrics, weight, max_value=None) -> jax.Array:
     """Cost for joint accelerations.
 
@@ -537,7 +478,7 @@ def _dof_acc_cost(env, data, info, metrics, weight, max_value=None) -> jax.Array
     return weighted_cost
 
 
-@_named_reward("alive")
+@_registry.reward("alive")
 def _alive_reward(env, data, info, metrics, weight) -> jax.Array:
     """Constant reward for staying alive.
 
@@ -556,7 +497,7 @@ def _alive_reward(env, data, info, metrics, weight) -> jax.Array:
     return weight
 
 
-@_named_reward("termination")
+@_registry.reward("termination")
 def _termination_penalty(env, data, info, metrics, weight) -> jax.Array:
     """Large penalty on episode termination.
 
@@ -577,7 +518,7 @@ def _termination_penalty(env, data, info, metrics, weight) -> jax.Array:
     return penalty
 
 
-@_named_reward("stand_still")
+@_registry.reward("stand_still")
 def _stand_still_penalty(env, data, info, metrics, weight) -> jax.Array:
     """Penalty for unwanted movement (moving when that axis command is zero).
 
@@ -613,7 +554,7 @@ def _stand_still_penalty(env, data, info, metrics, weight) -> jax.Array:
     return penalty
 
 
-@_named_reward("lateral_velocity")
+@_registry.reward("lateral_velocity")
 def _lateral_velocity_penalty(env, data, info, metrics, weight) -> jax.Array:
     """Penalty for lateral (sideways) velocity.
 
@@ -645,7 +586,7 @@ def _lateral_velocity_penalty(env, data, info, metrics, weight) -> jax.Array:
 # --- Termination Functions ---
 
 
-@_named_termination_criterion("fallen")
+@_registry.termination("fallen")
 def _fallen_termination(
     env, data: mjx.Data, info, min_torso_z: float, max_torso_angle: float
 ) -> jax.Array:
@@ -676,7 +617,7 @@ def _fallen_termination(
     return jp.logical_or(below_ground, too_tilted)
 
 
-@_named_termination_criterion("nan_termination")
+@_registry.termination("nan_termination")
 def _nan_termination(env, data, info) -> jax.Array:
     """Check for NaN values in simulation data.
 

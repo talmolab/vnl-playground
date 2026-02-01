@@ -26,29 +26,9 @@ from .. import utils
 from . import base as rodent_base
 from . import consts
 from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.task_registry import TaskRegistry
 
-_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
-_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
-
-
-def _named_reward(name: str):
-    """Decorator to register reward functions."""
-
-    def decorator(reward_fcn: Callable):
-        _REWARD_FCN_REGISTRY[name] = reward_fcn
-        return reward_fcn
-
-    return decorator
-
-
-def _named_termination_criterion(name: str):
-    """Decorator to register termination functions."""
-
-    def decorator(termination_fcn: Callable):
-        _TERMINATION_FCN_REGISTRY[name] = termination_fcn
-        return termination_fcn
-
-    return decorator
+_registry = TaskRegistry()
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -75,7 +55,10 @@ def default_config() -> config_dict.ConfigDict:
         clip_set="all",
         qvel_init="zeros",
         keep_clips_idx=None,
-        clip_range=(75,200),  # (start, end) frame indices or None for full clip. defaults to a rear
+        clip_range=(
+            75,
+            200,
+        ),  # (start, end) frame indices or None for full clip. defaults to a rear
         default_clip_idx=1,  # Fixed clip index to use (None to sample randomly). defaults idx 1 is a rear
         # Episode params
         episode_length=2500,  # 25 seconds to allow multiple sequence matches
@@ -106,6 +89,8 @@ class SparseImitation(rodent_base.RodentEnv):
     match the reference clip, allowing for time-warped playback (faster or slower).
     Episodes run for a fixed duration (episode_length steps) without early termination.
     """
+
+    _registry = _registry
 
     def __init__(
         self,
@@ -311,27 +296,7 @@ class SparseImitation(rodent_base.RodentEnv):
             privileged_state=obs,
         )
 
-    def _get_reward(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
-    ) -> jax.Array:
-        """Compute total reward.
-
-        Args:
-            data: Simulation data.
-            info: State info dictionary.
-            metrics: Metrics dictionary for logging.
-
-        Returns:
-            Total reward value.
-        """
-        net_reward = 0.0
-        for name, kwargs in self._config.reward_terms.items():
-            net_reward += _REWARD_FCN_REGISTRY[name](
-                self, data, info, metrics, **kwargs
-            )
-        return net_reward
-
-    @_named_reward("sequence_match")
+    @_registry.reward("sequence_match")
     def _sequence_match_reward(self, data, info, metrics, weight) -> jax.Array:
         """Sparse reward for completing a sequence match.
 
@@ -349,7 +314,9 @@ class SparseImitation(rodent_base.RodentEnv):
             Weighted sequence match reward (sparse).
         """
         # Advance sampling phase
-        sample_phase = info["sample_phase"] + self._config.ctrl_dt * self._config.mocap_hz
+        sample_phase = (
+            info["sample_phase"] + self._config.ctrl_dt * self._config.mocap_hz
+        )
         n_new_samples = jp.floor(sample_phase).astype(jp.int32)
         sample_phase = sample_phase - n_new_samples.astype(jp.float32)
 
@@ -388,15 +355,34 @@ class SparseImitation(rodent_base.RodentEnv):
                 new_min = jp.where(matched_now, jp.full_like(new_min, INF), new_min)
                 new_max = jp.where(matched_now, jp.full_like(new_max, -INF), new_max)
 
-                return (new_min, new_max, complete, m_count2, matched_any2 | matched_now)
+                return (
+                    new_min,
+                    new_max,
+                    complete,
+                    m_count2,
+                    matched_any2 | matched_now,
+                )
 
-            return jax.lax.cond(do_update, do, lambda c: c, (min_s, max_s, prev_reach, m_count, matched_any))
+            return jax.lax.cond(
+                do_update,
+                do,
+                lambda c: c,
+                (min_s, max_s, prev_reach, m_count, matched_any),
+            )
 
-        min_steps, max_steps, prev_final_reachable, match_count, matched_any = jax.lax.fori_loop(
-            0,
-            max_updates,
-            body,
-            (min_steps, max_steps, prev_final_reachable, match_count, jp.array(False)),
+        min_steps, max_steps, prev_final_reachable, match_count, matched_any = (
+            jax.lax.fori_loop(
+                0,
+                max_updates,
+                body,
+                (
+                    min_steps,
+                    max_steps,
+                    prev_final_reachable,
+                    match_count,
+                    jp.array(False),
+                ),
+            )
         )
 
         # Write back into info
@@ -418,7 +404,7 @@ class SparseImitation(rodent_base.RodentEnv):
 
         return reward
 
-    @_named_reward("dp_progress")
+    @_registry.reward("dp_progress")
     def _dp_progress_reward(self, data, info, metrics, weight) -> jax.Array:
         """Dense reward for advancing through the reference sequence.
 
@@ -449,7 +435,9 @@ class SparseImitation(rodent_base.RodentEnv):
         reachable = min_steps < INF  # already pruned by max_len inside _dp_update
         # Find furthest reachable frame index (-1 if none reachable)
         best_idx = jp.max(jp.where(reachable, jp.arange(L, dtype=jp.int32), -1))
-        progress = (best_idx + 1).astype(jp.float32) / jp.array(L, jp.float32)  # in [0,1]
+        progress = (best_idx + 1).astype(jp.float32) / jp.array(
+            L, jp.float32
+        )  # in [0,1]
 
         # Compute progress delta from previous step
         prev_progress = info["dp_progress"]
@@ -470,7 +458,7 @@ class SparseImitation(rodent_base.RodentEnv):
 
         return reward
 
-    @_named_reward("survival")
+    @_registry.reward("survival")
     def _survival_reward(self, data, info, metrics, weight) -> jax.Array:
         """Small constant reward for staying alive (not given on termination step).
 
@@ -489,7 +477,7 @@ class SparseImitation(rodent_base.RodentEnv):
         # Check if this step results in termination
         terminated = False
         for name, kwargs in self._config.termination_criteria.items():
-            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
+            termination_fcn = self._registry.terminations[name]
             terminated = jp.logical_or(
                 terminated, termination_fcn(self, data, info, **kwargs)
             )
@@ -498,27 +486,7 @@ class SparseImitation(rodent_base.RodentEnv):
         metrics["rewards/survival"] = reward
         return reward
 
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict) -> jax.Array:
-        """Check if episode should terminate.
-
-        Args:
-            data: Simulation data.
-            info: State info dictionary.
-            metrics: Metrics dictionary for logging.
-
-        Returns:
-            Boolean indicating if episode should terminate.
-        """
-        any_terminated = False
-        for name, kwargs in self._config.termination_criteria.items():
-            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-            terminated = termination_fcn(self, data, info, **kwargs)
-            any_terminated = jp.logical_or(any_terminated, terminated)
-            metrics["terminations/" + name] = jp.astype(terminated, float)
-        metrics["terminations/any"] = jp.astype(any_terminated, float)
-        return any_terminated
-
-    @_named_termination_criterion("fallen")
+    @_registry.termination("fallen")
     def _fallen_termination(
         self,
         data: mjx.Data,
@@ -551,7 +519,7 @@ class SparseImitation(rodent_base.RodentEnv):
 
         return jp.logical_or(below_ground, too_tilted)
 
-    @_named_termination_criterion("nan_termination")
+    @_registry.termination("nan_termination")
     def _nan_termination(self, data, info) -> jax.Array:
         """Check for NaN values in simulation data.
 
@@ -748,7 +716,10 @@ class SparseImitation(rodent_base.RodentEnv):
         Returns the frame index into the full clip (offset by clip_start).
         """
         time_in_frames = data.time * self._config.mocap_hz
-        return jp.floor(time_in_frames).astype(int) % self._clip_length() + self._clip_start
+        return (
+            jp.floor(time_in_frames).astype(int) % self._clip_length()
+            + self._clip_start
+        )
 
     def render(
         self,
@@ -804,7 +775,9 @@ class SparseImitation(rodent_base.RodentEnv):
         for i, state in enumerate(trajectory):
             # Use cyclic time-based frame indexing (offset by clip_start)
             time_in_frames = state.data.time * self._config.mocap_hz
-            frame = jp.floor(time_in_frames).astype(int) % clip_length + self._clip_start
+            frame = (
+                jp.floor(time_in_frames).astype(int) % clip_length + self._clip_start
+            )
             clip = state.info["reference_clip"]
             ref = self.reference_clips.at(clip=clip, frame=frame)
 
