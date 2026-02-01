@@ -31,6 +31,26 @@ _REWARD_FCN_REGISTRY: dict[str, Callable] = {}
 _TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
 
 
+def _named_reward(name: str):
+    """Decorator to register reward functions."""
+
+    def decorator(reward_fcn: Callable):
+        _REWARD_FCN_REGISTRY[name] = reward_fcn
+        return reward_fcn
+
+    return decorator
+
+
+def _named_termination_criterion(name: str):
+    """Decorator to register termination functions."""
+
+    def decorator(termination_fcn: Callable):
+        _TERMINATION_FCN_REGISTRY[name] = termination_fcn
+        return termination_fcn
+
+    return decorator
+
+
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         # Model paths
@@ -293,7 +313,7 @@ class SparseImitation(rodent_base.RodentEnv):
 
     def _get_reward(
         self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
-    ) -> float:
+    ) -> jax.Array:
         """Compute total reward.
 
         Args:
@@ -311,17 +331,8 @@ class SparseImitation(rodent_base.RodentEnv):
             )
         return net_reward
 
-    def _named_reward(name: str):
-        """Decorator to register reward functions."""
-
-        def decorator(reward_fcn: Callable):
-            _REWARD_FCN_REGISTRY[name] = reward_fcn
-            return reward_fcn
-
-        return decorator
-
     @_named_reward("sequence_match")
-    def _sequence_match_reward(self, data, info, metrics, weight) -> float:
+    def _sequence_match_reward(self, data, info, metrics, weight) -> jax.Array:
         """Sparse reward for completing a sequence match.
 
         Performs elastic DP matching: advances sampling phase, runs DP updates
@@ -408,7 +419,7 @@ class SparseImitation(rodent_base.RodentEnv):
         return reward
 
     @_named_reward("dp_progress")
-    def _dp_progress_reward(self, data, info, metrics, weight) -> float:
+    def _dp_progress_reward(self, data, info, metrics, weight) -> jax.Array:
         """Dense reward for advancing through the reference sequence.
 
         Computes the furthest reachable reference frame from the DP state and
@@ -460,7 +471,7 @@ class SparseImitation(rodent_base.RodentEnv):
         return reward
 
     @_named_reward("survival")
-    def _survival_reward(self, data, info, metrics, weight) -> float:
+    def _survival_reward(self, data, info, metrics, weight) -> jax.Array:
         """Small constant reward for staying alive (not given on termination step).
 
         Encourages the agent to avoid termination conditions and keep
@@ -487,7 +498,7 @@ class SparseImitation(rodent_base.RodentEnv):
         metrics["rewards/survival"] = reward
         return reward
 
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict) -> bool:
+    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict) -> jax.Array:
         """Check if episode should terminate.
 
         Args:
@@ -507,15 +518,6 @@ class SparseImitation(rodent_base.RodentEnv):
         metrics["terminations/any"] = jp.astype(any_terminated, float)
         return any_terminated
 
-    def _named_termination_criterion(name: str):
-        """Decorator to register termination functions."""
-
-        def decorator(termination_fcn: Callable):
-            _TERMINATION_FCN_REGISTRY[name] = termination_fcn
-            return termination_fcn
-
-        return decorator
-
     @_named_termination_criterion("fallen")
     def _fallen_termination(
         self,
@@ -523,7 +525,7 @@ class SparseImitation(rodent_base.RodentEnv):
         info,
         min_torso_z: float = 0.03,
         max_torso_angle: float = 60,
-    ) -> bool:
+    ) -> jax.Array:
         """Check if rodent has fallen.
 
         Args:
@@ -537,7 +539,7 @@ class SparseImitation(rodent_base.RodentEnv):
         """
         del info
 
-        torso_body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        torso_body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         torso_z = torso_body.xpos[2]
 
         below_ground = torso_z < min_torso_z
@@ -550,7 +552,7 @@ class SparseImitation(rodent_base.RodentEnv):
         return jp.logical_or(below_ground, too_tilted)
 
     @_named_termination_criterion("nan_termination")
-    def _nan_termination(self, data, info) -> bool:
+    def _nan_termination(self, data, info) -> jax.Array:
         """Check for NaN values in simulation data.
 
         Args:

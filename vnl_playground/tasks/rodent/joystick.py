@@ -267,7 +267,7 @@ class Joystick(rodent_base.RodentEnv):
         Returns:
             Linear velocity [vx, vy, vz] in torso frame.
         """
-        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         world_vel = torso.subtree_linvel
         # Transform to local frame using rotation matrix
         local_vel = jp.dot(world_vel, torso.xmat.reshape(3, 3))
@@ -306,7 +306,7 @@ class Joystick(rodent_base.RodentEnv):
             privileged_state=obs,
         )
 
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
+    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> jax.Array:
         """Check if episode should terminate.
 
         Args:
@@ -328,7 +328,7 @@ class Joystick(rodent_base.RodentEnv):
 
     def _get_reward(
         self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
-    ) -> float:
+    ) -> jax.Array:
         """Compute total reward.
 
         Args:
@@ -375,7 +375,7 @@ class Joystick(rodent_base.RodentEnv):
 
 
 @_named_reward("tracking_lin_vel")
-def _tracking_lin_vel_reward(env, data, info, metrics, weight) -> float:
+def _tracking_lin_vel_reward(env, data, info, metrics, weight) -> jax.Array:
     """Exponential reward for matching commanded forward velocity.
 
     Args:
@@ -406,7 +406,7 @@ def _tracking_lin_vel_reward(env, data, info, metrics, weight) -> float:
 
 
 @_named_reward("tracking_ang_vel")
-def _tracking_ang_vel_reward(env, data, info, metrics, weight) -> float:
+def _tracking_ang_vel_reward(env, data, info, metrics, weight) -> jax.Array:
     """Exponential reward for matching commanded yaw rate.
 
     Args:
@@ -421,7 +421,7 @@ def _tracking_ang_vel_reward(env, data, info, metrics, weight) -> float:
     """
     command = info["command"]  # [vx, vyaw]
     # Use gyro sensor z-component for yaw rate
-    gyro = data.bind(env.mjx_model, env._spec.sensor("gyro-rodent")).sensordata
+    gyro = data.bind(env.mjx_model, env._spec.sensor(f"gyro{env._suffix}")).sensordata
     yaw_rate = gyro[2]
 
     ang_vel_error = jp.square(command[1] - yaw_rate)
@@ -438,7 +438,7 @@ def _tracking_ang_vel_reward(env, data, info, metrics, weight) -> float:
 
 
 @_named_reward("torques")
-def _torques_cost(env, data, info, metrics, weight) -> float:
+def _torques_cost(env, data, info, metrics, weight) -> jax.Array:
     """Cost for actuator forces.
 
     Args:
@@ -462,7 +462,7 @@ def _torques_cost(env, data, info, metrics, weight) -> float:
 
 
 @_named_reward("action_rate")
-def _action_rate_cost(env, data, info, metrics, weight) -> float:
+def _action_rate_cost(env, data, info, metrics, weight) -> jax.Array:
     """Cost for action changes between timesteps.
 
     Args:
@@ -487,7 +487,7 @@ def _action_rate_cost(env, data, info, metrics, weight) -> float:
 
 
 @_named_reward("energy")
-def _energy_cost(env, data, info, metrics, weight) -> float:
+def _energy_cost(env, data, info, metrics, weight) -> jax.Array:
     """Cost for mechanical work (velocity * force).
 
     Args:
@@ -511,7 +511,7 @@ def _energy_cost(env, data, info, metrics, weight) -> float:
 
 
 @_named_reward("dof_acc")
-def _dof_acc_cost(env, data, info, metrics, weight, max_value=None) -> float:
+def _dof_acc_cost(env, data, info, metrics, weight, max_value=None) -> jax.Array:
     """Cost for joint accelerations.
 
     Args:
@@ -538,7 +538,7 @@ def _dof_acc_cost(env, data, info, metrics, weight, max_value=None) -> float:
 
 
 @_named_reward("alive")
-def _alive_reward(env, data, info, metrics, weight) -> float:
+def _alive_reward(env, data, info, metrics, weight) -> jax.Array:
     """Constant reward for staying alive.
 
     Args:
@@ -557,7 +557,7 @@ def _alive_reward(env, data, info, metrics, weight) -> float:
 
 
 @_named_reward("termination")
-def _termination_penalty(env, data, info, metrics, weight) -> float:
+def _termination_penalty(env, data, info, metrics, weight) -> jax.Array:
     """Large penalty on episode termination.
 
     Args:
@@ -578,7 +578,7 @@ def _termination_penalty(env, data, info, metrics, weight) -> float:
 
 
 @_named_reward("stand_still")
-def _stand_still_penalty(env, data, info, metrics, weight) -> float:
+def _stand_still_penalty(env, data, info, metrics, weight) -> jax.Array:
     """Penalty for unwanted movement (moving when that axis command is zero).
 
     Decoupled: penalizes forward velocity only when vx command is ~0,
@@ -596,7 +596,7 @@ def _stand_still_penalty(env, data, info, metrics, weight) -> float:
     """
     command = info["command"]  # [vx, vyaw]
     local_vel = env._get_local_linvel(data)
-    gyro = data.bind(env.mjx_model, env._spec.sensor("gyro-rodent")).sensordata
+    gyro = data.bind(env.mjx_model, env._spec.sensor(f"gyro{env._suffix}")).sensordata
     yaw_rate = gyro[2]
 
     # Penalize forward movement only when forward command is ~0
@@ -614,7 +614,7 @@ def _stand_still_penalty(env, data, info, metrics, weight) -> float:
 
 
 @_named_reward("lateral_velocity")
-def _lateral_velocity_penalty(env, data, info, metrics, weight) -> float:
+def _lateral_velocity_penalty(env, data, info, metrics, weight) -> jax.Array:
     """Penalty for lateral (sideways) velocity.
 
     The rodent shouldn't strafe - any lateral velocity is undesired drift.
@@ -648,7 +648,7 @@ def _lateral_velocity_penalty(env, data, info, metrics, weight) -> float:
 @_named_termination_criterion("fallen")
 def _fallen_termination(
     env, data: mjx.Data, info, min_torso_z: float, max_torso_angle: float
-) -> bool:
+) -> jax.Array:
     """Check if rodent has fallen.
 
     Args:
@@ -663,7 +663,7 @@ def _fallen_termination(
     """
     del info
 
-    torso_body = data.bind(env.mjx_model, env._spec.body("torso-rodent"))
+    torso_body = data.bind(env.mjx_model, env._spec.body(f"torso{env._suffix}"))
     torso_z = torso_body.xpos[2]
 
     below_ground = torso_z < min_torso_z
@@ -677,7 +677,7 @@ def _fallen_termination(
 
 
 @_named_termination_criterion("nan_termination")
-def _nan_termination(env, data, info) -> bool:
+def _nan_termination(env, data, info) -> jax.Array:
     """Check for NaN values in simulation data.
 
     Args:
