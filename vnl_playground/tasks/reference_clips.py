@@ -237,26 +237,58 @@ class ReferenceClips:
         joint_names: Optional[list[str]],
         body_names: Optional[list[str]],
     ) -> None:
-        """Load legacy flat-array format (rodent-style)."""
+        """Load legacy flat-array format (rodent-style).
+
+        Supports two sub-variants:
+        - **Fixed-length clips**: Total frames is evenly divisible by
+          ``n_frames_per_clip``. Arrays are reshaped directly.
+        - **Variable-length clips**: File contains a ``clip_lengths`` dataset.
+          Each clip is truncated or zero-padded to ``n_frames_per_clip`` frames.
+          Clips shorter than ``n_frames_per_clip`` are padded with their last
+          frame (hold-last-frame padding).
+        """
         self._is_legacy_format = True
 
         # Load config if available
         if "config" in fid:
             self._config = yaml.safe_load(fid["config"][()])
-            self.clip_names = self._extract_clip_names(self._config)
+            try:
+                self.clip_names = self._extract_clip_names(self._config)
+            except (KeyError, ValueError) as e:
+                logging.warning(
+                    f"Could not extract clip names from config: {e}. "
+                    "Using numeric clip indices as names."
+                )
+                self.clip_names = None  # Will be set after we know n_clips
+
+        # Detect variable-length clips
+        has_variable_clips = "clip_lengths" in fid
+        if has_variable_clips:
+            clip_lengths = fid["clip_lengths"][()].astype(int)
 
         # Load and reshape data arrays
         for k in self._LEGACY_ARRAYS:
             if k in fid:
                 arr = fid[k][()]
-                n_clips = arr.shape[0] // n_frames_per_clip
-                arr = arr.reshape(n_clips, n_frames_per_clip, *arr.shape[1:])
+                if has_variable_clips:
+                    arr = self._reshape_variable_clips(
+                        arr, clip_lengths, n_frames_per_clip
+                    )
+                else:
+                    n_clips = arr.shape[0] // n_frames_per_clip
+                    arr = arr.reshape(n_clips, n_frames_per_clip, *arr.shape[1:])
                 self._data_arrays[k] = jp.array(arr)
                 if keep_clips_idx is not None:
                     logging.info(f"{k}: Keeping {len(keep_clips_idx)} clips")
                     self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
-                    if self.clip_names is not None:
-                        self.clip_names = self.clip_names[keep_clips_idx]
+
+        # Set fallback clip names if extraction failed
+        if self.clip_names is None:
+            n_clips = self._data_arrays[self._LEGACY_ARRAYS[0]].shape[0]
+            self.clip_names = np.array([f"clip_{i}" for i in range(n_clips)])
+
+        if keep_clips_idx is not None and self.clip_names is not None:
+            self.clip_names = self.clip_names[keep_clips_idx]
 
         # Load name mappings
         if "names_qpos" in fid:
@@ -274,6 +306,45 @@ class ReferenceClips:
                 self._body_names_map = {name: i for i, name in enumerate(body_names)}
             else:
                 self._body_names_map = {n: i for (i, n) in enumerate(names_xpos)}
+
+    @staticmethod
+    def _reshape_variable_clips(
+        flat_arr: np.ndarray,
+        clip_lengths: np.ndarray,
+        n_frames_per_clip: int,
+    ) -> np.ndarray:
+        """Reshape a flat array of variable-length clips into fixed-size clips.
+
+        Clips longer than ``n_frames_per_clip`` are truncated. Clips shorter
+        are padded by repeating the last valid frame (hold-last-frame).
+
+        Parameters
+        ----------
+        flat_arr : np.ndarray, shape (n_total_frames, ...)
+            Concatenated frames from all clips.
+        clip_lengths : np.ndarray, shape (n_clips,)
+            Number of frames in each clip.
+        n_frames_per_clip : int
+            Target number of frames per clip.
+
+        Returns
+        -------
+        np.ndarray, shape (n_clips, n_frames_per_clip, ...)
+        """
+        n_clips = len(clip_lengths)
+        out_shape = (n_clips, n_frames_per_clip) + flat_arr.shape[1:]
+        out = np.zeros(out_shape, dtype=flat_arr.dtype)
+
+        offset = 0
+        for i, length in enumerate(clip_lengths):
+            usable = min(int(length), n_frames_per_clip)
+            out[i, :usable] = flat_arr[offset : offset + usable]
+            # Pad short clips by repeating last valid frame
+            if usable < n_frames_per_clip:
+                out[i, usable:] = flat_arr[offset + usable - 1]
+            offset += int(length)
+
+        return out
 
     def _extract_clip_names(self, config: Mapping[str, Any]) -> np.ndarray:
         """Extract behavior names from legacy config metadata."""
