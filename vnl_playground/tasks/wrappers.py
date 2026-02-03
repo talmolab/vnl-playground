@@ -88,14 +88,15 @@ class HighLevelWrapper(wrapper.Wrapper):
 
     The environment must return observations as a nested dict/OrderedDict with
     top-level keys 'state' and 'privileged_state', each containing 'task_obs'
-    and 'proprioception'. Only task observations are exposed to the high-level
-    policy; proprioception is passed to the decoder.
+    and 'proprioception'. Task observations are extracted and exposed with the
+    state/privileged_state structure preserved for asymmetric actor-critic
+    training. Proprioception is passed to the decoder.
 
     Args:
         env: The base environment to wrap.
         decoder_inference_fn: Function that maps (latent + proprioception) -> ctrl.
         latent_size: Size of the latent action space.
-        obs_key: Top-level observation key to use (default: 'state').
+        obs_key: Top-level observation key to use for decoder (default: 'state').
         highlvl_obs_key: Key for high-level policy observations (default: 'task_obs').
         decoder_obs_key: Key for decoder observations (default: 'proprioception').
     """
@@ -134,14 +135,23 @@ class HighLevelWrapper(wrapper.Wrapper):
 
     def _process_state(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
         """Process state to extract task obs for high-level policy."""
-        task_obs = jp.nan_to_num(
-            jax.flatten_util.ravel_pytree(
-                state.obs[self._obs_key][self._highlvl_obs_key]
-            )[0]
-        )
         # Store full dict obs in info for decoder access
         state.info["_full_obs"] = state.obs
-        return state.replace(obs=task_obs)
+
+        # Preserve state/privileged_state structure for asymmetric actor-critic
+        new_obs = {
+            "state": jp.nan_to_num(
+                jax.flatten_util.ravel_pytree(
+                    state.obs["state"][self._highlvl_obs_key]
+                )[0]
+            ),
+            "privileged_state": jp.nan_to_num(
+                jax.flatten_util.ravel_pytree(
+                    state.obs["privileged_state"][self._highlvl_obs_key]
+                )[0]
+            ),
+        }
+        return state.replace(obs=new_obs)
 
     def reset(
         self,
@@ -170,6 +180,12 @@ class HighLevelWrapper(wrapper.Wrapper):
         return self._latent_size
 
     @property
-    def observation_size(self) -> int:
-        """Return observation size for the high-level policy."""
-        return self._task_obs_size
+    def observation_size(self) -> dict[str, int]:
+        """Return observation sizes for the high-level policy.
+
+        Returns dict matching the state/privileged_state structure.
+        """
+        return {
+            "state": self._task_obs_size,
+            "privileged_state": self._task_obs_size,
+        }
