@@ -12,6 +12,7 @@ SPROUT_PATH = epath.Path(__file__).parent
 
 SPROUT_XML_PATH = SPROUT_PATH / "xmls" / "sprout.xml"
 ARENA_XML_PATH = SPROUT_PATH / "xmls" / "arena.xml"
+IMITATION_REFERENCE_PATH = SPROUT_PATH / "reference_data" / "reference_clips.h5"
 
 # End effectors for egocentric position tracking
 END_EFFECTORS = [
@@ -92,12 +93,13 @@ STANDING_POSE = {
 }
 
 # Motor group parameters from Fauna simulation documentation.
-# Maps motor type to (effort_limit, velocity_limit, saturation_effort).
+# Maps motor type to effort_limit, velocity_limit, saturation_effort, armature.
 MOTOR_PARAMETERS = {
     "48V-EC-A6408": {
         "effort_limit": 30,
         "velocity_limit": 15.4,
         "saturation_effort": 128.2,
+        "armature": 0.0068,
         "joints": [
             "left_hip_pitch_joint",
             "right_hip_pitch_joint",
@@ -113,6 +115,7 @@ MOTOR_PARAMETERS = {
         "effort_limit": 24,
         "velocity_limit": 19.04,
         "saturation_effort": 105.12,
+        "armature": 0.0068,
         "joints": [
             "left_shoulder_pitch_joint",
             "right_shoulder_pitch_joint",
@@ -125,6 +128,7 @@ MOTOR_PARAMETERS = {
         "effort_limit": 30,
         "velocity_limit": 15.72,
         "saturation_effort": 114.72,
+        "armature": 0.027,
         "joints": [
             "left_shoulder_roll_joint",
             "right_shoulder_roll_joint",
@@ -138,6 +142,7 @@ MOTOR_PARAMETERS = {
         "effort_limit": 18,
         "velocity_limit": 37.48,
         "saturation_effort": 28.50,
+        "armature": 0.027,
         "joints": [
             "neck_yaw_joint",
             "left_wrist_roll_joint",
@@ -148,6 +153,7 @@ MOTOR_PARAMETERS = {
         "effort_limit": 3.5,
         "velocity_limit": 17.5,
         "saturation_effort": 4.5,
+        "armature": 0.027,
         "joints": [
             "neck_pitch_joint",
             "left_gripper_joint",
@@ -163,4 +169,4 @@ DEFAULT_STIFFNESS = 32.5
 DEFAULT_DAMPING = 1.0
 
 # Spawn height for standing pose (from Fauna docs: pos=(0, 0, 0.7))
-SPAWN_HEIGHT = 0.7
+SPAWN_HEIGHT = 0.65

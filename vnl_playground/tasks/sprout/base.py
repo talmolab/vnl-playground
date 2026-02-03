@@ -41,6 +41,7 @@ def default_config() -> config_dict.ConfigDict:
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
+        ccd_iterations=50,
         mujoco_impl="jax",
     )
 
@@ -93,6 +94,11 @@ class SproutEnv(mjx_env.MjxEnv):
                 actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
                 actuator.biasprm = np.zeros((10, 1))
 
+        # Set joint damping and armature from Fauna simulation docs.
+        # Must be set before attach_body since MjSpec joints are modified
+        # in-place on the source spec.
+        self._set_joint_dynamics(sprout)
+
         spawn_site = self._spec.worldbody.add_frame(
             pos=pos,
             quat=quat,
@@ -111,10 +117,40 @@ class SproutEnv(mjx_env.MjxEnv):
         # Default fallback
         return 30.0
 
+    def _get_armature(self, joint_name: str) -> float:
+        """Get the rotor inertia (armature) for a joint from motor parameters."""
+        for motor_type, params in consts.MOTOR_PARAMETERS.items():
+            if joint_name in params["joints"]:
+                return params["armature"]
+        # Default fallback
+        return 0.01
+
+    def _set_joint_dynamics(self, sprout_spec: mujoco.MjSpec) -> None:
+        """Set joint damping and armature on the sprout spec.
+
+        Applies damping=1.0 (from Fauna docs) and per-motor-group armature
+        values to all actuated joints.
+        """
+        # Build a lookup from joint name -> armature
+        joint_armature = {}
+        for motor_type, params in consts.MOTOR_PARAMETERS.items():
+            for joint_name in params["joints"]:
+                joint_armature[joint_name] = params["armature"]
+
+        for joint in sprout_spec.joints:
+            joint_name = joint.name
+            if joint_name in joint_armature:
+                joint.damping = consts.DEFAULT_DAMPING
+                joint.armature = joint_armature[joint_name]
+                logging.info(
+                    f"Set {joint_name}: damping={joint.damping}, "
+                    f"armature={joint.armature}"
+                )
+
     def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and puts model to mjx."""
         if not self._compiled or forced:
-            self._spec.option.noslip_iterations = self._config.noslip_iterations
+            # self._spec.option.noslip_iterations = self._config.noslip_iterations
             self._mj_model = self._spec.compile()
             self._mj_model.opt.timestep = self._config.sim_dt
             # Increase offscreen framebuffer size for higher resolution rendering
@@ -126,6 +162,7 @@ class SproutEnv(mjx_env.MjxEnv):
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
+            self._mj_model.opt.ccd_iterations = self._config.ccd_iterations
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self._config.mujoco_impl
             )
