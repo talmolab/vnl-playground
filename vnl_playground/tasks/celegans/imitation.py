@@ -210,6 +210,12 @@ class Imitation(worm_base.CelegansEnv):
                 f"Simulation will not advance! Please increase `ctrl_dt` from {self.ctrl_dt} to at least {self.sim_dt}."
             )
 
+        self._avg_episode_length = (
+            self.clip_length
+            - int(self.config.start_frame_range[1])
+            - self.config.reference_length
+        ) * (1 / (self.mocap_hz * self.ctrl_dt))
+
     def __repr__(self) -> str:
         walker_config = pformat(
             {
@@ -384,9 +390,11 @@ class Imitation(worm_base.CelegansEnv):
             magnitude: Magnitude value to insert (if any).
         """
         if reward is not None:
+            max_reward = self._config.reward_terms[name].get("weight", 1e-8)
             metrics[f"rewards/{name}"] = metrics[f"rewards/per_step/{name}"] = reward
-            metrics[f"rewards/per_step/normalized/{name}"] = (
-                reward / self._config.reward_terms[name].get("weight", 1.0)
+            metrics[f"rewards/per_step/normalized/{name}"] = reward / max_reward
+            metrics["rewards/percent/{name}"] = reward / (
+                self._avg_episode_length * max_reward
             )
         if distance is not None:
             metrics[f"distances/{name}"] = metrics[f"distances/per_step/{name}"] = (
@@ -582,7 +590,9 @@ class Imitation(worm_base.CelegansEnv):
         root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
         root_targets = jax.vmap(
-            lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat)[: self.config.dim]
+            lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat)[
+                : self.config.dim
+            ]
         )(reference.body_xpos(self.root_name))
         quat_targets = jax.vmap(
             lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat)
@@ -600,7 +610,9 @@ class Imitation(worm_base.CelegansEnv):
         body_rel_pos = jp.array(
             [reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos]
         )
-        to_egocentric = jax.vmap(lambda diff_vec: brax.math.rotate(diff_vec, root_quat))
+        to_egocentric = jax.vmap(
+            lambda diff_vec: brax.math.rotate(diff_vec, root_quat)[: self._config.dim]
+        )
         body_targets = jax.vmap(to_egocentric)(body_rel_pos)
 
         return collections.OrderedDict(
@@ -746,7 +758,13 @@ class Imitation(worm_base.CelegansEnv):
         body_pos = self._get_bodies_pos(data, flatten=False)
         total_dist_sqr = 0.0
         for body_name in bodies:
-            dist_sqr = jp.sum((body_pos[body_name][:self.config.dim] - target.body_xpos(body_name)[:self.config.dim]) ** 2)
+            dist_sqr = jp.sum(
+                (
+                    body_pos[body_name][: self.config.dim]
+                    - target.body_xpos(body_name)[: self.config.dim]
+                )
+                ** 2
+            )
             metrics[f"errors/bodies/{body_name}"] = metrics[
                 f"errors/per_step/bodies/{body_name}"
             ] = jp.sqrt(dist_sqr)
@@ -977,8 +995,8 @@ class Imitation(worm_base.CelegansEnv):
             Boolean indicating if root is too far from reference.
         """
         target = self._get_current_target(data, info)
-        target_pos = target.body_xpos(self.root_name)[:self.config.dim]
-        root_pos = self._get_root_pos(data)[:self.config.dim]
+        target_pos = target.body_xpos(self.root_name)[: self.config.dim]
+        root_pos = self._get_root_pos(data)[: self.config.dim]
         distance = jp.linalg.norm(target_pos - root_pos)
         return distance > max_distance
 
@@ -1347,8 +1365,8 @@ class Imitation(worm_base.CelegansEnv):
             reference = self.reference_clips.at(clip=clip_idx, frame=frame)
             checks = collections.OrderedDict()
             checks["root_pos"] = jp.allclose(
-                self.root_body(data).xpos,
-                reference.body_xpos(self.root_name),
+                self.root_body(data).xpos[: self._config.dim],
+                reference.body_xpos(self.root_name)[: self._config.dim],
                 atol=atol,
             )
             checks["root_quat"] = jp.allclose(
@@ -1362,8 +1380,8 @@ class Imitation(worm_base.CelegansEnv):
             body_pos = self._get_bodies_pos(data, flatten=False)
             for body_name, body_pos in body_pos.items():
                 checks[f"body_xpos/{body_name}"] = jp.allclose(
-                    body_pos,
-                    reference.body_xpos(body_name),
+                    body_pos[: self._config.dim],
+                    reference.body_xpos(body_name)[: self._config.dim],
                     atol=atol,
                 )
             if self._config.qvel_init == "reference":
@@ -1411,10 +1429,10 @@ class Imitation(worm_base.CelegansEnv):
                     )
                     if name == "root_pos":
                         warnings.warn(
-                            f"Root position: {self.root_body(data).xpos} != {reference.body_xpos(self.root_name)}"
+                            f"Root position: {self.root_body(data).xpos[: self._config.dim]} != {reference.body_xpos(self.root_name)[: self._config.dim]}"
                         )
                         warnings.warn(
-                            f"diff: {jp.linalg.norm(self.root_body(data).xpos - reference.body_xpos(self.root_name))}"
+                            f"diff: {jp.linalg.norm(self.root_body(data).xpos[: self._config.dim] - reference.body_xpos(self.root_name)[: self._config.dim])}"
                         )
                     elif name == "root_quat":
                         warnings.warn(
@@ -1440,10 +1458,10 @@ class Imitation(worm_base.CelegansEnv):
                     elif "body_xpos" in name:
                         body_name = name.split("/")[-1]
                         warnings.warn(
-                            f"Body {body_name} pos: {self._get_bodies_pos(data, flatten=False)[body_name]}(Sim) != {reference.body_xpos(body_name)} (Ref)"
+                            f"Body {body_name} pos: {self._get_bodies_pos(data, flatten=False)[body_name][: self._config.dim]}(Sim) != {reference.body_xpos(body_name)[: self._config.dim]} (Ref)"
                         )
                         warnings.warn(
-                            f"diff: {jp.linalg.norm(self._get_bodies_pos(data, flatten=False)[body_name] - reference.body_xpos(body_name))}"
+                            f"diff: {jp.linalg.norm(self._get_bodies_pos(data, flatten=False)[body_name][: self._config.dim] - reference.body_xpos(body_name)[: self._config.dim])}"
                         )
                     any_failed = True
         return not any_failed
