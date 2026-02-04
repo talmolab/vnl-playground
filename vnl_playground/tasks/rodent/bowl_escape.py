@@ -86,7 +86,7 @@ def default_config() -> config_dict.ConfigDict:
         bowl_amplitude=-10,
         reward_terms={
             "escape_x_upright": {"weight": 1.0},
-            "speed": {"weight": 1.0},
+            "speed": {"weight": 0.0},
         },
         termination_criteria={
             "fallen": {},
