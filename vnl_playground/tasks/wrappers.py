@@ -125,9 +125,9 @@ class HighLevelWrapper(wrapper.Wrapper):
             )
 
         self._state_obs_size = int(
-            jax.flatten_util.ravel_pytree(
-                sample_state.obs["state"][highlvl_obs_key]
-            )[0].shape[0]
+            jax.flatten_util.ravel_pytree(sample_state.obs["state"][highlvl_obs_key])[
+                0
+            ].shape[0]
         )
         self._privileged_obs_size = int(
             jax.flatten_util.ravel_pytree(
