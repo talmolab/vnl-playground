@@ -68,7 +68,12 @@ def default_config() -> config_dict.ConfigDict:
         tolerance=1.5,  # Per-frame joint angle L2 threshold (radians) - relaxed for high-level matching
         use_wrapped_angles=True,  # Use atan2(sin,cos) for angle diff
         # Reward params
-        # Note: sequence_match must come before dp_progress (order matters for DP state)
+        # WARNING: reward_terms evaluation order matters. sequence_match must come
+        # before dp_progress because dp_progress reads DP state updated by
+        # sequence_match. This relies on Python dict insertion order (3.7+).
+        # If configs are ever loaded from sources that don't preserve order
+        # (e.g. some YAML parsers), this will silently break. Consider combining
+        # these into a single reward function or adding a runtime order check.
         reward_terms={
             "sequence_match": {"weight": 1.0},
             "dp_progress": {"weight": 0.1},
@@ -223,8 +228,8 @@ class SparseImitation(rodent_base.RodentEnv):
             "dp_progress": 0.0,
         }
         obs = self._get_obs(data, info)
-        reward = self._get_reward(data, info, metrics)
         terminated = self._is_done(data, info, metrics)
+        reward = self._get_reward(data, info, metrics)
         done = jp.logical_or(episode_ended, terminated)
 
         return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
@@ -257,13 +262,15 @@ class SparseImitation(rodent_base.RodentEnv):
         obs = self._get_obs(data, info)
 
         metrics = state.metrics.copy()
+
+        # Compute termination first so metrics["terminations/any"] is
+        # available for reward functions (e.g. survival reward).
+        terminated = self._is_done(data, info, metrics)
+
         reward = self._get_reward(data, info, metrics)
 
         # Handle nans during sim
         reward = jp.nan_to_num(reward)
-
-        # Check for termination (fallen, NaN, etc.)
-        terminated = self._is_done(data, info, metrics)
         done = jp.logical_or(episode_ended, terminated)
 
         return state.replace(
@@ -465,6 +472,9 @@ class SparseImitation(rodent_base.RodentEnv):
         Encourages the agent to avoid termination conditions and keep
         attempting to match the sequence.
 
+        Requires _is_done to have been called first so that
+        metrics["terminations/any"] is populated.
+
         Args:
             data: Simulation data.
             info: State info.
@@ -474,13 +484,7 @@ class SparseImitation(rodent_base.RodentEnv):
         Returns:
             Weighted survival reward (0 if terminated, weight otherwise).
         """
-        # Check if this step results in termination
-        terminated = False
-        for name, kwargs in self._config.termination_criteria.items():
-            termination_fcn = self._registry.terminations[name]
-            terminated = jp.logical_or(
-                terminated, termination_fcn(self, data, info, **kwargs)
-            )
+        terminated = metrics.get("terminations/any", jp.array(0.0)) > 0.5
 
         reward = jp.where(terminated, 0.0, weight)
         metrics["rewards/survival"] = reward
@@ -512,8 +516,8 @@ class SparseImitation(rodent_base.RodentEnv):
 
         below_ground = torso_z < min_torso_z
 
-        # xmat is 3x3 rotation matrix, [-1, -1] is element (2,2) = cos(angle from vertical)
-        upright_z = torso_body.xmat[-1, -1]
+        # xmat is flat (9,) from MJX body binding; reshape to (3,3) for indexing
+        upright_z = torso_body.xmat.reshape(3, 3)[2, 2]
         max_cos_angle = np.cos(np.deg2rad(max_torso_angle))
         too_tilted = upright_z < max_cos_angle
 

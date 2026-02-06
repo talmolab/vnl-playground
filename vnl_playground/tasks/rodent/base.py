@@ -43,6 +43,11 @@ def default_config() -> config_dict.ConfigDict:
 class RodentEnv(mjx_env.MjxEnv):
     """Base class for rodent environments."""
 
+    # TODO: Move duplicated utility methods (null_action, proprioceptive_obs_size,
+    # non_proprioceptive_obs_size, observation_size, non_flattened_observation_size)
+    # from subclasses (joystick, sparse_imitation, rearing, maintain_velocity) into
+    # this base class.
+
     # Subclasses should set this to their TaskRegistry instance
     _registry: TaskRegistry = None
 

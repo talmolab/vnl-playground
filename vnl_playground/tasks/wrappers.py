@@ -124,10 +124,15 @@ class HighLevelWrapper(wrapper.Wrapper):
                 f"HighLevelWrapper requires dict observations. Got {type(sample_state.obs).__name__}."
             )
 
-        self._task_obs_size = int(
-            jax.flatten_util.ravel_pytree(sample_state.obs[obs_key][highlvl_obs_key])[
-                0
-            ].shape[0]
+        self._state_obs_size = int(
+            jax.flatten_util.ravel_pytree(
+                sample_state.obs["state"][highlvl_obs_key]
+            )[0].shape[0]
+        )
+        self._privileged_obs_size = int(
+            jax.flatten_util.ravel_pytree(
+                sample_state.obs["privileged_state"][highlvl_obs_key]
+            )[0].shape[0]
         )
         _, self._dummy_decoder_extras = decoder_inference_fn(
             jp.zeros(latent_size + self._proprioceptive_obs_size)
@@ -186,6 +191,6 @@ class HighLevelWrapper(wrapper.Wrapper):
         Returns dict matching the state/privileged_state structure.
         """
         return {
-            "state": self._task_obs_size,
-            "privileged_state": self._task_obs_size,
+            "state": self._state_obs_size,
+            "privileged_state": self._privileged_obs_size,
         }
