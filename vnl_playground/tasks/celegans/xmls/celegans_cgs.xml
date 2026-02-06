@@ -10,9 +10,8 @@
     <geom conaffinity="1" condim="3" contype="1" material="geom" rgba="0.8 0.6 .4 1"/>
     <!-- <joint armature="0.1"/> -->
     <site type="sphere" size="0.000416572" rgba="0.8 0.2 0.1 1.0"/>
-    <mesh refquat="1.0 0.0 0 0" scale="0.0416572 0.0416572 0.0416572">
+    <mesh scale="0.0416572 0.0416572 0.0416572"/>
     <muscle ctrllimited="true" ctrlrange="0 1"/>
-    <spatial width="0.0002" rgba="0.95 0.3 0.3 1">
     <joint armature="1e-6"/>
     <default class="mesh">
       <geom type="mesh" contype="0" conaffinity="0" density="1"/>
@@ -21,10 +20,10 @@
        <geom type="sphere" contype="1" conaffinity="0" condim="3" density="0"/>
     </default>
     <default class="end_hinges">
-      <joint type="hinge" axis="0 0 1" limited="true" range="-70 70">
+      <joint type="hinge" axis="0 0 1" limited="true" range="-70 70"/>
     </default>
     <default class="body_hinges">
-      <joint type="hinge" axis="0 0 1" limited="true" range="-100 100">
+      <joint type="hinge" axis="0 0 1" limited="true" range="-100 100"/>
     </default>
   </default>
   <asset>
@@ -33,31 +32,31 @@
     <texture builtin="checker" height="100" name="texplane" rgb1="0 0 0" rgb2="0.8 0.8 0.8" type="2d" width="100"/>
     <material name="MatPlane" reflectance="0.5" shininess="1" specular="1" texrepeat="30 30" texture="texplane"/>
     <material name="geom" texture="texgeom" texuniform="true"/>
-    <mesh name="ellipsoid1" file="Ellipsoid.001.stl" refpos="1.25 0 0"/>
-    <mesh name="ellipsoid2" file="Ellipsoid.002.stl" refpos="1.1574074074074074 0 0"/>
+    <mesh name="ellipsoid1" file="Ellipsoid.001.stl" refpos="1.25 0 0" refquat="1.0 0.0 0 0" />
+    <mesh name="ellipsoid2" file="Ellipsoid.002.stl" refpos="1.1574074074074074 0 0" refquat="1.0 0.0 0 0" />
     <mesh name="ellipsoid3" file="Ellipsoid.003.stl" refpos="1.0567632850241546 0 0" refquat="0.9393937941349282 0.3428400494994482 0 0"/>
-    <mesh name="ellipsoid4" file="Ellipsoid.004.stl" refpos="0.9561191626409018 0 0"/>
-    <mesh name="ellipsoid5" file="Ellipsoid.005.stl" refpos="0.855475040257649 0 0"/>
-    <mesh name="ellipsoid6" file="Ellipsoid.006.stl" refpos="0.7548309178743962 0 0"/>
+    <mesh name="ellipsoid4" file="Ellipsoid.004.stl" refpos="0.9561191626409018 0 0" refquat="1.0 0.0 0 0" />
+    <mesh name="ellipsoid5" file="Ellipsoid.005.stl" refpos="0.855475040257649 0 0" refquat="1.0 0.0 0 0" />
+    <mesh name="ellipsoid6" file="Ellipsoid.006.stl" refpos="0.7548309178743962 0 0" refquat="1.0 0.0 0 0" />
     <mesh name="ellipsoid7" file="Ellipsoid.007.stl" refpos="0.6541867954911433 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0"/>
     <mesh name="ellipsoid8" file="Ellipsoid.008.stl" refpos="0.5535426731078905 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0"/>
     <mesh name="ellipsoid9" file="Ellipsoid.009.stl" refpos="0.45289855072463775 0 0" refquat="0.984807753012208 0.17364817766693033 0 0"/>
     <mesh name="ellipsoid10" file="Ellipsoid.010.stl" refpos="0.35225442834138493 0 0" refquat="0.9271838545667874 0.374606593415912 0 0"/>
-    <mesh name="ellipsoid11" file="Ellipsoid.011.stl" refpos="0.25161030595813205 0 0"/>
+    <mesh name="ellipsoid11" file="Ellipsoid.011.stl" refpos="0.25161030595813205 0 0" refquat="1.0 0.0 0 0"/>
     <mesh name="ellipsoid12" file="Ellipsoid.012.stl" refpos="0.15096618357487912 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0"/>
     <mesh name="ellipsoid13" file="Ellipsoid.013.stl" refpos="0.05032206119162645 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0"/>
     <mesh name="ellipsoid14" file="Ellipsoid.014.stl" refpos="-0.05032206119162645 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0"/>
-    <mesh name="ellipsoid15" file="Ellipsoid.015.stl" refpos="-0.15096618357487912 0 0"/>
+    <mesh name="ellipsoid15" file="Ellipsoid.015.stl" refpos="-0.15096618357487912 0 0" refquat="1.0 0.0 0 0" />
     <mesh name="ellipsoid16" file="Ellipsoid.016.stl" refpos="-0.25161030595813205 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0"/>
-    <mesh name="ellipsoid17" file="Ellipsoid.017.stl" refpos="-0.35225442834138493 0 0"/>
+    <mesh name="ellipsoid17" file="Ellipsoid.017.stl" refpos="-0.35225442834138493 0 0" refquat="1.0 0.0 0 0" />
     <mesh name="ellipsoid18" file="Ellipsoid.018.stl" refpos="-0.45289855072463764 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0"/>
     <mesh name="ellipsoid19" file="Ellipsoid.019.stl" refpos="-0.5535426731078905 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0"/>
-    <mesh name="ellipsoid20" file="Ellipsoid.020.stl" refpos="-0.6541867954911432 0 0"/>
+    <mesh name="ellipsoid20" file="Ellipsoid.020.stl" refpos="-0.6541867954911432 0 0" refquat="1.0 0.0 0 0" />
     <mesh name="ellipsoid21" file="Ellipsoid.021.stl" refpos="-0.7548309178743962 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0"/>
-    <mesh name="ellipsoid22" file="Ellipsoid.022.stl" refpos="-0.855475040257649 0 0"/>
+    <mesh name="ellipsoid22" file="Ellipsoid.022.stl" refpos="-0.855475040257649 0 0" refquat="1.0 0.0 0 0" />
     <mesh name="ellipsoid23" file="Ellipsoid.023.stl" refpos="-0.9561191626409019 0 0" refquat="0.9222009716704518 0.3867109616368206 0 0"/>
     <mesh name="ellipsoid24" file="Ellipsoid.024.stl" refpos="-1.0567632850241548 0 0" refquat="0.9238795325112867 0.3826834323650898 0 0"/>
-    <mesh name="ellipsoid25" file="Ellipsoid.025.stl" refpos="-1.1574074074074072 0 0"/>
+    <mesh name="ellipsoid25" file="Ellipsoid.025.stl" refpos="-1.1574074074074072 0 0" refquat="1.0 0.0 0 0"/>
   </asset>
   <worldbody>
     <camera name="fixedcam" mode="fixed" pos="0 0 2.08286" xyaxes="1 0 0 0 1 0"/>
@@ -517,477 +516,477 @@
     <exclude name="torso24_25" body1="torso24_body" body2="torso25_body"/>
   </contact>
   <tendon>
-    <spatial name="tendon_dbwml1">
+    <spatial name="tendon_dbwml1" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml1"/>
       <geom geom="geom2" sidesite="sidesite2_dorsal"/>
       <site site="site_posterior_dbwml1"/>
     </spatial>
-    <spatial name="tendon_dbwmr1">
+    <spatial name="tendon_dbwmr1" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr1"/>
       <geom geom="geom2" sidesite="sidesite2_dorsal"/>
       <site site="site_posterior_dbwmr1"/>
     </spatial>
-    <spatial name="tendon_vbwml1">
+    <spatial name="tendon_vbwml1" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml1"/>
       <geom geom="geom2" sidesite="sidesite2_ventral"/>
       <site site="site_posterior_vbwml1"/>
     </spatial>
-    <spatial name="tendon_vbwmr1">
+    <spatial name="tendon_vbwmr1" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr1"/>
       <geom geom="geom2" sidesite="sidesite2_ventral"/>
       <site site="site_posterior_vbwmr1"/>
     </spatial>
-    <spatial name="tendon_dbwml2">
+    <spatial name="tendon_dbwml2" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml2"/>
       <geom geom="geom3" sidesite="sidesite3_dorsal"/>
       <site site="site_posterior_dbwml2"/>
     </spatial>
-    <spatial name="tendon_dbwmr2">
+    <spatial name="tendon_dbwmr2" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr2"/>
       <geom geom="geom3" sidesite="sidesite3_dorsal"/>
       <site site="site_posterior_dbwmr2"/>
     </spatial>
-    <spatial name="tendon_vbwml2">
+    <spatial name="tendon_vbwml2" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml2"/>
       <geom geom="geom3" sidesite="sidesite3_ventral"/>
       <site site="site_posterior_vbwml2"/>
     </spatial>
-    <spatial name="tendon_vbwmr2">
+    <spatial name="tendon_vbwmr2" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr2"/>
       <geom geom="geom3" sidesite="sidesite3_ventral"/>
       <site site="site_posterior_vbwmr2"/>
     </spatial>
-    <spatial name="tendon_dbwml3">
+    <spatial name="tendon_dbwml3" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml3"/>
       <geom geom="geom4" sidesite="sidesite4_dorsal"/>
       <site site="site_posterior_dbwml3"/>
     </spatial>
-    <spatial name="tendon_dbwmr3">
+    <spatial name="tendon_dbwmr3" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr3"/>
       <geom geom="geom4" sidesite="sidesite4_dorsal"/>
       <site site="site_posterior_dbwmr3"/>
     </spatial>
-    <spatial name="tendon_vbwml3">
+    <spatial name="tendon_vbwml3" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml3"/>
       <geom geom="geom4" sidesite="sidesite4_ventral"/>
       <site site="site_posterior_vbwml3"/>
     </spatial>
-    <spatial name="tendon_vbwmr3">
+    <spatial name="tendon_vbwmr3" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr3"/>
       <geom geom="geom4" sidesite="sidesite4_ventral"/>
       <site site="site_posterior_vbwmr3"/>
     </spatial>
-    <spatial name="tendon_dbwml4">
+    <spatial name="tendon_dbwml4" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml4"/>
       <geom geom="geom5" sidesite="sidesite5_dorsal"/>
       <site site="site_posterior_dbwml4"/>
     </spatial>
-    <spatial name="tendon_dbwmr4">
+    <spatial name="tendon_dbwmr4" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr4"/>
       <geom geom="geom5" sidesite="sidesite5_dorsal"/>
       <site site="site_posterior_dbwmr4"/>
     </spatial>
-    <spatial name="tendon_vbwml4">
+    <spatial name="tendon_vbwml4" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml4"/>
       <geom geom="geom5" sidesite="sidesite5_ventral"/>
       <site site="site_posterior_vbwml4"/>
     </spatial>
-    <spatial name="tendon_vbwmr4">
+    <spatial name="tendon_vbwmr4" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr4"/>
       <geom geom="geom5" sidesite="sidesite5_ventral"/>
       <site site="site_posterior_vbwmr4"/>
     </spatial>
-    <spatial name="tendon_dbwml5">
+    <spatial name="tendon_dbwml5" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml5"/>
       <geom geom="geom6" sidesite="sidesite6_dorsal"/>
       <site site="site_posterior_dbwml5"/>
     </spatial>
-    <spatial name="tendon_dbwmr5">
+    <spatial name="tendon_dbwmr5" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr5"/>
       <geom geom="geom6" sidesite="sidesite6_dorsal"/>
       <site site="site_posterior_dbwmr5"/>
     </spatial>
-    <spatial name="tendon_vbwml5">
+    <spatial name="tendon_vbwml5" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml5"/>
       <geom geom="geom6" sidesite="sidesite6_ventral"/>
       <site site="site_posterior_vbwml5"/>
     </spatial>
-    <spatial name="tendon_vbwmr5">
+    <spatial name="tendon_vbwmr5" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr5"/>
       <geom geom="geom6" sidesite="sidesite6_ventral"/>
       <site site="site_posterior_vbwmr5"/>
     </spatial>
-    <spatial name="tendon_dbwml6">
+    <spatial name="tendon_dbwml6" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml6"/>
       <geom geom="geom7" sidesite="sidesite7_dorsal"/>
       <site site="site_posterior_dbwml6"/>
     </spatial>
-    <spatial name="tendon_dbwmr6">
+    <spatial name="tendon_dbwmr6" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr6"/>
       <geom geom="geom7" sidesite="sidesite7_dorsal"/>
       <site site="site_posterior_dbwmr6"/>
     </spatial>
-    <spatial name="tendon_vbwml6">
+    <spatial name="tendon_vbwml6" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml6"/>
       <geom geom="geom7" sidesite="sidesite7_ventral"/>
       <site site="site_posterior_vbwml6"/>
     </spatial>
-    <spatial name="tendon_vbwmr6">
+    <spatial name="tendon_vbwmr6" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr6"/>
       <geom geom="geom7" sidesite="sidesite7_ventral"/>
       <site site="site_posterior_vbwmr6"/>
     </spatial>
-    <spatial name="tendon_dbwml7">
+    <spatial name="tendon_dbwml7" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml7"/>
       <geom geom="geom8" sidesite="sidesite8_dorsal"/>
       <site site="site_posterior_dbwml7"/>
     </spatial>
-    <spatial name="tendon_dbwmr7">
+    <spatial name="tendon_dbwmr7" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr7"/>
       <geom geom="geom8" sidesite="sidesite8_dorsal"/>
       <site site="site_posterior_dbwmr7"/>
     </spatial>
-    <spatial name="tendon_vbwml7">
+    <spatial name="tendon_vbwml7" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml7"/>
       <geom geom="geom8" sidesite="sidesite8_ventral"/>
       <site site="site_posterior_vbwml7"/>
     </spatial>
-    <spatial name="tendon_vbwmr7">
+    <spatial name="tendon_vbwmr7" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr7"/>
       <geom geom="geom8" sidesite="sidesite8_ventral"/>
       <site site="site_posterior_vbwmr7"/>
     </spatial>
-    <spatial name="tendon_dbwml8">
+    <spatial name="tendon_dbwml8" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml8"/>
       <geom geom="geom9" sidesite="sidesite9_dorsal"/>
       <site site="site_posterior_dbwml8"/>
     </spatial>
-    <spatial name="tendon_dbwmr8">
+    <spatial name="tendon_dbwmr8" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr8"/>
       <geom geom="geom9" sidesite="sidesite9_dorsal"/>
       <site site="site_posterior_dbwmr8"/>
     </spatial>
-    <spatial name="tendon_vbwml8">
+    <spatial name="tendon_vbwml8" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml8"/>
       <geom geom="geom9" sidesite="sidesite9_ventral"/>
       <site site="site_posterior_vbwml8"/>
     </spatial>
-    <spatial name="tendon_vbwmr8">
+    <spatial name="tendon_vbwmr8" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr8"/>
       <geom geom="geom9" sidesite="sidesite9_ventral"/>
       <site site="site_posterior_vbwmr8"/>
     </spatial>
-    <spatial name="tendon_dbwml9">
+    <spatial name="tendon_dbwml9" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml9"/>
       <geom geom="geom10" sidesite="sidesite10_dorsal"/>
       <site site="site_posterior_dbwml9"/>
     </spatial>
-    <spatial name="tendon_dbwmr9">
+    <spatial name="tendon_dbwmr9" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr9"/>
       <geom geom="geom10" sidesite="sidesite10_dorsal"/>
       <site site="site_posterior_dbwmr9"/>
     </spatial>
-    <spatial name="tendon_vbwml9">
+    <spatial name="tendon_vbwml9" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml9"/>
       <geom geom="geom10" sidesite="sidesite10_ventral"/>
       <site site="site_posterior_vbwml9"/>
     </spatial>
-    <spatial name="tendon_vbwmr9">
+    <spatial name="tendon_vbwmr9" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr9"/>
       <geom geom="geom10" sidesite="sidesite10_ventral"/>
       <site site="site_posterior_vbwmr9"/>
     </spatial>
-    <spatial name="tendon_dbwml10">
+    <spatial name="tendon_dbwml10" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml10"/>
       <geom geom="geom11" sidesite="sidesite11_dorsal"/>
       <site site="site_posterior_dbwml10"/>
     </spatial>
-    <spatial name="tendon_dbwmr10">
+    <spatial name="tendon_dbwmr10" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr10"/>
       <geom geom="geom11" sidesite="sidesite11_dorsal"/>
       <site site="site_posterior_dbwmr10"/>
     </spatial>
-    <spatial name="tendon_vbwml10">
+    <spatial name="tendon_vbwml10" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml10"/>
       <geom geom="geom11" sidesite="sidesite11_ventral"/>
       <site site="site_posterior_vbwml10"/>
     </spatial>
-    <spatial name="tendon_vbwmr10">
+    <spatial name="tendon_vbwmr10" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr10"/>
       <geom geom="geom11" sidesite="sidesite11_ventral"/>
       <site site="site_posterior_vbwmr10"/>
     </spatial>
-    <spatial name="tendon_dbwml11">
+    <spatial name="tendon_dbwml11" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml11"/>
       <geom geom="geom12" sidesite="sidesite12_dorsal"/>
       <site site="site_posterior_dbwml11"/>
     </spatial>
-    <spatial name="tendon_dbwmr11">
+    <spatial name="tendon_dbwmr11" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr11"/>
       <geom geom="geom12" sidesite="sidesite12_dorsal"/>
       <site site="site_posterior_dbwmr11"/>
     </spatial>
-    <spatial name="tendon_vbwml11">
+    <spatial name="tendon_vbwml11" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml11"/>
       <geom geom="geom12" sidesite="sidesite12_ventral"/>
       <site site="site_posterior_vbwml11"/>
     </spatial>
-    <spatial name="tendon_vbwmr11">
+    <spatial name="tendon_vbwmr11" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr11"/>
       <geom geom="geom12" sidesite="sidesite12_ventral"/>
       <site site="site_posterior_vbwmr11"/>
     </spatial>
-    <spatial name="tendon_dbwml12">
+    <spatial name="tendon_dbwml12" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml12"/>
       <geom geom="geom13" sidesite="sidesite13_dorsal"/>
       <site site="site_posterior_dbwml12"/>
     </spatial>
-    <spatial name="tendon_dbwmr12">
+    <spatial name="tendon_dbwmr12" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr12"/>
       <geom geom="geom13" sidesite="sidesite13_dorsal"/>
       <site site="site_posterior_dbwmr12"/>
     </spatial>
-    <spatial name="tendon_vbwml12">
+    <spatial name="tendon_vbwml12" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml12"/>
       <geom geom="geom13" sidesite="sidesite13_ventral"/>
       <site site="site_posterior_vbwml12"/>
     </spatial>
-    <spatial name="tendon_vbwmr12">
+    <spatial name="tendon_vbwmr12" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr12"/>
       <geom geom="geom13" sidesite="sidesite13_ventral"/>
       <site site="site_posterior_vbwmr12"/>
     </spatial>
-    <spatial name="tendon_dbwml13">
+    <spatial name="tendon_dbwml13" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml13"/>
       <geom geom="geom14" sidesite="sidesite14_dorsal"/>
       <site site="site_posterior_dbwml13"/>
     </spatial>
-    <spatial name="tendon_dbwmr13">
+    <spatial name="tendon_dbwmr13" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr13"/>
       <geom geom="geom14" sidesite="sidesite14_dorsal"/>
       <site site="site_posterior_dbwmr13"/>
     </spatial>
-    <spatial name="tendon_vbwml13">
+    <spatial name="tendon_vbwml13" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml13"/>
       <geom geom="geom14" sidesite="sidesite14_ventral"/>
       <site site="site_posterior_vbwml13"/>
     </spatial>
-    <spatial name="tendon_vbwmr13">
+    <spatial name="tendon_vbwmr13" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr13"/>
       <geom geom="geom14" sidesite="sidesite14_ventral"/>
       <site site="site_posterior_vbwmr13"/>
     </spatial>
-    <spatial name="tendon_dbwml14">
+    <spatial name="tendon_dbwml14" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml14"/>
       <geom geom="geom15" sidesite="sidesite15_dorsal"/>
       <site site="site_posterior_dbwml14"/>
     </spatial>
-    <spatial name="tendon_dbwmr14">
+    <spatial name="tendon_dbwmr14" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr14"/>
       <geom geom="geom15" sidesite="sidesite15_dorsal"/>
       <site site="site_posterior_dbwmr14"/>
     </spatial>
-    <spatial name="tendon_vbwml14">
+    <spatial name="tendon_vbwml14" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml14"/>
       <geom geom="geom15" sidesite="sidesite15_ventral"/>
       <site site="site_posterior_vbwml14"/>
     </spatial>
-    <spatial name="tendon_vbwmr14">
+    <spatial name="tendon_vbwmr14" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr14"/>
       <geom geom="geom15" sidesite="sidesite15_ventral"/>
       <site site="site_posterior_vbwmr14"/>
     </spatial>
-    <spatial name="tendon_dbwml15">
+    <spatial name="tendon_dbwml15" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml15"/>
       <geom geom="geom16" sidesite="sidesite16_dorsal"/>
       <site site="site_posterior_dbwml15"/>
     </spatial>
-    <spatial name="tendon_dbwmr15">
+    <spatial name="tendon_dbwmr15" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr15"/>
       <geom geom="geom16" sidesite="sidesite16_dorsal"/>
       <site site="site_posterior_dbwmr15"/>
     </spatial>
-    <spatial name="tendon_vbwml15">
+    <spatial name="tendon_vbwml15" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml15"/>
       <geom geom="geom16" sidesite="sidesite16_ventral"/>
       <site site="site_posterior_vbwml15"/>
     </spatial>
-    <spatial name="tendon_vbwmr15">
+    <spatial name="tendon_vbwmr15" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr15"/>
       <geom geom="geom16" sidesite="sidesite16_ventral"/>
       <site site="site_posterior_vbwmr15"/>
     </spatial>
-    <spatial name="tendon_dbwml16">
+    <spatial name="tendon_dbwml16" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml16"/>
       <geom geom="geom17" sidesite="sidesite17_dorsal"/>
       <site site="site_posterior_dbwml16"/>
     </spatial>
-    <spatial name="tendon_dbwmr16">
+    <spatial name="tendon_dbwmr16" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr16"/>
       <geom geom="geom17" sidesite="sidesite17_dorsal"/>
       <site site="site_posterior_dbwmr16"/>
     </spatial>
-    <spatial name="tendon_vbwml16">
+    <spatial name="tendon_vbwml16" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml16"/>
       <geom geom="geom17" sidesite="sidesite17_ventral"/>
       <site site="site_posterior_vbwml16"/>
     </spatial>
-    <spatial name="tendon_vbwmr16">
+    <spatial name="tendon_vbwmr16" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr16"/>
       <geom geom="geom17" sidesite="sidesite17_ventral"/>
       <site site="site_posterior_vbwmr16"/>
     </spatial>
-    <spatial name="tendon_dbwml17">
+    <spatial name="tendon_dbwml17" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml17"/>
       <geom geom="geom18" sidesite="sidesite18_dorsal"/>
       <site site="site_posterior_dbwml17"/>
     </spatial>
-    <spatial name="tendon_dbwmr17">
+    <spatial name="tendon_dbwmr17" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr17"/>
       <geom geom="geom18" sidesite="sidesite18_dorsal"/>
       <site site="site_posterior_dbwmr17"/>
     </spatial>
-    <spatial name="tendon_vbwml17">
+    <spatial name="tendon_vbwml17" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml17"/>
       <geom geom="geom18" sidesite="sidesite18_ventral"/>
       <site site="site_posterior_vbwml17"/>
     </spatial>
-    <spatial name="tendon_vbwmr17">
+    <spatial name="tendon_vbwmr17" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr17"/>
       <geom geom="geom18" sidesite="sidesite18_ventral"/>
       <site site="site_posterior_vbwmr17"/>
     </spatial>
-    <spatial name="tendon_dbwml18">
+    <spatial name="tendon_dbwml18" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml18"/>
       <geom geom="geom19" sidesite="sidesite19_dorsal"/>
       <site site="site_posterior_dbwml18"/>
     </spatial>
-    <spatial name="tendon_dbwmr18">
+    <spatial name="tendon_dbwmr18" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr18"/>
       <geom geom="geom19" sidesite="sidesite19_dorsal"/>
       <site site="site_posterior_dbwmr18"/>
     </spatial>
-    <spatial name="tendon_vbwml18">
+    <spatial name="tendon_vbwml18" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml18"/>
       <geom geom="geom19" sidesite="sidesite19_ventral"/>
       <site site="site_posterior_vbwml18"/>
     </spatial>
-    <spatial name="tendon_vbwmr18">
+    <spatial name="tendon_vbwmr18" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr18"/>
       <geom geom="geom19" sidesite="sidesite19_ventral"/>
       <site site="site_posterior_vbwmr18"/>
     </spatial>
-    <spatial name="tendon_dbwml19">
+    <spatial name="tendon_dbwml19" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml19"/>
       <geom geom="geom20" sidesite="sidesite20_dorsal"/>
       <site site="site_posterior_dbwml19"/>
     </spatial>
-    <spatial name="tendon_dbwmr19">
+    <spatial name="tendon_dbwmr19" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr19"/>
       <geom geom="geom20" sidesite="sidesite20_dorsal"/>
       <site site="site_posterior_dbwmr19"/>
     </spatial>
-    <spatial name="tendon_vbwml19">
+    <spatial name="tendon_vbwml19" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml19"/>
       <geom geom="geom20" sidesite="sidesite20_ventral"/>
       <site site="site_posterior_vbwml19"/>
     </spatial>
-    <spatial name="tendon_vbwmr19">
+    <spatial name="tendon_vbwmr19" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr19"/>
       <geom geom="geom20" sidesite="sidesite20_ventral"/>
       <site site="site_posterior_vbwmr19"/>
     </spatial>
-    <spatial name="tendon_dbwml20">
+    <spatial name="tendon_dbwml20" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml20"/>
       <geom geom="geom21" sidesite="sidesite21_dorsal"/>
       <site site="site_posterior_dbwml20"/>
     </spatial>
-    <spatial name="tendon_dbwmr20">
+    <spatial name="tendon_dbwmr20" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr20"/>
       <geom geom="geom21" sidesite="sidesite21_dorsal"/>
       <site site="site_posterior_dbwmr20"/>
     </spatial>
-    <spatial name="tendon_vbwml20">
+    <spatial name="tendon_vbwml20" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml20"/>
       <geom geom="geom21" sidesite="sidesite21_ventral"/>
       <site site="site_posterior_vbwml20"/>
     </spatial>
-    <spatial name="tendon_vbwmr20">
+    <spatial name="tendon_vbwmr20" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr20"/>
       <geom geom="geom21" sidesite="sidesite21_ventral"/>
       <site site="site_posterior_vbwmr20"/>
     </spatial>
-    <spatial name="tendon_dbwml21">
+    <spatial name="tendon_dbwml21" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml21"/>
       <geom geom="geom22" sidesite="sidesite22_dorsal"/>
       <site site="site_posterior_dbwml21"/>
     </spatial>
-    <spatial name="tendon_dbwmr21">
+    <spatial name="tendon_dbwmr21" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr21"/>
       <geom geom="geom22" sidesite="sidesite22_dorsal"/>
       <site site="site_posterior_dbwmr21"/>
     </spatial>
-    <spatial name="tendon_vbwml21">
+    <spatial name="tendon_vbwml21" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml21"/>
       <geom geom="geom22" sidesite="sidesite22_ventral"/>
       <site site="site_posterior_vbwml21"/>
     </spatial>
-    <spatial name="tendon_vbwmr21">
+    <spatial name="tendon_vbwmr21" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr21"/>
       <geom geom="geom22" sidesite="sidesite22_ventral"/>
       <site site="site_posterior_vbwmr21"/>
     </spatial>
-    <spatial name="tendon_dbwml22">
+    <spatial name="tendon_dbwml22" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml22"/>
       <geom geom="geom23" sidesite="sidesite23_dorsal"/>
       <site site="site_posterior_dbwml22"/>
     </spatial>
-    <spatial name="tendon_dbwmr22">
+    <spatial name="tendon_dbwmr22" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr22"/>
       <geom geom="geom23" sidesite="sidesite23_dorsal"/>
       <site site="site_posterior_dbwmr22"/>
     </spatial>
-    <spatial name="tendon_vbwml22">
+    <spatial name="tendon_vbwml22" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml22"/>
       <geom geom="geom23" sidesite="sidesite23_ventral"/>
       <site site="site_posterior_vbwml22"/>
     </spatial>
-    <spatial name="tendon_vbwmr22">
+    <spatial name="tendon_vbwmr22" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr22"/>
       <geom geom="geom23" sidesite="sidesite23_ventral"/>
       <site site="site_posterior_vbwmr22"/>
     </spatial>
-    <spatial name="tendon_dbwml23">
+    <spatial name="tendon_dbwml23" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml23"/>
       <geom geom="geom24" sidesite="sidesite24_dorsal"/>
       <site site="site_posterior_dbwml23"/>
     </spatial>
-    <spatial name="tendon_dbwmr23">
+    <spatial name="tendon_dbwmr23" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr23"/>
       <geom geom="geom24" sidesite="sidesite24_dorsal"/>
       <site site="site_posterior_dbwmr23"/>
     </spatial>
-    <spatial name="tendon_vbwml23">
+    <spatial name="tendon_vbwml23" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwml23"/>
       <geom geom="geom24" sidesite="sidesite24_ventral"/>
       <site site="site_posterior_vbwml23"/>
     </spatial>
-    <spatial name="tendon_vbwmr23">
+    <spatial name="tendon_vbwmr23" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr23"/>
       <geom geom="geom24" sidesite="sidesite24_ventral"/>
       <site site="site_posterior_vbwmr23"/>
     </spatial>
-    <spatial name="tendon_dbwml24">
+    <spatial name="tendon_dbwml24" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwml24"/>
       <geom geom="geom25" sidesite="sidesite25_dorsal"/>
       <site site="site_posterior_dbwml24"/>
     </spatial>
-    <spatial name="tendon_dbwmr24">
+    <spatial name="tendon_dbwmr24" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_dbwmr24"/>
       <geom geom="geom25" sidesite="sidesite25_dorsal"/>
       <site site="site_posterior_dbwmr24"/>
     </spatial>
-    <spatial name="tendon_vbwmr24">
+    <spatial name="tendon_vbwmr24" width="2e-4" rgba="0.95 0.3 0.3 1">
       <site site="site_anterior_vbwmr24"/>
       <geom geom="geom25" sidesite="sidesite25_ventral"/>
       <site site="site_posterior_vbwmr24"/>

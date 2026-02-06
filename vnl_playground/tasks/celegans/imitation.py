@@ -267,6 +267,8 @@ class Imitation(worm_base.CelegansEnv):
             clip_idx = jax.random.choice(clip_rng, self.num_clips)
         if start_frame is None:
             start_frame = jax.random.randint(start_rng, (), *self.start_frame_range)
+        
+        
         data = self._reset_data(clip_idx, start_frame)
         info: dict[str, Any] = {
             "start_frame": start_frame,
@@ -276,6 +278,9 @@ class Imitation(worm_base.CelegansEnv):
         }
 
         last_valid_frame = self.clip_length - self.reference_length - 1
+        info["episode_length"] = last_valid_frame - start_frame
+
+        info["last_valid_frame"] = last_valid_frame
         info["truncated"] = jp.astype(
             self._get_cur_frame(data, info) > last_valid_frame, float
         )
@@ -373,6 +378,7 @@ class Imitation(worm_base.CelegansEnv):
     def _insert_metric(
         self,
         metrics: Mapping[str, Any],
+        info: Mapping[str, Any],
         name: str,
         reward=None,
         distance=None,
@@ -394,7 +400,7 @@ class Imitation(worm_base.CelegansEnv):
             metrics[f"rewards/{name}"] = metrics[f"rewards/per_step/{name}"] = reward
             metrics[f"rewards/per_step/normalized/{name}"] = reward / max_reward
             metrics["rewards/percent/{name}"] = reward / (
-                self._avg_episode_length * max_reward
+                info["episode_length"] * max_reward
             )
         if distance is not None:
             metrics[f"distances/{name}"] = metrics[f"distances/per_step/{name}"] = (
@@ -660,7 +666,7 @@ class Imitation(worm_base.CelegansEnv):
         distance = jp.linalg.norm(target_pos - root_pos)
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
 
-        self._insert_metric(metrics, "root_pos", reward=reward, distance=distance)
+        self._insert_metric(metrics, info, "root_pos", reward=reward, distance=distance)
         return reward
 
     @_named_reward("root_quat")
@@ -687,7 +693,7 @@ class Imitation(worm_base.CelegansEnv):
 
         reward = weight * jp.exp(-((ang_dist / exp_scale) ** 2) / 2)
 
-        self._insert_metric(metrics, "root_quat", reward=reward, distance=ang_dist)
+        self._insert_metric(metrics, info, "root_quat", reward=reward, distance=ang_dist)
         return reward
 
     @_named_reward("joints")
@@ -711,7 +717,7 @@ class Imitation(worm_base.CelegansEnv):
 
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
 
-        self._insert_metric(metrics, "joints", reward=reward, distance=distance)
+        self._insert_metric(metrics, info, "joints", reward=reward, distance=distance)
         for joint_name, joint_dist in zip(self.joint_names, error):
             metrics[f"errors/joints/{joint_name}"] = metrics[
                 f"errors/per_step/joints/{joint_name}"
@@ -736,7 +742,7 @@ class Imitation(worm_base.CelegansEnv):
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
 
-        self._insert_metric(metrics, "joints_vel", reward=reward, distance=distance)
+        self._insert_metric(metrics, info, "joints_vel", reward=reward, distance=distance)
         return reward
 
     def _get_bodies_dist(
@@ -787,7 +793,7 @@ class Imitation(worm_base.CelegansEnv):
         total_dist = self._get_bodies_dist(data, info, metrics, bodies=self.body_names)
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
 
-        self._insert_metric(metrics, "bodies_pos", reward=reward, distance=total_dist)
+        self._insert_metric(metrics, info, "bodies_pos", reward=reward, distance=total_dist)
         return reward
 
     @_named_reward("end_eff")
@@ -808,7 +814,7 @@ class Imitation(worm_base.CelegansEnv):
         )
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
 
-        self._insert_metric(metrics, "end_eff", reward=reward, distance=total_dist)
+        self._insert_metric(metrics, info, "end_eff", reward=reward, distance=total_dist)
         return reward
 
     @_named_reward("upright")
@@ -828,7 +834,7 @@ class Imitation(worm_base.CelegansEnv):
         min_z, max_z = healthy_z_range
         in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
         reward = weight * in_range.astype(float)
-        self._insert_metric(metrics, "upright", reward=reward, magnitude=torso_z)
+        self._insert_metric(metrics, info, "upright", reward=reward, magnitude=torso_z)
         return reward
 
     # Costs
@@ -862,7 +868,7 @@ class Imitation(worm_base.CelegansEnv):
         """
         ctrl_magnitude = jp.sum(jp.square(info["action"]))
         cost = weight * ctrl_magnitude
-        self._insert_metric(metrics, "control", cost=cost, magnitude=ctrl_magnitude)
+        self._insert_metric(metrics, info, "control", cost=cost, magnitude=ctrl_magnitude)
         return cost
 
     @_named_cost("control_diff")
@@ -879,7 +885,7 @@ class Imitation(worm_base.CelegansEnv):
         """
         ctrl_diff = jp.sum(jp.square(info["action"] - info["prev_action"]))
         cost = weight * ctrl_diff
-        self._insert_metric(metrics, "control_diff", cost=cost, magnitude=ctrl_diff)
+        self._insert_metric(metrics, info, "control_diff", cost=cost, magnitude=ctrl_diff)
         return cost
 
     @_named_cost("energy")
@@ -899,7 +905,7 @@ class Imitation(worm_base.CelegansEnv):
             jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator)), max_value
         )
         cost = weight * energy
-        self._insert_metric(metrics, "energy", cost=cost, magnitude=energy)
+        self._insert_metric(metrics, info, "energy", cost=cost, magnitude=energy)
         return cost
 
     @_named_cost("var")
@@ -920,7 +926,7 @@ class Imitation(worm_base.CelegansEnv):
         var = jp.sum(var_act)
         cost = weight * var
 
-        self._insert_metric(metrics, "var", cost=cost, magnitude=var)
+        self._insert_metric(metrics, info, "var", cost=cost, magnitude=var)
         return cost
 
     @_named_cost("jerk")
@@ -946,7 +952,7 @@ class Imitation(worm_base.CelegansEnv):
         jerk = jp.sum(jerks**2)
         cost = weight * jerk
 
-        self._insert_metric(metrics, "jerk", cost=cost, magnitude=jerk)
+        self._insert_metric(metrics, info, "jerk", cost=cost, magnitude=jerk)
         return cost
 
     # Termination
