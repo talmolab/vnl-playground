@@ -39,8 +39,8 @@ def default_config() -> config_dict.ConfigDict:
         # Simulation params
         mujoco_impl="jax",
         sim_dt=0.002,
-        ctrl_dt=0.01,  # 50 Hz control
-        solver="cg",
+        ctrl_dt=0.02,  # 50 Hz control
+        solver="newton",
         iterations=5,
         ls_iterations=5,
         naconmax=256,

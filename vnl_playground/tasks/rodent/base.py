@@ -31,7 +31,7 @@ def default_config() -> config_dict.ConfigDict:
         walker_xml_path=consts.RODENT_XML_PATH,
         arena_xml_path=consts.WHITE_ARENA_XML_PATH,
         sim_dt=0.002,
-        ctrl_dt=0.01,
+        ctrl_dt=0.02,
         solver="newton",
         iterations=5,
         ls_iterations=5,

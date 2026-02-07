@@ -53,10 +53,10 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.RODENT_BOX_FEET_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
-        ctrl_dt=0.01,
+        ctrl_dt=0.02,
         sim_dt=0.002,
-        solver="cg",
-        iterations=10,
+        solver="newton",
+        iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
         vision=False,
