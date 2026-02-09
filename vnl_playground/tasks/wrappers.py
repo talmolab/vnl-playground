@@ -77,6 +77,32 @@ class FlattenObsWrapper(wrapper.Wrapper):
         self.env._mjx_model = value
 
 
+class LegacyObsWrapper(wrapper.Wrapper):
+    """Wrapper that strips the state/privileged_state hierarchy from observations.
+
+    Replaces obs with obs["state"], restoring the flat observation structure
+    used by checkpoints trained before the asymmetric obs hierarchy was added.
+    """
+
+    def __init__(self, env: wrapper.mjx_env.MjxEnv, obs_key: str = "state"):
+        super().__init__(env)
+        self._obs_key = obs_key
+
+    def reset(
+        self,
+        rng: jax.Array,
+        **kwargs: Any,
+    ) -> wrapper.mjx_env.State:
+        state = self.env.reset(rng, **kwargs)
+        return state.replace(obs=state.obs[self._obs_key])
+
+    def step(
+        self, state: wrapper.mjx_env.State, action: jax.Array
+    ) -> wrapper.mjx_env.State:
+        state = self.env.step(state, action)
+        return state.replace(obs=state.obs[self._obs_key])
+
+
 class HighLevelWrapper(wrapper.Wrapper):
     """Wrapper that uses a decoder to convert latent actions to control signals.
 
