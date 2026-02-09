@@ -279,7 +279,7 @@ class BowlEscape(rodent_base.RodentEnv):
             sigmoid="linear",
         )
 
-        deviation_angle = 0
+        deviation_angle = 30
         deviation = np.cos(np.deg2rad(deviation_angle))
         # xmat is the 3x3 rotation matrix of the current frame
         upright_torso = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xmat[

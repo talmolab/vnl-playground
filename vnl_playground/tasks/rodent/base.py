@@ -152,12 +152,15 @@ class RodentEnv(mjx_env.MjxEnv):
             # Increase offscreen framebuffer size to render at higher resolutions.
             self._mj_model.vis.global_.offwidth = 3840
             self._mj_model.vis.global_.offheight = 2160
-            self._mj_model.opt.iterations = self._config.iterations
-            self._mj_model.opt.ls_iterations = self._config.ls_iterations
             self._mj_model.opt.solver = {
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
+            if self._config.mujoco_impl == "warp":
+                self._mj_model.opt.ccd_iterations = 50
+            else:
+                self._mj_model.opt.iterations = self._config.iterations
+                self._mj_model.opt.ls_iterations = self._config.ls_iterations
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self._config.mujoco_impl
             )
