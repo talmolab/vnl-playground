@@ -275,8 +275,10 @@ class ReferenceClips:
             else:
                 self._body_names_map = {n: i for (i, n) in enumerate(names_xpos)}
 
-    def _extract_clip_names(self, config: Mapping[str, Any]) -> np.ndarray:
+    def _extract_clip_names(self, config: Mapping[str, Any]) -> Optional[np.ndarray]:
         """Extract behavior names from legacy config metadata."""
+        if "model" not in config or "snips_order" not in config.get("model", {}):
+            return None
         original_filenames = config["model"]["snips_order"]
         pattern = r"([A-Za-z]+)_\d+(\.p)?"
         clip_names = []
