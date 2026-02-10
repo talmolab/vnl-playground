@@ -157,6 +157,7 @@ class RodentEnv(mjx_env.MjxEnv):
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
             if self._config.mujoco_impl == "warp":
+                # Warp backend uses CCD iterations instead of solver iterations/ls_iterations.
                 self._mj_model.opt.ccd_iterations = 50
             else:
                 self._mj_model.opt.iterations = self._config.iterations

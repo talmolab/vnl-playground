@@ -43,7 +43,7 @@ def default_config() -> config_dict.ConfigDict:
         target_relative_height=0.05,  # Target skull-torso height difference
         reset_height_threshold=0.01,  # Must return below this to earn another reward
         rearing_hold_duration=1.0,  # Seconds to hold rearing pose for success
-        episode_length=500,  # 5 seconds at ctrl_dt=0.01
+        episode_length=500,  # 10 seconds at ctrl_dt=0.02
         action_repeat=1,
         # Reward terms: shaping rewards are low, success bonus dominates
         reward_terms={
@@ -246,100 +246,91 @@ class Rearing(rodent_base.RodentEnv):
         obs = abstract_state.obs
         return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
+    # --- Reward Functions ---
 
-# --- Reward Functions ---
+    @_registry.reward("head_height_dense")
+    def _head_height_dense_reward(self, data, info, metrics, weight) -> float:
+        """Dense reward: smooth increase as head approaches target height."""
+        relative_height = self._get_relative_head_height(data)
+        target = self._config.target_relative_height
+        metrics["relative_head_height"] = relative_height
 
+        # Tolerance-based smooth reward
+        reward_value = reward_fns.tolerance(
+            relative_height,
+            bounds=(target, float("inf")),
+            margin=target,
+            sigmoid="linear",
+            value_at_margin=0.0,
+        )
+        weighted_reward = reward_value * weight
+        metrics["rewards/head_height_dense"] = weighted_reward
+        return weighted_reward
 
-@_registry.reward("head_height_dense")
-def _head_height_dense_reward(env, data, info, metrics, weight) -> float:
-    """Dense reward: smooth increase as head approaches target height."""
-    relative_height = env._get_relative_head_height(data)
-    target = env._config.target_relative_height
-    metrics["relative_head_height"] = relative_height
+    @_registry.reward("head_height_sparse")
+    def _head_height_sparse_reward(self, data, info, metrics, weight) -> float:
+        """Sparse reward: binary reward when head exceeds target height."""
+        relative_height = self._get_relative_head_height(data)
+        target = self._config.target_relative_height
 
-    # Tolerance-based smooth reward
-    reward_value = reward_fns.tolerance(
-        relative_height,
-        bounds=(target, float("inf")),
-        margin=target,
-        sigmoid="linear",
-        value_at_margin=0.0,
-    )
-    weighted_reward = reward_value * weight
-    metrics["rewards/head_height_dense"] = weighted_reward
-    return weighted_reward
+        above_target = relative_height >= target
+        weighted_reward = jp.astype(above_target, float) * weight
+        metrics["rewards/head_height_sparse"] = weighted_reward
+        return weighted_reward
 
+    @_registry.reward("upright")
+    def _upright_reward(self, data, info, metrics, weight, healthy_z_range) -> float:
+        """Reward for keeping torso in healthy z range (staying upright)."""
+        torso_z = self._get_body_height(data)
+        metrics["torso_z"] = torso_z
+        min_z, max_z = healthy_z_range
+        in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
+        weighted_reward = jp.astype(in_range, float) * weight
+        metrics["rewards/upright"] = weighted_reward
+        return weighted_reward
 
-@_registry.reward("head_height_sparse")
-def _head_height_sparse_reward(env, data, info, metrics, weight) -> float:
-    """Sparse reward: binary reward when head exceeds target height."""
-    relative_height = env._get_relative_head_height(data)
-    target = env._config.target_relative_height
+    @_registry.reward("energy_cost")
+    def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
+        """Penalize energy consumption."""
+        energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
+        metrics["energy_use"] = energy_use
+        cost = weight * jp.minimum(energy_use, max_value)
+        metrics["rewards/energy_cost"] = -cost
+        return -cost
 
-    above_target = relative_height >= target
-    weighted_reward = jp.astype(above_target, float) * weight
-    metrics["rewards/head_height_sparse"] = weighted_reward
-    return weighted_reward
+    @_registry.reward("rearing_success")
+    def _rearing_success_reward(self, data, info, metrics, weight) -> float:
+        """Large reward when rearing pose is held for the required duration."""
+        rearing_success = info["rearing_success"]
+        weighted_reward = jp.astype(rearing_success, float) * weight
+        metrics["rewards/rearing_success"] = weighted_reward
+        metrics["rearing_steps"] = info["rearing_steps"]
+        metrics["can_earn_rearing"] = jp.astype(info["can_earn_rearing"], float)
+        return weighted_reward
 
+    # --- Termination Functions ---
 
-@_registry.reward("upright")
-def _upright_reward(env, data, info, metrics, weight, healthy_z_range) -> float:
-    """Reward for keeping torso in healthy z range (staying upright)."""
-    torso_z = env._get_body_height(data)
-    metrics["torso_z"] = torso_z
-    min_z, max_z = healthy_z_range
-    in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
-    weighted_reward = jp.astype(in_range, float) * weight
-    metrics["rewards/upright"] = weighted_reward
-    return weighted_reward
+    @_registry.termination("fallen")
+    def _fallen_termination(
+        self, data: mjx.Data, info, min_torso_z: float, max_torso_angle: float
+    ) -> bool:
+        """Check if rodent has fallen."""
+        del info
+        torso_body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
+        torso_z = torso_body.xpos[2]
+        below_ground = torso_z < min_torso_z
 
+        # Check torso orientation - xmat[-1, -1] is the z-component of the z-axis
+        upright_z = torso_body.xmat.reshape(3, 3)[2, 2]
+        max_cos_angle = np.cos(np.deg2rad(max_torso_angle))
+        too_tilted = upright_z < max_cos_angle
 
-@_registry.reward("energy_cost")
-def _energy_cost(env, data, info, metrics, weight, max_value) -> float:
-    """Penalize energy consumption."""
-    energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
-    metrics["energy_use"] = energy_use
-    cost = weight * jp.minimum(energy_use, max_value)
-    metrics["rewards/energy_cost"] = -cost
-    return -cost
+        return jp.logical_or(below_ground, too_tilted)
 
-
-@_registry.reward("rearing_success")
-def _rearing_success_reward(env, data, info, metrics, weight) -> float:
-    """Large reward when rearing pose is held for the required duration."""
-    rearing_success = info["rearing_success"]
-    weighted_reward = jp.astype(rearing_success, float) * weight
-    metrics["rewards/rearing_success"] = weighted_reward
-    metrics["rearing_steps"] = info["rearing_steps"]
-    metrics["can_earn_rearing"] = jp.astype(info["can_earn_rearing"], float)
-    return weighted_reward
-
-
-# --- Termination Functions ---
-
-
-@_registry.termination("fallen")
-def _fallen_termination(
-    env, data: mjx.Data, info, min_torso_z: float, max_torso_angle: float
-) -> bool:
-    """Check if rodent has fallen."""
-    del info
-    torso_body = data.bind(env.mjx_model, env._spec.body(f"torso{env._suffix}"))
-    torso_z = torso_body.xpos[2]
-    below_ground = torso_z < min_torso_z
-
-    # Check torso orientation - xmat[-1, -1] is the z-component of the z-axis
-    upright_z = torso_body.xmat.reshape(3, 3)[2, 2]
-    max_cos_angle = np.cos(np.deg2rad(max_torso_angle))
-    too_tilted = upright_z < max_cos_angle
-
-    return jp.logical_or(below_ground, too_tilted)
-
-
-@_registry.termination("nan_termination")
-def _nan_termination(env, data, info) -> bool:
-    """Check for NaN values in simulation data."""
-    del info
-    flattened_vals, _ = flatten_util.ravel_pytree(data)
-    num_nans = jp.sum(jp.isnan(flattened_vals))
-    return num_nans > 0
+    @_registry.termination("nan_termination")
+    def _nan_termination(self, data, info) -> bool:
+        """Check for NaN values in simulation data."""
+        del info
+        flattened_vals, _ = flatten_util.ravel_pytree(data)
+        num_nans = jp.sum(jp.isnan(flattened_vals))
+        return num_nans > 0

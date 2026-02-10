@@ -311,325 +311,299 @@ class Joystick(rodent_base.RodentEnv):
         obs = abstract_state.obs
         return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
-
-# --- Reward Functions ---
-
-
-@_registry.reward("tracking_lin_vel")
-def _tracking_lin_vel_reward(env, data, info, metrics, weight) -> jax.Array:
-    """Exponential reward for matching commanded forward velocity.
-
-    Args:
-        env: Environment instance.
-        data: Simulation data.
-        info: State info with command.
-        metrics: Metrics dict for logging.
-        weight: Reward weight multiplier.
-
-    Returns:
-        Weighted tracking reward.
-    """
-    command = info["command"]  # [vx, vyaw]
-    local_vel = env._get_local_linvel(data)
-
-    # Squared error in forward (x) velocity only
-    lin_vel_error = jp.square(command[0] - local_vel[0])
-    sigma = env._config.reward_config.tracking_sigma
-
-    reward_value = jp.exp(-lin_vel_error / sigma)
-    weighted_reward = reward_value * weight
-
-    metrics["rewards/tracking_lin_vel"] = weighted_reward
-    metrics["local_vel_x"] = local_vel[0]
-    metrics["command_vx"] = command[0]
-
-    return weighted_reward
-
-
-@_registry.reward("tracking_ang_vel")
-def _tracking_ang_vel_reward(env, data, info, metrics, weight) -> jax.Array:
-    """Exponential reward for matching commanded yaw rate.
-
-    Args:
-        env: Environment instance.
-        data: Simulation data.
-        info: State info with command.
-        metrics: Metrics dict for logging.
-        weight: Reward weight multiplier.
-
-    Returns:
-        Weighted tracking reward.
-    """
-    command = info["command"]  # [vx, vyaw]
-    # Use gyro sensor z-component for yaw rate
-    gyro = data.bind(env.mjx_model, env._spec.sensor(f"gyro{env._suffix}")).sensordata
-    yaw_rate = gyro[2]
-
-    ang_vel_error = jp.square(command[1] - yaw_rate)
-    sigma = env._config.reward_config.tracking_sigma
-
-    reward_value = jp.exp(-ang_vel_error / sigma)
-    weighted_reward = reward_value * weight
-
-    metrics["rewards/tracking_ang_vel"] = weighted_reward
-    metrics["yaw_rate"] = yaw_rate
-    metrics["command_vyaw"] = command[1]
-
-    return weighted_reward
-
-
-@_registry.reward("torques")
-def _torques_cost(env, data, info, metrics, weight) -> jax.Array:
-    """Cost for actuator forces.
-
-    Args:
-        env: Environment instance.
-        data: Simulation data.
-        info: State info (unused).
-        metrics: Metrics dict for logging.
-        weight: Cost weight multiplier (negative for penalty).
-
-    Returns:
-        Weighted torque cost.
-    """
-    del info
-    torque_cost = jp.sum(jp.abs(data.qfrc_actuator))
-    weighted_cost = weight * torque_cost
-
-    metrics["rewards/torques"] = weighted_cost
-    metrics["torque_sum"] = torque_cost
-
-    return weighted_cost
-
-
-@_registry.reward("action_rate")
-def _action_rate_cost(env, data, info, metrics, weight) -> jax.Array:
-    """Cost for action changes between timesteps.
-
-    Args:
-        env: Environment instance.
-        data: Simulation data (unused).
-        info: State info with action history.
-        metrics: Metrics dict for logging.
-        weight: Cost weight multiplier (negative for penalty).
-
-    Returns:
-        Weighted action rate cost.
-    """
-    del data
-    action_diff = info["action"] - info["last_act"]
-    action_rate = jp.sum(jp.square(action_diff))
-    weighted_cost = weight * action_rate
-
-    metrics["rewards/action_rate"] = weighted_cost
-    metrics["action_rate"] = action_rate
-
-    return weighted_cost
-
-
-@_registry.reward("energy")
-def _energy_cost(env, data, info, metrics, weight) -> jax.Array:
-    """Cost for mechanical work (velocity * force).
-
-    Args:
-        env: Environment instance.
-        data: Simulation data.
-        info: State info (unused).
-        metrics: Metrics dict for logging.
-        weight: Cost weight multiplier (negative for penalty).
-
-    Returns:
-        Weighted energy cost.
-    """
-    del info
-    energy = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
-    weighted_cost = weight * energy
-
-    metrics["rewards/energy"] = weighted_cost
-    metrics["energy"] = energy
-
-    return weighted_cost
-
-
-@_registry.reward("dof_acc")
-def _dof_acc_cost(env, data, info, metrics, weight, max_value=None) -> jax.Array:
-    """Cost for joint accelerations.
-
-    Args:
-        env: Environment instance.
-        data: Simulation data.
-        info: State info (unused).
-        metrics: Metrics dict for logging.
-        weight: Cost weight multiplier (negative for penalty).
-        max_value: Optional cap on the acceleration sum before weighting.
-
-    Returns:
-        Weighted acceleration cost.
-    """
-    del info
-    dof_acc = jp.sum(jp.square(data.qacc))
-    if max_value is not None:
-        dof_acc = jp.minimum(dof_acc, max_value)
-    weighted_cost = weight * dof_acc
-
-    metrics["rewards/dof_acc"] = weighted_cost
-    metrics["dof_acc"] = dof_acc
-
-    return weighted_cost
-
-
-@_registry.reward("alive")
-def _alive_reward(env, data, info, metrics, weight) -> jax.Array:
-    """Constant reward for staying alive.
-
-    Args:
-        env: Environment instance.
-        data: Simulation data (unused).
-        info: State info (unused).
-        metrics: Metrics dict for logging.
-        weight: Reward weight.
-
-    Returns:
-        Constant alive reward.
-    """
-    del data, info
-    metrics["rewards/alive"] = weight
-    return weight
-
-
-@_registry.reward("termination")
-def _termination_penalty(env, data, info, metrics, weight) -> jax.Array:
-    """Large penalty on episode termination.
-
-    Args:
-        env: Environment instance.
-        data: Simulation data.
-        info: State info.
-        metrics: Metrics dict (with termination flags).
-        weight: Penalty weight (negative).
-
-    Returns:
-        Termination penalty (weight if terminated, 0 otherwise).
-    """
-    # Check if terminated (using already computed metrics)
-    terminated = metrics.get("terminations/any", jp.array(0.0))
-    penalty = jp.where(terminated > 0.5, weight, 0.0)
-    metrics["rewards/termination"] = penalty
-    return penalty
-
-
-@_registry.reward("stand_still")
-def _stand_still_penalty(env, data, info, metrics, weight) -> jax.Array:
-    """Penalty for unwanted movement (moving when that axis command is zero).
-
-    Decoupled: penalizes forward velocity only when vx command is ~0,
-    and penalizes yaw rate only when vyaw command is ~0.
-
-    Args:
-        env: Environment instance.
-        data: Simulation data.
-        info: State info with command.
-        metrics: Metrics dict for logging.
-        weight: Penalty weight (negative).
-
-    Returns:
-        Penalty for unwanted movement.
-    """
-    command = info["command"]  # [vx, vyaw]
-    local_vel = env._get_local_linvel(data)
-    gyro = data.bind(env.mjx_model, env._spec.sensor(f"gyro{env._suffix}")).sensordata
-    yaw_rate = gyro[2]
-
-    # Penalize forward movement only when forward command is ~0
-    vx_cmd_zero = jp.abs(command[0]) < 0.05
-    lin_penalty = jp.where(vx_cmd_zero, jp.square(local_vel[0]), 0.0)
-
-    # Penalize turning only when turn command is ~0
-    vyaw_cmd_zero = jp.abs(command[1]) < 0.1
-    ang_penalty = jp.where(vyaw_cmd_zero, jp.square(yaw_rate), 0.0)
-
-    penalty = weight * (lin_penalty + ang_penalty)
-    metrics["rewards/stand_still"] = penalty
-
-    return penalty
-
-
-@_registry.reward("lateral_velocity")
-def _lateral_velocity_penalty(env, data, info, metrics, weight) -> jax.Array:
-    """Penalty for lateral (sideways) velocity.
-
-    The rodent shouldn't strafe - any lateral velocity is undesired drift.
-    This is especially important during turning where the rodent might
-    otherwise slide sideways.
-
-    Args:
-        env: Environment instance.
-        data: Simulation data.
-        info: State info (unused).
-        metrics: Metrics dict for logging.
-        weight: Penalty weight (negative).
-
-    Returns:
-        Weighted lateral velocity penalty.
-    """
-    del info
-    local_vel = env._get_local_linvel(data)
-    lateral_vel_sq = jp.square(local_vel[1])  # y-velocity in local frame
-
-    penalty = weight * lateral_vel_sq
-    metrics["rewards/lateral_velocity"] = penalty
-    metrics["local_vel_y"] = local_vel[1]
-
-    return penalty
-
-
-# --- Termination Functions ---
-
-
-@_registry.termination("fallen")
-def _fallen_termination(
-    env, data: mjx.Data, info, min_torso_z: float, max_torso_angle: float
-) -> jax.Array:
-    """Check if rodent has fallen.
-
-    Args:
-        env: Environment instance.
-        data: Simulation data.
-        info: State info (unused).
-        min_torso_z: Minimum z height threshold.
-        max_torso_angle: Maximum angle from vertical in degrees.
-
-    Returns:
-        Boolean indicating if fallen.
-    """
-    del info
-
-    torso_body = data.bind(env.mjx_model, env._spec.body(f"torso{env._suffix}"))
-    torso_z = torso_body.xpos[2]
-
-    below_ground = torso_z < min_torso_z
-
-    # xmat is 3x3 rotation matrix, [2, 2] is cos(angle from vertical)
-    upright_z = torso_body.xmat.reshape(3, 3)[2, 2]
-    max_cos_angle = np.cos(np.deg2rad(max_torso_angle))
-    too_tilted = upright_z < max_cos_angle
-
-    return jp.logical_or(below_ground, too_tilted)
-
-
-@_registry.termination("nan_termination")
-def _nan_termination(env, data, info) -> jax.Array:
-    """Check for NaN values in simulation data.
-
-    Args:
-        env: Environment instance.
-        data: Simulation data.
-        info: State info (unused).
-
-    Returns:
-        Boolean indicating if NaN detected.
-    """
-    del info
-    flattened_vals, _ = flatten_util.ravel_pytree(data)
-    num_nans = jp.sum(jp.isnan(flattened_vals))
-    return num_nans > 0
+    # --- Reward Functions ---
+
+    @_registry.reward("tracking_lin_vel")
+    def _tracking_lin_vel_reward(self, data, info, metrics, weight) -> jax.Array:
+        """Exponential reward for matching commanded forward velocity.
+
+        Args:
+            data: Simulation data.
+            info: State info with command.
+            metrics: Metrics dict for logging.
+            weight: Reward weight multiplier.
+
+        Returns:
+            Weighted tracking reward.
+        """
+        command = info["command"]  # [vx, vyaw]
+        local_vel = self._get_local_linvel(data)
+
+        # Squared error in forward (x) velocity only
+        lin_vel_error = jp.square(command[0] - local_vel[0])
+        sigma = self._config.reward_config.tracking_sigma
+
+        reward_value = jp.exp(-lin_vel_error / sigma)
+        weighted_reward = reward_value * weight
+
+        metrics["rewards/tracking_lin_vel"] = weighted_reward
+        metrics["local_vel_x"] = local_vel[0]
+        metrics["command_vx"] = command[0]
+
+        return weighted_reward
+
+    @_registry.reward("tracking_ang_vel")
+    def _tracking_ang_vel_reward(self, data, info, metrics, weight) -> jax.Array:
+        """Exponential reward for matching commanded yaw rate.
+
+        Args:
+            data: Simulation data.
+            info: State info with command.
+            metrics: Metrics dict for logging.
+            weight: Reward weight multiplier.
+
+        Returns:
+            Weighted tracking reward.
+        """
+        command = info["command"]  # [vx, vyaw]
+        # Use gyro sensor z-component for yaw rate
+        gyro = data.bind(self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")).sensordata
+        yaw_rate = gyro[2]
+
+        ang_vel_error = jp.square(command[1] - yaw_rate)
+        sigma = self._config.reward_config.tracking_sigma
+
+        reward_value = jp.exp(-ang_vel_error / sigma)
+        weighted_reward = reward_value * weight
+
+        metrics["rewards/tracking_ang_vel"] = weighted_reward
+        metrics["yaw_rate"] = yaw_rate
+        metrics["command_vyaw"] = command[1]
+
+        return weighted_reward
+
+    @_registry.reward("torques")
+    def _torques_cost(self, data, info, metrics, weight) -> jax.Array:
+        """Cost for actuator forces.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            metrics: Metrics dict for logging.
+            weight: Cost weight multiplier (negative for penalty).
+
+        Returns:
+            Weighted torque cost.
+        """
+        del info
+        torque_cost = jp.sum(jp.abs(data.qfrc_actuator))
+        weighted_cost = weight * torque_cost
+
+        metrics["rewards/torques"] = weighted_cost
+        metrics["torque_sum"] = torque_cost
+
+        return weighted_cost
+
+    @_registry.reward("action_rate")
+    def _action_rate_cost(self, data, info, metrics, weight) -> jax.Array:
+        """Cost for action changes between timesteps.
+
+        Args:
+            data: Simulation data (unused).
+            info: State info with action history.
+            metrics: Metrics dict for logging.
+            weight: Cost weight multiplier (negative for penalty).
+
+        Returns:
+            Weighted action rate cost.
+        """
+        del data
+        action_diff = info["action"] - info["last_act"]
+        action_rate = jp.sum(jp.square(action_diff))
+        weighted_cost = weight * action_rate
+
+        metrics["rewards/action_rate"] = weighted_cost
+        metrics["action_rate"] = action_rate
+
+        return weighted_cost
+
+    @_registry.reward("energy")
+    def _energy_cost(self, data, info, metrics, weight) -> jax.Array:
+        """Cost for mechanical work (velocity * force).
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            metrics: Metrics dict for logging.
+            weight: Cost weight multiplier (negative for penalty).
+
+        Returns:
+            Weighted energy cost.
+        """
+        del info
+        energy = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
+        weighted_cost = weight * energy
+
+        metrics["rewards/energy"] = weighted_cost
+        metrics["energy"] = energy
+
+        return weighted_cost
+
+    @_registry.reward("dof_acc")
+    def _dof_acc_cost(self, data, info, metrics, weight, max_value=None) -> jax.Array:
+        """Cost for joint accelerations.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            metrics: Metrics dict for logging.
+            weight: Cost weight multiplier (negative for penalty).
+            max_value: Optional cap on the acceleration sum before weighting.
+
+        Returns:
+            Weighted acceleration cost.
+        """
+        del info
+        dof_acc = jp.sum(jp.square(data.qacc))
+        if max_value is not None:
+            dof_acc = jp.minimum(dof_acc, max_value)
+        weighted_cost = weight * dof_acc
+
+        metrics["rewards/dof_acc"] = weighted_cost
+        metrics["dof_acc"] = dof_acc
+
+        return weighted_cost
+
+    @_registry.reward("alive")
+    def _alive_reward(self, data, info, metrics, weight) -> jax.Array:
+        """Constant reward for staying alive.
+
+        Args:
+            data: Simulation data (unused).
+            info: State info (unused).
+            metrics: Metrics dict for logging.
+            weight: Reward weight.
+
+        Returns:
+            Constant alive reward.
+        """
+        del data, info
+        metrics["rewards/alive"] = weight
+        return weight
+
+    @_registry.reward("termination")
+    def _termination_penalty(self, data, info, metrics, weight) -> jax.Array:
+        """Large penalty on episode termination.
+
+        Args:
+            data: Simulation data.
+            info: State info.
+            metrics: Metrics dict (with termination flags).
+            weight: Penalty weight (negative).
+
+        Returns:
+            Termination penalty (weight if terminated, 0 otherwise).
+        """
+        # Check if terminated (using already computed metrics)
+        terminated = metrics.get("terminations/any", jp.array(0.0))
+        penalty = jp.where(terminated > 0.5, weight, 0.0)
+        metrics["rewards/termination"] = penalty
+        return penalty
+
+    @_registry.reward("stand_still")
+    def _stand_still_penalty(self, data, info, metrics, weight) -> jax.Array:
+        """Penalty for unwanted movement (moving when that axis command is zero).
+
+        Decoupled: penalizes forward velocity only when vx command is ~0,
+        and penalizes yaw rate only when vyaw command is ~0.
+
+        Args:
+            data: Simulation data.
+            info: State info with command.
+            metrics: Metrics dict for logging.
+            weight: Penalty weight (negative).
+
+        Returns:
+            Penalty for unwanted movement.
+        """
+        command = info["command"]  # [vx, vyaw]
+        local_vel = self._get_local_linvel(data)
+        gyro = data.bind(self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")).sensordata
+        yaw_rate = gyro[2]
+
+        # Penalize forward movement only when forward command is ~0
+        vx_cmd_zero = jp.abs(command[0]) < 0.05
+        lin_penalty = jp.where(vx_cmd_zero, jp.square(local_vel[0]), 0.0)
+
+        # Penalize turning only when turn command is ~0
+        vyaw_cmd_zero = jp.abs(command[1]) < 0.1
+        ang_penalty = jp.where(vyaw_cmd_zero, jp.square(yaw_rate), 0.0)
+
+        penalty = weight * (lin_penalty + ang_penalty)
+        metrics["rewards/stand_still"] = penalty
+
+        return penalty
+
+    @_registry.reward("lateral_velocity")
+    def _lateral_velocity_penalty(self, data, info, metrics, weight) -> jax.Array:
+        """Penalty for lateral (sideways) velocity.
+
+        The rodent shouldn't strafe - any lateral velocity is undesired drift.
+        This is especially important during turning where the rodent might
+        otherwise slide sideways.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            metrics: Metrics dict for logging.
+            weight: Penalty weight (negative).
+
+        Returns:
+            Weighted lateral velocity penalty.
+        """
+        del info
+        local_vel = self._get_local_linvel(data)
+        lateral_vel_sq = jp.square(local_vel[1])  # y-velocity in local frame
+
+        penalty = weight * lateral_vel_sq
+        metrics["rewards/lateral_velocity"] = penalty
+        metrics["local_vel_y"] = local_vel[1]
+
+        return penalty
+
+    # --- Termination Functions ---
+
+    @_registry.termination("fallen")
+    def _fallen_termination(
+        self, data: mjx.Data, info, min_torso_z: float, max_torso_angle: float
+    ) -> jax.Array:
+        """Check if rodent has fallen.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            min_torso_z: Minimum z height threshold.
+            max_torso_angle: Maximum angle from vertical in degrees.
+
+        Returns:
+            Boolean indicating if fallen.
+        """
+        del info
+
+        torso_body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
+        torso_z = torso_body.xpos[2]
+
+        below_ground = torso_z < min_torso_z
+
+        # xmat is 3x3 rotation matrix, [2, 2] is cos(angle from vertical)
+        upright_z = torso_body.xmat.reshape(3, 3)[2, 2]
+        max_cos_angle = np.cos(np.deg2rad(max_torso_angle))
+        too_tilted = upright_z < max_cos_angle
+
+        return jp.logical_or(below_ground, too_tilted)
+
+    @_registry.termination("nan_termination")
+    def _nan_termination(self, data, info) -> jax.Array:
+        """Check for NaN values in simulation data.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+
+        Returns:
+            Boolean indicating if NaN detected.
+        """
+        del info
+        flattened_vals, _ = flatten_util.ravel_pytree(data)
+        num_nans = jp.sum(jp.isnan(flattened_vals))
+        return num_nans > 0

@@ -102,6 +102,18 @@ class LegacyObsWrapper(wrapper.Wrapper):
         state = self.env.step(state, action)
         return state.replace(obs=state.obs[self._obs_key])
 
+    @property
+    def non_flattened_observation_size(self):
+        return self.env.non_flattened_observation_size[self._obs_key]
+
+    @property
+    def observation_size(self):
+        return jp.sum(jax.flatten_util.ravel_pytree(self.non_flattened_observation_size)[0])
+
+    @property
+    def non_proprioceptive_obs_size(self):
+        return self.observation_size - self.proprioceptive_obs_size
+
 
 class HighLevelWrapper(wrapper.Wrapper):
     """Wrapper that uses a decoder to convert latent actions to control signals.
