@@ -1,0 +1,19 @@
+<mujoco>
+  <visual>
+    <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
+    <global offwidth="3840" offheight="2160" elevation="-20" azimuth="120"/>
+    <quality shadowsize="2048"/>
+  </visual>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 0.1" dir="0 0 -1"/>
+    <body name="floor">
+      <geom name="floor" pos="0 0 -0.008" size="0.2 0.2 0.01" type="plane" material="grid"/>
+    </body>
+  </worldbody>
+</mujoco>
