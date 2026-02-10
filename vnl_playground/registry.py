@@ -43,6 +43,7 @@ def load(
     config: Optional[config_dict.ConfigDict] = None,
     clips: Any = None,
     flatten_obs: bool = True,
+    **kwargs,
 ):
     """Load an environment instance.
 
@@ -51,12 +52,14 @@ def load(
         config: Configuration dict. Uses default if not provided.
         clips: ReferenceClips for imitation tasks.
         flatten_obs: Whether to apply observation wrapper.
+        **kwargs: Additional arguments passed to environment constructor
+            (e.g., rng for locomotion environments).
 
     Returns:
         Instantiated environment.
     """
     if env_name in tasks.ALL_ENVS:
-        return tasks.load(env_name, config, clips, flatten_obs)
+        return tasks.load(env_name, config, clips, flatten_obs, **kwargs)
     # elif env_name in locomotion.ALL_ENVS:
     #     return locomotion.load(env_name, config)
     raise ValueError(f"Env '{env_name}' not found. Available: {ALL_ENVS}")
