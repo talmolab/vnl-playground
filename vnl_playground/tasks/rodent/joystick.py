@@ -357,7 +357,9 @@ class Joystick(rodent_base.RodentEnv):
         """
         command = info["command"]  # [vx, vyaw]
         # Use gyro sensor z-component for yaw rate
-        gyro = data.bind(self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")).sensordata
+        gyro = data.bind(
+            self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")
+        ).sensordata
         yaw_rate = gyro[2]
 
         ang_vel_error = jp.square(command[1] - yaw_rate)
@@ -518,7 +520,9 @@ class Joystick(rodent_base.RodentEnv):
         """
         command = info["command"]  # [vx, vyaw]
         local_vel = self._get_local_linvel(data)
-        gyro = data.bind(self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")).sensordata
+        gyro = data.bind(
+            self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")
+        ).sensordata
         yaw_rate = gyro[2]
 
         # Penalize forward movement only when forward command is ~0

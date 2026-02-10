@@ -108,7 +108,9 @@ class LegacyObsWrapper(wrapper.Wrapper):
 
     @property
     def observation_size(self):
-        return jp.sum(jax.flatten_util.ravel_pytree(self.non_flattened_observation_size)[0])
+        return jp.sum(
+            jax.flatten_util.ravel_pytree(self.non_flattened_observation_size)[0]
+        )
 
     @property
     def non_proprioceptive_obs_size(self):
