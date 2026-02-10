@@ -226,8 +226,10 @@ class Imitation(rodent_base.RodentEnv):
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
         obs = collections.OrderedDict(
-            task_obs=self._get_imitation_target(data, info),
-            proprioception=self._get_proprioception(data, info, flatten=False),
+            task_obs=jax.flatten_util.ravel_pytree(
+                self._get_imitation_target(data, info)
+            )[0],
+            proprioception=self._get_proprioception(data, info),
         )
         return collections.OrderedDict(
             state=obs,
@@ -591,26 +593,6 @@ class Imitation(rodent_base.RodentEnv):
                     faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
                     rendered_frames.append(faded_frame)
         return rendered_frames
-
-    @property
-    def proprioceptive_obs_size(self) -> int:
-        obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
-
-    @property
-    def non_proprioceptive_obs_size(self) -> int:
-        return self.observation_size - self.proprioceptive_obs_size
-
-    @property
-    def observation_size(self) -> mjx_env.ObservationSize:
-        obs = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs)[0])
-
-    @property
-    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        obs = abstract_state.obs
-        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     def verify_reference_data(self, atol: float = 5e-3) -> bool:
         """A set of non-exhaustive sanity checks that the reference data found in

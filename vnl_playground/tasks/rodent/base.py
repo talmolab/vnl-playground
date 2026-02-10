@@ -43,11 +43,6 @@ def default_config() -> config_dict.ConfigDict:
 class RodentEnv(mjx_env.MjxEnv):
     """Base class for rodent environments."""
 
-    # TODO: Move duplicated utility methods (null_action, proprioceptive_obs_size,
-    # non_proprioceptive_obs_size, observation_size, non_flattened_observation_size)
-    # from subclasses (joystick, sparse_imitation, rearing, maintain_velocity) into
-    # this base class.
-
     # Subclasses should set this to their TaskRegistry instance
     _registry: TaskRegistry = None
 
@@ -347,6 +342,28 @@ class RodentEnv(mjx_env.MjxEnv):
             metrics["terminations/" + name] = jp.astype(terminated, float)
         metrics["terminations/any"] = jp.astype(any_terminated, float)
         return any_terminated
+
+    @property
+    def proprioceptive_obs_size(self) -> int:
+        obs_size = self.non_flattened_observation_size
+        return jp.sum(
+            jax.flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0]
+        )
+
+    @property
+    def non_proprioceptive_obs_size(self) -> int:
+        return self.observation_size - self.proprioceptive_obs_size
+
+    @property
+    def observation_size(self):
+        obs = self.non_flattened_observation_size
+        return jp.sum(jax.flatten_util.ravel_pytree(obs)[0])
+
+    @property
+    def non_flattened_observation_size(self):
+        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+        obs = abstract_state.obs
+        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     @property
     def action_size(self) -> int:

@@ -189,7 +189,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
 
         obs = collections.OrderedDict(
             task_obs=task_obs,
-            proprioception=self._get_proprioception(data, info, flatten=False),
+            proprioception=self._get_proprioception(data, info),
         )
         return collections.OrderedDict(
             state=obs,
@@ -322,23 +322,3 @@ class MaintainVelocity(rodent_base.RodentEnv):
     def null_action(self) -> jp.ndarray:
         """Return zero action."""
         return jp.zeros(self.action_size)
-
-    @property
-    def proprioceptive_obs_size(self) -> int:
-        obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
-
-    @property
-    def non_proprioceptive_obs_size(self) -> int:
-        return self.observation_size - self.proprioceptive_obs_size
-
-    @property
-    def observation_size(self) -> mjx_env.ObservationSize:
-        obs = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs)[0])
-
-    @property
-    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        obs = abstract_state.obs
-        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
