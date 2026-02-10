@@ -173,6 +173,7 @@ class MaintainVelocity(stick_base.StickBugEnv):
         def decorator(reward_fcn: Callable):
             _REWARD_FCN_REGISTRY[name] = reward_fcn
             return reward_fcn
+
         return decorator
 
     @_named_reward("forward_velocity")
@@ -225,6 +226,7 @@ class MaintainVelocity(stick_base.StickBugEnv):
         def decorator(termination_fcn: Callable):
             _TERMINATION_FCN_REGISTRY[name] = termination_fcn
             return termination_fcn
+
         return decorator
 
     @_named_termination_criterion("fallen")

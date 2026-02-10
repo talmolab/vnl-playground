@@ -74,7 +74,9 @@ class StickBugEnv(mjx_env.MjxEnv):
         stick = mujoco.MjSpec.from_file(self._walker_xml_path)
 
         if torque_actuators:
-            raise ValueError("Torque actuator conversion is not supported for stick bug.")
+            raise ValueError(
+                "Torque actuator conversion is not supported for stick bug."
+            )
 
         if rescale_factor != 1.0:
             logging.info(f"Rescaling stick bug with scale factor {rescale_factor}")
@@ -120,9 +122,7 @@ class StickBugEnv(mjx_env.MjxEnv):
         for body in stick_spec.worldbody.bodies:
             _recolour_tree(body, rgba=ghost_rgba)
         spawn_frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
-        spawn_frame.attach_body(
-            stick_spec.body("reference_base"), "", suffix=suffix
-        )
+        spawn_frame.attach_body(stick_spec.body("reference_base"), "", suffix=suffix)
 
     def _scale_stick_spec(self, spec, scale: float):
         """Scale stick bug spec using reference_base as root.
