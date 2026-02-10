@@ -14,7 +14,10 @@ from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
 from vnl_playground.tasks.mouse import consts
-from vnl_playground.tasks.mouse.base import MouseBaseEnv, default_config as base_default_config
+from vnl_playground.tasks.mouse.base import (
+    MouseBaseEnv,
+    default_config as base_default_config,
+)
 from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
 
 
@@ -93,7 +96,10 @@ def load_config(yaml_path: str) -> config_dict.ConfigDict:
             if "mj_model_timestep" in env_args:
                 cfg.sim_dt = env_args["mj_model_timestep"]
             if "physics_steps_per_control_step" in env_args:
-                cfg.ctrl_dt = env_args.get("mj_model_timestep", cfg.sim_dt) * env_args["physics_steps_per_control_step"]
+                cfg.ctrl_dt = (
+                    env_args.get("mj_model_timestep", cfg.sim_dt)
+                    * env_args["physics_steps_per_control_step"]
+                )
             if "mocap_hz" in env_args:
                 cfg.mocap_hz = env_args["mocap_hz"]
             if "Kp" in env_args:
@@ -302,12 +308,16 @@ class MouseImitation(MouseBaseEnv):
             proprioception=self._get_proprioception(data, info),
         )
 
-    def _get_proprioception(self, data: mjx.Data, info: Mapping[str, Any]) -> jp.ndarray:
+    def _get_proprioception(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> jp.ndarray:
         """Get proprioceptive observation (joint positions and velocities)."""
-        return jp.concatenate([
-            data.qpos,  # Joint positions
-            data.qvel,  # Joint velocities
-        ])
+        return jp.concatenate(
+            [
+                data.qpos,  # Joint positions
+                data.qvel,  # Joint velocities
+            ]
+        )
 
     def _get_reward(
         self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
@@ -393,9 +403,9 @@ class MouseImitation(MouseBaseEnv):
 
         # Wrist position targets (in world frame since base is fixed)
         wrist_pos = data.xpos[self._wrist_body_id]
-        wrist_targets = jax.vmap(
-            lambda ref_pos: ref_pos - wrist_pos
-        )(reference.body_xpos("wrist_body"))
+        wrist_targets = jax.vmap(lambda ref_pos: ref_pos - wrist_pos)(
+            reference.body_xpos("wrist_body")
+        )
 
         return collections.OrderedDict(
             joint=joint_targets,
@@ -408,6 +418,7 @@ class MouseImitation(MouseBaseEnv):
         def decorator(reward_fcn: Callable):
             _REWARD_FCN_REGISTRY[name] = reward_fcn
             return reward_fcn
+
         return decorator
 
     @_named_reward("joints")
@@ -483,6 +494,7 @@ class MouseImitation(MouseBaseEnv):
         def decorator(termination_fcn: Callable):
             _TERMINATION_FCN_REGISTRY[name] = termination_fcn
             return termination_fcn
+
         return decorator
 
     @_named_termination_criterion("pose_error")
@@ -554,9 +566,12 @@ class MouseImitation(MouseBaseEnv):
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
 
         if camera is None:
-            camera = "my_camera-mouse" if "my_camera-mouse" in [
-                mj_model.camera(i).name for i in range(mj_model.ncam)
-            ] else -1
+            camera = (
+                "my_camera-mouse"
+                if "my_camera-mouse"
+                in [mj_model.camera(i).name for i in range(mj_model.ncam)]
+                else -1
+            )
 
         rendered_frames = []
         for state in trajectory:

@@ -81,9 +81,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         Returns:
             None
         """
-        mouse_spec = mujoco.MjSpec.from_file(
-            self._walker_xml_path
-        )
+        mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
 
         # Attach using a frame (like rodent) instead of site for better positioning
         spawn_frame = self._spec.worldbody.add_frame(
@@ -178,10 +176,10 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         """
         if not self._compiled:
             self._mj_model = self._spec.compile()
-            
+
             # Set timestep
             self._mj_model.opt.timestep = self._config.sim_dt
-            
+
             # Set solver type and iterations (critical for performance!)
             self._mj_model.opt.solver = {
                 "cg": mujoco.mjtSolver.mjSOL_CG,
@@ -190,11 +188,11 @@ class MouseBaseEnv(mjx_env.MjxEnv):
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
             self._mj_model.opt.noslip_iterations = self._config.noslip_iterations
-            
+
             # High-res offscreen buffer for nice renders
             self._mj_model.vis.global_.offwidth = 3840
             self._mj_model.vis.global_.offheight = 2160
-            
+
             # Use configured implementation (warp/jax)
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self._config.mujoco_impl

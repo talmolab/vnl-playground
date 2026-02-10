@@ -108,11 +108,15 @@ class MouseReferenceClips:
                 self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
             self.clip_names = self.clip_names[keep_clips_idx]
 
-        print(f"Loaded {len(self.clip_names)} clips with {self._n_frames_per_clip} frames each")
+        print(
+            f"Loaded {len(self.clip_names)} clips with {self._n_frames_per_clip} frames each"
+        )
         print(f"  qpos shape: {self._data_arrays['qpos'].shape}")
         print(f"  xpos shape: {self._data_arrays['xpos'].shape}")
 
-    def recompute_kinematics(self, mj_model: "MjModel", strip_suffix: str = "-mouse") -> None:
+    def recompute_kinematics(
+        self, mj_model: "MjModel", strip_suffix: str = "-mouse"
+    ) -> None:
         """Recompute xpos and xquat using the given MuJoCo model.
 
         This is necessary when the reference data was generated with a different
@@ -242,7 +246,9 @@ class MouseReferenceClips:
         }
         test_clips.clip_names = self.clip_names[test_indices]
 
-        print(f"Split: {len(train_indices)} train clips, {len(test_indices)} test clips")
+        print(
+            f"Split: {len(train_indices)} train clips, {len(test_indices)} test clips"
+        )
         return train_clips, test_clips
 
     @property

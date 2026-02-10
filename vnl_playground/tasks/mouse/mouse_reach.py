@@ -11,7 +11,10 @@ from mujoco import mjx
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward
 from vnl_playground.tasks.mouse import consts
-from vnl_playground.tasks.mouse.base import MouseBaseEnv, default_config as base_default_config
+from vnl_playground.tasks.mouse.base import (
+    MouseBaseEnv,
+    default_config as base_default_config,
+)
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -137,7 +140,9 @@ class MouseReach(MouseBaseEnv):
 
         # Ensure mocap position is set before physics step
         data = state.data.replace(
-            mocap_pos=state.data.mocap_pos.at[self._target_mocap_id].set(target_position)
+            mocap_pos=state.data.mocap_pos.at[self._target_mocap_id].set(
+                target_position
+            )
         )
 
         # Step physics (n_steps = ctrl_dt / sim_dt for proper substep integration)
@@ -177,15 +182,19 @@ class MouseReach(MouseBaseEnv):
         task_obs = to_target
 
         # Proprioceptive obs: joint angles, velocities, wrist position
-        proprio_obs = jp.concatenate([
-            data.qpos,
-            data.qvel,
-            wrist_pos,
-        ])
+        proprio_obs = jp.concatenate(
+            [
+                data.qpos,
+                data.qvel,
+                wrist_pos,
+            ]
+        )
 
         return task_obs, proprio_obs
 
-    def _get_reward(self, data: mjx.Data, target_position: jp.ndarray, action: jax.Array) -> jp.ndarray:
+    def _get_reward(
+        self, data: mjx.Data, target_position: jp.ndarray, action: jax.Array
+    ) -> jp.ndarray:
         """Distance-based tolerance reward from wrist marker to target."""
         wrist_marker_pos = data.geom_xpos[self._wrist_marker_geom_id]
         dist = jp.linalg.norm(wrist_marker_pos - target_position)
