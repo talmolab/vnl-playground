@@ -2,7 +2,6 @@
 
 from typing import Any, Dict, Optional, Union
 
-from etils import epath
 import jax
 import jax.numpy as jp
 from ml_collections import config_dict
@@ -60,9 +59,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         self._arena_xml_path = str(config.arena_xml_path)
 
         # Build an arena-only spec; walker gets attached on demand.
-        self._spec = mujoco.MjSpec.from_string(
-            epath.Path(self._arena_xml_path).read_text()
-        )
+        self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
         self._compiled = False
 
     def add_mouse(
@@ -125,9 +122,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         Returns:
             None
         """
-        mouse_spec = mujoco.MjSpec.from_string(
-            epath.Path(self._walker_xml_path).read_text()
-        )
+        mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
 
         # Attach using a frame for consistent positioning
         spawn_frame = self._spec.worldbody.add_frame(
