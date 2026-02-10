@@ -36,7 +36,7 @@ def default_config() -> config_dict.ConfigDict:
         iterations=5,
         ls_iterations=5,
         naconmax=256,
-        njmax=128,
+        njmax=600,
         noslip_iterations=0,
         torque_actuators=False,
         rescale_factor=1.5,  # Match H5 SCALE_FACTOR
