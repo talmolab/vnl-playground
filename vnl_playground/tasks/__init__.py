@@ -9,9 +9,11 @@ from typing import Any, Callable, Optional, Type
 from ml_collections import config_dict
 
 from vnl_playground.tasks.rodent import imitation as rodent_imitation
+from vnl_playground.tasks.rodent import sparse_imitation as rodent_sparse_imitation
 from vnl_playground.tasks.rodent import rearing as rodent_rearing
 from vnl_playground.tasks.rodent import bowl_escape as rodent_bowl_escape
 from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_velocity
+from vnl_playground.tasks.rodent import joystick as rodent_joystick
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
 from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_velocity
 from vnl_playground.tasks.stick import imitation as stick_imitation
@@ -23,9 +25,11 @@ from vnl_playground.tasks.reference_clips import ReferenceClips
 # Registry dicts (like locomotion's _envs, _cfgs)
 _envs = {
     "RodentImitation": rodent_imitation.Imitation,
+    "RodentSparseImitation": rodent_sparse_imitation.SparseImitation,
     "RodentRearing": rodent_rearing.Rearing,
     "RodentBowlEscape": rodent_bowl_escape.BowlEscape,
     "RodentMaintainVelocity": rodent_maintain_velocity.MaintainVelocity,
+    "RodentJoystick": rodent_joystick.Joystick,
     "FruitflyImitation": fruitfly_imitation.Imitation,
     "StickMaintainVelocity": stick_maintain_velocity.MaintainVelocity,
     "StickImitation": stick_imitation.Imitation,
@@ -33,9 +37,11 @@ _envs = {
 
 _cfgs = {
     "RodentImitation": rodent_imitation.default_config,
+    "RodentSparseImitation": rodent_sparse_imitation.default_config,
     "RodentRearing": rodent_rearing.default_config,
     "RodentBowlEscape": rodent_bowl_escape.default_config,
     "RodentMaintainVelocity": rodent_maintain_velocity.default_config,
+    "RodentJoystick": rodent_joystick.default_config,
     "FruitflyImitation": fruitfly_imitation.default_config,
     "StickMaintainVelocity": stick_maintain_velocity.default_config,
     "StickImitation": stick_imitation.default_config,
@@ -44,6 +50,7 @@ _cfgs = {
 # ReferenceClips class for imitation environments (not all envs use clips)
 _reference_clips_classes = {
     "RodentImitation": ReferenceClips,
+    "RodentSparseImitation": ReferenceClips,
     "FruitflyImitation": ReferenceClips,
     "StickImitation": ReferenceClips,
 }

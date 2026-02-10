@@ -19,32 +19,36 @@ from mujoco_playground._src import reward as reward_fns
 
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
+from vnl_playground.tasks.task_registry import TaskRegistry
+
+_registry = TaskRegistry()
 
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.RODENT_BOX_FEET_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
-        ctrl_dt=0.01,
+        ctrl_dt=0.02,
         sim_dt=0.002,
-        solver="cg",
+        solver="newton",
         mujoco_impl="jax",
-        naconmax=16 * 8192,
-        njmax=512,
-        iterations=10,
+        naconmax=90 * 1024,
+        njmax=1200,
+        iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
         torque_actuators=True,
         rescale_factor=0.9,
         # Rearing-specific config
         target_relative_height=0.05,  # Target skull-torso height difference
+        reset_height_threshold=0.01,  # Must return below this to earn another reward
         rearing_hold_duration=1.0,  # Seconds to hold rearing pose for success
-        episode_length=500,  # 5 seconds at ctrl_dt=0.01
+        episode_length=500,  # 10 seconds at ctrl_dt=0.02
         action_repeat=1,
         # Reward terms: shaping rewards are low, success bonus dominates
         reward_terms={
-            "head_height_dense": {"weight": 0.5},  # Shaping: progress toward target
-            "head_height_sparse": {"weight": 0.5},  # Shaping: binary above threshold
+            "head_height_dense": {"weight": 0.0},  # Shaping: progress toward target
+            "head_height_sparse": {"weight": 0.0},  # Shaping: binary above threshold
             "upright": {"healthy_z_range": (0.02, 0.5), "weight": 0.2},
             "energy_cost": {"max_value": 50.0, "weight": 0.01},
             "rearing_success": {"weight": 500.0},  # Large bonus for completing task
@@ -52,37 +56,14 @@ def default_config() -> config_dict.ConfigDict:
         termination_criteria={
             "fallen": {"min_torso_z": 0.02, "max_torso_angle": 80},
             "nan_termination": {},
-            "rearing_complete": {},  # Terminate on successful sustained rearing
         },
     )
 
 
-_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
-_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
-
-
-def _named_reward(name: str):
-    """Decorator to register a reward function."""
-
-    def decorator(reward_fcn: Callable):
-        _REWARD_FCN_REGISTRY[name] = reward_fcn
-        return reward_fcn
-
-    return decorator
-
-
-def _named_termination_criterion(name: str):
-    """Decorator to register a termination criterion."""
-
-    def decorator(termination_fcn: Callable):
-        _TERMINATION_FCN_REGISTRY[name] = termination_fcn
-        return termination_fcn
-
-    return decorator
-
-
 class Rearing(rodent_base.RodentEnv):
     """Rearing environment - rodent must raise head above target height."""
+
+    _registry = _registry
 
     def __init__(
         self,
@@ -111,6 +92,8 @@ class Rearing(rodent_base.RodentEnv):
             "prev_action": self.null_action(),
             "action": self.null_action(),
             "rearing_steps": jp.array(0),  # Track consecutive steps in rearing pose
+            "rearing_success": jp.array(False),  # Whether rearing was just completed
+            "can_earn_rearing": jp.array(True),  # Must reset before earning again
         }
 
         data = mjx.make_data(
@@ -133,19 +116,50 @@ class Rearing(rodent_base.RodentEnv):
         n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
-        info = state.info
+        info = state.info.copy()
         obs = self._get_obs(data, info)
 
         info["prev_action"] = info["action"]
         info["action"] = action
 
-        # Update rearing step counter
+        # Update rearing step counter with reset requirement
         relative_height = self._get_relative_head_height(data)
         is_rearing = relative_height >= self._config.target_relative_height
-        info["rearing_steps"] = jp.where(
+        is_reset_position = relative_height <= self._config.reset_height_threshold
+
+        # Increment counter only while rearing
+        new_rearing_steps = jp.where(
             is_rearing,
             info["rearing_steps"] + 1,
-            jp.array(0),  # Reset counter if not rearing
+            jp.array(0),
+        )
+
+        required_steps = int(self._config.rearing_hold_duration / self._config.ctrl_dt)
+        reached_threshold = new_rearing_steps >= required_steps
+
+        # Only award if we've reset since last success
+        can_earn = info["can_earn_rearing"]
+        rearing_success = jp.logical_and(reached_threshold, can_earn)
+        info["rearing_success"] = rearing_success
+
+        # State machine for can_earn_rearing:
+        # - After success: must reset before earning again
+        # - At reset position: become eligible again
+        info["can_earn_rearing"] = jp.where(
+            rearing_success,
+            jp.array(False),  # Just succeeded, need to go back down
+            jp.where(
+                is_reset_position,
+                jp.array(True),  # Returned to low position, can earn again
+                info["can_earn_rearing"],  # Otherwise keep current state
+            ),
+        )
+
+        # Reset step counter when threshold reached
+        info["rearing_steps"] = jp.where(
+            reached_threshold,
+            jp.array(0),
+            new_rearing_steps,
         )
 
         done = self._is_done(data, info, state.metrics)
@@ -164,7 +178,6 @@ class Rearing(rodent_base.RodentEnv):
     def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> collections.OrderedDict:
         kinematic_sensors = self._get_kinematic_sensors(data)
         touch_sensors = self._get_touch_sensors(data)
-        origin = self._get_origin(data)
 
         # Include relative head height in observation
         relative_height = self._get_relative_head_height(data)
@@ -174,14 +187,34 @@ class Rearing(rodent_base.RodentEnv):
                 info["prev_action"],
                 kinematic_sensors,
                 touch_sensors,
-                origin,
                 jp.array([relative_height]),  # Add head height info
             ]
         )
 
-        return collections.OrderedDict(
+        obs = collections.OrderedDict(
             task_obs=task_obs,
             proprioception=self._get_proprioception(data, info, flatten=False),
+        )
+
+        # Privileged observations include rearing progress info
+        required_steps = int(self._config.rearing_hold_duration / self._config.ctrl_dt)
+        privileged_task_obs = jp.concatenate(
+            [
+                task_obs,
+                jp.array(
+                    [info["rearing_steps"] / required_steps]
+                ),  # Normalized progress
+                jp.array([info["can_earn_rearing"]], dtype=float),  # Eligibility
+            ]
+        )
+        privileged_obs = collections.OrderedDict(
+            task_obs=privileged_task_obs,
+            proprioception=self._get_proprioception(data, info, flatten=False),
+        )
+
+        return collections.OrderedDict(
+            state=obs,
+            privileged_state=privileged_obs,
         )
 
     def _get_relative_head_height(self, data: mjx.Data) -> float:
@@ -190,33 +223,13 @@ class Rearing(rodent_base.RodentEnv):
         torso_body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         return skull_body.xpos[2] - torso_body.xpos[2]
 
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
-        any_terminated = False
-        for name, kwargs in self._config.termination_criteria.items():
-            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-            terminated = termination_fcn(self, data, info, **kwargs)
-            any_terminated = jp.logical_or(any_terminated, terminated)
-            metrics["terminations/" + name] = jp.astype(terminated, float)
-        metrics["terminations/any"] = jp.astype(any_terminated, float)
-        return any_terminated
-
-    def _get_reward(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
-    ) -> float:
-        net_reward = 0.0
-        for name, kwargs in self._config.reward_terms.items():
-            net_reward += _REWARD_FCN_REGISTRY[name](
-                self, data, info, metrics, **kwargs
-            )
-        return net_reward
-
     def null_action(self) -> jp.ndarray:
         return jp.zeros(self.action_size)
 
     @property
     def proprioceptive_obs_size(self) -> int:
         obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["proprioception"])[0])
+        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
 
     @property
     def non_proprioceptive_obs_size(self) -> int:
@@ -233,111 +246,91 @@ class Rearing(rodent_base.RodentEnv):
         obs = abstract_state.obs
         return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
+    # --- Reward Functions ---
 
-# --- Reward Functions ---
+    @_registry.reward("head_height_dense")
+    def _head_height_dense_reward(self, data, info, metrics, weight) -> float:
+        """Dense reward: smooth increase as head approaches target height."""
+        relative_height = self._get_relative_head_height(data)
+        target = self._config.target_relative_height
+        metrics["relative_head_height"] = relative_height
 
+        # Tolerance-based smooth reward
+        reward_value = reward_fns.tolerance(
+            relative_height,
+            bounds=(target, float("inf")),
+            margin=target,
+            sigmoid="linear",
+            value_at_margin=0.0,
+        )
+        weighted_reward = reward_value * weight
+        metrics["rewards/head_height_dense"] = weighted_reward
+        return weighted_reward
 
-@_named_reward("head_height_dense")
-def _head_height_dense_reward(env, data, info, metrics, weight) -> float:
-    """Dense reward: smooth increase as head approaches target height."""
-    relative_height = env._get_relative_head_height(data)
-    target = env._config.target_relative_height
-    metrics["relative_head_height"] = relative_height
+    @_registry.reward("head_height_sparse")
+    def _head_height_sparse_reward(self, data, info, metrics, weight) -> float:
+        """Sparse reward: binary reward when head exceeds target height."""
+        relative_height = self._get_relative_head_height(data)
+        target = self._config.target_relative_height
 
-    # Tolerance-based smooth reward
-    reward_value = reward_fns.tolerance(
-        relative_height,
-        bounds=(target, float("inf")),
-        margin=target,
-        sigmoid="linear",
-        value_at_margin=0.0,
-    )
-    weighted_reward = reward_value * weight
-    metrics["rewards/head_height_dense"] = weighted_reward
-    return weighted_reward
+        above_target = relative_height >= target
+        weighted_reward = jp.astype(above_target, float) * weight
+        metrics["rewards/head_height_sparse"] = weighted_reward
+        return weighted_reward
 
+    @_registry.reward("upright")
+    def _upright_reward(self, data, info, metrics, weight, healthy_z_range) -> float:
+        """Reward for keeping torso in healthy z range (staying upright)."""
+        torso_z = self._get_body_height(data)
+        metrics["torso_z"] = torso_z
+        min_z, max_z = healthy_z_range
+        in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
+        weighted_reward = jp.astype(in_range, float) * weight
+        metrics["rewards/upright"] = weighted_reward
+        return weighted_reward
 
-@_named_reward("head_height_sparse")
-def _head_height_sparse_reward(env, data, info, metrics, weight) -> float:
-    """Sparse reward: binary reward when head exceeds target height."""
-    relative_height = env._get_relative_head_height(data)
-    target = env._config.target_relative_height
+    @_registry.reward("energy_cost")
+    def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
+        """Penalize energy consumption."""
+        energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
+        metrics["energy_use"] = energy_use
+        cost = weight * jp.minimum(energy_use, max_value)
+        metrics["rewards/energy_cost"] = -cost
+        return -cost
 
-    above_target = relative_height >= target
-    weighted_reward = jp.astype(above_target, float) * weight
-    metrics["rewards/head_height_sparse"] = weighted_reward
-    return weighted_reward
+    @_registry.reward("rearing_success")
+    def _rearing_success_reward(self, data, info, metrics, weight) -> float:
+        """Large reward when rearing pose is held for the required duration."""
+        rearing_success = info["rearing_success"]
+        weighted_reward = jp.astype(rearing_success, float) * weight
+        metrics["rewards/rearing_success"] = weighted_reward
+        metrics["rearing_steps"] = info["rearing_steps"]
+        metrics["can_earn_rearing"] = jp.astype(info["can_earn_rearing"], float)
+        return weighted_reward
 
+    # --- Termination Functions ---
 
-@_named_reward("upright")
-def _upright_reward(env, data, info, metrics, weight, healthy_z_range) -> float:
-    """Reward for keeping torso in healthy z range (staying upright)."""
-    torso_z = env._get_body_height(data)
-    metrics["torso_z"] = torso_z
-    min_z, max_z = healthy_z_range
-    in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
-    weighted_reward = jp.astype(in_range, float) * weight
-    metrics["rewards/upright"] = weighted_reward
-    return weighted_reward
+    @_registry.termination("fallen")
+    def _fallen_termination(
+        self, data: mjx.Data, info, min_torso_z: float, max_torso_angle: float
+    ) -> bool:
+        """Check if rodent has fallen."""
+        del info
+        torso_body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
+        torso_z = torso_body.xpos[2]
+        below_ground = torso_z < min_torso_z
 
+        # Check torso orientation - xmat[-1, -1] is the z-component of the z-axis
+        upright_z = torso_body.xmat.reshape(3, 3)[2, 2]
+        max_cos_angle = np.cos(np.deg2rad(max_torso_angle))
+        too_tilted = upright_z < max_cos_angle
 
-@_named_reward("energy_cost")
-def _energy_cost(env, data, info, metrics, weight, max_value) -> float:
-    """Penalize energy consumption."""
-    energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
-    metrics["energy_use"] = energy_use
-    cost = weight * jp.minimum(energy_use, max_value)
-    metrics["rewards/energy_cost"] = -cost
-    return -cost
+        return jp.logical_or(below_ground, too_tilted)
 
-
-@_named_reward("rearing_success")
-def _rearing_success_reward(env, data, info, metrics, weight) -> float:
-    """Large reward when rearing pose is held for the required duration."""
-    required_steps = int(env._config.rearing_hold_duration / env._config.ctrl_dt)
-    rearing_steps = info["rearing_steps"]
-
-    # Give reward only on the exact step when threshold is reached
-    success = rearing_steps == required_steps
-    weighted_reward = jp.astype(success, float) * weight
-    metrics["rewards/rearing_success"] = weighted_reward
-    metrics["rearing_steps"] = rearing_steps
-    return weighted_reward
-
-
-# --- Termination Functions ---
-
-
-@_named_termination_criterion("fallen")
-def _fallen_termination(
-    env, data: mjx.Data, info, min_torso_z: float, max_torso_angle: float
-) -> bool:
-    """Check if rodent has fallen."""
-    del info
-    torso_body = data.bind(env.mjx_model, env._spec.body(f"torso{env._suffix}"))
-    torso_z = torso_body.xpos[2]
-    below_ground = torso_z < min_torso_z
-
-    # Check torso orientation - xmat[-1, -1] is the z-component of the z-axis
-    upright_z = torso_body.xmat.reshape(3, 3)[2, 2]
-    max_cos_angle = np.cos(np.deg2rad(max_torso_angle))
-    too_tilted = upright_z < max_cos_angle
-
-    return jp.logical_or(below_ground, too_tilted)
-
-
-@_named_termination_criterion("nan_termination")
-def _nan_termination(env, data, info) -> bool:
-    """Check for NaN values in simulation data."""
-    del info
-    flattened_vals, _ = flatten_util.ravel_pytree(data)
-    num_nans = jp.sum(jp.isnan(flattened_vals))
-    return num_nans > 0
-
-
-@_named_termination_criterion("rearing_complete")
-def _rearing_complete_termination(env, data, info) -> bool:
-    """Terminate episode when rearing pose has been held for required duration."""
-    del data
-    required_steps = int(env._config.rearing_hold_duration / env._config.ctrl_dt)
-    return info["rearing_steps"] >= required_steps
+    @_registry.termination("nan_termination")
+    def _nan_termination(self, data, info) -> bool:
+        """Check for NaN values in simulation data."""
+        del info
+        flattened_vals, _ = flatten_util.ravel_pytree(data)
+        num_nans = jp.sum(jp.isnan(flattened_vals))
+        return num_nans > 0

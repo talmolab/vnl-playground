@@ -15,6 +15,7 @@ from mujoco import mjx
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.fruitfly import consts
 from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
+from vnl_playground.tasks.task_registry import TaskRegistry
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -40,6 +41,9 @@ def default_config() -> config_dict.ConfigDict:
 
 class FruitflyEnv(mjx_env.MjxEnv):
     """Base class for fruitfly environments."""
+
+    # Subclasses should set this to their TaskRegistry instance
+    _registry: TaskRegistry = None
 
     def __init__(
         self,
@@ -297,6 +301,65 @@ class FruitflyEnv(mjx_env.MjxEnv):
     def root_body(self, data: mjx.Data):
         """Return thorax body as root reference."""
         return data.bind(self.mjx_model, self._spec.body(f"thorax{self._suffix}"))
+
+    def _get_reward(
+        self, data: mjx.Data, info: Mapping[str, Any], metrics: dict
+    ) -> float:
+        """Compute total reward from registered reward functions.
+
+        Args:
+            data: Simulation data.
+            info: State info dictionary.
+            metrics: Metrics dictionary for logging.
+
+        Returns:
+            Total reward value.
+        """
+        if self._registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no TaskRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
+        net_reward = 0.0
+        for name, kwargs in self._config.reward_terms.items():
+            if name not in self._registry.rewards:
+                raise KeyError(
+                    f"Reward '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self._registry.rewards.keys())}"
+                )
+            net_reward += self._registry.rewards[name](
+                self, data, info, metrics, **kwargs
+            )
+        return net_reward
+
+    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: dict) -> bool:
+        """Check if episode should terminate based on registered criteria.
+
+        Args:
+            data: Simulation data.
+            info: State info dictionary.
+            metrics: Metrics dictionary for logging.
+
+        Returns:
+            Boolean indicating if episode should terminate.
+        """
+        if self._registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no TaskRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
+        any_terminated = False
+        for name, kwargs in self._config.termination_criteria.items():
+            if name not in self._registry.terminations:
+                raise KeyError(
+                    f"Termination '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self._registry.terminations.keys())}"
+                )
+            terminated = self._registry.terminations[name](self, data, info, **kwargs)
+            any_terminated = jp.logical_or(any_terminated, terminated)
+            metrics["terminations/" + name] = jp.astype(terminated, float)
+        metrics["terminations/any"] = jp.astype(any_terminated, float)
+        return any_terminated
 
     @property
     def action_size(self) -> int:
