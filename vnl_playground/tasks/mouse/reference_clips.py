@@ -47,7 +47,13 @@ class MouseReferenceClips:
     def _load_from_disk(
         self, data_path: str, keep_clips_idx: Optional[List[int]] = None
     ):
-        """Load all h5 files from the directory."""
+        """Load all h5 files from the directory into stacked JAX arrays.
+
+        Args:
+            data_path: Path to directory containing h5 files (one per clip).
+            keep_clips_idx: Optional indices of clips to keep after loading.
+                If None, all clips are retained.
+        """
         # Find all h5 files
         h5_files = sorted(glob.glob(os.path.join(data_path, "*.h5")))
         if not h5_files:

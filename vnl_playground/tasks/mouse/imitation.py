@@ -22,7 +22,12 @@ from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
 
 
 def default_config() -> config_dict.ConfigDict:
-    """Default configuration for mouse arm imitation."""
+    """Default configuration for mouse arm imitation.
+
+    Returns:
+        config_dict.ConfigDict: Configuration with reference data settings,
+            walker body names, reward terms, and termination criteria.
+    """
     cfg = base_default_config()
     # Reference data settings
     cfg.reference_data_path = str(consts.MOUSE_REFERENCE_DATA_PATH)
@@ -302,7 +307,16 @@ class MouseImitation(MouseBaseEnv):
         return state
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Build observation dictionary."""
+        """Build observation dictionary.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict containing reference_clip and start_frame.
+
+        Returns:
+            Mapping[str, Any]: OrderedDict with 'imitation_target' and
+                'proprioception' entries.
+        """
         return collections.OrderedDict(
             imitation_target=self._get_imitation_target(data, info),
             proprioception=self._get_proprioception(data, info),
@@ -311,7 +325,15 @@ class MouseImitation(MouseBaseEnv):
     def _get_proprioception(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> jp.ndarray:
-        """Get proprioceptive observation (joint positions and velocities)."""
+        """Get proprioceptive observation (joint positions and velocities).
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+
+        Returns:
+            jp.ndarray: Concatenated qpos and qvel.
+        """
         return jp.concatenate(
             [
                 data.qpos,  # Joint positions
@@ -322,7 +344,16 @@ class MouseImitation(MouseBaseEnv):
     def _get_reward(
         self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
     ) -> float:
-        """Compute total reward from all reward terms."""
+        """Compute total reward from all registered reward terms.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+            metrics: Mutable metrics dict; individual reward values are written here.
+
+        Returns:
+            float: Sum of all weighted reward terms.
+        """
         net_reward = 0.0
         for name, kwargs in self._config.reward_terms.items():
             if name in _REWARD_FCN_REGISTRY:
@@ -332,7 +363,16 @@ class MouseImitation(MouseBaseEnv):
         return net_reward
 
     def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
-        """Check if episode should terminate."""
+        """Check if episode should terminate based on registered criteria.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+            metrics: Mutable metrics dict; termination flags are written here.
+
+        Returns:
+            bool: True if any termination criterion is triggered.
+        """
         any_terminated = False
         for name, kwargs in self._config.termination_criteria.items():
             if name in _TERMINATION_FCN_REGISTRY:
@@ -344,7 +384,15 @@ class MouseImitation(MouseBaseEnv):
         return any_terminated
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
-        """Reset simulation data to match reference at given clip/frame."""
+        """Reset simulation data to match reference at given clip/frame.
+
+        Args:
+            clip_idx: Index of the reference clip.
+            start_frame: Frame index within the clip to initialize from.
+
+        Returns:
+            mjx.Data: Simulation data initialized to the reference pose.
+        """
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
@@ -362,22 +410,46 @@ class MouseImitation(MouseBaseEnv):
         return data
 
     def null_action(self) -> jp.ndarray:
-        """Return zero action."""
+        """Return zero action.
+
+        Returns:
+            jp.ndarray: Zero array of shape (action_size,).
+        """
         return jp.zeros(self.action_size)
 
     def _clip_length(self):
-        """Get number of frames per clip."""
+        """Get number of frames per clip.
+
+        Returns:
+            int: Number of frames in each reference clip.
+        """
         return self.reference_clips.qpos.shape[1]
 
     def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
-        """Get current frame index based on simulation time."""
+        """Get current frame index based on simulation time.
+
+        Args:
+            data: MJX simulation data (uses data.time).
+            info: Episode info dict containing 'start_frame'.
+
+        Returns:
+            int: Current frame index in the reference clip.
+        """
         time_in_frames = data.time * self._config.mocap_hz
         return jp.floor(time_in_frames + info["start_frame"]).astype(int)
 
     def _get_current_target(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> MouseReferenceClips:
-        """Get reference data at the current frame."""
+        """Get reference data at the current frame.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict containing 'reference_clip' and 'start_frame'.
+
+        Returns:
+            MouseReferenceClips: Reference clip sliced to the current frame.
+        """
         return self.reference_clips.at(
             clip=info["reference_clip"], frame=self._get_cur_frame(data, info)
         )
@@ -385,7 +457,16 @@ class MouseImitation(MouseBaseEnv):
     def _get_imitation_reference(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> MouseReferenceClips:
-        """Get future reference frames for observation."""
+        """Get future reference frames for observation.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict containing 'reference_clip' and 'start_frame'.
+
+        Returns:
+            MouseReferenceClips: Slice of reference_length future frames starting
+                from current_frame + 1.
+        """
         return self.reference_clips.slice(
             clip=info["reference_clip"],
             start_frame=self._get_cur_frame(data, info) + 1,
@@ -395,7 +476,16 @@ class MouseImitation(MouseBaseEnv):
     def _get_imitation_target(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Mapping[str, jp.ndarray]:
-        """Get imitation target (future reference poses relative to current state)."""
+        """Get imitation target (future reference poses relative to current state).
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict containing 'reference_clip' and 'start_frame'.
+
+        Returns:
+            Mapping[str, jp.ndarray]: OrderedDict with 'joint' (joint angle deltas)
+                and 'wrist' (wrist position deltas) targets.
+        """
         reference = self._get_imitation_reference(data, info)
 
         # Joint angle targets (difference from current)
@@ -415,6 +505,15 @@ class MouseImitation(MouseBaseEnv):
     # ==================== Reward Functions ====================
 
     def _named_reward(name: str):
+        """Decorator to register a method in the reward function registry.
+
+        Args:
+            name: Key to register the reward function under.
+
+        Returns:
+            Callable: Decorator that registers and returns the reward function.
+        """
+
         def decorator(reward_fcn: Callable):
             _REWARD_FCN_REGISTRY[name] = reward_fcn
             return reward_fcn
@@ -423,7 +522,18 @@ class MouseImitation(MouseBaseEnv):
 
     @_named_reward("joints")
     def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Reward for matching joint angles."""
+        """Reward for matching joint angles.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+            metrics: Mutable metrics dict.
+            weight: Reward weight multiplier.
+            exp_scale: Scale parameter for the Gaussian kernel.
+
+        Returns:
+            float: Weighted Gaussian reward based on joint angle L2 error.
+        """
         target = self._get_current_target(data, info)
         distance = jp.linalg.norm(target.joints - data.qpos)
         metrics["joint_l2_error"] = distance
@@ -433,7 +543,18 @@ class MouseImitation(MouseBaseEnv):
 
     @_named_reward("joints_vel")
     def _joints_vel_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Reward for matching joint velocities."""
+        """Reward for matching joint velocities.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+            metrics: Mutable metrics dict.
+            weight: Reward weight multiplier.
+            exp_scale: Scale parameter for the Gaussian kernel.
+
+        Returns:
+            float: Weighted Gaussian reward based on joint velocity L2 error.
+        """
         target = self._get_current_target(data, info)
         distance = jp.linalg.norm(target.joints_velocity - data.qvel)
         metrics["joint_vel_l2_error"] = distance
@@ -443,7 +564,18 @@ class MouseImitation(MouseBaseEnv):
 
     @_named_reward("wrist_pos")
     def _wrist_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Reward for matching wrist (end effector) position."""
+        """Reward for matching wrist (end effector) position.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+            metrics: Mutable metrics dict.
+            weight: Reward weight multiplier.
+            exp_scale: Scale parameter for the Gaussian kernel.
+
+        Returns:
+            float: Weighted Gaussian reward based on wrist position L2 error.
+        """
         target = self._get_current_target(data, info)
         wrist_pos = data.xpos[self._wrist_body_id]
         target_wrist = target.body_xpos("wrist_body")
@@ -455,7 +587,18 @@ class MouseImitation(MouseBaseEnv):
 
     @_named_reward("bodies_pos")
     def _bodies_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Reward for matching all tracked body positions."""
+        """Reward for matching all tracked body positions.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+            metrics: Mutable metrics dict.
+            weight: Reward weight multiplier.
+            exp_scale: Scale parameter for the Gaussian kernel.
+
+        Returns:
+            float: Weighted Gaussian reward based on total body position L2 error.
+        """
         target = self._get_current_target(data, info)
         total_dist_sqr = 0.0
         for body_name, body_id in self._body_ids.items():
@@ -472,7 +615,17 @@ class MouseImitation(MouseBaseEnv):
 
     @_named_reward("control_cost")
     def _control_cost(self, data, info, metrics, weight) -> float:
-        """Penalty for control magnitude."""
+        """Penalty for control magnitude.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+            metrics: Mutable metrics dict.
+            weight: Penalty weight multiplier.
+
+        Returns:
+            float: Negative weighted sum of squared action values.
+        """
         ctrl_sqr = jp.sum(jp.square(info["action"]))
         metrics["ctrl_sqr"] = ctrl_sqr
         cost = weight * ctrl_sqr
@@ -481,7 +634,17 @@ class MouseImitation(MouseBaseEnv):
 
     @_named_reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
-        """Penalty for control rate of change."""
+        """Penalty for control rate of change.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+            metrics: Mutable metrics dict.
+            weight: Penalty weight multiplier.
+
+        Returns:
+            float: Negative weighted sum of squared action deltas.
+        """
         ctrl_diff_sqr = jp.sum(jp.square(info["action"] - info["prev_action"]))
         metrics["ctrl_diff_sqr"] = ctrl_diff_sqr
         cost = weight * ctrl_diff_sqr
@@ -491,6 +654,15 @@ class MouseImitation(MouseBaseEnv):
     # ==================== Termination Functions ====================
 
     def _named_termination_criterion(name: str):
+        """Decorator to register a method in the termination function registry.
+
+        Args:
+            name: Key to register the termination function under.
+
+        Returns:
+            Callable: Decorator that registers and returns the termination function.
+        """
+
         def decorator(termination_fcn: Callable):
             _TERMINATION_FCN_REGISTRY[name] = termination_fcn
             return termination_fcn
@@ -499,14 +671,31 @@ class MouseImitation(MouseBaseEnv):
 
     @_named_termination_criterion("pose_error")
     def _bad_pose(self, data, info, max_l2_error) -> bool:
-        """Terminate if pose error is too large."""
+        """Terminate if pose error is too large.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+            max_l2_error: Maximum allowable L2 joint error before termination.
+
+        Returns:
+            bool: True if joint L2 error exceeds max_l2_error.
+        """
         target = self._get_current_target(data, info)
         pose_error = jp.linalg.norm(target.joints - data.qpos)
         return pose_error > max_l2_error
 
     @_named_termination_criterion("nan_termination")
     def _nan_termination(self, data, info) -> bool:
-        """Terminate if NaN values appear in simulation."""
+        """Terminate if NaN values appear in simulation.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+
+        Returns:
+            bool: True if any NaN values are found in the flattened data.
+        """
         flattened_vals, _ = flatten_util.ravel_pytree(data)
         num_nans = jp.sum(jp.isnan(flattened_vals))
         return num_nans > 0

@@ -14,7 +14,11 @@ from vnl_playground.tasks.mouse import consts
 
 
 def get_assets() -> Dict[str, bytes]:
-    """Collect XML + assets into a dict (for bundling/remote)."""
+    """Collect XML + asset files into a dict for bundling/remote loading.
+
+    Returns:
+        Dict[str, bytes]: Mapping of asset filenames to their byte contents.
+    """
     assets = {}
     mjx_env.update_assets(assets, consts.MOUSE_PATH / "xmls", "*.xml")
     mjx_env.update_assets(assets, consts.MOUSE_PATH / "xmls" / "assets")
@@ -22,7 +26,12 @@ def get_assets() -> Dict[str, bytes]:
 
 
 def default_config() -> config_dict.ConfigDict:
-    """Default sim + XML config for mouse tasks."""
+    """Default sim + XML config for mouse tasks.
+
+    Returns:
+        config_dict.ConfigDict: Configuration with walker/arena paths, solver
+            settings, PD gains, timesteps, and episode length.
+    """
     return config_dict.create(
         walker_xml_path=consts.MOUSE_XML_PATH,
         arena_xml_path=consts.MOUSE_ARENA_XML_PATH,  # separate empty arena
@@ -201,26 +210,56 @@ class MouseBaseEnv(mjx_env.MjxEnv):
 
     @property
     def action_size(self) -> int:
+        """Number of actuators (action dimensions) in the compiled model.
+
+        Returns:
+            int: Number of actuators.
+        """
         return self._mjx_model.nu
 
     @property
     def xml_path(self) -> str:
+        """Path to the walker XML file (alias for walker_xml_path).
+
+        Returns:
+            str: Filesystem path to the walker MJCF XML.
+        """
         return self._walker_xml_path
 
     @property
     def walker_xml_path(self) -> str:
+        """Path to the walker (mouse arm) XML file.
+
+        Returns:
+            str: Filesystem path to the walker MJCF XML.
+        """
         return self._walker_xml_path
 
     @property
     def arena_xml_path(self) -> str:
+        """Path to the arena XML file.
+
+        Returns:
+            str: Filesystem path to the arena MJCF XML.
+        """
         return self._arena_xml_path
 
     @property
     def mj_model(self) -> mujoco.MjModel:
+        """The compiled MuJoCo model (CPU).
+
+        Returns:
+            mujoco.MjModel: The compiled MuJoCo model.
+        """
         return self._mj_model
 
     @property
     def mjx_model(self) -> mjx.Model:
+        """The compiled MJX model (JAX/accelerator).
+
+        Returns:
+            mjx.Model: The compiled MJX model for use with JAX.
+        """
         return self._mjx_model
 
     @property

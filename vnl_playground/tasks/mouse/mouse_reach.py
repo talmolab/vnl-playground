@@ -18,7 +18,12 @@ from vnl_playground.tasks.mouse.base import (
 
 
 def default_config() -> config_dict.ConfigDict:
-    """Default config for mouse reaching task."""
+    """Default config for mouse reaching task.
+
+    Returns:
+        config_dict.ConfigDict: Configuration with target size/margin, control
+            cost weight, target sampling mode, and volume bounds.
+    """
     cfg = base_default_config()
     cfg.target_size = 0.001  # reaching radius tolerance
     cfg.target_margin = 0.003  # margin for reward shaping
@@ -40,6 +45,15 @@ class MouseReach(MouseBaseEnv):
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
     ) -> None:
+        """Initialize the mouse reaching environment.
+
+        Adds a fixed-base mouse arm, a mocap target sphere, compiles
+        the model, and caches body/geom IDs.
+
+        Args:
+            config: Configuration dictionary with reaching task parameters.
+            config_overrides: Optional overrides for config fields.
+        """
         super().__init__(config, config_overrides)
 
         # Add mouse model (no freejoint - fixed base arm)
@@ -71,7 +85,11 @@ class MouseReach(MouseBaseEnv):
 
     @staticmethod
     def get_target_positions() -> jp.ndarray:
-        """Return a fixed set of reachable target positions."""
+        """Return a fixed set of reachable target positions.
+
+        Returns:
+            jp.ndarray: Array of shape (8, 3) with target (x, y, z) positions.
+        """
         return jp.array(
             [
                 [0.007, 0.010, -0.006],
@@ -87,19 +105,40 @@ class MouseReach(MouseBaseEnv):
         )
 
     def _sample_target_from_list(self, rng: jax.Array) -> jp.ndarray:
-        """Sample a target from the fixed list of positions."""
+        """Sample a target from the fixed list of positions.
+
+        Args:
+            rng: JAX random key.
+
+        Returns:
+            jp.ndarray: Sampled target position of shape (3,).
+        """
         target_positions = self.get_target_positions()
         idx = jax.random.randint(rng, (), 0, target_positions.shape[0])
         return target_positions[idx]
 
     def _sample_target_from_volume(self, rng: jax.Array) -> jp.ndarray:
-        """Sample a target uniformly from the configured cubic volume."""
+        """Sample a target uniformly from the configured cubic volume.
+
+        Args:
+            rng: JAX random key.
+
+        Returns:
+            jp.ndarray: Sampled target position of shape (3,).
+        """
         vol_min = jp.array(self._config.target_volume_min, dtype=jp.float32)
         vol_max = jp.array(self._config.target_volume_max, dtype=jp.float32)
         return jax.random.uniform(rng, shape=(3,), minval=vol_min, maxval=vol_max)
 
     def reset(self, rng: jax.Array) -> mjx_env.State:
-        """Reset the environment and sample a target for this episode."""
+        """Reset the environment and sample a target for this episode.
+
+        Args:
+            rng: JAX random key for target sampling.
+
+        Returns:
+            mjx_env.State: Initial environment state with sampled target.
+        """
         # Sample a target position based on mode
         rng, key = jax.random.split(rng)
         if self._config.target_mode == "random_volume":
@@ -135,7 +174,15 @@ class MouseReach(MouseBaseEnv):
         return mjx_env.State(data, obs, reward_val, done, metrics, info)
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
-        """Take one physics step."""
+        """Take one control step (with physics substeps).
+
+        Args:
+            state: Current environment state.
+            action: Action array of shape (action_size,).
+
+        Returns:
+            mjx_env.State: Updated environment state after stepping.
+        """
         target_position = state.info["target_position"]
 
         # Ensure mocap position is set before physics step
@@ -171,9 +218,14 @@ class MouseReach(MouseBaseEnv):
     ) -> Tuple[jp.ndarray, jp.ndarray]:
         """Build observation vector.
 
+        Args:
+            data: MJX simulation data.
+            target_position: Target position of shape (3,).
+
         Returns:
-            task_obs: task-specific observations (target direction)
-            proprio_obs: proprioceptive observations (qpos, qvel, wrist pos)
+            Tuple[jp.ndarray, jp.ndarray]: (task_obs, proprio_obs) where
+                task_obs is the direction to target (3,) and proprio_obs
+                contains qpos, qvel, and wrist position.
         """
         wrist_pos = data.xpos[self._wrist_body_id]
         to_target = target_position - wrist_pos
@@ -195,7 +247,16 @@ class MouseReach(MouseBaseEnv):
     def _get_reward(
         self, data: mjx.Data, target_position: jp.ndarray, action: jax.Array
     ) -> jp.ndarray:
-        """Distance-based tolerance reward from wrist marker to target."""
+        """Distance-based tolerance reward from wrist marker to target.
+
+        Args:
+            data: MJX simulation data.
+            target_position: Target position of shape (3,).
+            action: Applied action array.
+
+        Returns:
+            jp.ndarray: Scalar reward (tolerance reward minus control cost).
+        """
         wrist_marker_pos = data.geom_xpos[self._wrist_marker_geom_id]
         dist = jp.linalg.norm(wrist_marker_pos - target_position)
         distance_reward = reward.tolerance(
@@ -211,7 +272,14 @@ class MouseReach(MouseBaseEnv):
         return jp.asarray(distance_reward - ctrl_cost, dtype=jp.float32)
 
     def _get_termination(self, data: mjx.Data) -> jax.Array:
-        """No early termination by default."""
+        """Check for early termination conditions.
+
+        Args:
+            data: MJX simulation data.
+
+        Returns:
+            jax.Array: Scalar float, 0.0 (no early termination by default).
+        """
         return jp.zeros((), dtype=jp.float32)
 
     @property
@@ -228,7 +296,11 @@ class MouseReach(MouseBaseEnv):
 
     @property
     def non_flattened_observation_size(self) -> Dict[str, int]:
-        """Get observation sizes by component."""
+        """Get observation sizes by component.
+
+        Returns:
+            Dict[str, int]: Mapping of observation component names to their sizes.
+        """
         nq = self._mj_model.nq
         nv = self._mj_model.nv
         return {
