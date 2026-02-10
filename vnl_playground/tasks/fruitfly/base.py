@@ -315,8 +315,18 @@ class FruitflyEnv(mjx_env.MjxEnv):
         Returns:
             Total reward value.
         """
+        if self._registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no TaskRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
         net_reward = 0.0
         for name, kwargs in self._config.reward_terms.items():
+            if name not in self._registry.rewards:
+                raise KeyError(
+                    f"Reward '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self._registry.rewards.keys())}"
+                )
             net_reward += self._registry.rewards[name](
                 self, data, info, metrics, **kwargs
             )
@@ -333,8 +343,18 @@ class FruitflyEnv(mjx_env.MjxEnv):
         Returns:
             Boolean indicating if episode should terminate.
         """
+        if self._registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no TaskRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
         any_terminated = False
         for name, kwargs in self._config.termination_criteria.items():
+            if name not in self._registry.terminations:
+                raise KeyError(
+                    f"Termination '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self._registry.terminations.keys())}"
+                )
             terminated = self._registry.terminations[name](self, data, info, **kwargs)
             any_terminated = jp.logical_or(any_terminated, terminated)
             metrics["terminations/" + name] = jp.astype(terminated, float)

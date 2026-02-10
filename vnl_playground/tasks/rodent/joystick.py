@@ -141,7 +141,7 @@ class Joystick(rodent_base.RodentEnv):
         info = {
             "rng": rng,
             "step": jp.array(0),
-            "command": self._sample_command(cmd_rng),  # [vx, vy, vyaw]
+            "command": self._sample_command(cmd_rng),  # [vx, vyaw]
             "prev_action": self.null_action(),
             "action": self.null_action(),
             "last_act": self.null_action(),  # for action_rate

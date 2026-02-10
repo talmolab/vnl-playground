@@ -116,7 +116,7 @@ class Rearing(rodent_base.RodentEnv):
         n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
-        info = state.info
+        info = state.info.copy()
         obs = self._get_obs(data, info)
 
         info["prev_action"] = info["action"]

@@ -61,7 +61,7 @@ def default_config() -> config_dict.ConfigDict:
         ),  # (start, end) frame indices or None for full clip. defaults to a rear
         default_clip_idx=1,  # Fixed clip index to use (None to sample randomly). defaults idx 1 is a rear
         # Episode params
-        episode_length=2500,  # 25 seconds to allow multiple sequence matches
+        episode_length=2500,  # 50 seconds to allow multiple sequence matches
         # Elastic matching params
         min_ratio=0.9,  # Agent can complete clip in 0.9x time (faster)
         max_ratio=1.1,  # Agent can take up to 1.1x time (slower)
@@ -92,7 +92,8 @@ class SparseImitation(rodent_base.RodentEnv):
 
     Uses online dynamic programming to detect when the agent's joint angles
     match the reference clip, allowing for time-warped playback (faster or slower).
-    Episodes run for a fixed duration (episode_length steps) without early termination.
+    Episodes run for a fixed duration (episode_length steps) and may terminate early
+    if the rodent falls or NaN values are detected.
     """
 
     _registry = _registry
