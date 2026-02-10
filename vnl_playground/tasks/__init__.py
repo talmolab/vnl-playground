@@ -14,6 +14,7 @@ from vnl_playground.tasks.rodent import rearing as rodent_rearing
 from vnl_playground.tasks.rodent import bowl_escape as rodent_bowl_escape
 from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_velocity
 from vnl_playground.tasks.rodent import joystick as rodent_joystick
+from vnl_playground.tasks.rodent import run_gap as rodent_run_gap
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
 from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_velocity
 from vnl_playground.tasks.stick import imitation as stick_imitation
@@ -30,6 +31,7 @@ _envs = {
     "RodentBowlEscape": rodent_bowl_escape.BowlEscape,
     "RodentMaintainVelocity": rodent_maintain_velocity.MaintainVelocity,
     "RodentJoystick": rodent_joystick.Joystick,
+    "RodentRunGap": rodent_run_gap.RunGap,
     "FruitflyImitation": fruitfly_imitation.Imitation,
     "StickMaintainVelocity": stick_maintain_velocity.MaintainVelocity,
     "StickImitation": stick_imitation.Imitation,
@@ -42,6 +44,7 @@ _cfgs = {
     "RodentBowlEscape": rodent_bowl_escape.default_config,
     "RodentMaintainVelocity": rodent_maintain_velocity.default_config,
     "RodentJoystick": rodent_joystick.default_config,
+    "RodentRunGap": rodent_run_gap.default_config,
     "FruitflyImitation": fruitfly_imitation.default_config,
     "StickMaintainVelocity": stick_maintain_velocity.default_config,
     "StickImitation": stick_imitation.default_config,
