@@ -1,0 +1,28 @@
+<mujoco>
+  <visual>
+    <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
+    <global offwidth="2048" offheight="1536"/>
+    <quality shadowsize="8192"/>
+    <map znear="0.00025" zfar="4.0"/>
+  </visual>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512"
+             rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true"
+              reflectance=".2"/>
+    <texture name="platform_tex" type="2d" builtin="flat" width="64" height="64"
+             rgb1=".4 .5 .3" rgb2=".3 .4 .2"/>
+    <material name="platform_mat" texture="platform_tex" texrepeat="2 2"
+              texuniform="true" reflectance=".1"/>
+  </asset>
+
+  <worldbody>
+    <!-- Void below - no global floor, platforms are individual boxes -->
+    <!-- Side walls for visual reference (no collision) -->
+    <geom name="wall_left" type="plane" pos="0 2 0" zaxis="0 -1 0"
+          size="25 2 0.01" contype="0" conaffinity="0" rgba="0.6 0.6 0.6 0.3"/>
+    <geom name="wall_right" type="plane" pos="0 -2 0" zaxis="0 1 0"
+          size="25 2 0.01" contype="0" conaffinity="0" rgba="0.6 0.6 0.6 0.3"/>
+  </worldbody>
+</mujoco>
