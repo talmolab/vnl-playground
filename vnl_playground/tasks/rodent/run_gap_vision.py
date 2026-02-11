@@ -3,11 +3,9 @@
 Extends RunGap with egocentric camera observations rendered via
 mujoco_warp's GPU batch ray-tracer.
 
-The observation dict from _get_obs() returns a flat dict compatible with
-track-mjx's ff_ppo observation_utils:
+The observation dict from _get_obs() returns:
 
     {
-        "imitation_target": jp.zeros(1),         # dummy for DictRunningStatisticsState
         "proprioception": OrderedDict(...),       # nested dict, flattened by observation_utils
         "vision": jp.zeros(H, W, C),             # placeholder; actual pixels injected by renderer
     }
@@ -54,9 +52,8 @@ class RunGapVision(run_gap.RunGap):
     rendering is performed by VisionRenderer in the training loop,
     not inside step().
 
-    Observations are returned as a flat dict compatible with track-mjx's
-    ff_ppo observation_utils (DictRunningStatisticsState, flatten_obs_dict,
-    etc.), with keys: imitation_target, proprioception, vision.
+    Observations are returned as a dict with keys: proprioception, vision.
+    Compatible with track-mjx's ff_ppo observation_utils.
 
     IMPORTANT: This task requires:
     - mujoco_impl="warp" for mujoco_warp rendering compatibility
@@ -94,11 +91,8 @@ class RunGapVision(run_gap.RunGap):
     def _get_obs(self, data, info) -> dict:
         """Get observations in ff_ppo-compatible dict format.
 
-        Returns a flat dict with keys expected by track-mjx's
-        observation_utils (DictRunningStatisticsState, flatten_obs_dict):
+        Returns a dict with keys:
 
-        - imitation_target: dummy zeros(1) for compatibility with
-          DictRunningStatisticsState which requires this key.
         - proprioception: nested OrderedDict from _get_proprioception
           (joint_angles, joint_ang_vels, etc.). Flattened by
           observation_utils._flatten_nested_obs at normalization time.
@@ -110,10 +104,9 @@ class RunGapVision(run_gap.RunGap):
             info: State info dictionary.
 
         Returns:
-            Dict with imitation_target, proprioception, and vision keys.
+            Dict with proprioception and vision keys.
         """
         return {
-            "imitation_target": jp.zeros(1),
             "proprioception": self._get_proprioception(data, info, flatten=False),
             "vision": jp.zeros(self.vision_shape),
         }
@@ -122,14 +115,13 @@ class RunGapVision(run_gap.RunGap):
     def observation_size(self) -> int:
         """Total flat observation size for the MLP (excludes vision pixels).
 
-        This is the sum of all flat proprioception dims + 1 (dummy
-        imitation_target). Vision pixels are handled separately by the CNN
-        and are NOT included here.
+        Vision pixels are handled separately by the CNN and are NOT
+        included here.
 
         Returns:
             int: Number of scalar observations fed to the MLP.
         """
-        return self.proprioceptive_obs_size + 1  # +1 for imitation_target
+        return self.proprioceptive_obs_size
 
     @property
     def proprioceptive_obs_size(self) -> int:
