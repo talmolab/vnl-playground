@@ -116,6 +116,20 @@ def _import_mujoco_warp():
 
 mjw = _import_mujoco_warp()
 
+# Work around mujoco_warp bleeding-edge detection bug:
+# mujoco 3.4.1.dev sets BLEEDING_EDGE_MUJOCO=True which tries to access
+# MjModel.flexedge_J_rownnz that doesn't exist in this build.
+# Must patch mujoco_warp._src.io directly where put_model() checks the flag.
+if not hasattr(mujoco.MjModel, "flexedge_J_rownnz"):
+    try:
+        import mujoco_warp._src.io as _mjw_io
+
+        if getattr(_mjw_io, "BLEEDING_EDGE_MUJOCO", False):
+            _mjw_io.BLEEDING_EDGE_MUJOCO = False
+            logger.info("Patched mujoco_warp._src.io.BLEEDING_EDGE_MUJOCO=False")
+    except ImportError:
+        pass
+
 
 class VisionRenderer:
     """GPU-accelerated batch renderer for egocentric vision observations.
@@ -145,6 +159,10 @@ class VisionRenderer:
         render_depth: Whether to also render depth (default: False).
         use_textures: Whether to use textures in rendering (default: True).
         use_shadows: Whether to use shadow rendering (default: False).
+        hide_self_geoms: If True, hide geoms belonging to the robot body so
+            the egocentric camera only sees the scene (default: False).
+        self_body_suffix: Body name suffix identifying robot bodies when
+            ``hide_self_geoms=True`` (default: "-rodent").
         nconmax: Maximum contacts per world for warp Data. If None, uses default.
         njmax: Maximum constraints per world for warp Data. If None, uses default.
         naconmax: Maximum contacts across all worlds. If None, computed from nconmax.
@@ -160,6 +178,8 @@ class VisionRenderer:
         render_depth: bool = False,
         use_textures: bool = True,
         use_shadows: bool = False,
+        hide_self_geoms: bool = False,
+        self_body_suffix: str = "-rodent",
         nconmax: int | None = None,
         njmax: int | None = None,
         naconmax: int | None = None,
@@ -181,8 +201,35 @@ class VisionRenderer:
             )
         self._cam_idx = cam_names.index(camera_name)
 
+        # Optionally hide robot body geoms by setting rgba alpha to 0
+        # before copying the model to GPU. This makes the egocentric camera
+        # see only the scene (arena, platforms, etc.) without the robot body.
+        saved_rgba = None
+        if hide_self_geoms:
+            robot_body_ids = {
+                i
+                for i in range(mj_model.nbody)
+                if mj_model.body(i).name.endswith(self_body_suffix)
+            }
+            robot_geom_ids = [
+                i
+                for i in range(mj_model.ngeom)
+                if mj_model.geom_bodyid[i] in robot_body_ids
+            ]
+            if robot_geom_ids:
+                saved_rgba = mj_model.geom_rgba[robot_geom_ids].copy()
+                mj_model.geom_rgba[robot_geom_ids, 3] = 0
+                logger.info(
+                    f"Hiding {len(robot_geom_ids)} robot geoms "
+                    f"(suffix='{self_body_suffix}')"
+                )
+
         # Create native mujoco_warp model on GPU
         self._mjw_model = mjw.put_model(mj_model)
+
+        # Restore original rgba values so physics model is unaffected
+        if saved_rgba is not None:
+            mj_model.geom_rgba[robot_geom_ids] = saved_rgba
 
         # Create native mujoco_warp data on GPU (batch of nworld)
         mj_data = mujoco.MjData(mj_model)
