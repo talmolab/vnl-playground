@@ -109,6 +109,18 @@ class BraxObsWrapper(wrapper.Wrapper):
             for k, v in obs.items()
         }
 
+    @property
+    def unwrapped(self) -> mjx_env.MjxEnv:
+        return self
+
+    @property
+    def _mjx_model(self):
+        return self.env._mjx_model
+
+    @_mjx_model.setter
+    def _mjx_model(self, value):
+        self.env._mjx_model = value
+
 
 class TrackMjxObsWrapper(wrapper.Wrapper):
     """Wrapper that flattens each second-level obs value into a 1D array.
@@ -142,6 +154,18 @@ class TrackMjxObsWrapper(wrapper.Wrapper):
             }
             for k, v in obs.items()
         }
+
+    @property
+    def unwrapped(self) -> mjx_env.MjxEnv:
+        return self
+
+    @property
+    def _mjx_model(self):
+        return self.env._mjx_model
+
+    @_mjx_model.setter
+    def _mjx_model(self, value):
+        self.env._mjx_model = value
 
 
 class LegacyObsWrapper(wrapper.Wrapper):
