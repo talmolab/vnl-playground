@@ -55,6 +55,11 @@ def _import_mujoco_warp():
     except ImportError:
         pass
 
+    # The vendored mujoco_warp (from mujoco-mjx) is now cached in
+    # sys.modules.  We must evict it so that subsequent imports from a
+    # different path can actually pick up the standalone package.
+    sys.modules.pop("mujoco_warp", None)
+
     # Strategy 2: Check MUJOCO_WARP_PATH environment variable
     mjw_path = os.environ.get("MUJOCO_WARP_PATH")
     if mjw_path and os.path.isdir(mjw_path):
@@ -68,6 +73,9 @@ def _import_mujoco_warp():
                 return mjw
         except ImportError:
             pass
+
+    # Evict again before trying common dev locations
+    sys.modules.pop("mujoco_warp", None)
 
     # Strategy 3: Try common development locations
     search_paths = []
@@ -87,6 +95,8 @@ def _import_mujoco_warp():
         ):
             if path not in sys.path:
                 sys.path.insert(0, path)
+            # Evict cached module before each retry
+            sys.modules.pop("mujoco_warp", None)
             try:
                 import mujoco_warp as mjw
 
@@ -191,13 +201,18 @@ class VisionRenderer:
         cam_active = [False] * mj_model.ncam
         cam_active[self._cam_idx] = True
 
+        # The number of active cameras (just our single egocentric camera)
+        n_active = sum(cam_active)
+
         self._render_context = mjw.create_render_context(
             mj_model,
             self._mjw_model,
             self._mjw_data,
             cam_res=(width, height),
-            render_rgb=True,
-            render_depth=render_depth,
+            # Pass per-camera lists to work around mujoco_warp bug where
+            # render_depth=False is not correctly handled as a scalar bool.
+            render_rgb=[True] * n_active,
+            render_depth=[render_depth] * n_active,
             cam_active=cam_active,
             use_textures=use_textures,
             use_shadows=use_shadows,
