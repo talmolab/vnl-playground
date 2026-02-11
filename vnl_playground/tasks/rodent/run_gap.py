@@ -48,8 +48,8 @@ def default_config() -> config_dict.ConfigDict:
         sim_dt=0.002,
         solver="newton",
         mujoco_impl="warp",
-        naconmax=90 * 1024,
-        njmax=1200,
+        naconmax=14 * 1024,
+        njmax=400,
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
@@ -179,9 +179,7 @@ class RunGap(rodent_base.RodentEnv):
                 contype=1,
                 conaffinity=1,
             )
-            self._platform_positions.append(
-                (x_cursor, x_cursor + plat_length)
-            )
+            self._platform_positions.append((x_cursor, x_cursor + plat_length))
             x_cursor += plat_length
 
         self._corridor_end_x = x_cursor
@@ -301,34 +299,40 @@ class RunGap(rodent_base.RodentEnv):
         sentinel_len = 0.0  # zero length for "no gap"
 
         # Distances to leading edge (start) of next 3 gaps
-        gap_distances = jp.array([
-            jp.where(
-                next_idx + i < n,
-                self._gap_starts[jp.clip(next_idx + i, 0, n - 1)] - rodent_x,
-                sentinel_dist,
-            )
-            for i in range(3)
-        ])
+        gap_distances = jp.array(
+            [
+                jp.where(
+                    next_idx + i < n,
+                    self._gap_starts[jp.clip(next_idx + i, 0, n - 1)] - rodent_x,
+                    sentinel_dist,
+                )
+                for i in range(3)
+            ]
+        )
 
         # Lengths of next 3 gaps
-        gap_lengths = jp.array([
-            jp.where(
-                next_idx + i < n,
-                self._gap_lengths[jp.clip(next_idx + i, 0, n - 1)],
-                sentinel_len,
-            )
-            for i in range(3)
-        ])
+        gap_lengths = jp.array(
+            [
+                jp.where(
+                    next_idx + i < n,
+                    self._gap_lengths[jp.clip(next_idx + i, 0, n - 1)],
+                    sentinel_len,
+                )
+                for i in range(3)
+            ]
+        )
 
         # Lengths of next 3 platforms (after each gap)
-        platform_lengths = jp.array([
-            jp.where(
-                next_idx + i < n,
-                self._platform_lengths_after_gap[jp.clip(next_idx + i, 0, n - 1)],
-                sentinel_len,
-            )
-            for i in range(3)
-        ])
+        platform_lengths = jp.array(
+            [
+                jp.where(
+                    next_idx + i < n,
+                    self._platform_lengths_after_gap[jp.clip(next_idx + i, 0, n - 1)],
+                    sentinel_len,
+                )
+                for i in range(3)
+            ]
+        )
 
         # Velocity features
         forward_vel = torso.subtree_linvel[0]  # x velocity
@@ -352,21 +356,24 @@ class RunGap(rodent_base.RodentEnv):
             plat_idx < len(self._platform_trailing_edges),
             self._platform_trailing_edges[
                 jp.clip(plat_idx, 0, len(self._platform_trailing_edges) - 1)
-            ] - rodent_x,
+            ]
+            - rodent_x,
             sentinel_dist,
         )
 
-        return jp.concatenate([
-            gap_distances,                        # (3,)
-            gap_lengths,                          # (3,)
-            platform_lengths,                     # (3,)
-            forward_vel.reshape(1),               # (1,)
-            lateral_vel.reshape(1),               # (1,)
-            body_height.reshape(1),               # (1,)
-            lateral_pos.reshape(1),               # (1,)
-            jp.array([heading_x, heading_y]),     # (2,)
-            platform_edge_dist.reshape(1),        # (1,)
-        ])  # Total: 16
+        return jp.concatenate(
+            [
+                gap_distances,  # (3,)
+                gap_lengths,  # (3,)
+                platform_lengths,  # (3,)
+                forward_vel.reshape(1),  # (1,)
+                lateral_vel.reshape(1),  # (1,)
+                body_height.reshape(1),  # (1,)
+                lateral_pos.reshape(1),  # (1,)
+                jp.array([heading_x, heading_y]),  # (2,)
+                platform_edge_dist.reshape(1),  # (1,)
+            ]
+        )  # Total: 16
 
     def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> collections.OrderedDict:
         """Get the current observation from the simulation data.

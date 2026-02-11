@@ -51,15 +51,16 @@ from track_mjx.agent.ff_ppo.ppo_networks import (
 )
 
 from vnl_playground import tasks
+from vnl_playground.tasks.wrappers import LegacyObsWrapper
 
 # Enable persistent compilation cache.
-jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
-jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
-jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
-jax.config.update(
-    "jax_persistent_cache_enable_xla_caches",
-    "xla_gpu_per_fusion_autotune_cache_dir",
-)
+# jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+# jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+# jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+# jax.config.update(
+#     "jax_persistent_cache_enable_xla_caches",
+#     "xla_gpu_per_fusion_autotune_cache_dir",
+# )
 
 
 def render_video(rollout, mj_model, mj_data, renderer, video_path, fps=50):
@@ -137,6 +138,13 @@ def main(cfg: DictConfig):
     env = tasks.load(env_name, flatten_obs=False, config_overrides=env_args)
     eval_env = tasks.load(env_name, flatten_obs=False, config_overrides=env_args)
 
+    # Strip state/privileged_state wrapping for non-vision training.
+    # ff_ppo expects dict obs with proprioception/imitation_target at top level.
+    arch_name = cfg.network_config.arch_name
+    if arch_name != "vision":
+        env = LegacyObsWrapper(env)
+        eval_env = LegacyObsWrapper(eval_env)
+
     logging.info(f"Loaded environment: {env_name}")
     logging.info(f"Action size: {env.action_size}")
 
@@ -155,7 +163,6 @@ def main(cfg: DictConfig):
     )
 
     # Build network factory based on architecture
-    arch_name = cfg.network_config.arch_name
 
     if arch_name == "vision":
         network_factory = functools.partial(
