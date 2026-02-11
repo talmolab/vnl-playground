@@ -42,7 +42,7 @@ def default_config() -> config_dict.ConfigDict:
         config_dict.ConfigDict: The default configuration dictionary.
     """
     return config_dict.create(
-        walker_xml_path=consts.RODENT_BOX_FEET_PATH,
+        walker_xml_path=consts.RODENT_NO_TAIL_COLLISION_XML,
         arena_xml_path=consts.CORRIDOR_ARENA_XML_PATH,
         ctrl_dt=0.02,
         sim_dt=0.002,
