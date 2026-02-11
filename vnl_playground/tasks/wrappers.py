@@ -205,7 +205,7 @@ class HighLevelWrapper(wrapper.Wrapper):
         policy_obs_key: Top-level obs key for the policy/actor (default: 'state').
         value_obs_key: Top-level obs key for the value/critic (default: 'state').
         highlvl_obs_key: Key for high-level policy observations (default: 'task_obs').
-        decoder_obs_key: Key for decoder observations (default: 'proprioception').
+        lowlvl_obs_key: Key for decoder observations (default: 'proprioception').
     """
 
     def __init__(
@@ -216,7 +216,7 @@ class HighLevelWrapper(wrapper.Wrapper):
         policy_obs_key: str = "state",
         value_obs_key: str = "state",
         highlvl_obs_key: str = "task_obs",
-        decoder_obs_key: str = "proprioception",
+        lowlvl_obs_key: str = "proprioception",
     ):
         super().__init__(env)
         self._decoder_inference_fn = decoder_inference_fn
@@ -224,7 +224,7 @@ class HighLevelWrapper(wrapper.Wrapper):
         self._policy_obs_key = policy_obs_key
         self._value_obs_key = value_obs_key
         self._highlvl_obs_key = highlvl_obs_key
-        self._decoder_obs_key = decoder_obs_key
+        self._lowlvl_obs_key = lowlvl_obs_key
         self._proprioceptive_obs_size = int(env.proprioceptive_obs_size)
 
         sample_state = env.reset(jax.random.PRNGKey(0))
@@ -279,7 +279,7 @@ class HighLevelWrapper(wrapper.Wrapper):
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
         decoder_obs = jp.nan_to_num(
             jax.flatten_util.ravel_pytree(
-                state.info["_full_obs"][self._policy_obs_key][self._decoder_obs_key]
+                state.info["_full_obs"][self._policy_obs_key][self._lowlvl_obs_key]
             )[0]
         )
         ctrl, extras = self._decoder_inference_fn(
