@@ -413,7 +413,7 @@
                       <geom name="skull_T2_collision" class="nonself_collision_primitive" type="ellipsoid" group="1" size="0.002209522800796731 0.001669565217391304 0.007000000000000001" rgba="1 1 1 1" density="703.10773841" pos="0.02808303479812645 -0.000912695652173913 -0.0123" euler="0 0.5235987755982988 0"/>
                       <joint name="atlas" class="atlas" pos="-0.02843583549004804 0 0"/>
                       <site name="head" class="sensor" type="box" size="0.002 0.002 0.002"/>
-                      <camera name="egocentric" fovy="80.0" pos="0.01 0 0.005" euler="0 -1.570796326794897 -1.570796326794897"/>
+                      <camera name="egocentric" fovy="80.0" pos="0.05 0 0.005" euler="0 -1.570796326794897 -1.570796326794897"/>
                       <body name="jaw" pos="0.0004529521741633299 -1.588797783766933e-08 -0.0164" euler="0 0.2617993877991494 0">
                         <geom name="jaw_back_collision" class="nonself_collision_primitive" type="ellipsoid" size="0.01215237540438202 0.01335652173913044 0.007000000000000001" density="314.057274977" pos="-0.01087085217991992 0 0.00205" euler="0 0.9599310885968813 0"/>
                         <geom name="jaw_F_collision" class="nonself_collision_primitive" type="ellipsoid" size="0.003314284201195097 0.006678260869565218 0.012" density="314.057274977" pos="0.002717713044979979 0 -0.00492" euler="0 1.832595714594046 0"/>

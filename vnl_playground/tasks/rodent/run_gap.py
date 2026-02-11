@@ -186,6 +186,32 @@ class RunGap(rodent_base.RodentEnv):
 
         self._corridor_end_x = x_cursor
 
+        # Precompute gap positions as JAX arrays for jit-compatible obs
+        # Gaps exist between consecutive platforms
+        gap_starts = []
+        gap_ends = []
+        gap_lengths = []
+        platform_lengths = []
+        for i in range(1, len(self._platform_positions)):
+            prev_end = self._platform_positions[i - 1][1]
+            curr_start = self._platform_positions[i][0]
+            gap_starts.append(prev_end)
+            gap_ends.append(curr_start)
+            gap_lengths.append(curr_start - prev_end)
+            plat_start, plat_end = self._platform_positions[i]
+            platform_lengths.append(plat_end - plat_start)
+
+        self._gap_starts = jp.array(gap_starts)
+        self._gap_ends = jp.array(gap_ends)
+        self._gap_lengths = jp.array(gap_lengths)
+        self._platform_lengths_after_gap = jp.array(platform_lengths)
+        self._n_gaps = len(gap_starts)
+
+        # Platform trailing edges for computing distance-to-edge
+        self._platform_trailing_edges = jp.array(
+            [pos[1] for pos in self._platform_positions]
+        )
+
     def reset(self, rng: jax.Array) -> mjx_env.State:
         """Reset the environment state.
 
@@ -246,32 +272,128 @@ class RunGap(rodent_base.RodentEnv):
         )
         return state
 
+    def _get_gap_features(self, data: mjx.Data) -> jp.ndarray:
+        """Compute handcrafted gap-aware features for the current state.
+
+        Returns a flat array of features about upcoming gaps relative to the
+        rodent's position, plus velocity, height, lateral position, and heading.
+        These serve as the encoder input (imitation_target) for the intention
+        network - encoding "what terrain lies ahead" into a latent intention.
+
+        Args:
+            data: Current simulation data.
+
+        Returns:
+            Flat array of 16 gap-aware feature values.
+        """
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        rodent_x = torso.xpos[0]
+        rodent_y = torso.xpos[1]
+        rodent_z = torso.xpos[2]
+
+        # Find the first gap whose end is ahead of the rodent
+        # (i.e., first gap not yet fully passed)
+        next_idx = jp.searchsorted(self._gap_ends, rodent_x)
+
+        # Pad with large sentinel values for gaps beyond corridor end
+        n = self._n_gaps
+        sentinel_dist = 10.0  # large distance for "no gap ahead"
+        sentinel_len = 0.0  # zero length for "no gap"
+
+        # Distances to leading edge (start) of next 3 gaps
+        gap_distances = jp.array([
+            jp.where(
+                next_idx + i < n,
+                self._gap_starts[jp.clip(next_idx + i, 0, n - 1)] - rodent_x,
+                sentinel_dist,
+            )
+            for i in range(3)
+        ])
+
+        # Lengths of next 3 gaps
+        gap_lengths = jp.array([
+            jp.where(
+                next_idx + i < n,
+                self._gap_lengths[jp.clip(next_idx + i, 0, n - 1)],
+                sentinel_len,
+            )
+            for i in range(3)
+        ])
+
+        # Lengths of next 3 platforms (after each gap)
+        platform_lengths = jp.array([
+            jp.where(
+                next_idx + i < n,
+                self._platform_lengths_after_gap[jp.clip(next_idx + i, 0, n - 1)],
+                sentinel_len,
+            )
+            for i in range(3)
+        ])
+
+        # Velocity features
+        forward_vel = torso.subtree_linvel[0]  # x velocity
+        lateral_vel = torso.subtree_linvel[1]  # y velocity
+
+        # Height above platform surface (surface is at z=0)
+        body_height = rodent_z
+
+        # Lateral deviation from corridor center (center is y=0)
+        lateral_pos = rodent_y
+
+        # Heading direction (x-y plane components from rotation matrix)
+        # xmat row 0 gives the forward direction of the torso
+        heading_x = torso.xmat[0, 0]  # cos of heading
+        heading_y = torso.xmat[0, 1]  # sin of heading
+
+        # Distance to trailing edge of current platform
+        # Find which platform the rodent is on or past
+        plat_idx = jp.searchsorted(self._platform_trailing_edges, rodent_x)
+        platform_edge_dist = jp.where(
+            plat_idx < len(self._platform_trailing_edges),
+            self._platform_trailing_edges[
+                jp.clip(plat_idx, 0, len(self._platform_trailing_edges) - 1)
+            ] - rodent_x,
+            sentinel_dist,
+        )
+
+        return jp.concatenate([
+            gap_distances,                        # (3,)
+            gap_lengths,                          # (3,)
+            platform_lengths,                     # (3,)
+            forward_vel.reshape(1),               # (1,)
+            lateral_vel.reshape(1),               # (1,)
+            body_height.reshape(1),               # (1,)
+            lateral_pos.reshape(1),               # (1,)
+            jp.array([heading_x, heading_y]),     # (2,)
+            platform_edge_dist.reshape(1),        # (1,)
+        ])  # Total: 16
+
     def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> collections.OrderedDict:
         """Get the current observation from the simulation data.
+
+        Observation structure for the intention encoder-decoder architecture:
+        - imitation_target: Handcrafted gap features (16 values) -> encoder input
+          The encoder compresses terrain-ahead information into a latent "intention"
+        - proprioception: Body state (joint angles, sensors, etc.) -> decoder input
+          Combined with the latent intention to produce actions
 
         Args:
             data: The simulation data.
             info: State info dictionary.
 
         Returns:
-            OrderedDict with state and privileged_state keys.
+            OrderedDict with state and privileged_state keys, each containing
+            imitation_target and proprioception.
         """
-        kinematic_sensors = self._get_kinematic_sensors(data)
-        touch_sensors = self._get_touch_sensors(data)
-        origin = self._get_origin(data)
+        # Gap features -> encoder input (what terrain lies ahead)
+        gap_features = self._get_gap_features(data)
 
-        task_obs = jp.concatenate(
-            [
-                info["prev_action"],
-                kinematic_sensors,
-                touch_sensors,
-                origin,
-            ]
-        )
+        # Body state -> decoder input (combined with latent intention)
+        proprioception = self._get_proprioception(data, info, flatten=False)
 
         obs = collections.OrderedDict(
-            task_obs=task_obs,
-            proprioception=self._get_proprioception(data, info, flatten=False),
+            imitation_target=gap_features,
+            proprioception=proprioception,
         )
         return collections.OrderedDict(
             state=obs,
