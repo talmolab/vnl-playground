@@ -77,6 +77,73 @@ class FlattenObsWrapper(wrapper.Wrapper):
         self.env._mjx_model = value
 
 
+class BraxObsWrapper(wrapper.Wrapper):
+    """Wrapper that flattens each top-level obs value into a single 1D array.
+
+    Input:  {state: OrderedDict(task_obs=..., proprioception=...)}
+    Output: {state: jax.Array}
+
+    If privileged_state is present:
+    Input:  {state: ..., privileged_state: ...}
+    Output: {state: jax.Array, privileged_state: jax.Array}
+    """
+
+    def reset(
+        self,
+        rng: jax.Array,
+        **kwargs: Any,
+    ) -> wrapper.mjx_env.State:
+        state = self.env.reset(rng, **kwargs)
+        return state.replace(obs=self._flatten_obs(state.obs))
+
+    def step(
+        self, state: wrapper.mjx_env.State, action: jax.Array
+    ) -> wrapper.mjx_env.State:
+        state = self.env.step(state, action)
+        return state.replace(obs=self._flatten_obs(state.obs))
+
+    @staticmethod
+    def _flatten_obs(obs):
+        return {
+            k: jp.nan_to_num(jax.flatten_util.ravel_pytree(v)[0])
+            for k, v in obs.items()
+        }
+
+
+class TrackMjxObsWrapper(wrapper.Wrapper):
+    """Wrapper that flattens each second-level obs value into a 1D array.
+
+    Input:  {state: OrderedDict(task_obs=nested, proprioception=nested)}
+    Output: {state: {task_obs: jax.Array, proprioception: jax.Array}}
+
+    If privileged_state is present, it is flattened the same way.
+    """
+
+    def reset(
+        self,
+        rng: jax.Array,
+        **kwargs: Any,
+    ) -> wrapper.mjx_env.State:
+        state = self.env.reset(rng, **kwargs)
+        return state.replace(obs=self._flatten_obs(state.obs))
+
+    def step(
+        self, state: wrapper.mjx_env.State, action: jax.Array
+    ) -> wrapper.mjx_env.State:
+        state = self.env.step(state, action)
+        return state.replace(obs=self._flatten_obs(state.obs))
+
+    @staticmethod
+    def _flatten_obs(obs):
+        return {
+            k: {
+                k2: jp.nan_to_num(jax.flatten_util.ravel_pytree(v2)[0])
+                for k2, v2 in v.items()
+            }
+            for k, v in obs.items()
+        }
+
+
 class LegacyObsWrapper(wrapper.Wrapper):
     """Wrapper that strips the state/privileged_state hierarchy from observations.
 
