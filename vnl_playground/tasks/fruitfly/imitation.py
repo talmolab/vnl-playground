@@ -215,15 +215,10 @@ class Imitation(fruitfly_base.FruitflyEnv):
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
         obs = collections.OrderedDict(
-            task_obs=jax.flatten_util.ravel_pytree(
-                self._get_imitation_target(data, info)
-            )[0],
-            proprioception=self._get_proprioception(data, info),
+            task_obs=self._get_imitation_target(data, info),
+            proprioception=self._get_proprioception(data, info, flatten=False),
         )
-        return collections.OrderedDict(
-            state=obs,
-            privileged_state=obs,
-        )
+        return collections.OrderedDict(state=obs)
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         data = mjx.make_data(

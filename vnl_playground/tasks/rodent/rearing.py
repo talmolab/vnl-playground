@@ -193,7 +193,7 @@ class Rearing(rodent_base.RodentEnv):
 
         obs = collections.OrderedDict(
             task_obs=task_obs,
-            proprioception=self._get_proprioception(data, info),
+            proprioception=self._get_proprioception(data, info, flatten=False),
         )
 
         # Privileged observations include rearing progress info
@@ -209,7 +209,7 @@ class Rearing(rodent_base.RodentEnv):
         )
         privileged_obs = collections.OrderedDict(
             task_obs=privileged_task_obs,
-            proprioception=self._get_proprioception(data, info),
+            proprioception=self._get_proprioception(data, info, flatten=False),
         )
 
         return collections.OrderedDict(

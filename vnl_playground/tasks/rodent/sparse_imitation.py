@@ -297,12 +297,9 @@ class SparseImitation(rodent_base.RodentEnv):
         )
         obs = collections.OrderedDict(
             task_obs=task_obs,
-            proprioception=self._get_proprioception(data, info),
+            proprioception=self._get_proprioception(data, info, flatten=False),
         )
-        return collections.OrderedDict(
-            state=obs,
-            privileged_state=obs,
-        )
+        return collections.OrderedDict(state=obs)
 
     @_registry.reward("sequence_match")
     def _sequence_match_reward(self, data, info, metrics, weight) -> jax.Array:

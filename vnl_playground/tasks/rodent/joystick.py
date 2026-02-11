@@ -280,12 +280,9 @@ class Joystick(rodent_base.RodentEnv):
 
         obs = collections.OrderedDict(
             task_obs=task_obs,
-            proprioception=self._get_proprioception(data, info),
+            proprioception=self._get_proprioception(data, info, flatten=False),
         )
-        return collections.OrderedDict(
-            state=obs,
-            privileged_state=obs,
-        )
+        return collections.OrderedDict(state=obs)
 
     def null_action(self) -> jp.ndarray:
         """Return zero action."""
