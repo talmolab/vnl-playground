@@ -1,6 +1,7 @@
 """Mouse forelimb reaching task following rodent task patterns."""
 
-from typing import Any, Dict, Optional, Union, Tuple
+import collections
+from typing import Any, Dict, Mapping, Optional, Union
 
 import jax
 import jax.numpy as jp
@@ -158,8 +159,7 @@ class MouseReach(MouseBaseEnv):
         data = mjx.forward(self.mjx_model, data)
 
         # Build observation
-        task_obs, proprio_obs = self._get_obs(data, target_position)
-        obs = jp.concatenate([task_obs, proprio_obs])
+        obs = self._get_obs(data, target_position)
 
         reward_val, done = jp.zeros(2)
         metrics = {}
@@ -167,8 +167,6 @@ class MouseReach(MouseBaseEnv):
         info = {
             "target_position": target_position,
             "prev_action": jp.zeros(self.action_size),
-            "task_obs_size": task_obs.shape[0],
-            "proprio_obs_size": proprio_obs.shape[0],
         }
 
         return mjx_env.State(data, obs, reward_val, done, metrics, info)
@@ -198,8 +196,7 @@ class MouseReach(MouseBaseEnv):
         data = mjx_env.step(self.mjx_model, data, action, n_steps)
 
         # Get observation
-        task_obs, proprio_obs = self._get_obs(data, target_position)
-        obs = jp.concatenate([task_obs, proprio_obs])
+        obs = self._get_obs(data, target_position)
 
         # Compute reward
         rew = self._get_reward(data, target_position, action)
@@ -215,34 +212,30 @@ class MouseReach(MouseBaseEnv):
 
     def _get_obs(
         self, data: mjx.Data, target_position: jp.ndarray
-    ) -> Tuple[jp.ndarray, jp.ndarray]:
-        """Build observation vector.
+    ) -> Mapping[str, jp.ndarray]:
+        """Build observation dictionary.
 
         Args:
             data: MJX simulation data.
             target_position: Target position of shape (3,).
 
         Returns:
-            Tuple[jp.ndarray, jp.ndarray]: (task_obs, proprio_obs) where
-                task_obs is the direction to target (3,) and proprio_obs
-                contains qpos, qvel, and wrist position.
+            Mapping[str, jp.ndarray]: OrderedDict with 'task_obs' (direction
+                to target) and 'proprioception' (qpos, qvel, wrist position).
         """
         wrist_pos = data.xpos[self._wrist_body_id]
         to_target = target_position - wrist_pos
 
-        # Task obs: direction to target
-        task_obs = to_target
-
-        # Proprioceptive obs: joint angles, velocities, wrist position
-        proprio_obs = jp.concatenate(
-            [
-                data.qpos,
-                data.qvel,
-                wrist_pos,
-            ]
+        return collections.OrderedDict(
+            task_obs=to_target,
+            proprioception=jp.concatenate(
+                [
+                    data.qpos,
+                    data.qvel,
+                    wrist_pos,
+                ]
+            ),
         )
-
-        return task_obs, proprio_obs
 
     def _get_reward(
         self, data: mjx.Data, target_position: jp.ndarray, action: jax.Array
@@ -305,5 +298,5 @@ class MouseReach(MouseBaseEnv):
         nv = self._mj_model.nv
         return {
             "task_obs": 3,  # to_target
-            "proprio_obs": nq + nv + 3,  # qpos + qvel + wrist_pos
+            "proprioception": nq + nv + 3,  # qpos + qvel + wrist_pos
         }
