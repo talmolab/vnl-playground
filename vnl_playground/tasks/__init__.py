@@ -15,6 +15,11 @@ from vnl_playground.tasks.rodent import bowl_escape as rodent_bowl_escape
 from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_velocity
 from vnl_playground.tasks.rodent import joystick as rodent_joystick
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
+from vnl_playground.tasks.mouse import imitation as mouse_imitation
+from vnl_playground.tasks.mouse import mouse_reach
+from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
+from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_velocity
+from vnl_playground.tasks.stick import imitation as stick_imitation
 
 # Unified wrappers and reference clips
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
@@ -29,6 +34,10 @@ _envs = {
     "RodentMaintainVelocity": rodent_maintain_velocity.MaintainVelocity,
     "RodentJoystick": rodent_joystick.Joystick,
     "FruitflyImitation": fruitfly_imitation.Imitation,
+    "MouseReach": mouse_reach.MouseReach,
+    "MouseImitation": mouse_imitation.MouseImitation,
+    "StickMaintainVelocity": stick_maintain_velocity.MaintainVelocity,
+    "StickImitation": stick_imitation.Imitation,
 }
 
 _cfgs = {
@@ -39,6 +48,10 @@ _cfgs = {
     "RodentMaintainVelocity": rodent_maintain_velocity.default_config,
     "RodentJoystick": rodent_joystick.default_config,
     "FruitflyImitation": fruitfly_imitation.default_config,
+    "MouseReach": mouse_reach.default_config,
+    "MouseImitation": mouse_imitation.default_config,
+    "StickMaintainVelocity": stick_maintain_velocity.default_config,
+    "StickImitation": stick_imitation.default_config,
 }
 
 # ReferenceClips class for imitation environments (not all envs use clips)
@@ -46,6 +59,8 @@ _reference_clips_classes = {
     "RodentImitation": ReferenceClips,
     "RodentSparseImitation": ReferenceClips,
     "FruitflyImitation": ReferenceClips,
+    "MouseImitation": MouseReferenceClips,
+    "StickImitation": ReferenceClips,
 }
 
 
