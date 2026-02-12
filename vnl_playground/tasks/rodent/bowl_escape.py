@@ -267,7 +267,9 @@ class BowlEscape(rodent_base.RodentEnv):
         """
         del info
         terrain_size = float(self._config.bowl_hsize)
-        torso_xpos = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xpos
+        torso_xpos = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos
         escape_reward = reward_fns.tolerance(
             jp.linalg.norm(torso_xpos),
             bounds=(terrain_size, float("inf")),
@@ -279,12 +281,12 @@ class BowlEscape(rodent_base.RodentEnv):
         deviation_angle = 30
         deviation = np.cos(np.deg2rad(deviation_angle))
         # xmat is the 3x3 rotation matrix of the current frame
-        upright_torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xmat[
-            -1, -1
-        ]
-        upright_head = data.bind(self.mjx_model, self._spec.body(f"skull{self._suffix}")).xmat[
-            -1, -1
-        ]
+        upright_torso = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xmat[-1, -1]
+        upright_head = data.bind(
+            self.mjx_model, self._spec.body(f"skull{self._suffix}")
+        ).xmat[-1, -1]
         upright = reward_fns.tolerance(
             jp.stack([upright_torso, upright_head]),
             bounds=(deviation, np.inf),
@@ -332,7 +334,9 @@ class BowlEscape(rodent_base.RodentEnv):
         """
         del info
         # Torso (root) position
-        torso_pos = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}")).xpos
+        torso_pos = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos
         x, y, z = torso_pos
 
         # fetch bowl surface height at torso (x, y)

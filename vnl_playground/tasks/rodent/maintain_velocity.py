@@ -261,7 +261,9 @@ class MaintainVelocity(rodent_base.RodentEnv):
         """
         del info
         # Use gyro sensor for angular velocity
-        gyro = data.bind(self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")).sensordata
+        gyro = data.bind(
+            self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")
+        ).sensordata
         yaw_rate = gyro[2]  # z-axis angular velocity
         cost = -weight * jp.square(yaw_rate)  # negative to penalize
         metrics["rewards/angular_velocity_z"] = cost
