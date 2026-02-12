@@ -73,7 +73,70 @@ python -c "import jax; print(f'JAX version: {jax.__version__}'); print(f'Availab
 python -m ipykernel install --user --name=track-mjx --display-name="Python (track-mjx)"
 ```
 
-## Features
+## Supported Body Models
+
+| Walker | Description |
+|--------|-------------|
+| **Rodent** | Biomechanical model of *Rattus norvegicus* (Long Evans) with 74 DoF and 38 torque actuators, derived from [Merel et al., 2018](https://arxiv.org/abs/1811.11711) |
+| **Fruitfly** | Anatomically-detailed model of *Drosophila melanogaster* with 102 DoF and 61 torque actuators, reconstructed from confocal microscopy ([Vaxenburg et al., 2025](https://doi.org/10.1038/s41586-025-09029-4)) |
+| **Mouse** | Musculoskeletal forelimb model of *Mus musculus* with 4 DoF and 9 Hill-type muscle actuators, built from light sheet microscopy data ([Gilmer et al., 2025](https://doi.org/10.1152/jn.00198.2024)) |
+| **Stick Bug** | Model of *Sungaya aeta* with 42 DoF and 42 joints across 43 rigid body segments, constructed from 3D photogrammetry via [scAnt](https://github.com/evo-biomech/scAnt) ([Plum & Labonte, 2021](https://doi.org/10.7717/peerj.11155)) |
+
+## Available Environments
+
+All 12 environments are accessible via the registry: `registry.load("TaskName", config=cfg, ...)`.
+
+### Rodent
+
+| Environment | Description |
+|-------------|-------------|
+| `RodentImitation` | Multi-clip imitation learning from mocap with dense tracking rewards |
+| `RodentSparseImitation` | Sparse-reward imitation via elastic sequence matching (online DP) |
+| `RodentRearing` | Raise head above target height relative to torso |
+| `RodentBowlEscape` | Escape from a bowl-shaped arena (supports vision) |
+| `RodentMaintainVelocity` | Track a target forward velocity in an open arena |
+| `RodentJoystick` | Track periodically resampled forward velocity + yaw rate commands |
+
+### Fruitfly
+
+| Environment | Description |
+|-------------|-------------|
+| `FruitflyImitation` | Multi-clip imitation at 500 Hz control / 5000 Hz physics |
+| `FruitflyMaintainVelocity` | Forward velocity tracking at cm-scale |
+
+### Mouse
+
+| Environment | Description |
+|-------------|-------------|
+| `MouseImitation` | Forelimb imitation learning tracking arm mocap |
+| `MouseReach` | Reach toward randomly sampled or fixed 3D targets |
+
+### Stick Bug
+
+| Environment | Description |
+|-------------|-------------|
+| `StickImitation` | Multi-clip imitation learning from mocap |
+| `StickMaintainVelocity` | Forward velocity tracking at mm-scale |
+
+## Usage
+
+```python
+from vnl_playground import registry
+
+# List all available environments
+print(registry.ALL_ENVS)
+
+# Locomotion tasks (no reference clips needed)
+cfg = registry.get_default_config("RodentJoystick")
+env = registry.load("RodentJoystick", config=cfg, rng=jax.random.key(0))
+
+# Imitation tasks (require reference clips)
+cfg = registry.get_default_config("RodentImitation")
+clips = registry.load_reference_clips("RodentImitation", data_path, n_frames_per_clip=250)
+env = registry.load("RodentImitation", config=cfg, clips=clips)
+```
+
+## Notes
 
 ### `mujoco_playground`-style Environment Management
 
@@ -83,6 +146,6 @@ We adopt the `mujoco_playground` approach to environment and task management. He
 
 `vnl-playground` uses [`mujoco.Mjspec`](https://mujoco.readthedocs.io/en/stable/python.html#model-editing) during model creation and editing. This allows us to generate environments procedurally, such as adding target locations for reaching tasks or randomizing terrain shapes.
 
-### RL Training with Brax
+### RL Training with Brax (demo scripts wip)
 
-RL training can be done out of the box with [Brax](https://github.com/google/brax) and [RSL-RL](https://github.com/leggedrobotics/rsl_rl). Our demo notebooks: WIP. Also, check out the [MuJoCo Playground examples](https://github.com/google-deepmind/mujoco_playground/tree/main/learning). 
+This repo was originally built to house environments for [track-mjx](https://github.com/talmolab/track-mjx), which includes examples of task training using [Brax](https://github.com/google/brax). Demo scripts/notebooks in this repo are wip. Check out the [MuJoCo Playground](https://github.com/google-deepmind/mujoco_playground/tree/main/learning) for more examples. 
