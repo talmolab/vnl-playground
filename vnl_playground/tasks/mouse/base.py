@@ -1,6 +1,6 @@
 """Base classes for mouse (arena-first, add walker later)."""
 
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Mapping, Optional, Union
 
 import jax
 import jax.numpy as jp
@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.mouse import consts
+from vnl_playground.tasks.task_registry import TaskRegistry
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -50,6 +51,8 @@ def default_config() -> config_dict.ConfigDict:
 
 class MouseBaseEnv(mjx_env.MjxEnv):
     """Arena-first base for mouse environments with add_mouse() then compile."""
+
+    _registry: TaskRegistry = None
 
     def __init__(
         self,
@@ -266,3 +269,64 @@ class MouseBaseEnv(mjx_env.MjxEnv):
     def dt(self) -> float:
         """Control timestep (ctrl_dt)."""
         return self._config.ctrl_dt
+
+    def _get_reward(
+        self, data: mjx.Data, info: Mapping[str, Any], metrics: dict
+    ) -> float:
+        if self._registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no TaskRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
+        net_reward = 0.0
+        for name, kwargs in self._config.reward_terms.items():
+            if name not in self._registry.rewards:
+                raise KeyError(
+                    f"Reward '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self._registry.rewards.keys())}"
+                )
+            net_reward += self._registry.rewards[name](
+                self, data, info, metrics, **kwargs
+            )
+        return net_reward
+
+    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: dict) -> bool:
+        if self._registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no TaskRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
+        any_terminated = False
+        for name, kwargs in self._config.termination_criteria.items():
+            if name not in self._registry.terminations:
+                raise KeyError(
+                    f"Termination '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self._registry.terminations.keys())}"
+                )
+            terminated = self._registry.terminations[name](self, data, info, **kwargs)
+            any_terminated = jp.logical_or(any_terminated, terminated)
+            metrics["terminations/" + name] = jp.astype(terminated, float)
+        metrics["terminations/any"] = jp.astype(any_terminated, float)
+        return any_terminated
+
+    @property
+    def proprioceptive_obs_size(self) -> int:
+        obs_size = self.non_flattened_observation_size
+        return jp.sum(
+            jax.flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0]
+        )
+
+    @property
+    def non_proprioceptive_obs_size(self) -> int:
+        return self.observation_size - self.proprioceptive_obs_size
+
+    @property
+    def observation_size(self):
+        obs = self.non_flattened_observation_size
+        return jp.sum(jax.flatten_util.ravel_pytree(obs)[0])
+
+    @property
+    def non_flattened_observation_size(self):
+        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+        obs = abstract_state.obs
+        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)

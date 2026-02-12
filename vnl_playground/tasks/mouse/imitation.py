@@ -1,7 +1,7 @@
 """Mouse arm imitation environment for motion tracking."""
 
 import collections
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import jax
 import jax.numpy as jp
@@ -18,6 +18,7 @@ from vnl_playground.tasks.mouse.base import (
     default_config as base_default_config,
 )
 from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
+from vnl_playground.tasks.task_registry import TaskRegistry
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -61,12 +62,13 @@ def default_config() -> config_dict.ConfigDict:
     return cfg
 
 
-_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
-_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
+_registry = TaskRegistry()
 
 
 class MouseImitation(MouseBaseEnv):
     """Multi-clip imitation environment for mouse arm."""
+
+    _registry = _registry
 
     def __init__(
         self,
@@ -227,10 +229,11 @@ class MouseImitation(MouseBaseEnv):
             Mapping[str, Any]: OrderedDict with 'task_obs' and
                 'proprioception' entries.
         """
-        return collections.OrderedDict(
+        obs = collections.OrderedDict(
             task_obs=self._get_imitation_target(data, info),
             proprioception=self._get_proprioception(data, info),
         )
+        return collections.OrderedDict(state=obs)
 
     def _get_proprioception(
         self, data: mjx.Data, info: Mapping[str, Any]
@@ -250,48 +253,6 @@ class MouseImitation(MouseBaseEnv):
                 data.qvel,  # Joint velocities
             ]
         )
-
-    def _get_reward(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
-    ) -> float:
-        """Compute total reward from all registered reward terms.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict.
-            metrics: Mutable metrics dict; individual reward values are written here.
-
-        Returns:
-            float: Sum of all weighted reward terms.
-        """
-        net_reward = 0.0
-        for name, kwargs in self._config.reward_terms.items():
-            if name in _REWARD_FCN_REGISTRY:
-                net_reward += _REWARD_FCN_REGISTRY[name](
-                    self, data, info, metrics, **kwargs
-                )
-        return net_reward
-
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
-        """Check if episode should terminate based on registered criteria.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict.
-            metrics: Mutable metrics dict; termination flags are written here.
-
-        Returns:
-            bool: True if any termination criterion is triggered.
-        """
-        any_terminated = False
-        for name, kwargs in self._config.termination_criteria.items():
-            if name in _TERMINATION_FCN_REGISTRY:
-                termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-                terminated = termination_fcn(self, data, info, **kwargs)
-                any_terminated = jp.logical_or(any_terminated, terminated)
-                metrics["terminations/" + name] = jp.astype(terminated, float)
-        metrics["terminations/any"] = jp.astype(any_terminated, float)
-        return any_terminated
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         """Reset simulation data to match reference at given clip/frame.
@@ -412,25 +373,7 @@ class MouseImitation(MouseBaseEnv):
             wrist=wrist_targets,
         )
 
-    # ==================== Reward Functions ====================
-
-    def _named_reward(name: str):
-        """Decorator to register a method in the reward function registry.
-
-        Args:
-            name: Key to register the reward function under.
-
-        Returns:
-            Callable: Decorator that registers and returns the reward function.
-        """
-
-        def decorator(reward_fcn: Callable):
-            _REWARD_FCN_REGISTRY[name] = reward_fcn
-            return reward_fcn
-
-        return decorator
-
-    @_named_reward("joints")
+    @_registry.reward("joints")
     def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching joint angles.
 
@@ -451,7 +394,7 @@ class MouseImitation(MouseBaseEnv):
         metrics["rewards/joints"] = reward
         return reward
 
-    @_named_reward("joints_vel")
+    @_registry.reward("joints_vel")
     def _joints_vel_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching joint velocities.
 
@@ -472,7 +415,7 @@ class MouseImitation(MouseBaseEnv):
         metrics["rewards/joints_vel"] = reward
         return reward
 
-    @_named_reward("wrist_pos")
+    @_registry.reward("wrist_pos")
     def _wrist_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching wrist (end effector) position.
 
@@ -495,7 +438,7 @@ class MouseImitation(MouseBaseEnv):
         metrics["rewards/wrist_pos"] = reward
         return reward
 
-    @_named_reward("bodies_pos")
+    @_registry.reward("bodies_pos")
     def _bodies_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching all tracked body positions.
 
@@ -523,7 +466,7 @@ class MouseImitation(MouseBaseEnv):
         metrics["rewards/bodies_pos"] = reward
         return reward
 
-    @_named_reward("control_cost")
+    @_registry.reward("control_cost")
     def _control_cost(self, data, info, metrics, weight) -> float:
         """Penalty for control magnitude.
 
@@ -542,7 +485,7 @@ class MouseImitation(MouseBaseEnv):
         metrics["rewards/control_cost"] = -cost
         return -cost
 
-    @_named_reward("control_diff_cost")
+    @_registry.reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
         """Penalty for control rate of change.
 
@@ -561,25 +504,7 @@ class MouseImitation(MouseBaseEnv):
         metrics["rewards/control_diff_cost"] = -cost
         return -cost
 
-    # ==================== Termination Functions ====================
-
-    def _named_termination_criterion(name: str):
-        """Decorator to register a method in the termination function registry.
-
-        Args:
-            name: Key to register the termination function under.
-
-        Returns:
-            Callable: Decorator that registers and returns the termination function.
-        """
-
-        def decorator(termination_fcn: Callable):
-            _TERMINATION_FCN_REGISTRY[name] = termination_fcn
-            return termination_fcn
-
-        return decorator
-
-    @_named_termination_criterion("pose_error")
+    @_registry.termination("pose_error")
     def _bad_pose(self, data, info, max_l2_error) -> bool:
         """Terminate if pose error is too large.
 
@@ -595,7 +520,7 @@ class MouseImitation(MouseBaseEnv):
         pose_error = jp.linalg.norm(target.joints - data.qpos)
         return pose_error > max_l2_error
 
-    @_named_termination_criterion("nan_termination")
+    @_registry.termination("nan_termination")
     def _nan_termination(self, data, info) -> bool:
         """Terminate if NaN values appear in simulation.
 
@@ -690,17 +615,3 @@ class MouseImitation(MouseBaseEnv):
             rendered_frames.append(renderer.render())
 
         return rendered_frames
-
-    @property
-    def observation_size(self) -> int:
-        """Total flattened observation size."""
-        obs = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs)[0])
-
-    @property
-    def non_flattened_observation_size(self) -> Dict[str, Any]:
-        """Observation sizes by component."""
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        return jax.tree_util.tree_map(
-            lambda x: jp.prod(jp.array(x.shape)), abstract_state.obs
-        )

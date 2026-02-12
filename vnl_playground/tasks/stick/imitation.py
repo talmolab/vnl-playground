@@ -7,7 +7,7 @@ loaded via the unified ReferenceClips class.
 
 import collections
 import warnings
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import brax.math
 import jax
@@ -23,6 +23,7 @@ from .. import utils
 from . import base as stick_base
 from . import consts
 from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.task_registry import TaskRegistry
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -69,12 +70,13 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
-_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
-_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
+_registry = TaskRegistry()
 
 
 class Imitation(stick_base.StickBugEnv):
     """Multi-clip imitation environment for stick bug."""
+
+    _registry = _registry
 
     def __init__(
         self,
@@ -186,30 +188,11 @@ class Imitation(stick_base.StickBugEnv):
         return state
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
-        return collections.OrderedDict(
-            imitation_target=self._get_imitation_target(data, info),
+        obs = collections.OrderedDict(
+            task_obs=self._get_imitation_target(data, info),
             proprioception=self._get_proprioception(data, info, flatten=False),
         )
-
-    def _get_reward(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
-    ) -> float:
-        net_reward = 0.0
-        for name, kwargs in self._config.reward_terms.items():
-            net_reward += _REWARD_FCN_REGISTRY[name](
-                self, data, info, metrics, **kwargs
-            )
-        return net_reward
-
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
-        any_terminated = False
-        for name, kwargs in self._config.termination_criteria.items():
-            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-            terminated = termination_fcn(self, data, info, **kwargs)
-            any_terminated = jp.logical_or(any_terminated, terminated)
-            metrics["terminations/" + name] = jp.astype(terminated, float)
-        metrics["terminations/any"] = jp.astype(any_terminated, float)
-        return any_terminated
+        return collections.OrderedDict(state=obs)
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         data = mjx.make_data(
@@ -298,14 +281,7 @@ class Imitation(stick_base.StickBugEnv):
         )
 
     # Rewards
-    def _named_reward(name: str):
-        def decorator(reward_fcn: Callable):
-            _REWARD_FCN_REGISTRY[name] = reward_fcn
-            return reward_fcn
-
-        return decorator
-
-    @_named_reward("root_pos")
+    @_registry.reward("root_pos")
     def _root_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         root_pos = self.root_body(data).xpos
@@ -315,7 +291,7 @@ class Imitation(stick_base.StickBugEnv):
         metrics["rewards/root_pos"] = reward
         return reward
 
-    @_named_reward("root_quat")
+    @_registry.reward("root_quat")
     def _root_quat_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
@@ -327,7 +303,7 @@ class Imitation(stick_base.StickBugEnv):
         metrics["rewards/root_quat"] = reward
         return reward
 
-    @_named_reward("joints")
+    @_registry.reward("joints")
     def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
@@ -337,7 +313,7 @@ class Imitation(stick_base.StickBugEnv):
         metrics["rewards/joints"] = reward
         return reward
 
-    @_named_reward("joints_vel")
+    @_registry.reward("joints_vel")
     def _joint_vels_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         joint_vels = self._get_joint_ang_vels(data)
@@ -357,7 +333,7 @@ class Imitation(stick_base.StickBugEnv):
             total_dist_sqr += dist_sqr
         return jp.sqrt(total_dist_sqr)
 
-    @_named_reward("bodies_pos")
+    @_registry.reward("bodies_pos")
     def _body_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         total_dist = self._get_bodies_dist(data, info, metrics, consts.BODIES)
         metrics["body_errors/total"] = total_dist
@@ -365,7 +341,7 @@ class Imitation(stick_base.StickBugEnv):
         metrics["rewards/bodies_pos"] = reward
         return reward
 
-    @_named_reward("end_eff")
+    @_registry.reward("end_eff")
     def _end_eff_reward(self, data, info, metrics, weight, exp_scale) -> float:
         total_dist = self._get_bodies_dist(data, info, metrics, consts.END_EFFECTORS)
         metrics["body_errors/end_eff_total"] = total_dist
@@ -373,7 +349,7 @@ class Imitation(stick_base.StickBugEnv):
         metrics["rewards/end_eff"] = reward
         return reward
 
-    @_named_reward("torso_z_range")
+    @_registry.reward("torso_z_range")
     def _torso_z_range_reward(
         self, data, info, metrics, weight, healthy_z_range
     ) -> float:
@@ -385,14 +361,14 @@ class Imitation(stick_base.StickBugEnv):
         metrics["rewards/torso_z_range"] = reward
         return reward
 
-    @_named_reward("control_cost")
+    @_registry.reward("control_cost")
     def _control_cost(self, data, info, metrics, weight) -> float:
         metrics["ctrl_sqr"] = ctrl_sqr = jp.sum(jp.square(info["action"]))
         cost = weight * ctrl_sqr
         metrics["rewards/control_cost"] = -cost
         return -cost
 
-    @_named_reward("control_diff_cost")
+    @_registry.reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
         metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(
             jp.square(info["action"] - info["prev_action"])
@@ -401,7 +377,7 @@ class Imitation(stick_base.StickBugEnv):
         metrics["rewards/control_diff_cost"] = -cost
         return -cost
 
-    @_named_reward("energy_cost")
+    @_registry.reward("energy_cost")
     def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
         energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
         metrics["energy_use"] = energy_use
@@ -410,21 +386,14 @@ class Imitation(stick_base.StickBugEnv):
         return -cost
 
     # Termination
-    def _named_termination_criterion(name: str):
-        def decorator(termination_fcn: Callable):
-            _TERMINATION_FCN_REGISTRY[name] = termination_fcn
-            return termination_fcn
-
-        return decorator
-
-    @_named_termination_criterion("root_too_far")
+    @_registry.termination("root_too_far")
     def _root_too_far(self, data, info, max_distance) -> bool:
         target = self._get_current_target(data, info)
         root_pos = self.root_body(data).xpos
         distance = jp.linalg.norm(target.root_position - root_pos)
         return distance > max_distance
 
-    @_named_termination_criterion("root_too_rotated")
+    @_registry.termination("root_too_rotated")
     def _root_too_rotated(self, data, info, max_degrees) -> bool:
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
@@ -432,14 +401,14 @@ class Imitation(stick_base.StickBugEnv):
         ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
         return ang_dist > jp.deg2rad(max_degrees)
 
-    @_named_termination_criterion("pose_error")
+    @_registry.termination("pose_error")
     def _bad_pose(self, data, info, max_l2_error) -> bool:
         target = self._get_current_target(data, info)
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
 
-    @_named_termination_criterion("nan_termination")
+    @_registry.termination("nan_termination")
     def _nan_termination(self, data, info) -> bool:
         flattened_vals, _ = flatten_util.ravel_pytree(data)
         num_nans = jp.sum(jp.isnan(flattened_vals))
@@ -512,26 +481,6 @@ class Imitation(stick_base.StickBugEnv):
                     faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
                     rendered_frames.append(faded_frame)
         return rendered_frames
-
-    @property
-    def proprioceptive_obs_size(self) -> int:
-        obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["proprioception"])[0])
-
-    @property
-    def non_proprioceptive_obs_size(self) -> int:
-        return self.observation_size - self.proprioceptive_obs_size
-
-    @property
-    def observation_size(self) -> mjx_env.ObservationSize:
-        obs = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs)[0])
-
-    @property
-    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        obs = abstract_state.obs
-        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
 
 def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):

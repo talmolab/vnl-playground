@@ -136,8 +136,7 @@ def load_reference_clips(
     data_path: str,
     n_frames_per_clip: int,
     keep_clips_idx=None,
-    joint_names: Optional[list[str]] = None,
-    body_names: Optional[list[str]] = None,
+    **kwargs,
 ):
     """Load reference clips for an environment.
 
@@ -146,8 +145,8 @@ def load_reference_clips(
         data_path: Path to HDF5 reference data.
         n_frames_per_clip: Number of frames per clip.
         keep_clips_idx: Optional indices to keep.
-        joint_names: Optional list of joint names. If None, read from H5 or use indices.
-        body_names: Optional list of body names. If None, read from H5 or use indices.
+        **kwargs: Additional arguments forwarded to the clips class
+            (e.g., joint_names, body_names for ReferenceClips).
 
     Returns:
         Instantiated ReferenceClips object.
@@ -156,10 +155,10 @@ def load_reference_clips(
         raise ValueError(
             f"Env '{env_name}' not found in reference clips classes. Available: {list(_reference_clips_classes.keys())}"
         )
-    return ReferenceClips(
+    clips_class = _reference_clips_classes[env_name]
+    return clips_class(
         data_path=data_path,
         n_frames_per_clip=n_frames_per_clip,
         keep_clips_idx=keep_clips_idx,
-        joint_names=joint_names,
-        body_names=body_names,
+        **kwargs,
     )
