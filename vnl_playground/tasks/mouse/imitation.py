@@ -7,7 +7,6 @@ import jax
 import jax.numpy as jp
 import mujoco
 import numpy as np
-import yaml
 from jax import flatten_util
 from ml_collections import config_dict
 from mujoco import mjx
@@ -58,95 +57,6 @@ def default_config() -> config_dict.ConfigDict:
         "pose_error": {"max_l2_error": 3.0},
         "nan_termination": {},
     }
-
-    return cfg
-
-
-def load_config(yaml_path: str) -> config_dict.ConfigDict:
-    """Load configuration from a YAML file.
-
-    Loads defaults from default_config(), then overrides with values from YAML.
-    Supports the full YAML structure with env_config, reacher_config, etc.
-
-    Args:
-        yaml_path: Path to YAML config file.
-
-    Returns:
-        ConfigDict with merged configuration.
-    """
-    cfg = default_config()
-
-    with open(yaml_path, "r") as f:
-        yaml_cfg = yaml.safe_load(f)
-
-    # Apply data_path if specified
-    if yaml_cfg.get("data_path"):
-        cfg.reference_data_path = yaml_cfg["data_path"]
-
-    # Apply env_config overrides
-    if "env_config" in yaml_cfg:
-        env_cfg = yaml_cfg["env_config"]
-
-        # Handle nested env_args
-        if "env_args" in env_cfg:
-            env_args = env_cfg["env_args"]
-            if "solver" in env_args:
-                cfg.solver = env_args["solver"]
-            if "iterations" in env_args:
-                cfg.iterations = env_args["iterations"]
-            if "ls_iterations" in env_args:
-                cfg.ls_iterations = env_args["ls_iterations"]
-            if "noslip_iterations" in env_args:
-                cfg.noslip_iterations = env_args["noslip_iterations"]
-            if "mj_model_timestep" in env_args:
-                cfg.sim_dt = env_args["mj_model_timestep"]
-            if "physics_steps_per_control_step" in env_args:
-                cfg.ctrl_dt = (
-                    env_args.get("mj_model_timestep", cfg.sim_dt)
-                    * env_args["physics_steps_per_control_step"]
-                )
-            if "mocap_hz" in env_args:
-                cfg.mocap_hz = env_args["mocap_hz"]
-            if "Kp" in env_args:
-                cfg.Kp = env_args["Kp"]
-            if "Kd" in env_args:
-                cfg.Kd = env_args["Kd"]
-            if "mujoco_impl" in env_args:
-                cfg.mujoco_impl = env_args["mujoco_impl"]
-
-        # Handle reward_terms directly
-        if "reward_terms" in env_cfg:
-            cfg.reward_terms = env_cfg["reward_terms"]
-
-        # Handle termination_criteria
-        if "termination_criteria" in env_cfg:
-            cfg.termination_criteria = env_cfg["termination_criteria"]
-
-    # Apply reference_config overrides
-    if "reference_config" in yaml_cfg:
-        ref_cfg = yaml_cfg["reference_config"]
-        if "clip_length" in ref_cfg:
-            cfg.clip_length = ref_cfg["clip_length"]
-        if "reference_length" in ref_cfg:
-            cfg.reference_length = ref_cfg["reference_length"]
-        if "start_frame_range" in ref_cfg:
-            cfg.start_frame_range = ref_cfg["start_frame_range"]
-        if "qvel_init" in ref_cfg:
-            cfg.qvel_init = ref_cfg["qvel_init"]
-        if "clip_set" in ref_cfg:
-            cfg.clip_set = ref_cfg["clip_set"]
-        if ref_cfg.get("keep_clips_idx") is not None:
-            cfg.keep_clips_idx = ref_cfg["keep_clips_idx"]
-
-    # Apply reacher_config overrides (or walker_config for backwards compat)
-    reacher_cfg = yaml_cfg.get("reacher_config") or yaml_cfg.get("walker_config")
-    if reacher_cfg:
-        if "tracked_bodies" in reacher_cfg:
-            cfg.tracked_bodies = reacher_cfg["tracked_bodies"]
-        if "end_eff_names" in reacher_cfg:
-            cfg.end_effector = reacher_cfg["end_eff_names"][0]  # First end effector
-        elif "end_effector" in reacher_cfg:
-            cfg.end_effector = reacher_cfg["end_effector"]
 
     return cfg
 
@@ -314,11 +224,11 @@ class MouseImitation(MouseBaseEnv):
             info: Episode info dict containing reference_clip and start_frame.
 
         Returns:
-            Mapping[str, Any]: OrderedDict with 'imitation_target' and
+            Mapping[str, Any]: OrderedDict with 'task_obs' and
                 'proprioception' entries.
         """
         return collections.OrderedDict(
-            imitation_target=self._get_imitation_target(data, info),
+            task_obs=self._get_imitation_target(data, info),
             proprioception=self._get_proprioception(data, info),
         )
 
