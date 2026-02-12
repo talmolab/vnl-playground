@@ -39,7 +39,7 @@ def default_config() -> config_dict.ConfigDict:
         # Standard sim params (same as maintain_velocity)
         walker_xml_path=consts.RODENT_BOX_FEET_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
-        ctrl_dt=0.02,
+        ctrl_dt=0.01,
         sim_dt=0.002,
         solver="newton",
         mujoco_impl="jax",

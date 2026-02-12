@@ -28,7 +28,7 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.RODENT_BOX_FEET_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
-        ctrl_dt=0.02,
+        ctrl_dt=0.01,
         sim_dt=0.002,
         solver="newton",
         mujoco_impl="jax",
@@ -43,7 +43,7 @@ def default_config() -> config_dict.ConfigDict:
         target_relative_height=0.05,  # Target skull-torso height difference
         reset_height_threshold=0.01,  # Must return below this to earn another reward
         rearing_hold_duration=1.0,  # Seconds to hold rearing pose for success
-        episode_length=500,  # 10 seconds at ctrl_dt=0.02
+        episode_length=1000,  # 10 seconds at ctrl_dt=0.01
         action_repeat=1,
         # Reward terms: shaping rewards are low, success bonus dominates
         reward_terms={
