@@ -245,6 +245,11 @@ class FruitflyEnv(mjx_env.MjxEnv):
         """Get gravity direction in body frame."""
         return self.root_body(data).xmat.flatten()[6:]
 
+    def _get_origin(self, data: mjx.Data) -> jp.ndarray:
+        """Get origin position in the thorax frame."""
+        thorax = data.bind(self.mjx_model, self._spec.body(f"thorax{self._suffix}"))
+        return jp.dot(-thorax.xpos, thorax.xmat)
+
     def _get_proprioception(
         self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True
     ) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:

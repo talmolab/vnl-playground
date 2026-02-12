@@ -7,7 +7,7 @@ loaded via the unified ReferenceClips class.
 
 import collections
 import warnings
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 import brax.math
 import jax
