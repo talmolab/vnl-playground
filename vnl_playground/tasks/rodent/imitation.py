@@ -524,7 +524,7 @@ class Imitation(rodent_base.RodentEnv):
 
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
         if camera is None:
-            camera = -1
+            camera = self._default_render_camera
 
         rendered_frames = []
         for i, state in enumerate(trajectory):

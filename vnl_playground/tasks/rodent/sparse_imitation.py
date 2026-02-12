@@ -770,7 +770,7 @@ class SparseImitation(rodent_base.RodentEnv):
 
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
         if camera is None:
-            camera = -1
+            camera = self._default_render_camera
 
         rendered_frames = []
         clip_length = self._clip_length()

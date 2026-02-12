@@ -42,6 +42,7 @@ class StickBugEnv(mjx_env.MjxEnv):
     """Base class for stick bug environments."""
 
     _registry: TaskRegistry = None
+    _default_render_camera: str = "close_profile"
 
     def __init__(
         self,
@@ -177,6 +178,11 @@ class StickBugEnv(mjx_env.MjxEnv):
                 self._mj_model, impl=self._config.mujoco_impl
             )
             self._compiled = True
+            cam_name = f"{self._default_render_camera}{self._suffix}"
+            cam_names = [
+                self._mj_model.camera(i).name for i in range(self._mj_model.ncam)
+            ]
+            self._default_render_camera = cam_name if cam_name in cam_names else -1
 
     def _get_appendages_pos(
         self, data: mjx.Data, flatten: bool = True

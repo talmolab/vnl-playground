@@ -53,6 +53,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
     """Arena-first base for mouse environments with add_mouse() then compile."""
 
     _registry: TaskRegistry = None
+    _default_render_camera: str = "my_camera"
 
     def __init__(
         self,
@@ -102,6 +103,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         )
         # Attach the clavicle body (root of arm hierarchy), not entire worldbody
         body = spawn_frame.attach_body(mouse_spec.body("clavicle"), "", suffix)
+        self._suffix = suffix
         if freejoint:
             body.add_freejoint()
         if rgba is not None:
@@ -210,6 +212,11 @@ class MouseBaseEnv(mjx_env.MjxEnv):
                 self._mj_model, impl=self._config.mujoco_impl
             )
             self._compiled = True
+            cam_name = f"{self._default_render_camera}{self._suffix}"
+            cam_names = [
+                self._mj_model.camera(i).name for i in range(self._mj_model.ncam)
+            ]
+            self._default_render_camera = cam_name if cam_name in cam_names else -1
 
     @property
     def action_size(self) -> int:

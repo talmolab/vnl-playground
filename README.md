@@ -126,7 +126,7 @@ from vnl_playground import registry
 # List all available environments
 print(registry.ALL_ENVS)
 
-# Locomotion tasks (no reference clips needed)
+# Standard tasks (no reference clips needed)
 cfg = registry.get_default_config("RodentJoystick")
 env = registry.load("RodentJoystick", config=cfg, rng=jax.random.key(0))
 

@@ -590,12 +590,7 @@ class MouseImitation(MouseBaseEnv):
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
 
         if camera is None:
-            camera = (
-                "my_camera-mouse"
-                if "my_camera-mouse"
-                in [mj_model.camera(i).name for i in range(mj_model.ncam)]
-                else -1
-            )
+            camera = self._default_render_camera
 
         rendered_frames = []
         for state in trajectory:
