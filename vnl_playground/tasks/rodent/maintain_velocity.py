@@ -208,7 +208,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
         """
         del info
 
-        body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         forward_vel = body.subtree_linvel[0]
 
         target_speed = self._config.target_speed
@@ -240,7 +240,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
             Negative weighted cost (penalty for lateral movement).
         """
         del info
-        body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         lateral_vel = body.subtree_linvel[1]  # y-direction velocity
         cost = -weight * jp.square(lateral_vel)  # negative to penalize
         metrics["rewards/lateral_velocity"] = cost
@@ -261,7 +261,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
         """
         del info
         # Use gyro sensor for angular velocity
-        gyro = data.bind(self.mjx_model, self._spec.sensor("gyro-rodent")).sensordata
+        gyro = data.bind(self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")).sensordata
         yaw_rate = gyro[2]  # z-axis angular velocity
         cost = -weight * jp.square(yaw_rate)  # negative to penalize
         metrics["rewards/angular_velocity_z"] = cost
@@ -288,7 +288,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
         """
         del info
 
-        torso_body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        torso_body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         torso_z = torso_body.xpos[2]
 
         below_ground = torso_z < min_torso_z

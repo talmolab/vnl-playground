@@ -385,7 +385,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
 
     @property
     def action_size(self) -> int:
-        return self._mj_model.nu
+        return self._mjx_model.nu
 
     @property
     def xml_path(self) -> str:

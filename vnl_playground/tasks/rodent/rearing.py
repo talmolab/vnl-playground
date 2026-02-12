@@ -69,9 +69,7 @@ class Rearing(rodent_base.RodentEnv):
         self,
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
-        clips: Optional[Any] = None,  # Accepted for loader compatibility, unused
     ) -> None:
-        del clips  # Rearing task does not use reference clips
         super().__init__(config, config_overrides)
 
         # Initialize rodent at origin, standing pose

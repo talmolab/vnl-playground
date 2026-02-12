@@ -166,7 +166,7 @@ class RodentEnv(mjx_env.MjxEnv):
         self, data: mjx.Data, flatten: bool = True
     ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
         """Get _egocentric_ position of the appendages."""
-        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         appendages_pos = collections.OrderedDict()
         for apppendage_name in consts.END_EFFECTORS:
             global_xpos = data.bind(
@@ -239,12 +239,14 @@ class RodentEnv(mjx_env.MjxEnv):
     ) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
         """Get kinematic sensors data from the environment."""
         accelerometer = data.bind(
-            self.mjx_model, self._spec.sensor("accelerometer-rodent")
+            self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")
         ).sensordata
         velocimeter = data.bind(
-            self.mjx_model, self._spec.sensor("velocimeter-rodent")
+            self.mjx_model, self._spec.sensor(f"velocimeter{self._suffix}")
         ).sensordata
-        gyro = data.bind(self.mjx_model, self._spec.sensor("gyro-rodent")).sensordata
+        gyro = data.bind(
+            self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")
+        ).sensordata
         sensors = collections.OrderedDict(
             accelerometer=accelerometer,
             velocimeter=velocimeter,
