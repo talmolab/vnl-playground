@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.mouse import consts
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -52,7 +52,7 @@ def default_config() -> config_dict.ConfigDict:
 class MouseBaseEnv(mjx_env.MjxEnv):
     """Arena-first base for mouse environments with add_mouse() then compile."""
 
-    _registry: TaskRegistry = None
+    _registry: RewardRegistry = None
     _default_render_camera: str = "my_camera"
 
     def __init__(
@@ -282,7 +282,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
     ) -> float:
         if self._registry is None:
             raise RuntimeError(
-                f"{type(self).__name__} has no TaskRegistry assigned. "
+                f"{type(self).__name__} has no RewardRegistry assigned. "
                 "Subclasses must set `_registry` as a class attribute."
             )
         net_reward = 0.0
@@ -300,7 +300,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
     def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: dict) -> bool:
         if self._registry is None:
             raise RuntimeError(
-                f"{type(self).__name__} has no TaskRegistry assigned. "
+                f"{type(self).__name__} has no RewardRegistry assigned. "
                 "Subclasses must set `_registry` as a class attribute."
             )
         any_terminated = False

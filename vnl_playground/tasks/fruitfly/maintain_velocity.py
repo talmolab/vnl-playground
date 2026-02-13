@@ -25,7 +25,7 @@ from mujoco_playground._src import reward as reward_fns
 
 from vnl_playground.tasks.fruitfly import base as fruitfly_base
 from vnl_playground.tasks.fruitfly import consts
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -58,7 +58,7 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
-_registry = TaskRegistry()
+_registry = RewardRegistry()
 
 
 class MaintainVelocity(fruitfly_base.FruitflyEnv):

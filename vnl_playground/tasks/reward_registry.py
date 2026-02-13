@@ -3,7 +3,7 @@
 from typing import Callable
 
 
-class TaskRegistry:
+class RewardRegistry:
     """Registry for reward and termination functions.
 
     This class provides a decorator-based pattern for registering
