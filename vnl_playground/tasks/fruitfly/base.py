@@ -31,9 +31,9 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         sim_dt=0.001,
         ctrl_dt=0.002,
-        solver="cg",
-        iterations=4,
-        ls_iterations=4,
+        solver="newton",
+        iterations=5,
+        ls_iterations=5,
         noslip_iterations=0,
         mujoco_impl="jax",
     )

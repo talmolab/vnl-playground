@@ -43,7 +43,7 @@ def default_config() -> config_dict.ConfigDict:
         noslip_iterations=0,
         torque_actuators=False,
         rescale_factor=0.9,
-        init_z=0.05,
+        init_z=0.005,
         target_speed=0.01,  # Stick bug is mm-scale, so speed is small
         episode_length=2000,
         action_repeat=1,

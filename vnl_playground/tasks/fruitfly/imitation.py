@@ -31,9 +31,9 @@ def default_config() -> config_dict.ConfigDict:
         naconmax=1024 * 10,
         sim_dt=0.0002,  # 5000 Hz physics
         ctrl_dt=0.002,  # 500 Hz control
-        solver="cg",
-        iterations=4,
-        ls_iterations=4,
+        solver="newton",
+        iterations=5,
+        ls_iterations=5,
         noslip_iterations=0,
         torque_actuators=False,  # Keep XML actuators as-is
         rescale_factor=1.0,
