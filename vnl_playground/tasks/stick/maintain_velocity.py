@@ -43,7 +43,7 @@ def default_config() -> config_dict.ConfigDict:
         noslip_iterations=0,
         torque_actuators=False,
         rescale_factor=0.9,
-        init_z=0.0,
+        init_z=0.05,
         target_speed=0.01,  # Stick bug is mm-scale, so speed is small
         episode_length=2000,
         action_repeat=1,
@@ -103,7 +103,6 @@ class MaintainVelocity(stick_base.StickBugEnv):
             naconmax=self._config.naconmax,
             njmax=self._config.njmax,
         )
-
         metrics = {}
         obs = self._get_obs(data, info)
         reward = self._get_reward(data, info, metrics)
