@@ -1,26 +1,38 @@
 """Vision-enabled run through corridor with gaps task.
 
-Extends RunGap with egocentric camera observations rendered via
-mujoco_warp's GPU batch ray-tracer.
+Extends RunGap with egocentric camera observations rendered via the
+JAX-callable mujoco_warp GPU ray-tracer.
 
-The observation dict from _get_obs() returns:
+The observation dict from _get_obs() returns::
 
     {
-        "proprioception": OrderedDict(...),       # nested dict, flattened by observation_utils
-        "vision": jp.zeros(H, W, C),             # placeholder; actual pixels injected by renderer
+        "state": OrderedDict(
+            imitation_target=...,               # gap features (16-dim)
+            proprioception=OrderedDict(...),     # nested dict
+            vision=jp.zeros(H, W, C),           # placeholder zeros
+        ),
+        "privileged_state": OrderedDict(...),   # same as state
     }
 
-Vision observations are added externally by the training loop which handles
-the mujoco_warp rendering pipeline:
+Vision rendering happens in ``VisionRenderWrapper`` (vision_jax.py), which
+wraps the vmapped/batched env and renders on all worlds at once using the
+JAX-callable warp renderer. The wrapper replaces the zero placeholders with
+real rendered images.
 
-    1. env.step() (physics via MJX/Warp)
-    2. renderer.sync_state(state.data)
-    3. rgb, depth = renderer.render()
-    4. obs["vision"] = rgb / 255.0
+Compatible with ``HighLevelWrapper`` for transfer learning pipelines
+(the wrapper extracts imitation_target for the high-level policy and
+proprioception for the frozen decoder; vision is preserved for optional
+CNN processing).
 
-See VisionRenderer in vision.py for the rendering wrapper.
+Usage::
+
+    env = RunGapVision(config=cfg)
+    brax_env = wrap_for_brax_training(env, ...)
+    vision_env = VisionRenderWrapper(brax_env, env.mj_model, nworld=num_envs,
+                                      **vision_config)
 """
 
+import collections
 from typing import Any, Dict, Optional, Union
 
 import jax
@@ -42,23 +54,21 @@ def default_config() -> config_dict.ConfigDict:
     cfg.grayscale = True
     cfg.vision_camera_name = "egocentric-rodent"
     cfg.render_depth = False
+    cfg.use_textures = False
+    cfg.use_shadows = False
     return cfg
 
 
 class RunGapVision(run_gap.RunGap):
     """RunGap with egocentric vision observations.
 
-    Adds vision configuration and metadata to RunGap. The actual
-    rendering is performed by VisionRenderer in the training loop,
-    not inside step().
+    Observations are returned with state/privileged_state wrapping containing
+    imitation_target, proprioception, and vision keys. The vision key contains
+    placeholder zeros — real rendering is handled by ``VisionRenderWrapper``
+    which wraps the batched env.
 
-    Observations are returned as a dict with keys: proprioception, vision.
-    Compatible with track-mjx's ff_ppo observation_utils.
-
-    IMPORTANT: This task requires:
-    - mujoco_impl="warp" for mujoco_warp rendering compatibility
-    - A custom training loop that handles rendering (see vision.py)
-    - Standard brax/track-mjx PPO loops will NOT work without adaptation
+    Compatible with both track-mjx's ff_ppo observation_utils and
+    ``HighLevelWrapper`` for transfer learning pipelines.
     """
 
     def __init__(
@@ -80,7 +90,7 @@ class RunGapVision(run_gap.RunGap):
     @property
     def vision_shape(self):
         """Shape of the vision observation: (H, W, C) where C=1 if grayscale else 3."""
-        channels = 1 if self._config.get("grayscale", False) else 3
+        channels = 1 if self._grayscale else 3
         return (self._vision_height, self._vision_width, channels)
 
     @property
@@ -88,60 +98,57 @@ class RunGapVision(run_gap.RunGap):
         """Whether vision observations are enabled."""
         return self._vision_enabled
 
-    def _get_obs(self, data, info) -> dict:
-        """Get observations in ff_ppo-compatible dict format.
+    def _get_obs(self, data, info) -> collections.OrderedDict:
+        """Get observations in state/privileged_state dict format.
 
-        Returns a dict with keys:
+        Returns an OrderedDict with state and privileged_state keys, each
+        containing:
 
-        - proprioception: nested OrderedDict from _get_proprioception
-          (joint_angles, joint_ang_vels, etc.). Flattened by
-          observation_utils._flatten_nested_obs at normalization time.
-        - vision: zeros placeholder with shape (H, W, C). Actual pixels
-          are injected by the training loop after rendering.
+        - imitation_target: Gap features from parent RunGap (16-dim). Used by
+          the high-level policy in transfer learning, or by the intention
+          encoder in direct training.
+        - proprioception: Nested OrderedDict of body state sensors. Used by
+          the decoder in transfer learning.
+        - vision: Zeros placeholder with shape (H, W, C). Real pixels are
+          injected by VisionRenderWrapper after batched rendering.
+
+        This structure is compatible with both ``HighLevelWrapper`` (for
+        transfer learning) and direct ff_ppo training.
 
         Args:
             data: The simulation data (mjx.Data).
             info: State info dictionary.
 
         Returns:
-            Dict with proprioception and vision keys.
+            OrderedDict with state and privileged_state keys.
         """
-        return {
-            "proprioception": self._get_proprioception(data, info, flatten=False),
-            "vision": jp.zeros(self.vision_shape),
-        }
+        obs = collections.OrderedDict(
+            imitation_target=self._get_gap_features(data),
+            proprioception=self._get_proprioception(data, info, flatten=False),
+            vision=jp.zeros(self.vision_shape),
+        )
+        return collections.OrderedDict(
+            state=obs,
+            privileged_state=obs,
+        )
 
     @property
     def observation_size(self) -> int:
-        """Total flat observation size for the MLP (excludes vision pixels).
-
-        Vision pixels are handled separately by the CNN and are NOT
-        included here.
-
-        Returns:
-            int: Number of scalar observations fed to the MLP.
-        """
-        return self.proprioceptive_obs_size
+        """Total flat observation size for the MLP (excludes vision pixels)."""
+        obs_size = self.non_flattened_observation_size
+        total = 0
+        for key in ("imitation_target", "proprioception"):
+            total += jp.sum(flatten_util.ravel_pytree(obs_size["state"][key])[0])
+        return total
 
     @property
     def proprioceptive_obs_size(self) -> int:
-        """Flat size of the proprioceptive observation component.
-
-        Computes the total number of scalars when the nested OrderedDict
-        from _get_proprioception(flatten=False) is flattened.
-
-        Returns:
-            int: Number of proprioception scalars.
-        """
+        """Flat size of the proprioceptive observation component."""
         obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["proprioception"])[0])
+        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
 
     @property
     def vision_obs_size(self) -> int:
-        """Total number of pixels in the vision observation (H * W * C).
-
-        Returns:
-            int: Product of vision shape dimensions.
-        """
+        """Total number of pixels in the vision observation (H * W * C)."""
         h, w, c = self.vision_shape
         return h * w * c

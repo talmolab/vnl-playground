@@ -1,0 +1,48 @@
+<mujoco>
+  <visual>
+    <headlight diffuse=".5 .5 .5" specular="1 1 1" />
+    <global offwidth="2048" offheight="1536" />
+    <quality shadowsize="8192" />
+    <map znear="0.00025" zfar="4.0" fogstart="0.05" fogend="1.5" />
+    <rgba fog="0.0 0.0 0.0 1.0" />
+  </visual>
+
+  <asset>
+    <!-- Platform surface: rubberized flat gray -->
+    <texture name="platform_tex" type="2d" builtin="flat" width="64" height="64"
+      rgb1=".5 .5 .5" rgb2=".45 .45 .45" />
+    <material name="platform_mat" texture="platform_tex" texrepeat="2 2"
+      texuniform="true" reflectance=".1" />
+
+    <!-- White-noise background: checker pattern for visual depth cues
+         (grayscale squares approximating ~1 degree visual angle) -->
+    <texture name="noise_bg" type="2d" builtin="checker" width="512" height="512"
+      rgb1=".85 .85 .85" rgb2=".15 .15 .15" />
+    <material name="noise_bg_mat" texture="noise_bg" texrepeat="40 20"
+      texuniform="true" reflectance="0" />
+
+    <!-- Landing edge strip: dark black strip on leading edge of landing platform -->
+    <material name="edge_strip_mat" rgba="0.05 0.05 0.05 1.0" reflectance="0" />
+  </asset>
+
+  <worldbody>
+    <!-- Background wall with noise texture (behind landing platform, facing -x) -->
+    <geom name="back_wall" type="plane" pos="2.0 0 0.5" zaxis="-1 0 0"
+      size="1.5 1.5 0.01" contype="0" conaffinity="0" material="noise_bg_mat" />
+
+    <!-- Side walls for visual reference (no collision, translucent) -->
+    <geom name="wall_left" type="plane" pos="0 2 0" zaxis="0 -1 0"
+      size="25 2 0.01" contype="0" conaffinity="0" rgba="0.6 0.6 0.6 0.3" />
+    <geom name="wall_right" type="plane" pos="0 -2 0" zaxis="0 1 0"
+      size="25 2 0.01" contype="0" conaffinity="0" rgba="0.6 0.6 0.6 0.3" />
+
+    <!-- Take-off and landing platforms are added procedurally in Python
+         (see gap_jump.py for platform geometry generation) -->
+
+    <!-- Overhead lights -->
+    <light name="overhead_1" pos="-0.5 0 3.0" dir="0 0 -1" diffuse="0.7 0.7 0.7"
+      specular="0.3 0.3 0.3" directional="false" castshadow="true" />
+    <light name="overhead_2" pos="1.5 0 3.0" dir="0 0 -1" diffuse="0.7 0.7 0.7"
+      specular="0.3 0.3 0.3" directional="false" castshadow="true" />
+  </worldbody>
+</mujoco>

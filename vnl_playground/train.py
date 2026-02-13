@@ -43,15 +43,25 @@ from mujoco_playground import wrapper as mp_wrapper
 from omegaconf import DictConfig, OmegaConf
 from orbax import checkpoint as ocp
 
+import gc
+import psutil
+
 from track_mjx.agent.ff_ppo import ppo as ff_ppo_train
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
-from track_mjx.agent.ff_ppo import vision_ppo
 from track_mjx.agent.ff_ppo.ppo_networks import (
     make_logging_inference_fn as ff_make_logging_inference_fn,
 )
 
 from vnl_playground import tasks
 from vnl_playground.tasks.wrappers import LegacyObsWrapper
+
+def _log_memory(label: str):
+    """Log current process RSS memory usage."""
+    proc = psutil.Process()
+    rss_gb = proc.memory_info().rss / (1024**3)
+    logging.info(f"[MEM] {label}: {rss_gb:.2f} GB RSS")
+    return rss_gb
+
 
 # Enable persistent compilation cache.
 # jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
@@ -63,8 +73,25 @@ from vnl_playground.tasks.wrappers import LegacyObsWrapper
 # )
 
 
-def render_video(rollout, mj_model, mj_data, renderer, video_path, fps=50):
-    """Render a rollout to an MP4 video file with tracking camera."""
+def render_video(
+    rollout,
+    mj_model,
+    mj_data,
+    renderer,
+    video_path,
+    fps=50,
+    vision_renderer=None,
+):
+    """Render a rollout to an MP4 video file with tracking camera.
+
+    If ``vision_renderer`` (a ``JaxVisionRenderer`` with nworld=1) is
+    provided, the agent's egocentric view rendered by the warp GPU
+    ray-tracer is overlaid in the upper-left corner of each frame.
+
+    Egocentric renders are batched into a single JAX call via
+    ``jax.lax.scan`` to avoid per-call host-memory leaks from the
+    Warp FFI ``jax_callable`` bridge.
+    """
     camera = mujoco.MjvCamera()
     camera.type = mujoco.mjtCamera.mjCAMERA_TRACKING
 
@@ -91,12 +118,60 @@ def render_video(rollout, mj_model, mj_data, renderer, video_path, fps=50):
 
     scene_option = mujoco.MjvOption()
 
+    # Pre-render ALL egocentric frames in one batched JIT call to avoid
+    # per-call memory leak from Warp FFI jax_callable.
+    ego_frames_np = None
+    if vision_renderer is not None:
+        # Stack the kinematic arrays needed for rendering from all rollout states
+        all_data = jax.tree.map(lambda *xs: jax.numpy.stack(xs), *[s.data for s in rollout])
+
+        @jax.jit
+        def _render_all_ego(stacked_data):
+            """Render egocentric views for all timesteps in one call."""
+            def body(carry, data_slice):
+                batched = jax.tree.map(lambda x: x[None, ...], data_slice)
+                img = vision_renderer.render(batched)
+                return carry, img[0]  # (H, W, C)
+            _, all_imgs = jax.lax.scan(body, None, stacked_data)
+            return all_imgs  # (T, H, W, C)
+
+        ego_imgs_jax = _render_all_ego(all_data)
+        ego_frames_np = np.array(ego_imgs_jax)  # single transfer to host
+        del ego_imgs_jax, all_data
+        gc.collect()
+
     with imageio.get_writer(video_path, fps=fps) as writer:
-        for state in rollout:
+        for i, state in enumerate(rollout):
             mj_data.qpos = np.array(state.data.qpos)
             mujoco.mj_forward(mj_model, mj_data)
             renderer.update_scene(mj_data, camera, scene_option=scene_option)
-            writer.append_data(renderer.render())
+            frame = renderer.render()
+
+            # Overlay warp-rendered egocentric vision in upper-left corner
+            if ego_frames_np is not None:
+                ego_np = ego_frames_np[i]  # (H, W, C) float32 [0,1]
+
+                # Convert to uint8 RGB
+                if ego_np.shape[-1] == 1:
+                    ego_np = np.repeat(ego_np, 3, axis=-1)
+                ego_uint8 = np.clip(ego_np * 255, 0, 255).astype(np.uint8)
+
+                # Scale up for visibility (2x)
+                scale = 2
+                ego_scaled = np.repeat(
+                    np.repeat(ego_uint8, scale, axis=0), scale, axis=1
+                )
+                sh, sw = ego_scaled.shape[:2]
+
+                # Place with white border
+                pad = 2
+                y0, x0 = pad + 4, pad + 4
+                y1, x1 = y0 + sh, x0 + sw
+                if y1 < frame.shape[0] and x1 < frame.shape[1]:
+                    frame[y0 - pad : y1 + pad, x0 - pad : x1 + pad] = 255
+                    frame[y0:y1, x0:x1] = ego_scaled
+
+            writer.append_data(frame)
 
 
 @hydra.main(version_base=None, config_path="config", config_name="run_gap_vision")
@@ -156,6 +231,7 @@ def main(cfg: DictConfig):
         else (64, 64, 3)
     )
     logging.info(f"Vision shape: {vision_shape}")
+    _log_memory("after env load")
 
     # PPO training params
     ppo_params = dict(
@@ -241,23 +317,47 @@ def main(cfg: DictConfig):
         resume="allow",
         group=cfg.logging_config.get("group_name", env_name),
     )
+    _log_memory("after wandb init")
 
     def wandb_progress(num_steps, metrics):
         metrics["num_steps_thousands"] = num_steps
+        proc = psutil.Process()
+        metrics["system/rss_gb"] = proc.memory_info().rss / (1024**3)
+        metrics["system/rss_mb"] = proc.memory_info().rss / (1024**2)
         wandb.log(metrics)
+
+    # Save reference before it gets shadowed by the bool parameter in the callback.
+    _render_video_fn = render_video
+
+    # Create a warp vision renderer (nworld=1) for egocentric overlay in videos
+    _video_vision_renderer = None
+    if arch_name == "vision":
+        from vnl_playground.tasks.rodent.vision_jax import JaxVisionRenderer
+
+        _unwrapped = env.env if hasattr(env, "env") else env
+        _video_vision_renderer = JaxVisionRenderer(
+            mj_model=_unwrapped.mj_model,
+            nworld=1,
+            width=cfg.env_config.get("vision_width", 32),
+            height=cfg.env_config.get("vision_height", 32),
+            grayscale=cfg.env_config.get("grayscale", True),
+            camera_name=cfg.env_config.get("vision_camera_name", "egocentric-rodent"),
+        )
+        logging.info("Created warp vision renderer (nworld=1) for video overlay")
 
     def policy_params_fn(
         current_step,
         jit_logging_inference_fn,
         params,
         policy_params_fn_key,
-        render_video,  # noqa: N803 -- name set by ff_ppo caller
+        render_video,  # noqa: N803 -- bool flag set by ff_ppo caller
         ppo_network,
     ):
         """Callback for policy evaluation, video rendering, and metric logging."""
-        should_render = render_video
-        if not should_render:
+        if not render_video:
             return
+
+        _log_memory(f"policy_params_fn entry step={current_step}")
 
         episode_length = cfg.train_setup.train_config.episode_length
 
@@ -293,13 +393,14 @@ def main(cfg: DictConfig):
         # Render video
         video_path = str(checkpoint_path / f"{current_step}.mp4")
         try:
-            render_video(
+            _render_video_fn(
                 rollout,
                 mj_model,
                 mj_data,
                 renderer,
                 video_path,
                 fps=cfg.render_config.render_fps,
+                vision_renderer=_video_vision_renderer,
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
@@ -307,6 +408,12 @@ def main(cfg: DictConfig):
             )
         except mujoco.FatalError as e:
             logging.warning(f"Video rendering failed: {e}")
+
+        _log_memory(f"policy_params_fn before cleanup step={current_step}")
+
+        # --- Explicit memory cleanup ---
+        del rollout
+        gc.collect()
 
     # Compute num_evals for ff_ppo
     num_evals = max(
@@ -318,19 +425,52 @@ def main(cfg: DictConfig):
 
     # Build and run train function
     if arch_name == "vision":
-        # Vision training: use vision_ppo.train with interleaved rendering
+        # Vision training: wrap env with VisionRenderWrapper for JAX-native
+        # GPU rendering, then use standard ff_ppo.train with lax.scan.
+        from vnl_playground.tasks.rodent.vision_jax import VisionRenderWrapper
+
+        # Get the raw env's mj_model and vision config
+        unwrapped_env = env.env if hasattr(env, "env") else env
         vision_width = cfg.env_config.get("vision_width", 32)
         vision_height = cfg.env_config.get("vision_height", 32)
         grayscale = cfg.env_config.get("grayscale", True)
         camera_name = cfg.env_config.get("vision_camera_name", "egocentric-rodent")
 
+        def wrap_with_vision(
+            environment,
+            episode_length: int = 1000,
+            action_repeat: int = 1,
+            randomization_fn=None,
+        ):
+            """Wrap env for brax training, then add vision rendering."""
+            brax_env = mp_wrapper.wrap_for_brax_training(
+                environment,
+                episode_length=episode_length,
+                action_repeat=action_repeat,
+                randomization_fn=randomization_fn,
+                full_reset=False,
+            )
+            # nworld=None: renderer is lazily initialized on first reset(),
+            # auto-detecting the batch size.  This lets the same wrapper
+            # function work for both training (num_envs) and eval
+            # (num_eval_envs) environments.
+            return VisionRenderWrapper(
+                brax_env,
+                mj_model=unwrapped_env.mj_model,
+                width=vision_width,
+                height=vision_height,
+                grayscale=grayscale,
+                camera_name=camera_name,
+            )
+
         logging.info(
-            f"Vision training: {vision_width}x{vision_height}, "
-            f"grayscale={grayscale}, camera={camera_name}"
+            f"Vision rendering: {vision_width}x{vision_height}, "
+            f"grayscale={grayscale}, camera={camera_name}, "
+            f"JAX-callable (inside lax.scan)"
         )
 
         train_fn = functools.partial(
-            vision_ppo.train,
+            ff_ppo_train.train,
             **ppo_params,
             num_evals=num_evals,
             ckpt_mgr=ckpt_mgr,
@@ -339,17 +479,14 @@ def main(cfg: DictConfig):
             network_factory=network_factory,
             progress_fn=wandb_progress,
             policy_params_fn=policy_params_fn,
-            wrap_for_training=functools.partial(
-                mp_wrapper.wrap_for_brax_training, full_reset=False
-            ),
-            vision_width=vision_width,
-            vision_height=vision_height,
-            grayscale=grayscale,
-            camera_name=camera_name,
+            wrap_for_training=wrap_with_vision,
         )
 
-        logging.info("Starting vision PPO training...")
-        make_policy, params, metrics = train_fn(environment=env)
+        logging.info("Starting vision PPO training (JAX-native rendering)...")
+        make_policy, params, metrics = train_fn(
+            environment=env,
+            eval_env=eval_env,
+        )
     else:
         # Non-vision training: use standard ff_ppo.train with lax.scan
         train_fn = functools.partial(
