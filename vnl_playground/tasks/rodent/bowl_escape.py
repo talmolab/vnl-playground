@@ -67,7 +67,7 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.RODENT_BOX_FEET_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
-        ctrl_dt=0.02,
+        ctrl_dt=0.01,
         sim_dt=0.002,
         solver="newton",
         mujoco_impl="jax",
@@ -252,10 +252,7 @@ class BowlEscape(rodent_base.RodentEnv):
             task_obs=task_obs,
             proprioception=self._get_proprioception(data, info, flatten=False),
         )
-        return collections.OrderedDict(
-            state=obs,
-            privileged_state=obs,
-        )
+        return collections.OrderedDict(state=obs)
 
     # Rewards
     @_registry.reward("escape_x_upright")
@@ -270,7 +267,9 @@ class BowlEscape(rodent_base.RodentEnv):
         """
         del info
         terrain_size = float(self._config.bowl_hsize)
-        torso_xpos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
+        torso_xpos = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos
         escape_reward = reward_fns.tolerance(
             jp.linalg.norm(torso_xpos),
             bounds=(terrain_size, float("inf")),
@@ -282,12 +281,12 @@ class BowlEscape(rodent_base.RodentEnv):
         deviation_angle = 30
         deviation = np.cos(np.deg2rad(deviation_angle))
         # xmat is the 3x3 rotation matrix of the current frame
-        upright_torso = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xmat[
-            -1, -1
-        ]
-        upright_head = data.bind(self.mjx_model, self._spec.body("skull-rodent")).xmat[
-            -1, -1
-        ]
+        upright_torso = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xmat[-1, -1]
+        upright_head = data.bind(
+            self.mjx_model, self._spec.body(f"skull{self._suffix}")
+        ).xmat[-1, -1]
         upright = reward_fns.tolerance(
             jp.stack([upright_torso, upright_head]),
             bounds=(deviation, np.inf),
@@ -306,7 +305,7 @@ class BowlEscape(rodent_base.RodentEnv):
     @_registry.reward("speed")
     def _speed_reward(self, data, info, metrics, weight) -> float:
         del info
-        body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         vel = jp.linalg.norm(body.subtree_linvel)
         target_speed = self._config.target_speed
         reward = (
@@ -335,7 +334,9 @@ class BowlEscape(rodent_base.RodentEnv):
         """
         del info
         # Torso (root) position
-        torso_pos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
+        torso_pos = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos
         x, y, z = torso_pos
 
         # fetch bowl surface height at torso (x, y)
@@ -353,26 +354,6 @@ class BowlEscape(rodent_base.RodentEnv):
 
     def null_action(self) -> jp.ndarray:
         return jp.zeros(self.action_size)
-
-    @property
-    def proprioceptive_obs_size(self) -> int:
-        obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
-
-    @property
-    def non_proprioceptive_obs_size(self) -> int:
-        return self.observation_size - self.proprioceptive_obs_size
-
-    @property
-    def observation_size(self) -> mjx_env.ObservationSize:
-        obs = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs)[0])
-
-    @property
-    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        obs = abstract_state.obs
-        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     def _interpolate_bowl_height(self, x: float, y: float) -> float:
         """Interpolate the bowl surface height at world coordinates (x, y).

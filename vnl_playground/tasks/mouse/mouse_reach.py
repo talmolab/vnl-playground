@@ -9,13 +9,14 @@ from ml_collections import config_dict
 import mujoco
 from mujoco import mjx
 
+from jax import flatten_util
 from mujoco_playground._src import mjx_env
-from mujoco_playground._src import reward
-from vnl_playground.tasks.mouse import consts
+from mujoco_playground._src import reward as reward_fns
 from vnl_playground.tasks.mouse.base import (
     MouseBaseEnv,
     default_config as base_default_config,
 )
+from vnl_playground.tasks.task_registry import TaskRegistry
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -28,18 +29,29 @@ def default_config() -> config_dict.ConfigDict:
     cfg = base_default_config()
     cfg.target_size = 0.001  # reaching radius tolerance
     cfg.target_margin = 0.003  # margin for reward shaping
-    cfg.ctrl_cost_weight = 0.001  # penalty on action magnitude
     # Target sampling: "fixed_list" or "random_volume"
     cfg.target_mode = "random_volume"
     # Volume bounds for random sampling (min and max corners)
     # Derived from fixed target positions: x in [-0.003, 0.007], y ~ 0.010, z in [-0.011, -0.001]
     cfg.target_volume_min = (-0.003, 0.010, -0.011)
     cfg.target_volume_max = (0.007, 0.010, -0.001)
+    cfg.reward_terms = {
+        "distance": {"weight": 1.0},
+        "control_cost": {"weight": 0.001},
+    }
+    cfg.termination_criteria = {
+        "nan_termination": {},
+    }
     return cfg
+
+
+_registry = TaskRegistry()
 
 
 class MouseReach(MouseBaseEnv):
     """Mouse reaching env: reward for moving wrist marker to target position."""
+
+    _registry = _registry
 
     def __init__(
         self,
@@ -158,18 +170,20 @@ class MouseReach(MouseBaseEnv):
         # Run forward kinematics to update xpos from mocap_pos
         data = mjx.forward(self.mjx_model, data)
 
-        # Build observation
-        obs = self._get_obs(data, target_position)
-
-        reward_val, done = jp.zeros(2)
-        metrics = {}
-
         info = {
             "target_position": target_position,
             "prev_action": jp.zeros(self.action_size),
+            "action": jp.zeros(self.action_size),
         }
 
-        return mjx_env.State(data, obs, reward_val, done, metrics, info)
+        obs = self._get_obs(data, info)
+        metrics = {}
+        reward_val = self._get_reward(data, info, metrics)
+        done = self._is_done(data, info, metrics)
+
+        return mjx_env.State(
+            data, obs, reward_val, jp.astype(done, float), metrics, info
+        )
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
         """Take one control step (with physics substeps).
@@ -195,38 +209,36 @@ class MouseReach(MouseBaseEnv):
         n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
         data = mjx_env.step(self.mjx_model, data, action, n_steps)
 
-        # Get observation
-        obs = self._get_obs(data, target_position)
-
-        # Compute reward
-        rew = self._get_reward(data, target_position, action)
-
-        # Check termination
-        done = self._get_termination(data)
-
-        # Update info (direct assignment, no .copy() - JAX friendly)
         info = state.info
-        info["prev_action"] = action
+        info["prev_action"] = info["action"]
+        info["action"] = action
 
-        return state.replace(data=data, obs=obs, reward=rew, done=done, info=info)
+        obs = self._get_obs(data, info)
+        done = self._is_done(data, info, state.metrics)
+        rew = self._get_reward(data, info, state.metrics)
+        rew = jp.nan_to_num(rew)
+
+        return state.replace(
+            data=data, obs=obs, reward=rew, done=done.astype(float), info=info
+        )
 
     def _get_obs(
-        self, data: mjx.Data, target_position: jp.ndarray
+        self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Mapping[str, jp.ndarray]:
         """Build observation dictionary.
 
         Args:
             data: MJX simulation data.
-            target_position: Target position of shape (3,).
+            info: Episode info dict containing 'target_position'.
 
         Returns:
-            Mapping[str, jp.ndarray]: OrderedDict with 'task_obs' (direction
-                to target) and 'proprioception' (qpos, qvel, wrist position).
+            Mapping[str, jp.ndarray]: OrderedDict with state wrapper containing
+                'task_obs' (direction to target) and 'proprioception'.
         """
         wrist_pos = data.xpos[self._wrist_body_id]
-        to_target = target_position - wrist_pos
+        to_target = info["target_position"] - wrist_pos
 
-        return collections.OrderedDict(
+        obs = collections.OrderedDict(
             task_obs=to_target,
             proprioception=jp.concatenate(
                 [
@@ -236,67 +248,30 @@ class MouseReach(MouseBaseEnv):
                 ]
             ),
         )
+        return collections.OrderedDict(state=obs)
 
-    def _get_reward(
-        self, data: mjx.Data, target_position: jp.ndarray, action: jax.Array
-    ) -> jp.ndarray:
-        """Distance-based tolerance reward from wrist marker to target.
-
-        Args:
-            data: MJX simulation data.
-            target_position: Target position of shape (3,).
-            action: Applied action array.
-
-        Returns:
-            jp.ndarray: Scalar reward (tolerance reward minus control cost).
-        """
+    @_registry.reward("distance")
+    def _distance_reward(self, data, info, metrics, weight) -> float:
         wrist_marker_pos = data.geom_xpos[self._wrist_marker_geom_id]
-        dist = jp.linalg.norm(wrist_marker_pos - target_position)
-        distance_reward = reward.tolerance(
+        dist = jp.linalg.norm(wrist_marker_pos - info["target_position"])
+        reward_value = reward_fns.tolerance(
             dist,
             bounds=(0, self._config.target_size),
             margin=self._config.target_margin,
             sigmoid="hyperbolic",
         )
+        weighted = weight * reward_value
+        metrics["rewards/distance"] = weighted
+        return weighted
 
-        # Control cost: penalize large actions
-        ctrl_cost = self._config.ctrl_cost_weight * jp.sum(jp.square(action))
+    @_registry.reward("control_cost")
+    def _control_cost(self, data, info, metrics, weight) -> float:
+        cost = -weight * jp.sum(jp.square(info["action"]))
+        metrics["rewards/control_cost"] = cost
+        return cost
 
-        return jp.asarray(distance_reward - ctrl_cost, dtype=jp.float32)
-
-    def _get_termination(self, data: mjx.Data) -> jax.Array:
-        """Check for early termination conditions.
-
-        Args:
-            data: MJX simulation data.
-
-        Returns:
-            jax.Array: Scalar float, 0.0 (no early termination by default).
-        """
-        return jp.zeros((), dtype=jp.float32)
-
-    @property
-    def observation_size(self) -> int:
-        """Compute observation size from model dimensions.
-
-        Observation = [to_target(3), qpos(nq), qvel(nv), wrist_pos(3)]
-        """
-        # task_obs: to_target (3)
-        # proprio_obs: qpos (nq) + qvel (nv) + wrist_pos (3)
-        nq = self._mj_model.nq
-        nv = self._mj_model.nv
-        return 3 + nq + nv + 3
-
-    @property
-    def non_flattened_observation_size(self) -> Dict[str, int]:
-        """Get observation sizes by component.
-
-        Returns:
-            Dict[str, int]: Mapping of observation component names to their sizes.
-        """
-        nq = self._mj_model.nq
-        nv = self._mj_model.nv
-        return {
-            "task_obs": 3,  # to_target
-            "proprioception": nq + nv + 3,  # qpos + qvel + wrist_pos
-        }
+    @_registry.termination("nan_termination")
+    def _nan_termination(self, data, info) -> bool:
+        flattened_vals, _ = flatten_util.ravel_pytree(data)
+        num_nans = jp.sum(jp.isnan(flattened_vals))
+        return num_nans > 0

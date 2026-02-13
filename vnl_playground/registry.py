@@ -70,10 +70,11 @@ def load_reference_clips(
     data_path: str,
     n_frames_per_clip: int,
     keep_clips_idx=None,
+    **kwargs,
 ):
     """Load reference clips for an environment."""
     if env_name in tasks.ALL_ENVS:
         return tasks.load_reference_clips(
-            env_name, data_path, n_frames_per_clip, keep_clips_idx
+            env_name, data_path, n_frames_per_clip, keep_clips_idx, **kwargs
         )
     raise ValueError(f"Env '{env_name}' has no reference clips.")

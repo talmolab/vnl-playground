@@ -11,7 +11,7 @@ Termination occurs if:
 """
 
 import collections
-from typing import Any, Callable, Dict, Mapping, Optional, Union
+from typing import Any, Dict, Mapping, Optional, Union
 
 import jax
 import jax.numpy as jp
@@ -25,6 +25,7 @@ from mujoco_playground._src import reward as reward_fns
 
 from vnl_playground.tasks.stick import base as stick_base
 from vnl_playground.tasks.stick import consts
+from vnl_playground.tasks.task_registry import TaskRegistry
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -42,7 +43,7 @@ def default_config() -> config_dict.ConfigDict:
         noslip_iterations=0,
         torque_actuators=False,
         rescale_factor=0.9,
-        init_z=0.0,
+        init_z=0.005,
         target_speed=0.01,  # Stick bug is mm-scale, so speed is small
         episode_length=2000,
         action_repeat=1,
@@ -58,8 +59,7 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
-_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
-_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
+_registry = TaskRegistry()
 
 
 class MaintainVelocity(stick_base.StickBugEnv):
@@ -67,6 +67,8 @@ class MaintainVelocity(stick_base.StickBugEnv):
 
     The stick bug must maintain a target forward velocity in the +x direction.
     """
+
+    _registry = _registry
 
     def __init__(
         self,
@@ -101,7 +103,6 @@ class MaintainVelocity(stick_base.StickBugEnv):
             naconmax=self._config.naconmax,
             njmax=self._config.njmax,
         )
-
         metrics = {}
         obs = self._get_obs(data, info)
         reward = self._get_reward(data, info, metrics)
@@ -144,39 +145,13 @@ class MaintainVelocity(stick_base.StickBugEnv):
             ]
         )
 
-        return collections.OrderedDict(
+        obs = collections.OrderedDict(
             task_obs=task_obs,
             proprioception=self._get_proprioception(data, info, flatten=False),
         )
+        return collections.OrderedDict(state=obs)
 
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
-        any_terminated = False
-        for name, kwargs in self._config.termination_criteria.items():
-            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-            terminated = termination_fcn(self, data, info, **kwargs)
-            any_terminated = jp.logical_or(any_terminated, terminated)
-            metrics["terminations/" + name] = jp.astype(terminated, float)
-        metrics["terminations/any"] = jp.astype(any_terminated, float)
-        return any_terminated
-
-    def _get_reward(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
-    ) -> float:
-        net_reward = 0.0
-        for name, kwargs in self._config.reward_terms.items():
-            net_reward += _REWARD_FCN_REGISTRY[name](
-                self, data, info, metrics, **kwargs
-            )
-        return net_reward
-
-    def _named_reward(name: str):
-        def decorator(reward_fcn: Callable):
-            _REWARD_FCN_REGISTRY[name] = reward_fcn
-            return reward_fcn
-
-        return decorator
-
-    @_named_reward("forward_velocity")
+    @_registry.reward("forward_velocity")
     def _forward_velocity_reward(self, data, info, metrics, weight) -> float:
         del info
         body = data.bind(
@@ -198,7 +173,7 @@ class MaintainVelocity(stick_base.StickBugEnv):
         metrics["rewards/forward_velocity"] = weighted_reward
         return weighted_reward
 
-    @_named_reward("lateral_velocity")
+    @_registry.reward("lateral_velocity")
     def _lateral_velocity_cost(self, data, info, metrics, weight) -> float:
         del info
         body = data.bind(
@@ -210,7 +185,7 @@ class MaintainVelocity(stick_base.StickBugEnv):
         metrics["rewards/lateral_velocity"] = cost
         return cost
 
-    @_named_reward("angular_velocity_z")
+    @_registry.reward("angular_velocity_z")
     def _angular_velocity_z_cost(self, data, info, metrics, weight) -> float:
         del info
         gyro = data.bind(
@@ -222,14 +197,7 @@ class MaintainVelocity(stick_base.StickBugEnv):
         metrics["rewards/angular_velocity_z"] = cost
         return cost
 
-    def _named_termination_criterion(name: str):
-        def decorator(termination_fcn: Callable):
-            _TERMINATION_FCN_REGISTRY[name] = termination_fcn
-            return termination_fcn
-
-        return decorator
-
-    @_named_termination_criterion("fallen")
+    @_registry.termination("fallen")
     def _fallen_termination(
         self,
         data: mjx.Data,
@@ -251,7 +219,7 @@ class MaintainVelocity(stick_base.StickBugEnv):
 
         return jp.logical_or(below_ground, too_tilted)
 
-    @_named_termination_criterion("nan_termination")
+    @_registry.termination("nan_termination")
     def _nan_termination(self, data, info) -> bool:
         del info
         flattened_vals, _ = flatten_util.ravel_pytree(data)
@@ -260,23 +228,3 @@ class MaintainVelocity(stick_base.StickBugEnv):
 
     def null_action(self) -> jp.ndarray:
         return jp.zeros(self.action_size)
-
-    @property
-    def proprioceptive_obs_size(self) -> int:
-        obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["proprioception"])[0])
-
-    @property
-    def non_proprioceptive_obs_size(self) -> int:
-        return self.observation_size - self.proprioceptive_obs_size
-
-    @property
-    def observation_size(self) -> mjx_env.ObservationSize:
-        obs = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs)[0])
-
-    @property
-    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        obs = abstract_state.obs
-        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)

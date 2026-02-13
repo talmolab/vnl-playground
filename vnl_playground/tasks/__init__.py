@@ -15,6 +15,9 @@ from vnl_playground.tasks.rodent import bowl_escape as rodent_bowl_escape
 from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_velocity
 from vnl_playground.tasks.rodent import joystick as rodent_joystick
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
+from vnl_playground.tasks.fruitfly import (
+    maintain_velocity as fruitfly_maintain_velocity,
+)
 from vnl_playground.tasks.mouse import imitation as mouse_imitation
 from vnl_playground.tasks.mouse import mouse_reach
 from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
@@ -34,6 +37,7 @@ _envs = {
     "RodentMaintainVelocity": rodent_maintain_velocity.MaintainVelocity,
     "RodentJoystick": rodent_joystick.Joystick,
     "FruitflyImitation": fruitfly_imitation.Imitation,
+    "FruitflyMaintainVelocity": fruitfly_maintain_velocity.MaintainVelocity,
     "MouseReach": mouse_reach.MouseReach,
     "MouseImitation": mouse_imitation.MouseImitation,
     "StickMaintainVelocity": stick_maintain_velocity.MaintainVelocity,
@@ -48,6 +52,7 @@ _cfgs = {
     "RodentMaintainVelocity": rodent_maintain_velocity.default_config,
     "RodentJoystick": rodent_joystick.default_config,
     "FruitflyImitation": fruitfly_imitation.default_config,
+    "FruitflyMaintainVelocity": fruitfly_maintain_velocity.default_config,
     "MouseReach": mouse_reach.default_config,
     "MouseImitation": mouse_imitation.default_config,
     "StickMaintainVelocity": stick_maintain_velocity.default_config,
@@ -136,8 +141,7 @@ def load_reference_clips(
     data_path: str,
     n_frames_per_clip: int,
     keep_clips_idx=None,
-    joint_names: Optional[list[str]] = None,
-    body_names: Optional[list[str]] = None,
+    **kwargs,
 ):
     """Load reference clips for an environment.
 
@@ -146,8 +150,8 @@ def load_reference_clips(
         data_path: Path to HDF5 reference data.
         n_frames_per_clip: Number of frames per clip.
         keep_clips_idx: Optional indices to keep.
-        joint_names: Optional list of joint names. If None, read from H5 or use indices.
-        body_names: Optional list of body names. If None, read from H5 or use indices.
+        **kwargs: Additional arguments forwarded to the clips class
+            (e.g., joint_names, body_names for ReferenceClips).
 
     Returns:
         Instantiated ReferenceClips object.
@@ -156,10 +160,10 @@ def load_reference_clips(
         raise ValueError(
             f"Env '{env_name}' not found in reference clips classes. Available: {list(_reference_clips_classes.keys())}"
         )
-    return ReferenceClips(
+    clips_class = _reference_clips_classes[env_name]
+    return clips_class(
         data_path=data_path,
         n_frames_per_clip=n_frames_per_clip,
         keep_clips_idx=keep_clips_idx,
-        joint_names=joint_names,
-        body_names=body_names,
+        **kwargs,
     )
