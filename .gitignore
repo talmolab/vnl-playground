@@ -181,6 +181,7 @@ wandb/
 checkpoints/
 .DS_Store
 model_checkpoints/
+highlvl_checkpoints/
 outputs/
 *.mp4
 *.png

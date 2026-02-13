@@ -137,6 +137,10 @@ class HighLevelWrapper(wrapper.Wrapper):
     The agent must derive all task-relevant information from egocentric pixels.
     Body proprioception is routed exclusively to the frozen decoder.
 
+    When ``pass_vision=True`` AND ``pass_task_obs=True``, the wrapper includes
+    both vision pixels and the flattened task_obs (keyed as ``"imitation_target"``)
+    in the observation dict, giving the high-level network both modalities.
+
     Args:
         env: The base environment to wrap.
         decoder_inference_fn: Function that maps (latent + proprioception) -> ctrl.
@@ -147,6 +151,9 @@ class HighLevelWrapper(wrapper.Wrapper):
         pass_vision: If True, expose only vision to the high-level policy
             (no gap features, no proprioception). Requires env to have a
             ``vision`` key in its observations.
+        pass_task_obs: If True (requires ``pass_vision=True``), also include the
+            flattened ``highlvl_obs_key`` as ``"imitation_target"`` alongside
+            vision in the observation dict.
     """
 
     def __init__(
@@ -158,14 +165,21 @@ class HighLevelWrapper(wrapper.Wrapper):
         highlvl_obs_key: str = "task_obs",
         decoder_obs_key: str = "proprioception",
         pass_vision: bool = False,
+        pass_task_obs: bool = False,
     ):
         super().__init__(env)
+        if pass_task_obs and not pass_vision:
+            raise ValueError(
+                "pass_task_obs=True requires pass_vision=True. "
+                "Task obs passthrough is only supported in vision mode."
+            )
         self._decoder_inference_fn = decoder_inference_fn
         self._latent_size = latent_size
         self._obs_key = obs_key
         self._highlvl_obs_key = highlvl_obs_key
         self._decoder_obs_key = decoder_obs_key
         self._pass_vision = pass_vision
+        self._pass_task_obs = pass_task_obs
         self._proprioceptive_obs_size = int(env.proprioceptive_obs_size)
 
         sample_state = env.reset(jax.random.PRNGKey(0))
@@ -202,7 +216,21 @@ class HighLevelWrapper(wrapper.Wrapper):
         # Store full dict obs in info for decoder access
         state.info["_full_obs"] = state.obs
 
-        if self._pass_vision:
+        if self._pass_vision and self._pass_task_obs:
+            # Vision + task_obs mode: high-level policy sees pixels AND
+            # flattened task observations (e.g. imitation targets).
+            # Body proprioception is routed to the frozen decoder in step().
+            flat_task_obs = jp.nan_to_num(
+                jax.flatten_util.ravel_pytree(
+                    state.obs["state"][self._highlvl_obs_key]
+                )[0]
+            )
+            new_obs = {
+                "imitation_target": flat_task_obs,
+                "proprioception": jp.zeros(0),
+                "vision": state.obs["state"]["vision"],
+            }
+        elif self._pass_vision:
             # Vision-only mode: high-level policy sees ONLY pixels.
             # No gap features, no proprioception — the agent must derive
             # all task-relevant information from the egocentric camera.
@@ -256,6 +284,11 @@ class HighLevelWrapper(wrapper.Wrapper):
     @property
     def observation_size(self) -> dict[str, int]:
         """Return observation sizes for the high-level policy."""
+        if self._pass_vision and self._pass_task_obs:
+            return {
+                "imitation_target": self._state_obs_size,
+                "proprioception": 0,
+            }
         if self._pass_vision:
             return {"proprioception": 0}
         return {

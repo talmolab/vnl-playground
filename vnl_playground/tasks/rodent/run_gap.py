@@ -4,8 +4,7 @@ The rodent must run forward (+x direction) across platforms separated by gaps.
 Platforms are procedurally generated box geoms added to a corridor arena that
 has side walls but no floor.
 
-Reward is based on forward velocity (tolerance function), with optional penalties
-for lateral movement. An alive bonus is provided each step.
+Reward is based on forward velocity along the corridor (+x direction).
 
 Termination occurs if:
 - Torso becomes too tilted or falls below the platforms (fallen)
@@ -24,7 +23,6 @@ from ml_collections import config_dict
 from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
-from mujoco_playground._src import reward as reward_fns
 
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
@@ -66,11 +64,7 @@ def default_config() -> config_dict.ConfigDict:
         spawn_x=0.5,
         randomize_gaps=True,
         reward_terms={
-            "forward_displacement": {"weight": 1.0},
-            "forward_velocity": {"weight": 0.5},
-            "lateral_velocity": {"weight": -0.1},
-            "alive": {"weight": 0.1},
-            "heading": {"weight": 0.2},
+            "forward_velocity": {"weight": 1.0},
         },
         termination_criteria={
             "fallen": {"min_torso_z": 0.01, "max_torso_angle": 70},
@@ -315,7 +309,6 @@ class RunGap(rodent_base.RodentEnv):
         info = {
             "prev_action": self.null_action(),
             "action": self.null_action(),
-            "prev_x": jp.array(self._config.spawn_x),
         }
 
         data = mjx.make_data(
@@ -391,10 +384,6 @@ class RunGap(rodent_base.RodentEnv):
         done = self._is_done(data, info, state.metrics)
         reward = self._get_reward(data, info, state.metrics)
         reward = jp.nan_to_num(reward)
-
-        # Update prev_x AFTER reward computation so displacement uses old value
-        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
-        info["prev_x"] = torso.xpos[0]
 
         state = state.replace(
             data=data,
@@ -599,7 +588,12 @@ class RunGap(rodent_base.RodentEnv):
 
     @_registry.reward("forward_velocity")
     def _forward_velocity_reward(self, data, info, metrics, weight) -> float:
-        """Reward for maintaining target forward velocity in +x direction.
+        """Reward for forward velocity along the corridor (+x direction).
+
+        Linear reward proportional to x-velocity, clamped to [0, 1].
+        Zero reward for standing still or moving backward, max reward at
+        target_speed. Circling yields ~0 average reward since x-velocity
+        averages out over a full loop.
 
         Args:
             data: Simulation data.
@@ -616,113 +610,11 @@ class RunGap(rodent_base.RodentEnv):
         forward_vel = body.subtree_linvel[0]
 
         target_speed = self._config.target_speed
-
-        reward_value = reward_fns.tolerance(
-            forward_vel,
-            bounds=(target_speed, target_speed),
-            margin=target_speed,
-            sigmoid="linear",
-            value_at_margin=0.0,
-        )
+        reward_value = jp.clip(forward_vel / target_speed, 0.0, 1.0)
 
         weighted_reward = reward_value * weight
         metrics["rewards/forward_velocity"] = weighted_reward
 
-        return weighted_reward
-
-    @_registry.reward("lateral_velocity")
-    def _lateral_velocity_cost(self, data, info, metrics, weight) -> float:
-        """Cost for lateral (y-direction) velocity to encourage straight-line motion.
-
-        Args:
-            data: Simulation data.
-            info: State info (unused).
-            metrics: Metrics dict for logging.
-            weight: Cost weight multiplier (negative value = penalty).
-
-        Returns:
-            Weighted lateral velocity cost.
-        """
-        del info
-        body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
-        lateral_vel = body.subtree_linvel[1]  # y-direction velocity
-        cost = weight * jp.square(lateral_vel)
-        metrics["rewards/lateral_velocity"] = cost
-        return cost
-
-    @_registry.reward("alive")
-    def _alive_reward(self, data, info, metrics, weight) -> float:
-        """Constant alive bonus per step.
-
-        Args:
-            data: Simulation data (unused).
-            info: State info (unused).
-            metrics: Metrics dict for logging.
-            weight: Reward weight (constant bonus per step).
-
-        Returns:
-            Alive bonus.
-        """
-        del data, info
-        metrics["rewards/alive"] = weight
-        return weight
-
-    @_registry.reward("forward_displacement")
-    def _forward_displacement_reward(self, data, info, metrics, weight) -> float:
-        """Reward for incremental forward (+x) displacement per step.
-
-        Computes the x-displacement since the previous step, normalized by
-        the expected displacement at target speed. Only positive displacement
-        is rewarded (backward movement gives 0).
-
-        Args:
-            data: Simulation data.
-            info: State info containing prev_x.
-            metrics: Metrics dict for logging.
-            weight: Reward weight multiplier.
-
-        Returns:
-            Weighted forward displacement reward.
-        """
-        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
-        current_x = torso.xpos[0]
-        dx = current_x - info["prev_x"]
-
-        # Normalize by expected displacement at target speed per control step
-        expected_dx = self._config.target_speed * self._config.ctrl_dt
-        normalized_dx = dx / expected_dx
-
-        # Reward positive displacement, cap at 1.0
-        reward_value = jp.clip(normalized_dx, 0.0, 1.0)
-
-        weighted_reward = reward_value * weight
-        metrics["rewards/forward_displacement"] = weighted_reward
-        return weighted_reward
-
-    @_registry.reward("heading")
-    def _heading_reward(self, data, info, metrics, weight) -> float:
-        """Reward for maintaining forward (+x) heading direction.
-
-        Uses the cosine of the heading angle relative to +x axis from the
-        torso rotation matrix. Returns 1.0 when facing perfectly forward,
-        0.0 when perpendicular or facing backward.
-
-        Args:
-            data: Simulation data.
-            info: State info (unused).
-            metrics: Metrics dict for logging.
-            weight: Reward weight multiplier.
-
-        Returns:
-            Weighted heading reward.
-        """
-        del info
-        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
-        heading_x = torso.xmat[0, 0]  # cos(heading vs +x)
-        reward_value = jp.clip(heading_x, 0.0, 1.0)
-
-        weighted_reward = reward_value * weight
-        metrics["rewards/heading"] = weighted_reward
         return weighted_reward
 
     # ---- Termination criteria ----

@@ -33,10 +33,10 @@ env_config:
 
 network_config:
   arch_name: vision
-  vision_latent_size: 32
+  vision_latent_size: 8
   decoder_hidden_layer_sizes: [512, 512]
   value_hidden_layer_sizes: [512, 512]
-  vision_channels: [32, 64, 64]
+  vision_channels: [2, 4, 8, 16]
 
 train_setup:
   agent_name: rodent

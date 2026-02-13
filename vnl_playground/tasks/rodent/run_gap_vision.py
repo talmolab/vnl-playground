@@ -7,12 +7,16 @@ The observation dict from _get_obs() returns::
 
     {
         "state": OrderedDict(
-            imitation_target=...,               # gap features (16-dim)
+            task_obs=...,                       # body-state signals (flat)
             proprioception=OrderedDict(...),     # nested dict
             vision=jp.zeros(H, W, C),           # placeholder zeros
         ),
         "privileged_state": OrderedDict(...),   # same as state
     }
+
+``task_obs`` contains body-state signals (prev_action, kinematic sensors,
+touch sensors, origin) rather than hand-crafted gap features — gap
+information should be inferred from vision.
 
 Vision rendering happens in ``VisionRenderWrapper`` (vision_jax.py), which
 wraps the vmapped/batched env and renders on all worlds at once using the
@@ -20,9 +24,8 @@ JAX-callable warp renderer. The wrapper replaces the zero placeholders with
 real rendered images.
 
 Compatible with ``HighLevelWrapper`` for transfer learning pipelines
-(the wrapper extracts imitation_target for the high-level policy and
-proprioception for the frozen decoder; vision is preserved for optional
-CNN processing).
+and direct ff_ppo training.  Downstream ``observation_utils.flatten_obs_dict()``
+maps ``task_obs`` to ``imitation_target`` internally.
 
 Usage::
 
@@ -63,9 +66,13 @@ class RunGapVision(run_gap.RunGap):
     """RunGap with egocentric vision observations.
 
     Observations are returned with state/privileged_state wrapping containing
-    imitation_target, proprioception, and vision keys. The vision key contains
+    task_obs, proprioception, and vision keys. The vision key contains
     placeholder zeros — real rendering is handled by ``VisionRenderWrapper``
     which wraps the batched env.
+
+    ``task_obs`` provides body-state signals (prev_action, kinematic sensors,
+    touch sensors, origin). Gap information is not included — the agent should
+    infer it from vision.
 
     Compatible with both track-mjx's ff_ppo observation_utils and
     ``HighLevelWrapper`` for transfer learning pipelines.
@@ -104,13 +111,16 @@ class RunGapVision(run_gap.RunGap):
         Returns an OrderedDict with state and privileged_state keys, each
         containing:
 
-        - imitation_target: Gap features from parent RunGap (16-dim). Used by
-          the high-level policy in transfer learning, or by the intention
-          encoder in direct training.
+        - task_obs: Body-state signals (prev_action, kinematic sensors, touch
+          sensors, origin). Downstream ``observation_utils.flatten_obs_dict()``
+          maps this key to ``imitation_target`` internally.
         - proprioception: Nested OrderedDict of body state sensors. Used by
           the decoder in transfer learning.
         - vision: Zeros placeholder with shape (H, W, C). Real pixels are
           injected by VisionRenderWrapper after batched rendering.
+
+        Gap features are intentionally excluded — the agent should infer gap
+        information from vision.
 
         This structure is compatible with both ``HighLevelWrapper`` (for
         transfer learning) and direct ff_ppo training.
@@ -122,8 +132,21 @@ class RunGapVision(run_gap.RunGap):
         Returns:
             OrderedDict with state and privileged_state keys.
         """
+        kinematic_sensors = self._get_kinematic_sensors(data)
+        touch_sensors = self._get_touch_sensors(data)
+        origin = self._get_origin(data)
+
+        task_obs = jp.concatenate(
+            [
+                info["prev_action"],
+                kinematic_sensors,
+                touch_sensors,
+                origin,
+            ]
+        )
+
         obs = collections.OrderedDict(
-            imitation_target=self._get_gap_features(data),
+            task_obs=task_obs,
             proprioception=self._get_proprioception(data, info, flatten=False),
             vision=jp.zeros(self.vision_shape),
         )
@@ -137,7 +160,7 @@ class RunGapVision(run_gap.RunGap):
         """Total flat observation size for the MLP (excludes vision pixels)."""
         obs_size = self.non_flattened_observation_size
         total = 0
-        for key in ("imitation_target", "proprioception"):
+        for key in ("task_obs", "proprioception"):
             total += jp.sum(flatten_util.ravel_pytree(obs_size["state"][key])[0])
         return total
 
