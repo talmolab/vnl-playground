@@ -132,6 +132,11 @@ class HighLevelWrapper(wrapper.Wrapper):
     state/privileged_state structure preserved for asymmetric actor-critic
     training. Proprioception is passed to the decoder.
 
+    When ``pass_vision=True``, the wrapper produces vision-only observations
+    for the high-level policy: ``{"proprioception": empty[0], "vision": ...}``.
+    The agent must derive all task-relevant information from egocentric pixels.
+    Body proprioception is routed exclusively to the frozen decoder.
+
     Args:
         env: The base environment to wrap.
         decoder_inference_fn: Function that maps (latent + proprioception) -> ctrl.
@@ -139,6 +144,9 @@ class HighLevelWrapper(wrapper.Wrapper):
         obs_key: Top-level observation key to use for decoder (default: 'state').
         highlvl_obs_key: Key for high-level policy observations (default: 'task_obs').
         decoder_obs_key: Key for decoder observations (default: 'proprioception').
+        pass_vision: If True, expose only vision to the high-level policy
+            (no gap features, no proprioception). Requires env to have a
+            ``vision`` key in its observations.
     """
 
     def __init__(
@@ -149,6 +157,7 @@ class HighLevelWrapper(wrapper.Wrapper):
         obs_key: str = "state",
         highlvl_obs_key: str = "task_obs",
         decoder_obs_key: str = "proprioception",
+        pass_vision: bool = False,
     ):
         super().__init__(env)
         self._decoder_inference_fn = decoder_inference_fn
@@ -156,6 +165,7 @@ class HighLevelWrapper(wrapper.Wrapper):
         self._obs_key = obs_key
         self._highlvl_obs_key = highlvl_obs_key
         self._decoder_obs_key = decoder_obs_key
+        self._pass_vision = pass_vision
         self._proprioceptive_obs_size = int(env.proprioceptive_obs_size)
 
         sample_state = env.reset(jax.random.PRNGKey(0))
@@ -174,28 +184,47 @@ class HighLevelWrapper(wrapper.Wrapper):
                 sample_state.obs["privileged_state"][highlvl_obs_key]
             )[0].shape[0]
         )
+
+        if pass_vision and "vision" not in sample_state.obs.get("state", {}):
+            raise ValueError(
+                "pass_vision=True requires env observations to contain a 'vision' key "
+                "inside 'state'. Use a vision-enabled environment (e.g. RunGapVision)."
+            )
+        if pass_vision:
+            self._vision_shape = sample_state.obs["state"]["vision"].shape
+
         _, self._dummy_decoder_extras = decoder_inference_fn(
             jp.zeros(latent_size + self._proprioceptive_obs_size)
         )
 
     def _process_state(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
-        """Process state to extract task obs for high-level policy."""
+        """Process state to extract obs for the high-level policy."""
         # Store full dict obs in info for decoder access
         state.info["_full_obs"] = state.obs
 
-        # Preserve state/privileged_state structure for asymmetric actor-critic
-        new_obs = {
-            "state": jp.nan_to_num(
-                jax.flatten_util.ravel_pytree(
-                    state.obs["state"][self._highlvl_obs_key]
-                )[0]
-            ),
-            "privileged_state": jp.nan_to_num(
-                jax.flatten_util.ravel_pytree(
-                    state.obs["privileged_state"][self._highlvl_obs_key]
-                )[0]
-            ),
-        }
+        if self._pass_vision:
+            # Vision-only mode: high-level policy sees ONLY pixels.
+            # No gap features, no proprioception — the agent must derive
+            # all task-relevant information from the egocentric camera.
+            # Body proprioception is routed to the frozen decoder in step().
+            new_obs = {
+                "proprioception": jp.zeros(0),
+                "vision": state.obs["state"]["vision"],
+            }
+        else:
+            # MLP mode: flat obs with state/privileged_state structure
+            new_obs = {
+                "state": jp.nan_to_num(
+                    jax.flatten_util.ravel_pytree(
+                        state.obs["state"][self._highlvl_obs_key]
+                    )[0]
+                ),
+                "privileged_state": jp.nan_to_num(
+                    jax.flatten_util.ravel_pytree(
+                        state.obs["privileged_state"][self._highlvl_obs_key]
+                    )[0]
+                ),
+            }
         return state.replace(obs=new_obs)
 
     def reset(
@@ -226,11 +255,17 @@ class HighLevelWrapper(wrapper.Wrapper):
 
     @property
     def observation_size(self) -> dict[str, int]:
-        """Return observation sizes for the high-level policy.
-
-        Returns dict matching the state/privileged_state structure.
-        """
+        """Return observation sizes for the high-level policy."""
+        if self._pass_vision:
+            return {"proprioception": 0}
         return {
             "state": self._state_obs_size,
             "privileged_state": self._privileged_obs_size,
         }
+
+    @property
+    def vision_shape(self):
+        """Shape of the vision observation (H, W, C). Only valid when pass_vision=True."""
+        if not self._pass_vision:
+            raise AttributeError("vision_shape is only available when pass_vision=True")
+        return self._vision_shape
