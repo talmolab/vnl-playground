@@ -20,11 +20,11 @@ from mujoco_playground._src import reward as reward_fns
 
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 import matplotlib.colors as mcolors
 
-_registry = TaskRegistry()
+_registry = RewardRegistry()
 
 
 def default_vision_config() -> config_dict.ConfigDict:

@@ -24,9 +24,9 @@ from mujoco_playground._src import reward as reward_fns
 
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
-_registry = TaskRegistry()
+_registry = RewardRegistry()
 
 
 def default_config() -> config_dict.ConfigDict:

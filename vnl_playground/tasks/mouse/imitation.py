@@ -18,7 +18,7 @@ from vnl_playground.tasks.mouse.base import (
     default_config as base_default_config,
 )
 from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -62,7 +62,7 @@ def default_config() -> config_dict.ConfigDict:
     return cfg
 
 
-_registry = TaskRegistry()
+_registry = RewardRegistry()
 
 
 class MouseImitation(MouseBaseEnv):

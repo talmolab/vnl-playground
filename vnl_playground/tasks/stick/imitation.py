@@ -23,7 +23,7 @@ from .. import utils
 from . import base as stick_base
 from . import consts
 from vnl_playground.tasks.reference_clips import ReferenceClips
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -70,7 +70,7 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
-_registry = TaskRegistry()
+_registry = RewardRegistry()
 
 
 class Imitation(stick_base.StickBugEnv):

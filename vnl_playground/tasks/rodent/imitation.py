@@ -16,9 +16,9 @@ from .. import utils
 from . import base as rodent_base
 from . import consts
 from vnl_playground.tasks.reference_clips import ReferenceClips
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
-_registry = TaskRegistry()
+_registry = RewardRegistry()
 
 
 def default_config() -> config_dict.ConfigDict:

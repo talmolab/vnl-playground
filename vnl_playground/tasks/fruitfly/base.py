@@ -15,7 +15,7 @@ from mujoco import mjx
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.fruitfly import consts
 from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -42,8 +42,8 @@ def default_config() -> config_dict.ConfigDict:
 class FruitflyEnv(mjx_env.MjxEnv):
     """Base class for fruitfly environments."""
 
-    # Subclasses should set this to their TaskRegistry instance
-    _registry: TaskRegistry = None
+    # Subclasses should set this to their RewardRegistry instance
+    _registry: RewardRegistry = None
     _default_render_camera: str = "track1"
 
     def __init__(
@@ -328,7 +328,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
         """
         if self._registry is None:
             raise RuntimeError(
-                f"{type(self).__name__} has no TaskRegistry assigned. "
+                f"{type(self).__name__} has no RewardRegistry assigned. "
                 "Subclasses must set `_registry` as a class attribute."
             )
         net_reward = 0.0
@@ -356,7 +356,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
         """
         if self._registry is None:
             raise RuntimeError(
-                f"{type(self).__name__} has no TaskRegistry assigned. "
+                f"{type(self).__name__} has no RewardRegistry assigned. "
                 "Subclasses must set `_registry` as a class attribute."
             )
         any_terminated = False
