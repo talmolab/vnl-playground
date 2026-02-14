@@ -27,12 +27,12 @@ env_config:
     torque_actuators: true
 
 network_config:
-  arch_name: vision_task_obs
+  arch_name: shared_vision_task_obs
   vision_latent_size: 16
-  vision_feature_size: 8
+  vision_feature_size: 32
   decoder_hidden_layer_sizes: [512, 512]
   value_hidden_layer_sizes: [512, 512]
-  vision_channels: [2, 4, 8, 16]
+  vision_channels: [4, 8, 16, 32]
   fusion_hidden_layer_sizes: [256]
 
 transfer:
@@ -66,6 +66,7 @@ train_setup:
     deterministic_eval: false
     grad_clip_threshold: 20.0
     vf_loss_coefficient: 0.5
+    vision_lr_multiplier: 3.0
 
 logging_config:
   project_name: vnl-playground
