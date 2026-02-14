@@ -1088,6 +1088,11 @@ def main(cfg: DictConfig):
     _log_memory("after wandb init")
 
     def wandb_progress(num_steps, metrics):
+        # Convert JAX Arrays to Python floats to prevent wandb holding JAX references
+        metrics = {
+            k: float(v) if hasattr(v, "dtype") else v
+            for k, v in metrics.items()
+        }
         metrics["num_steps_thousands"] = num_steps
         proc = psutil.Process()
         metrics["system/rss_gb"] = proc.memory_info().rss / (1024**3)
