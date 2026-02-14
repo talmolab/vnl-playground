@@ -274,20 +274,17 @@ class RunGap(rodent_base.RodentEnv):
                 x_cursor += plat_length
 
             # Precompute static gap arrays for legacy mode
-            gap_starts, gap_ends, gap_lengths, platform_lengths = [], [], [], []
+            gap_starts, gap_ends, gap_lengths = [], [], []
             for i in range(1, len(self._platform_positions)):
                 prev_end = self._platform_positions[i - 1][1]
                 curr_start = self._platform_positions[i][0]
                 gap_starts.append(prev_end)
                 gap_ends.append(curr_start)
                 gap_lengths.append(curr_start - prev_end)
-                plat_start, plat_end = self._platform_positions[i]
-                platform_lengths.append(plat_end - plat_start)
 
             self._static_gap_starts = jp.array(gap_starts)
             self._static_gap_ends = jp.array(gap_ends)
             self._static_gap_lengths = jp.array(gap_lengths)
-            self._static_platform_lengths = jp.array(platform_lengths)
             self._static_platform_trailing_edges = jp.array(
                 [pos[1] for pos in self._platform_positions]
             )
@@ -422,6 +419,17 @@ class RunGap(rodent_base.RodentEnv):
         These serve as the encoder input (imitation_target) for the intention
         network - encoding "what terrain lies ahead" into a latent intention.
 
+        Feature layout (16 values):
+          [0-2]  gap_distances: distance to leading edge of next 3 gaps
+          [3-5]  gap_lengths: lengths of next 3 gaps
+          [6-8]  gap_far_edge_distances: distance to far edge (end) of next 3 gaps
+          [9]    forward_vel: x velocity
+          [10]   lateral_vel: y velocity
+          [11]   body_height: height above platform surface
+          [12]   lateral_pos: lateral deviation from corridor center
+          [13-14] heading: (heading_x, heading_y) from torso rotation
+          [15]   platform_edge_dist: distance to trailing edge of current platform
+
         When ``randomize_gaps`` is enabled, platform positions are read
         dynamically from ``data.xpos`` (reflecting the current slide-joint
         configuration).  Otherwise the precomputed static arrays are used.
@@ -455,23 +463,15 @@ class RunGap(rodent_base.RodentEnv):
                 + self._start_platform_half_length
             )
 
-            # Gap starts = trailing edge of previous platform
-            # Gap ends = leading edge of current platform
-            all_trailing = jp.concatenate([start_end.reshape(1), plat_ends])
-            gap_starts_arr = all_trailing[:-1]
+            # Gap geometry from trailing/leading edges
+            all_trailing_edges = jp.concatenate([start_end.reshape(1), plat_ends])
+            gap_starts_arr = all_trailing_edges[:-1]
             gap_ends_arr = plat_starts
             gap_lengths_arr = gap_ends_arr - gap_starts_arr
-            plat_lengths_arr = plat_ends - plat_starts
-
-            # All trailing edges including start platform
-            all_trailing_edges = jp.concatenate(
-                [start_end.reshape(1), plat_ends]
-            )
         else:
             gap_starts_arr = self._static_gap_starts
             gap_ends_arr = self._static_gap_ends
             gap_lengths_arr = self._static_gap_lengths
-            plat_lengths_arr = self._static_platform_lengths
             all_trailing_edges = self._static_platform_trailing_edges
 
         # Find the first gap whose end (= leading edge of next platform)
@@ -502,13 +502,14 @@ class RunGap(rodent_base.RodentEnv):
             ]
         )
 
-        # Lengths of next 3 platforms (after each gap)
-        platform_lengths = jp.array(
+        # Distance to far edge (end) of next 3 gaps
+        # Replaces former platform_lengths feature (which was always constant in randomized mode)
+        gap_far_edge_distances = jp.array(
             [
                 jp.where(
                     next_idx + i < n,
-                    plat_lengths_arr[jp.clip(next_idx + i, 0, n - 1)],
-                    sentinel_len,
+                    gap_ends_arr[jp.clip(next_idx + i, 0, n - 1)] - rodent_x,
+                    sentinel_dist,
                 )
                 for i in range(3)
             ]
@@ -542,7 +543,7 @@ class RunGap(rodent_base.RodentEnv):
             [
                 gap_distances,  # (3,)
                 gap_lengths,  # (3,)
-                platform_lengths,  # (3,)
+                gap_far_edge_distances,  # (3,)
                 forward_vel.reshape(1),  # (1,)
                 lateral_vel.reshape(1),  # (1,)
                 body_height.reshape(1),  # (1,)
