@@ -528,9 +528,6 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
         height=cfg.render_config.render_height,
         width=cfg.render_config.render_width,
     )
-    jit_reset = jax.jit(eval_env.reset)
-    jit_step = jax.jit(eval_env.step)
-
     # Create warp vision renderer (nworld=1) for egocentric overlay in videos
     _video_vision_renderer = None
     from vnl_playground.tasks.rodent.vision_jax import (
@@ -552,6 +549,25 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
         camera_name=cfg.env_config.get("vision_camera_name", "egocentric-rodent"),
     )
     logging.info("Created warp vision renderer (nworld=1) for video overlay")
+
+    # Eval callback closures with vision rendering (uses _video_vision_renderer)
+    _eval_base_reset = eval_env.reset
+    _eval_base_step = eval_env.step
+
+    def _eval_reset_with_vision(rng):
+        state = _eval_base_reset(rng)
+        data_b = jax.tree.map(lambda x: x[None, ...], state.data)
+        vision = _video_vision_renderer.render(data_b)[0]
+        return state.replace(obs={**state.obs, "vision": vision})
+
+    def _eval_step_with_vision(state, action):
+        state = _eval_base_step(state, action)
+        data_b = jax.tree.map(lambda x: x[None, ...], state.data)
+        vision = _video_vision_renderer.render(data_b)[0]
+        return state.replace(obs={**state.obs, "vision": vision})
+
+    jit_reset = jax.jit(_eval_reset_with_vision)
+    jit_step = jax.jit(_eval_step_with_vision)
 
     # Ensure render_config has render_interval for ff_ppo
     if "render_interval" not in cfg_dict.get("render_config", {}):
@@ -857,9 +873,6 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         height=cfg.render_config.render_height,
         width=cfg.render_config.render_width,
     )
-    jit_reset = jax.jit(eval_env.reset)
-    jit_step = jax.jit(eval_env.step)
-
     # Create warp vision renderer (nworld=1) for egocentric overlay
     _video_vision_renderer = None
     from vnl_playground.tasks.rodent.vision_jax import (
@@ -880,6 +893,25 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         camera_name=cfg.env_config.get("vision_camera_name", "egocentric-rodent"),
     )
     logging.info("Created warp vision renderer (nworld=1) for video overlay")
+
+    # Eval callback closures with vision rendering (uses _video_vision_renderer)
+    _eval_base_reset = eval_env.reset
+    _eval_base_step = eval_env.step
+
+    def _eval_reset_with_vision(rng):
+        state = _eval_base_reset(rng)
+        data_b = jax.tree.map(lambda x: x[None, ...], state.data)
+        vision = _video_vision_renderer.render(data_b)[0]
+        return state.replace(obs={**state.obs, "vision": vision})
+
+    def _eval_step_with_vision(state, action):
+        state = _eval_base_step(state, action)
+        data_b = jax.tree.map(lambda x: x[None, ...], state.data)
+        vision = _video_vision_renderer.render(data_b)[0]
+        return state.replace(obs={**state.obs, "vision": vision})
+
+    jit_reset = jax.jit(_eval_reset_with_vision)
+    jit_step = jax.jit(_eval_step_with_vision)
 
     # Ensure render_config has render_interval
     if "render_interval" not in cfg_dict.get("render_config", {}):
