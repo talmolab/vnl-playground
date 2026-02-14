@@ -667,8 +667,11 @@ def _train_vision_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, chec
     eval_every = cfg.train_setup.get("eval_every", 10_000_000)
     num_evals = max(1, int(ppo_params["num_timesteps"] / eval_every))
 
-    # Checkpoint to restore (if any)
+    # Checkpoint to restore (if any) — auto-set when resuming
     checkpoint_to_restore = cfg.train_setup.get("checkpoint_to_restore", None)
+    if checkpoint_to_restore is None and cfg.train_setup.get("resume_run_id", None):
+        checkpoint_to_restore = str(checkpoint_path)
+        logging.info(f"Auto-setting checkpoint_to_restore={checkpoint_to_restore}")
 
     # Vision rendering wrapper for training environments
     unwrapped_env = env.env if hasattr(env, "env") else env
@@ -937,8 +940,11 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
     eval_every = cfg.train_setup.get("eval_every", 10_000_000)
     num_evals = max(1, int(ppo_params["num_timesteps"] / eval_every))
 
-    # Checkpoint to restore (if any)
+    # Checkpoint to restore (if any) — auto-set when resuming
     checkpoint_to_restore = cfg.train_setup.get("checkpoint_to_restore", None)
+    if checkpoint_to_restore is None and cfg.train_setup.get("resume_run_id", None):
+        checkpoint_to_restore = str(checkpoint_path)
+        logging.info(f"Auto-setting checkpoint_to_restore={checkpoint_to_restore}")
 
     # Vision rendering wrapper for training environments
     unwrapped_env = env.env if hasattr(env, "env") else env
@@ -1019,19 +1025,35 @@ def main(cfg: DictConfig):
 
     logging.info(f"Config: {OmegaConf.to_container(cfg, resolve=True)}")
 
-    # ---- Generate run ID and checkpoint path ----
-    run_id = datetime.now().strftime("%y%m%d_%H%M%S")
-    checkpoint_path = Path(
-        hydra.utils.to_absolute_path(f"./{cfg.logging_config.model_path}/{run_id}")
-    )
-    checkpoint_path.mkdir(parents=True, exist_ok=True)
+    # ---- Generate or resume run ID and checkpoint path ----
+    resume_run_id = cfg.train_setup.get("resume_run_id", None)
+    if resume_run_id:
+        run_id = str(resume_run_id)
+        checkpoint_path = Path(
+            hydra.utils.to_absolute_path(
+                f"./{cfg.logging_config.model_path}/{run_id}"
+            )
+        )
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(
+                f"Cannot resume: checkpoint path {checkpoint_path} does not exist"
+            )
+        logging.info(f"RESUMING run_id: {run_id}")
+    else:
+        run_id = datetime.now().strftime("%y%m%d_%H%M%S")
+        checkpoint_path = Path(
+            hydra.utils.to_absolute_path(
+                f"./{cfg.logging_config.model_path}/{run_id}"
+            )
+        )
+        checkpoint_path.mkdir(parents=True, exist_ok=True)
+        logging.info(f"NEW run_id: {run_id}")
 
     # Save config to checkpoint directory
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
     with open(checkpoint_path / "config.json", "w") as f:
         json.dump(cfg_dict, f, indent=2, default=lambda o: str(o))
 
-    logging.info(f"run_id: {run_id}")
     logging.info(f"Checkpoint path: {checkpoint_path}")
 
     # ---- Load frozen decoder from Phase 1 checkpoint ----
