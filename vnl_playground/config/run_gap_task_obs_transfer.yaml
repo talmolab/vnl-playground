@@ -1,0 +1,65 @@
+# TaskObs-only high-level transfer training for RunGapVision (no vision)
+# Uses standard Brax PPO with MLP policy on handcrafted body-state features.
+#
+# This is a baseline comparison for the vision_task_obs architecture.
+# The high-level policy receives task_obs (prev_action + kinematic sensors +
+# touch sensors + origin) and maps them directly to latent intentions via MLP,
+# without any visual input.
+#
+# Usage:
+#   cd vnl-playground
+#   python -m vnl_playground.train_highlvl --config-name=run_gap_task_obs_transfer
+
+env_config:
+  env_name: RodentRunGapVision
+  task_name: run_gap_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  env_args:
+    target_speed: 2
+    platform_length_range: [0.3, 0.6]
+    gap_length_range: [0.03, 0.12]
+    n_platforms: 20
+    torque_actuators: true
+
+network_config:
+  arch_name: mlp
+  policy_hidden_layer_sizes: [512, 512]
+  value_hidden_layer_sizes: [512, 512]
+
+transfer:
+  mimic_run_id: "260212_123718_492372"   # Replace with Phase 1 run ID
+  mimic_checkpoint_dir: /home/talmolab/Desktop/SalkResearch/track-mjx/model_checkpoints
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+train_setup:
+  eval_every: 10_000_000
+  train_config:
+    episode_length: 1000
+    num_envs: 1024
+    num_timesteps: 1_000_000_000
+    batch_size: 1024
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 3e-4
+    clipping_epsilon: 0.2
+    discounting: 0.97
+    entropy_cost: 1e-3
+    action_repeat: 1
+    unroll_length: 10
+    reward_scaling: 1.0
+    normalize_observations: true
+    seed: 0
+
+logging_config:
+  project_name: vnl-playground
+  group_name: run-gap-task-obs-transfer
+  model_path: highlvl_checkpoints
+  notes: "TaskObs-only MLP high-level transfer for RunGapVision (baseline, no vision)"
+  exp_name: run_gap_task_obs_transfer
+
+render_config:
+  render_fps: 50
+  render_height: 480
+  render_width: 640

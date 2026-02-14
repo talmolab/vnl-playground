@@ -4,13 +4,8 @@ Trains a high-level policy that outputs latent intentions to a frozen
 Phase 1 decoder. Supports two modes:
 
 MLP mode (arch_name="mlp"):
-    Standard Brax PPO with flat observations (gap features).
+    Standard Brax PPO with flat observations (task_obs body signals).
     HighLevelWrapper produces state/privileged_state flat arrays.
-
-Vision mode (arch_name="vision"):
-    ff_ppo with CNN encoder for egocentric pixels.
-    HighLevelWrapper produces vision-only observations.
-    VisionRenderWrapper provides GPU-rendered egocentric frames.
 
 Vision+TaskObs mode (arch_name="vision_task_obs"):
     ff_ppo with CNN encoder fused with task observation (body signals).
@@ -20,8 +15,8 @@ Vision+TaskObs mode (arch_name="vision_task_obs"):
 Usage:
     cd vnl-playground
     python -m vnl_playground.train_highlvl
-    python -m vnl_playground.train_highlvl --config-name=run_gap_transfer
-    python -m vnl_playground.train_highlvl --config-name=run_gap_vision_transfer
+    python -m vnl_playground.train_highlvl --config-name=run_gap_task_obs_transfer
+    python -m vnl_playground.train_highlvl --config-name=run_gap_vision_task_obs_transfer
 """
 
 import os
@@ -58,9 +53,6 @@ from orbax import checkpoint as ocp
 from track_mjx.agent import checkpointing
 from track_mjx.agent.ff_ppo import ppo as ff_ppo_train
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
-from track_mjx.agent.ff_ppo.ppo_networks import (
-    make_logging_inference_fn as ff_make_logging_inference_fn,
-)
 
 from vnl_playground import tasks
 from vnl_playground.tasks.wrappers import HighLevelWrapper
@@ -123,26 +115,6 @@ def _prepare_ego_overlay(ego_frames_np, scale=2):
     # Scale up via np.repeat on spatial axes
     ego_scaled = np.repeat(np.repeat(ego_uint8, scale, axis=1), scale, axis=2)
     return ego_scaled
-
-
-def _composite_overlay_batch(main_frames_np, ego_overlay_np, pad=2):
-    """Composite egocentric overlay onto main frames in batch.
-
-    Takes (T, H, W, 3) uint8 main frames and (T, sh, sw, 3) uint8 ego overlay.
-    Returns (T, H, W, 3) uint8 composited array.
-    """
-    sh, sw = ego_overlay_np.shape[1], ego_overlay_np.shape[2]
-    y0, x0 = pad + 4, pad + 4
-    y1, x1 = y0 + sh, x0 + sw
-
-    # If ego overlay is too large for main frame, return unchanged
-    if y1 + pad >= main_frames_np.shape[1] or x1 + pad >= main_frames_np.shape[2]:
-        return main_frames_np
-
-    composited = main_frames_np.copy()
-    composited[:, y0 - pad : y1 + pad, x0 - pad : x1 + pad] = 255
-    composited[:, y0:y1, x0:x1] = ego_overlay_np
-    return composited
 
 
 def render_video(
@@ -470,273 +442,6 @@ def _train_mlp_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpo
 
 
 # ---------------------------------------------------------------------------
-# Vision mode: ff_ppo with CNN
-# ---------------------------------------------------------------------------
-
-
-def _train_vision_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpoint_path, cfg_dict, progress_fn):
-    """Train high-level vision policy using ff_ppo with CNN encoder.
-
-    The HighLevelWrapper with pass_vision=True produces vision-only
-    observations for the high-level policy. VisionRenderWrapper provides
-    GPU-rendered egocentric frames inside the training lax.scan loop.
-    """
-    latent_size = mimic_cfg.network_config.intention_size
-    highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
-    decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
-
-    env = HighLevelWrapper(
-        env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=True,
-    )
-    eval_env = HighLevelWrapper(
-        eval_env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=True,
-    )
-
-    logging.info(f"Vision HighLevelWrapper: action_size={env.action_size}")
-    _log_memory("after Vision HighLevelWrapper")
-
-    # Detect vision shape from environment
-    unwrapped = env.env if hasattr(env, "env") else env
-    vision_shape = (
-        unwrapped.vision_shape
-        if hasattr(unwrapped, "vision_shape")
-        else (
-            cfg.env_config.get("vision_height", 32),
-            cfg.env_config.get("vision_width", 32),
-            1 if cfg.env_config.get("grayscale", True) else 3,
-        )
-    )
-    logging.info(f"Vision shape: {vision_shape}")
-
-    # PPO training params
-    ppo_params = dict(
-        OmegaConf.to_container(cfg.train_setup.train_config, resolve=True)
-    )
-
-    # Network factory: vision CNN + MLP (value network also uses CNN)
-    network_factory = functools.partial(
-        ff_ppo_networks.make_vision_highlvl_ppo_networks,
-        vision_shape=tuple(vision_shape),
-        vision_latent_size=cfg.network_config.vision_latent_size,
-        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_hidden_layer_sizes),
-        value_hidden_layer_sizes=tuple(cfg.network_config.value_hidden_layer_sizes),
-        vision_channels=tuple(cfg.network_config.vision_channels),
-    )
-
-    # Create orbax CheckpointManager for ff_ppo
-    ckpt_mgr_options = ocp.CheckpointManagerOptions(
-        save_interval_steps=1,
-        max_to_keep=5,
-        step_prefix="PPONetwork",
-        create=True,
-    )
-    ckpt_mgr = ocp.CheckpointManager(
-        str(checkpoint_path), options=ckpt_mgr_options
-    )
-
-    # Eval rendering setup
-    mj_model = eval_env.mj_model
-    mj_data = mujoco.MjData(mj_model)
-    renderer_obj = mujoco.Renderer(
-        mj_model,
-        height=cfg.render_config.render_height,
-        width=cfg.render_config.render_width,
-    )
-    jit_reset = jax.jit(eval_env.reset)
-    jit_step = jax.jit(eval_env.step)
-
-    # Create warp vision renderer (nworld=1) for egocentric overlay in videos
-    _video_vision_renderer = None
-    from vnl_playground.tasks.rodent.vision_jax import (
-        JaxVisionRenderer,
-        VisionRenderWrapper,
-    )
-
-    _unwrapped = env.env if hasattr(env, "env") else env
-    # Walk up the wrapper chain to find the raw env with mj_model
-    while hasattr(_unwrapped, "env"):
-        _unwrapped = _unwrapped.env
-
-    _video_vision_renderer = JaxVisionRenderer(
-        mj_model=_unwrapped.mj_model,
-        nworld=1,
-        width=cfg.env_config.get("vision_width", 32),
-        height=cfg.env_config.get("vision_height", 32),
-        grayscale=cfg.env_config.get("grayscale", True),
-        camera_name=cfg.env_config.get("vision_camera_name", "egocentric-rodent"),
-    )
-    logging.info("Created warp vision renderer (nworld=1) for video overlay")
-
-    # Ensure render_config has render_interval for ff_ppo
-    if "render_interval" not in cfg_dict.get("render_config", {}):
-        cfg_dict.setdefault("render_config", {})["render_interval"] = 1
-
-    # Update config_dict with network_config fields that ff_ppo expects
-    cfg_dict["network_config"].update(
-        {
-            "arch_name": "vision",
-            "vision_latent_size": cfg.network_config.vision_latent_size,
-            "decoder_layer_sizes": list(cfg.network_config.decoder_hidden_layer_sizes),
-            "critic_layer_sizes": list(cfg.network_config.value_hidden_layer_sizes),
-        }
-    )
-
-    # Save reference before it gets shadowed by the bool parameter in the callback
-    _render_video_fn = render_video
-
-    episode_length = cfg.train_setup.train_config.episode_length
-
-    def vision_policy_params_fn(
-        current_step,
-        jit_logging_inference_fn,
-        params,
-        policy_params_fn_key,
-        render_video,  # noqa: N803 -- bool flag set by ff_ppo caller
-        ppo_network,
-    ):
-        """Callback for ff_ppo: render video with egocentric overlay."""
-        if not render_video:
-            return
-
-        _log_memory(f"vision_policy_params_fn entry step={current_step}")
-
-        # Run an evaluation rollout
-        _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
-        state = jit_reset(reset_rng)
-        rollout = [state]
-
-        for _ in range(episode_length):
-            _, act_rng = jax.random.split(act_rng)
-            action, _ = jit_logging_inference_fn(params, state.obs, act_rng)
-            state = jit_step(state, action)
-            rollout.append(state)
-
-        # Log per-step reward metrics
-        for metric_name in [
-            k for k in rollout[0].metrics.keys() if k.startswith("rewards/")
-        ]:
-            values = [float(s.metrics[metric_name]) for s in rollout]
-            table = wandb.Table(
-                data=[[i, v] for i, v in enumerate(values)],
-                columns=["frame", metric_name],
-            )
-            wandb.log(
-                {
-                    f"eval/rollout_{metric_name}": wandb.plot.line(
-                        table, "frame", metric_name, title=metric_name
-                    )
-                },
-                commit=False,
-            )
-
-        # Render video
-        video_path = str(checkpoint_path / f"{current_step}.mp4")
-        try:
-            _render_video_fn(
-                rollout,
-                mj_model,
-                mj_data,
-                renderer_obj,
-                video_path,
-                fps=cfg.render_config.render_fps,
-                vision_renderer=_video_vision_renderer,
-            )
-            wandb.log(
-                {"videos/rollout": wandb.Video(video_path, format="mp4")},
-                commit=False,
-            )
-        except mujoco.FatalError as e:
-            logging.warning(f"Video rendering failed: {e}")
-
-        _log_memory(f"vision_policy_params_fn before cleanup step={current_step}")
-
-        del rollout
-        gc.collect()
-
-    # Compute num_evals
-    eval_every = cfg.train_setup.get("eval_every", 10_000_000)
-    num_evals = max(1, int(ppo_params["num_timesteps"] / eval_every))
-
-    # Checkpoint to restore (if any) — auto-set when resuming
-    checkpoint_to_restore = cfg.train_setup.get("checkpoint_to_restore", None)
-    if checkpoint_to_restore is None and cfg.train_setup.get("resume_run_id", None):
-        checkpoint_to_restore = str(checkpoint_path)
-        logging.info(f"Auto-setting checkpoint_to_restore={checkpoint_to_restore}")
-
-    # Vision rendering wrapper for training environments
-    unwrapped_env = env.env if hasattr(env, "env") else env
-    # Walk up to find the raw env for mj_model
-    _raw_env = unwrapped_env
-    while hasattr(_raw_env, "env"):
-        _raw_env = _raw_env.env
-
-    vision_width = cfg.env_config.get("vision_width", 32)
-    vision_height = cfg.env_config.get("vision_height", 32)
-    grayscale = cfg.env_config.get("grayscale", True)
-    camera_name = cfg.env_config.get("vision_camera_name", "egocentric-rodent")
-
-    def wrap_with_vision(
-        environment,
-        episode_length: int = 1000,
-        action_repeat: int = 1,
-        randomization_fn=None,
-    ):
-        """Wrap env for brax training, then add vision rendering."""
-        brax_env = mp_wrapper.wrap_for_brax_training(
-            environment,
-            episode_length=episode_length,
-            action_repeat=action_repeat,
-            randomization_fn=randomization_fn,
-            full_reset=False,
-        )
-        return VisionRenderWrapper(
-            brax_env,
-            mj_model=_raw_env.mj_model,
-            width=vision_width,
-            height=vision_height,
-            grayscale=grayscale,
-            camera_name=camera_name,
-        )
-
-    logging.info(
-        f"Vision rendering: {vision_width}x{vision_height}, "
-        f"grayscale={grayscale}, camera={camera_name}, "
-        f"JAX-callable (inside lax.scan)"
-    )
-
-    # Build and run ff_ppo train
-    train_fn = functools.partial(
-        ff_ppo_train.train,
-        **ppo_params,
-        num_evals=num_evals,
-        ckpt_mgr=ckpt_mgr,
-        config_dict=cfg_dict,
-        checkpoint_to_restore=checkpoint_to_restore,
-        network_factory=network_factory,
-        progress_fn=progress_fn,
-        policy_params_fn=vision_policy_params_fn,
-        wrap_for_training=wrap_with_vision,
-    )
-
-    logging.info("Starting vision high-level PPO training (ff_ppo)...")
-    make_policy, params, metrics = train_fn(
-        environment=env,
-        eval_env=eval_env,
-    )
-    return make_policy, params, metrics
-
-
-# ---------------------------------------------------------------------------
 # Vision + TaskObs mode: ff_ppo with CNN + body signals
 # ---------------------------------------------------------------------------
 
@@ -744,9 +449,9 @@ def _train_vision_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, chec
 def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpoint_path, cfg_dict, progress_fn):
     """Train high-level vision+task_obs policy using ff_ppo with CNN encoder.
 
-    Similar to _train_vision_highlvl() but the HighLevelWrapper also passes
-    task_obs (body signals) alongside vision, and uses a fusion network that
-    combines CNN features with the task observation vector.
+    The HighLevelWrapper passes both vision and task_obs (body signals),
+    and uses a fusion network that combines CNN features with the task
+    observation vector.
     """
     latent_size = mimic_cfg.network_config.intention_size
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
@@ -1012,7 +717,7 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
 @hydra.main(
     version_base=None,
     config_path="config",
-    config_name="run_gap_vision_transfer",
+    config_name="run_gap_vision_task_obs_transfer",
 )
 def main(cfg: DictConfig):
     """Main training function for high-level transfer learning."""
@@ -1130,12 +835,6 @@ def main(cfg: DictConfig):
             cfg, env, eval_env, decoder_policy_fn, mimic_cfg,
             checkpoint_path, cfg_dict, progress_fn=wandb_progress,
         )
-    elif arch_name == "vision":
-        logging.info("Architecture: Vision (ff_ppo with CNN)")
-        _train_vision_highlvl(
-            cfg, env, eval_env, decoder_policy_fn, mimic_cfg,
-            checkpoint_path, cfg_dict, progress_fn=wandb_progress,
-        )
     elif arch_name == "vision_task_obs":
         logging.info("Architecture: Vision + TaskObs (ff_ppo with CNN + body signals)")
         _train_vision_task_obs_highlvl(
@@ -1144,7 +843,7 @@ def main(cfg: DictConfig):
         )
     else:
         raise ValueError(
-            f"Unknown arch_name: {arch_name}. Must be 'mlp', 'vision', or 'vision_task_obs'."
+            f"Unknown arch_name: {arch_name}. Must be 'mlp' or 'vision_task_obs'."
         )
 
     logging.info("Training complete.")
