@@ -9,6 +9,16 @@
 #   ./vnl_playground/run_with_autoresume.sh --config-name=run_gap_vision_task_obs_transfer \
 #       train_setup.train_config.num_envs=512
 #
+# Multi-GPU usage (run two jobs in the same directory):
+#   CUDA_VISIBLE_DEVICES=0 ./vnl_playground/run_with_autoresume.sh --config-name=...
+#   CUDA_VISIBLE_DEVICES=1 ./vnl_playground/run_with_autoresume.sh --config-name=...
+#
+# Each instance gets its own state file (.autoresume_state_gpu0, .autoresume_state_gpu1)
+# and log files (training_attempt_N_gpu0.log, training_attempt_N_gpu1.log).
+#
+# You can also set JOB_TAG explicitly to override the auto-derived tag:
+#   JOB_TAG=experiment_a ./vnl_playground/run_with_autoresume.sh --config-name=...
+#
 # The script:
 #   1. Runs training normally on first launch
 #   2. Captures the run_id from the checkpoint directory
@@ -27,10 +37,23 @@ MODEL_PATH="highlvl_checkpoints"  # Must match cfg.logging_config.model_path
 # Collect all arguments to forward to the training script
 EXTRA_ARGS=("$@")
 
-# State file to persist run_id across restarts
-STATE_FILE=".autoresume_state"
+# Derive a job tag for unique state/log files when running multiple jobs in the same dir.
+# Priority: explicit JOB_TAG env var > CUDA_VISIBLE_DEVICES > "default"
+if [[ -n "${JOB_TAG:-}" ]]; then
+    _TAG="$JOB_TAG"
+elif [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    # Replace commas with dashes so "0,1" becomes "0-1" (safe for filenames)
+    _TAG="gpu${CUDA_VISIBLE_DEVICES//,/-}"
+else
+    _TAG="default"
+fi
+
+# State file to persist run_id across restarts (unique per job tag)
+STATE_FILE=".autoresume_state_${_TAG}"
 
 echo "=== Auto-Resume Training Wrapper ==="
+echo "Job tag: ${_TAG}"
+echo "State file: ${STATE_FILE}"
 echo "Max retries: ${MAX_RETRIES}"
 echo "Extra args: ${EXTRA_ARGS[*]}"
 echo ""
@@ -70,7 +93,7 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
 
     # Run training, capture exit code
     set +e
-    "${CMD[@]}" 2>&1 | tee "training_attempt_${attempt}.log"
+    "${CMD[@]}" 2>&1 | tee "training_attempt_${attempt}_${_TAG}.log"
     EXIT_CODE=${PIPESTATUS[0]}
     set -e
 
