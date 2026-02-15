@@ -42,6 +42,7 @@ import imageio
 import jax
 import jax.numpy as jp
 import mujoco
+from mujoco.mjx.warp.types import DATA_NON_VMAP
 import numpy as np
 import psutil
 import wandb
@@ -58,6 +59,23 @@ from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 
 from vnl_playground import tasks
 from vnl_playground.tasks.wrappers import HighLevelWrapper
+
+
+def _add_batch_dim_for_warp(data):
+    """Add leading batch dim to MJX Data, skipping non-vmap fields.
+
+    MJX Warp's FFI layer expects certain fields (contact, efc, etc.) to remain
+    unbatched.  A naive ``jax.tree.map(lambda x: x[None, ...], data)`` would
+    add a dimension to *every* leaf, violating the Warp type contract and
+    causing an AssertionError in ``_expand_dim_from_path``.
+    """
+    def _maybe_expand(path, x):
+        parts = [p.name for p in path if hasattr(p, 'name') and p.name != '_impl']
+        attr = '__'.join(parts)
+        if attr in DATA_NON_VMAP:
+            return x
+        return x[None, ...]
+    return jax.tree.map_with_path(_maybe_expand, data)
 
 
 class _FlatObsAdapter:
@@ -179,7 +197,7 @@ def render_video(
             """Render egocentric views for all timesteps in one call."""
 
             def body(carry, data_slice):
-                batched = jax.tree.map(lambda x: x[None, ...], data_slice)
+                batched = _add_batch_dim_for_warp(data_slice)
                 img = vision_renderer.render(batched)
                 return carry, img[0]  # (H, W, C)
 
@@ -559,7 +577,7 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
 
     def _eval_reset_with_vision(rng):
         state = _eval_base_reset(rng)
-        data_b = jax.tree.map(lambda x: x[None, ...], state.data)
+        data_b = _add_batch_dim_for_warp(state.data)
         vision = _video_vision_renderer.render(data_b)[0]
         return state.replace(
             obs=VisionRenderWrapper._inject_vision(state.obs, vision)
@@ -567,7 +585,7 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
 
     def _eval_step_with_vision(state, action):
         state = _eval_base_step(state, action)
-        data_b = jax.tree.map(lambda x: x[None, ...], state.data)
+        data_b = _add_batch_dim_for_warp(state.data)
         vision = _video_vision_renderer.render(data_b)[0]
         return state.replace(
             obs=VisionRenderWrapper._inject_vision(state.obs, vision)
@@ -909,7 +927,7 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
 
     def _eval_reset_with_vision(rng):
         state = _eval_base_reset(rng)
-        data_b = jax.tree.map(lambda x: x[None, ...], state.data)
+        data_b = _add_batch_dim_for_warp(state.data)
         vision = _video_vision_renderer.render(data_b)[0]
         return state.replace(
             obs=VisionRenderWrapper._inject_vision(state.obs, vision)
@@ -917,7 +935,7 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
 
     def _eval_step_with_vision(state, action):
         state = _eval_base_step(state, action)
-        data_b = jax.tree.map(lambda x: x[None, ...], state.data)
+        data_b = _add_batch_dim_for_warp(state.data)
         vision = _video_vision_renderer.render(data_b)[0]
         return state.replace(
             obs=VisionRenderWrapper._inject_vision(state.obs, vision)
