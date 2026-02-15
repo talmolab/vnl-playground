@@ -26,6 +26,8 @@ os.environ["XLA_FLAGS"] = xla_flags
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
+import vnl_playground.naccdmax_patch  # noqa: F401  # monkey-patch naccdmax default
+
 import functools
 import json
 import logging

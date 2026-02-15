@@ -12,6 +12,8 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
+import vnl_playground.naccdmax_patch  # noqa: F401  # monkey-patch naccdmax default
+
 import functools
 import json
 from datetime import datetime

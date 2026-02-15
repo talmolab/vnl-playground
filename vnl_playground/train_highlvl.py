@@ -28,6 +28,8 @@ os.environ["XLA_FLAGS"] = xla_flags
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
+import vnl_playground.naccdmax_patch  # noqa: F401  # monkey-patch naccdmax default
+
 import functools
 import gc
 import json
@@ -559,13 +561,17 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
         state = _eval_base_reset(rng)
         data_b = jax.tree.map(lambda x: x[None, ...], state.data)
         vision = _video_vision_renderer.render(data_b)[0]
-        return state.replace(obs={**state.obs, "vision": vision})
+        return state.replace(
+            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
+        )
 
     def _eval_step_with_vision(state, action):
         state = _eval_base_step(state, action)
         data_b = jax.tree.map(lambda x: x[None, ...], state.data)
         vision = _video_vision_renderer.render(data_b)[0]
-        return state.replace(obs={**state.obs, "vision": vision})
+        return state.replace(
+            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
+        )
 
     jit_reset = jax.jit(_eval_reset_with_vision)
     jit_step = jax.jit(_eval_step_with_vision)
@@ -905,13 +911,17 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         state = _eval_base_reset(rng)
         data_b = jax.tree.map(lambda x: x[None, ...], state.data)
         vision = _video_vision_renderer.render(data_b)[0]
-        return state.replace(obs={**state.obs, "vision": vision})
+        return state.replace(
+            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
+        )
 
     def _eval_step_with_vision(state, action):
         state = _eval_base_step(state, action)
         data_b = jax.tree.map(lambda x: x[None, ...], state.data)
         vision = _video_vision_renderer.render(data_b)[0]
-        return state.replace(obs={**state.obs, "vision": vision})
+        return state.replace(
+            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
+        )
 
     jit_reset = jax.jit(_eval_reset_with_vision)
     jit_step = jax.jit(_eval_step_with_vision)
