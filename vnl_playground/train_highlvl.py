@@ -37,6 +37,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+import cv2
 import hydra
 import imageio
 import jax
@@ -137,6 +138,54 @@ def _prepare_ego_overlay(ego_frames_np, scale=2):
     return ego_scaled
 
 
+def _get_termination_reason(state):
+    """Extract termination reason string from state metrics.
+
+    Reads ``terminations/<name>`` metrics populated by the task registry's
+    ``_is_done`` method. Returns the name of the first active termination
+    criterion, or ``"unknown"`` if none found.
+    """
+    for key in state.metrics:
+        if key.startswith("terminations/") and key != "terminations/any":
+            if float(state.metrics[key]) > 0.5:
+                return key.replace("terminations/", "")
+    return "unknown"
+
+
+def _run_eval_rollout(jit_reset, jit_step, inference_fn, params, episode_length, rng):
+    """Run an evaluation rollout with termination detection and auto-reset.
+
+    Instead of blindly stepping for ``episode_length`` steps (which continues
+    rendering a dead/fallen agent), this detects ``state.done`` and resets the
+    environment to start a new episode.
+
+    Returns:
+        rollout: list of states (may span multiple episodes).
+        termination_events: list of ``(frame_index, reason_string)`` tuples
+            marking where each episode ended and why.
+    """
+    _, reset_rng, act_rng = jax.random.split(rng, 3)
+    state = jit_reset(reset_rng)
+    rollout = [state]
+    termination_events = []
+
+    for _ in range(episode_length):
+        _, act_rng = jax.random.split(act_rng)
+        action, _ = inference_fn(params, state.obs, act_rng)
+        state = jit_step(state, action)
+        rollout.append(state)
+
+        if float(state.done) > 0.5:
+            reason = _get_termination_reason(state)
+            termination_events.append((len(rollout) - 1, reason))
+            # Reset for a new episode
+            _, reset_rng = jax.random.split(act_rng)
+            state = jit_reset(reset_rng)
+            rollout.append(state)
+
+    return rollout, termination_events
+
+
 def render_video(
     rollout,
     mj_model,
@@ -145,6 +194,8 @@ def render_video(
     video_path,
     fps=50,
     vision_renderer=None,
+    termination_events=None,
+    termination_fade_seconds=1.0,
 ):
     """Render a rollout to an MP4 video file with tracking camera.
 
@@ -155,8 +206,14 @@ def render_video(
     Egocentric renders are batched into a single JAX call via
     ``jax.lax.scan`` to avoid per-call host-memory leaks from the
     Warp FFI ``jax_callable`` bridge.  Ego overlay preparation
-    (grayscale→RGB, float→uint8, 2x upscale) is vectorized across
+    (grayscale->RGB, float->uint8, 2x upscale) is vectorized across
     all frames before the per-frame rendering loop.
+
+    If ``termination_events`` is provided (a list of ``(frame_index,
+    reason_string)`` tuples from ``_run_eval_rollout``), frames at
+    termination points receive a text overlay showing the termination
+    reason followed by a logistic fade-out effect lasting
+    ``termination_fade_seconds``.
     """
     camera = mujoco.MjvCamera()
     camera.type = mujoco.mjtCamera.mjCAMERA_TRACKING
@@ -216,6 +273,10 @@ def render_video(
 
     # -- Render main camera frames + composite overlay ------------------------
     with imageio.get_writer(video_path, fps=fps) as writer:
+        termination_dict = {}
+        if termination_events:
+            termination_dict = {idx: reason for idx, reason in termination_events}
+
         for i, state in enumerate(rollout):
             mj_data.qpos = np.array(state.data.qpos)
             mujoco.mj_forward(mj_model, mj_data)
@@ -233,7 +294,32 @@ def render_video(
                     frame[y0 - pad : y1 + pad, x0 - pad : x1 + pad] = 255
                     frame[y0:y1, x0:x1] = ego_scaled
 
-            writer.append_data(frame)
+            # Check if this frame is a termination event
+            if termination_dict and i in termination_dict:
+                reason = termination_dict[i]
+                # Draw termination reason text overlay
+                overlay_frame = frame.copy()
+                label = f"Terminated: {reason}"
+                cv2.putText(
+                    overlay_frame,
+                    label,
+                    (10, frame.shape[0] // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+                writer.append_data(overlay_frame)
+                # Fade-out frames (logistic curve, same as imitation.py)
+                n_fade = int(fps * termination_fade_seconds)
+                for t in range(n_fade):
+                    rel_t = t / n_fade
+                    fade_factor = 1 / (1 + np.exp(10 * (rel_t - 0.5)))
+                    faded = (overlay_frame * fade_factor).astype(np.uint8)
+                    writer.append_data(faded)
+            else:
+                writer.append_data(frame)
 
 
 # ---------------------------------------------------------------------------
@@ -372,14 +458,11 @@ def _train_mlp_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpo
         _log_memory(f"mlp_policy_params_fn entry step={current_step}")
 
         # Run an evaluation rollout
-        rollout = [start_state]
-        state = start_state
-        act_rng = jax.random.PRNGKey(current_step)
-        for _ in range(episode_length):
-            _, act_rng = jax.random.split(act_rng)
-            action, _ = jit_logging_inference_fn(params, state.obs, act_rng)
-            state = jit_step(state, action)
-            rollout.append(state)
+        eval_rng = jax.random.PRNGKey(current_step)
+        rollout, termination_events = _run_eval_rollout(
+            jit_reset, jit_step, jit_logging_inference_fn,
+            params, episode_length, eval_rng,
+        )
 
         # Log per-step reward metrics
         for metric_name in [
@@ -409,6 +492,7 @@ def _train_mlp_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpo
                 renderer_obj,
                 video_path,
                 fps=cfg.render_config.render_fps,
+                termination_events=termination_events,
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
@@ -630,15 +714,10 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
         _log_memory(f"vision_task_obs_policy_params_fn entry step={current_step}")
 
         # Run an evaluation rollout
-        _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
-        state = jit_reset(reset_rng)
-        rollout = [state]
-
-        for _ in range(episode_length):
-            _, act_rng = jax.random.split(act_rng)
-            action, _ = jit_logging_inference_fn(params, state.obs, act_rng)
-            state = jit_step(state, action)
-            rollout.append(state)
+        rollout, termination_events = _run_eval_rollout(
+            jit_reset, jit_step, jit_logging_inference_fn,
+            params, episode_length, policy_params_fn_key,
+        )
 
         # Vision sensitivity diagnostic: compare actions with real vs blank vision
         mid = len(rollout) // 2
@@ -647,7 +726,7 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
             k: (jp.zeros_like(v) if k == "vision" else v)
             for k, v in obs_with_vision.items()
         }
-        _, sensitivity_rng = jax.random.split(act_rng)
+        _, sensitivity_rng = jax.random.split(policy_params_fn_key)
         act_real, _ = jit_logging_inference_fn(params, obs_with_vision, sensitivity_rng)
         act_blank, _ = jit_logging_inference_fn(params, obs_blank_vision, sensitivity_rng)
         vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
@@ -682,6 +761,7 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
                 video_path,
                 fps=cfg.render_config.render_fps,
                 vision_renderer=_video_vision_renderer,
+                termination_events=termination_events,
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
@@ -983,15 +1063,10 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         _log_memory(f"shared_vision_policy_params_fn entry step={current_step}")
 
         # Run an evaluation rollout
-        _, reset_rng, act_rng = jax.random.split(policy_params_fn_key, 3)
-        state = jit_reset(reset_rng)
-        rollout = [state]
-
-        for _ in range(episode_length):
-            _, act_rng = jax.random.split(act_rng)
-            action, _ = jit_logging_inference_fn(params, state.obs, act_rng)
-            state = jit_step(state, action)
-            rollout.append(state)
+        rollout, termination_events = _run_eval_rollout(
+            jit_reset, jit_step, jit_logging_inference_fn,
+            params, episode_length, policy_params_fn_key,
+        )
 
         # Vision sensitivity diagnostic
         mid = len(rollout) // 2
@@ -1000,7 +1075,7 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
             k: (jp.zeros_like(v) if k == "vision" else v)
             for k, v in obs_with_vision.items()
         }
-        _, sensitivity_rng = jax.random.split(act_rng)
+        _, sensitivity_rng = jax.random.split(policy_params_fn_key)
         act_real, _ = jit_logging_inference_fn(params, obs_with_vision, sensitivity_rng)
         act_blank, _ = jit_logging_inference_fn(params, obs_blank_vision, sensitivity_rng)
         vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
@@ -1035,6 +1110,7 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
                 video_path,
                 fps=cfg.render_config.render_fps,
                 vision_renderer=_video_vision_renderer,
+                termination_events=termination_events,
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
