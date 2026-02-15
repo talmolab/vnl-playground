@@ -124,6 +124,16 @@ class GapJumpTrial(rodent_base.RodentEnv):
         self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
         self.compile()
 
+        # The landing_slide joint prepends extra elements to qpos/qvel.
+        # Record where the rodent's joints start so proprioception getters
+        # slice correctly (the base class assumes qpos[7:] / qvel[6:]).
+        root_jnt_id = mujoco.mj_name2id(
+            self._mj_model, mujoco.mjtObj.mjOBJ_JOINT, "root"
+        )
+        self._rodent_qpos_start = self._mj_model.jnt_qposadr[root_jnt_id] + 7
+        self._rodent_qvel_start = self._mj_model.jnt_dofadr[root_jnt_id] + 6
+        self._rodent_root_dof = self._mj_model.jnt_dofadr[root_jnt_id]
+
         # Store joint index for landing platform slide
         self._landing_slide_qpos_idx = self._mj_model.jnt_qposadr[
             mujoco.mj_name2id(
@@ -220,6 +230,20 @@ class GapJumpTrial(rodent_base.RodentEnv):
             contype=0,
             conaffinity=0,
         )
+
+    # ---- Proprioception overrides ----
+    # The landing_slide joint prepends extra elements to qpos / qvel.
+    # The base-class getters assume the rodent motor joints start at
+    # qpos[7:] / qvel[6:], so we override them here.
+
+    def _get_joint_angles(self, data: mjx.Data) -> jp.ndarray:
+        return data.qpos[self._rodent_qpos_start:]
+
+    def _get_joint_ang_vels(self, data: mjx.Data) -> jp.ndarray:
+        return data.qvel[self._rodent_qvel_start:]
+
+    def _get_actuator_ctrl(self, data: mjx.Data) -> jp.ndarray:
+        return data.qfrc_actuator[self._rodent_root_dof:]
 
     # ------------------------------------------------------------------
     # Core environment interface
@@ -358,7 +382,12 @@ class GapJumpTrial(rodent_base.RodentEnv):
     def _get_obs(
         self, data: mjx.Data, info: dict[str, Any]
     ) -> collections.OrderedDict:
-        """Get observations with phase indicator as task_obs.
+        """Get observations with body-state signals and phase indicator as task_obs.
+
+        ``task_obs`` contains body-state signals (prev_action, kinematic
+        sensors, touch sensors, origin) concatenated with a 3-dim phase
+        indicator one-hot vector.  This richer signal is compatible with the
+        vision+task_obs fusion architecture used in ``RunGapVision``.
 
         The agent observation does NOT include gap_distance -- the agent must
         rely on vision (or the privileged state) to infer the gap width.
@@ -373,15 +402,27 @@ class GapJumpTrial(rodent_base.RodentEnv):
         phase = info.get("trial_phase", jp.array(PHASE_HOLD, dtype=jp.int32))
         phase_indicator = jax.nn.one_hot(phase, 3)
 
+        kinematic_sensors = self._get_kinematic_sensors(data)
+        touch_sensors = self._get_touch_sensors(data)
+        origin = self._get_origin(data)
+
+        task_obs = jp.concatenate([
+            info["prev_action"],
+            kinematic_sensors,
+            touch_sensors,
+            origin,
+            phase_indicator,
+        ])
+
         proprioception = self._get_proprioception(data, info, flatten=False)
 
         obs = collections.OrderedDict(
-            task_obs=phase_indicator,
+            task_obs=task_obs,
             proprioception=proprioception,
         )
 
         privileged_obs = collections.OrderedDict(
-            task_obs=phase_indicator,
+            task_obs=task_obs,
             proprioception=proprioception,
             gap_distance=jp.array(info.get("gap_distance", 0.0)).reshape(1),
         )

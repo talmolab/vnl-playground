@@ -320,17 +320,30 @@ class VisionRenderWrapper:
     def _inject_vision(obs, vision):
         """Replace vision placeholders in the obs dict with rendered images.
 
-        The env produces obs with structure::
+        Handles two obs layouts:
+
+        1. Raw env (OrderedDict)::
 
             OrderedDict(
                 state=OrderedDict(task_obs, proprioception, vision=zeros),
                 privileged_state=OrderedDict(...)
             )
 
-        This replaces the zero placeholders in-place (preserving pytree
-        structure for lax.scan compatibility).
+        2. HighLevelWrapper (plain dict)::
+
+            {"imitation_target": ..., "proprioception": ..., "vision": zeros}
+
+        Preserves the exact container types for lax.scan compatibility.
         """
-        new_obs = collections.OrderedDict()
+        # Top-level "vision" key (e.g. HighLevelWrapper output)
+        if "vision" in obs:
+            new_obs = type(obs)(
+                [(k, vision if k == "vision" else v) for k, v in obs.items()]
+            )
+            return new_obs
+
+        # Nested "vision" key inside sub-dicts (raw env output)
+        new_obs = type(obs)()
         for key, val in obs.items():
             if isinstance(val, dict) and "vision" in val:
                 new_inner = type(val)(

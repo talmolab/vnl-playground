@@ -3,34 +3,29 @@
 Extends GapJumpTrial with egocentric camera observations rendered via the
 JAX-callable mujoco_warp GPU ray-tracer.
 
-Key addition over base GapJumpTrial: phase-based vision masking.
-During the HOLD phase the rodent's vision is occluded (all zeros),
-matching the Liska et al. paradigm where a barrier blocks the view.
-Vision becomes active during DECISION and JUMP phases.
-
 The observation dict from _get_obs() returns::
 
     {
         "state": OrderedDict(
-            task_obs=phase_indicator,           # [3] one-hot phase
+            task_obs=...,                       # body-state signals (flat)
             proprioception=OrderedDict(...),    # nested dict
-            vision=masked_vision_placeholder,   # [H, W, C] zeros placeholder
-            vision_mask=scalar,                 # 0 during HOLD, 1 otherwise
+            vision=jp.zeros(H, W, C),           # placeholder zeros
         ),
-        "privileged_state": OrderedDict(
-            task_obs=phase_indicator,
-            proprioception=OrderedDict(...),
-            gap_distance=...,
-            vision=masked_vision_placeholder,
-            vision_mask=scalar,
-        ),
+        "privileged_state": OrderedDict(...),   # same as state
     }
+
+``task_obs`` contains body-state signals (prev_action, kinematic sensors,
+touch sensors, origin) plus a 3-dim phase indicator one-hot vector.  Gap
+information is not included -- the agent should infer it from vision.
 
 Vision rendering happens in ``VisionRenderWrapper`` (vision_jax.py), which
 wraps the vmapped/batched env and renders on all worlds at once using the
 JAX-callable warp renderer. The wrapper replaces the zero placeholders with
-real rendered images. The vision_mask field allows downstream policies to
-mask out vision during the HOLD phase even after real pixels are injected.
+real rendered images.
+
+Compatible with ``HighLevelWrapper`` for transfer learning pipelines
+and direct ff_ppo training.  Downstream ``observation_utils.flatten_obs_dict()``
+maps ``task_obs`` to ``imitation_target`` internally.
 
 Usage::
 
@@ -49,11 +44,7 @@ from jax import flatten_util
 from ml_collections import config_dict
 
 from vnl_playground.tasks.rodent import gap_jump_trial
-from vnl_playground.tasks.rodent.gap_jump_trial import (
-    PHASE_HOLD,
-    PHASE_DECISION,
-    PHASE_JUMP,
-)
+from vnl_playground.tasks.rodent.gap_jump_trial import PHASE_HOLD
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -76,14 +67,16 @@ class GapJumpTrialVision(gap_jump_trial.GapJumpTrial):
     """GapJumpTrial with egocentric vision observations.
 
     Observations are returned with state/privileged_state wrapping containing
-    task_obs, proprioception, vision, and vision_mask keys. The vision key
-    contains placeholder zeros -- real rendering is handled by
-    ``VisionRenderWrapper`` which wraps the batched env.
+    task_obs, proprioception, and vision keys. The vision key contains
+    placeholder zeros -- real rendering is handled by ``VisionRenderWrapper``
+    which wraps the batched env.
 
-    Phase-based vision masking: during HOLD phase, the vision placeholder is
-    zeroed out and vision_mask is 0.0. During DECISION and JUMP phases,
-    vision_mask is 1.0 and the placeholder is left as-is (to be replaced
-    by real rendered pixels via VisionRenderWrapper).
+    ``task_obs`` provides body-state signals (prev_action, kinematic sensors,
+    touch sensors, origin) plus a 3-dim phase indicator. Gap information is
+    not included -- the agent should infer it from vision.
+
+    Compatible with both track-mjx's ff_ppo observation_utils and
+    ``HighLevelWrapper`` for transfer learning pipelines.
     """
 
     def __init__(
@@ -121,54 +114,39 @@ class GapJumpTrialVision(gap_jump_trial.GapJumpTrial):
         h, w, c = self.vision_shape
         return h * w * c
 
-    def _get_obs(
-        self, data, info
-    ) -> collections.OrderedDict:
-        """Get observations with phase indicator, proprioception, and vision.
+    def _get_obs(self, data, info) -> collections.OrderedDict:
+        """Get observations with body-state signals, phase indicator, and vision.
 
-        Adds vision placeholder and phase-based vision masking on top of the
-        base GapJumpTrial observations. During HOLD phase, vision is zeroed
-        out (occluded barrier). During DECISION and JUMP phases, the vision
-        placeholder is active (to be replaced by VisionRenderWrapper).
-
-        Args:
-            data: The simulation data (mjx.Data).
-            info: State info dictionary.
-
-        Returns:
-            OrderedDict with state and privileged_state keys.
+        task_obs includes body-state signals (prev_action, kinematic sensors,
+        touch sensors, origin) plus the phase indicator, matching the RunGapVision
+        pattern. Vision placeholder is zeros -- real pixels are injected by
+        VisionRenderWrapper after batched GPU rendering.
         """
         phase = info.get("trial_phase", jp.array(PHASE_HOLD, dtype=jp.int32))
         phase_indicator = jax.nn.one_hot(phase, 3)
 
+        kinematic_sensors = self._get_kinematic_sensors(data)
+        touch_sensors = self._get_touch_sensors(data)
+        origin = self._get_origin(data)
+
+        task_obs = jp.concatenate([
+            info["prev_action"],
+            kinematic_sensors,
+            touch_sensors,
+            origin,
+            phase_indicator,
+        ])
+
         proprioception = self._get_proprioception(data, info, flatten=False)
 
-        # Vision mask: 0 during HOLD, 1 during DECISION/JUMP
-        vision_mask = (phase > PHASE_HOLD).astype(jp.float32)
-
-        # Vision placeholder multiplied by mask -- zeros during HOLD phase.
-        # VisionRenderWrapper replaces zeros with real pixels, but the policy
-        # can use vision_mask to know when vision should be masked.
-        masked_vision_placeholder = jp.zeros(self.vision_shape) * vision_mask
-
         obs = collections.OrderedDict(
-            task_obs=phase_indicator,
+            task_obs=task_obs,
             proprioception=proprioception,
-            vision=masked_vision_placeholder,
-            vision_mask=vision_mask,
+            vision=jp.zeros(self.vision_shape),
         )
-
-        privileged_obs = collections.OrderedDict(
-            task_obs=phase_indicator,
-            proprioception=proprioception,
-            gap_distance=jp.array(info.get("gap_distance", 0.0)).reshape(1),
-            vision=masked_vision_placeholder,
-            vision_mask=vision_mask,
-        )
-
         return collections.OrderedDict(
             state=obs,
-            privileged_state=privileged_obs,
+            privileged_state=obs,
         )
 
     @property
