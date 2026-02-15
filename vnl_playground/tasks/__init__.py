@@ -21,6 +21,8 @@ from vnl_playground.tasks.rodent import gap_jump_trial_vision as rodent_gap_jump
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
 from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_velocity
 from vnl_playground.tasks.stick import imitation as stick_imitation
+from vnl_playground.tasks.walker import multi_behavior as walker_multi_behavior
+from vnl_playground.tasks.walker import imitation as walker_imitation
 
 # Unified wrappers and reference clips
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
@@ -41,6 +43,8 @@ _envs = {
     "FruitflyImitation": fruitfly_imitation.Imitation,
     "StickMaintainVelocity": stick_maintain_velocity.MaintainVelocity,
     "StickImitation": stick_imitation.Imitation,
+    "WalkerMultiBehavior": walker_multi_behavior.MultiBehaviorWalker,
+    "WalkerImitation": walker_imitation.WalkerImitation,
 }
 
 _cfgs = {
@@ -57,6 +61,8 @@ _cfgs = {
     "FruitflyImitation": fruitfly_imitation.default_config,
     "StickMaintainVelocity": stick_maintain_velocity.default_config,
     "StickImitation": stick_imitation.default_config,
+    "WalkerMultiBehavior": walker_multi_behavior.default_config,
+    "WalkerImitation": walker_imitation.default_config,
 }
 
 # ReferenceClips class for imitation environments (not all envs use clips)
