@@ -8,6 +8,7 @@ Reward is based on forward velocity along the corridor (+x direction).
 
 Termination occurs if:
 - Torso becomes too tilted or falls below the platforms (fallen)
+- Agent fails to make minimum forward displacement over patience window (stale_location)
 - NaN detected in simulation data
 """
 
@@ -68,6 +69,7 @@ def default_config() -> config_dict.ConfigDict:
         },
         termination_criteria={
             "fallen": {"min_torso_z": 0.01, "max_torso_angle": 70},
+            "stale_location": {"patience": 100, "min_displacement": 0.03},
             "nan_termination": {},
         },
     )
@@ -116,6 +118,11 @@ class RunGap(rodent_base.RodentEnv):
         )
         self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
         self.compile()
+
+        # Stale location termination config (read at init to avoid tracing issues)
+        stale_cfg = dict(self._config.termination_criteria.get("stale_location", {}))
+        self._stale_patience = stale_cfg.get("patience", 100)
+        self._stale_min_displacement = stale_cfg.get("min_displacement", 0.03)
 
         if self._config.randomize_gaps:
             # Store slide joint qpos indices and platform body IDs for reset
@@ -306,6 +313,8 @@ class RunGap(rodent_base.RodentEnv):
         info = {
             "prev_action": self.null_action(),
             "action": self.null_action(),
+            "stale_ref_x": jp.array(self._config.spawn_x, dtype=jp.float32),
+            "stale_steps": jp.array(0, dtype=jp.int32),
         }
 
         data = mjx.make_data(
@@ -377,6 +386,22 @@ class RunGap(rodent_base.RodentEnv):
 
         info["prev_action"] = info["action"]
         info["action"] = action
+
+        # Stale location tracking: check forward displacement over patience window
+        stale_steps = info["stale_steps"] + 1
+        torso_body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        current_x = torso_body.xpos[0]
+        ref_x = info["stale_ref_x"]
+
+        # At checkpoint: reset counter & reference if agent made enough progress
+        at_checkpoint = stale_steps >= self._stale_patience
+        made_progress = (current_x - ref_x) >= self._stale_min_displacement
+        reset_stale = at_checkpoint & made_progress
+
+        info["stale_steps"] = jp.where(
+            reset_stale, jp.array(0, dtype=jp.int32), stale_steps
+        )
+        info["stale_ref_x"] = jp.where(reset_stale, current_x, ref_x)
 
         done = self._is_done(data, info, state.metrics)
         reward = self._get_reward(data, info, state.metrics)
@@ -652,6 +677,37 @@ class RunGap(rodent_base.RodentEnv):
         too_tilted = upright_z < max_cos_angle
 
         return jp.logical_or(below_ground, too_tilted)
+
+    @_registry.termination("stale_location")
+    def _stale_location_termination(
+        self,
+        data: mjx.Data,
+        info,
+        patience: int = 100,
+        min_displacement: float = 0.03,
+    ) -> bool:
+        """Terminate if agent hasn't displaced forward enough over patience window.
+
+        This catches cases where the agent gets stuck (e.g., feet wedged in a
+        gap) and jitters in place without making net forward progress, which
+        would not trigger the height-based fallen termination.
+
+        The actual displacement check and counter management happen in step().
+        This function just reads the counter - if it reached patience without
+        being reset (meaning insufficient displacement), we terminate.
+
+        Args:
+            data: Simulation data (unused, state is tracked in info).
+            info: State info containing stale_steps counter.
+            patience: Steps before checking displacement (counter reset on progress).
+            min_displacement: Minimum forward displacement required over patience
+                window to avoid termination (in meters).
+
+        Returns:
+            Boolean indicating if agent has been stale too long.
+        """
+        del data
+        return info["stale_steps"] >= patience
 
     @_registry.termination("nan_termination")
     def _nan_termination(self, data, info) -> bool:
