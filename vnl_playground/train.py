@@ -337,6 +337,7 @@ def main(cfg: DictConfig):
         _unwrapped = env.env if hasattr(env, "env") else env
         _video_vision_renderer = JaxVisionRenderer(
             mj_model=_unwrapped.mj_model,
+            mjx_model=_unwrapped.mjx_model,
             nworld=1,
             width=cfg.env_config.get("vision_width", 32),
             height=cfg.env_config.get("vision_height", 32),
@@ -457,6 +458,7 @@ def main(cfg: DictConfig):
             return VisionRenderWrapper(
                 brax_env,
                 mj_model=unwrapped_env.mj_model,
+                mjx_model=unwrapped_env.mjx_model,
                 width=vision_width,
                 height=vision_height,
                 grayscale=grayscale,

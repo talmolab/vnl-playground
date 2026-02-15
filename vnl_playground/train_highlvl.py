@@ -542,6 +542,7 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
 
     _video_vision_renderer = JaxVisionRenderer(
         mj_model=_unwrapped.mj_model,
+        mjx_model=_unwrapped.mjx_model,
         nworld=1,
         width=cfg.env_config.get("vision_width", 32),
         height=cfg.env_config.get("vision_height", 32),
@@ -709,6 +710,7 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
         return VisionRenderWrapper(
             brax_env,
             mj_model=_raw_env.mj_model,
+            mjx_model=_raw_env.mjx_model,
             width=vision_width,
             height=vision_height,
             grayscale=grayscale,
@@ -886,6 +888,7 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
 
     _video_vision_renderer = JaxVisionRenderer(
         mj_model=_unwrapped.mj_model,
+        mjx_model=_unwrapped.mjx_model,
         nworld=1,
         width=cfg.env_config.get("vision_width", 32),
         height=cfg.env_config.get("vision_height", 32),
@@ -1015,7 +1018,12 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         _log_memory(f"shared_vision_policy_params_fn before cleanup step={current_step}")
 
         del rollout
+        del obs_with_vision, obs_blank_vision
+        del act_real, act_blank
         gc.collect()
+        jax.clear_caches()
+
+        _log_memory(f"shared_vision_policy_params_fn after cleanup step={current_step}")
 
     # Checkpoint to restore (if any)
     checkpoint_to_restore = cfg.train_setup.get("checkpoint_to_restore", None)
@@ -1051,6 +1059,7 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         return VisionRenderWrapper(
             brax_env,
             mj_model=_raw_env.mj_model,
+            mjx_model=_raw_env.mjx_model,
             width=vision_width,
             height=vision_height,
             grayscale=grayscale,

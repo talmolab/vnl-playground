@@ -1,11 +1,12 @@
-"""JAX-native vision rendering using the MJX warp renderer.
+"""JAX-native vision rendering using the official MJX render API.
 
 Provides two main components:
 
-1. ``JaxVisionRenderer`` — wraps ``create_mjx_render_fn`` from render_jax.py
-   to produce a JAX-callable render function.
+1. ``JaxVisionRenderer`` -- wraps ``mjx.create_render_context``,
+   ``mjx.refit_bvh``, and ``mjx.render`` to produce batched vision
+   observations from ``mjx.Data``.
 
-2. ``VisionRenderWrapper`` — a Brax-compatible environment wrapper that
+2. ``VisionRenderWrapper`` -- a Brax-compatible environment wrapper that
    renders vision observations on batched data after each vmapped step.
 
 The rendering is JAX-traceable: it works inside ``jax.jit`` and
@@ -18,122 +19,97 @@ Usage::
     raw_env = RunGapVision(config=cfg)
     brax_env = wrap_for_brax_training(raw_env, ...)
     env = VisionRenderWrapper(
-        brax_env, raw_env.mj_model, nworld=num_envs,
+        brax_env, raw_env.mj_model, mjx_model=mx, nworld=num_envs,
         width=32, height=32, grayscale=True,
         camera_name="egocentric-rodent",
     )
     # env.step() now produces real vision observations
 """
 
+import collections
 import logging
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import mujoco
+from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
-# Import mujoco_warp with rendering support (same strategy as vision.py)
+# Batch-aware pixel unpacking helpers
+# ---------------------------------------------------------------------------
+# The official mjx.get_rgb works per-world. These helpers operate on the full
+# (nworld, total_pixels) packed output for efficient batch unpacking.
+#
+# Pixel format is ABGR uint32: B in bits 0-7, G in bits 8-15, R in bits 16-23.
 # ---------------------------------------------------------------------------
 
-def _import_mujoco_warp():
-    """Import mujoco_warp with rendering support."""
-    import os
-    import sys
 
-    # Strategy 1: Direct import
-    try:
-        import mujoco_warp as mjw
-        if hasattr(mjw, "create_render_context"):
-            return mjw
-    except ImportError:
-        pass
+def _unpack_rgb(
+    rgb_packed: jnp.ndarray, height: int, width: int
+) -> jnp.ndarray:
+    """Unpack uint32 packed ABGR to float32 RGB array.
 
-    sys.modules.pop("mujoco_warp", None)
+    Args:
+        rgb_packed: (nworld, total_pixels) uint32 packed pixel data.
+        height: Image height in pixels.
+        width: Image width in pixels.
 
-    # Strategy 2: MUJOCO_WARP_PATH env var
-    mjw_path = os.environ.get("MUJOCO_WARP_PATH")
-    if mjw_path and os.path.isdir(mjw_path):
-        if mjw_path not in sys.path:
-            sys.path.insert(0, mjw_path)
-        try:
-            import mujoco_warp as mjw
-            if hasattr(mjw, "create_render_context"):
-                return mjw
-        except ImportError:
-            pass
-
-    sys.modules.pop("mujoco_warp", None)
-
-    # Strategy 3: Common dev locations
-    workspace_root = os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        )
-    )
-    for name in ("mujoco_warp", "mujoco-warp"):
-        path = os.path.join(workspace_root, name)
-        if os.path.isdir(path) and os.path.isfile(
-            os.path.join(path, "mujoco_warp", "__init__.py")
-        ):
-            if path not in sys.path:
-                sys.path.insert(0, path)
-            sys.modules.pop("mujoco_warp", None)
-            try:
-                import mujoco_warp as mjw
-                if hasattr(mjw, "create_render_context"):
-                    return mjw
-            except ImportError:
-                pass
-
-    raise ImportError(
-        "Could not find mujoco_warp with rendering support. "
-        "Install the standalone mujoco_warp package or set MUJOCO_WARP_PATH."
-    )
+    Returns:
+        (nworld, height, width, 3) float32 array with values in [0, 1].
+    """
+    r = ((rgb_packed >> 16) & 0xFF).astype(jnp.float32) / 255.0
+    g = ((rgb_packed >> 8) & 0xFF).astype(jnp.float32) / 255.0
+    b = (rgb_packed & 0xFF).astype(jnp.float32) / 255.0
+    nworld = rgb_packed.shape[0]
+    rgb = jnp.stack([r, g, b], axis=-1)
+    return rgb.reshape(nworld, height, width, 3)
 
 
-def _import_render_jax():
-    """Import the render_jax module from the MJX warp backend."""
-    try:
-        from mujoco.mjx.warp import render_jax
-        return render_jax
-    except ImportError:
-        pass
+def _unpack_grayscale(
+    rgb_packed: jnp.ndarray, height: int, width: int
+) -> jnp.ndarray:
+    """Unpack uint32 packed ABGR to float32 grayscale array.
 
-    # Fallback: try relative to SalkResearch workspace
-    import os
-    import sys
-    workspace_root = os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        )
-    )
-    mjx_warp_path = os.path.join(workspace_root, "mujoco", "mjx")
-    if mjx_warp_path not in sys.path:
-        sys.path.insert(0, mjx_warp_path)
-    from mujoco.mjx.warp import render_jax
-    return render_jax
+    Uses the standard luminance formula: 0.299*R + 0.587*G + 0.114*B.
+
+    Args:
+        rgb_packed: (nworld, total_pixels) uint32 packed pixel data.
+        height: Image height in pixels.
+        width: Image width in pixels.
+
+    Returns:
+        (nworld, height, width, 1) float32 array with values in [0, 1].
+    """
+    r = ((rgb_packed >> 16) & 0xFF).astype(jnp.float32)
+    g = ((rgb_packed >> 8) & 0xFF).astype(jnp.float32)
+    b = (rgb_packed & 0xFF).astype(jnp.float32)
+    gray = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+    nworld = rgb_packed.shape[0]
+    return gray.reshape(nworld, height, width, 1)
 
 
 class JaxVisionRenderer:
-    """JAX-native vision renderer using the MJX warp FFI bridge.
+    """JAX-native vision renderer using the official MJX render API.
 
-    Unlike the old VisionRenderer, this renderer produces a JAX-callable
-    function that works inside jax.jit and jax.lax.scan. No Python-level
-    sync_state/render calls are needed.
+    Uses ``mjx.create_render_context`` for setup, ``mjx.refit_bvh`` to
+    update the BVH for the current pose, and ``mjx.render`` to produce
+    packed pixel buffers. The render context handles memory management
+    automatically via its destructor.
 
-    The render function is created once at init time, capturing the warp
-    Model/Data/RenderContext in a closure. Only dynamic kinematic arrays
-    (geometry, camera, light poses) flow through JAX.
+    The render function is JAX-traceable and works inside ``jax.jit``
+    and ``jax.lax.scan``.
     """
 
     def __init__(
         self,
         mj_model: mujoco.MjModel,
+        mjx_model: mjx.Model,
         nworld: int,
         width: int = 32,
         height: int = 32,
@@ -148,6 +124,7 @@ class JaxVisionRenderer:
 
         Args:
             mj_model: Host MuJoCo model.
+            mjx_model: MJX model (warp backend). Needed for refit_bvh/render.
             nworld: Number of parallel worlds (batch size).
             width: Render width in pixels.
             height: Render height in pixels.
@@ -163,55 +140,47 @@ class JaxVisionRenderer:
         self._grayscale = grayscale
         self._render_depth = render_depth
         self._nworld = nworld
-
-        mjwarp = _import_mujoco_warp()
-        render_jax = _import_render_jax()
-
-        # Create host MjData for warp initialization
-        mjd = mujoco.MjData(mj_model)
-        mujoco.mj_forward(mj_model, mjd)
-
-        # Transfer to warp GPU memory
-        m_warp = mjwarp.put_model(mj_model)
-        d_warp = mjwarp.put_data(mj_model, mjd, nworld=nworld)
-        mjwarp.forward(m_warp, d_warp)
+        self._mjx_model = mjx_model
 
         # Determine which cameras to render
         cam_active = None
         if camera_name is not None:
             cam_active = [False] * mj_model.ncam
-            cam_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+            cam_id = mujoco.mj_name2id(
+                mj_model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name
+            )
             if cam_id < 0:
                 raise ValueError(f"Camera '{camera_name}' not found in model")
             cam_active[cam_id] = True
 
-        # Create JAX-callable render function
-        self._render_fn, self._info = render_jax.create_mjx_render_fn(
-            mj_model,
-            m_warp,
-            d_warp,
+        if enabled_geom_groups is None:
+            enabled_geom_groups = [0, 1, 2]
+
+        # Determine number of active cameras for per-camera flag lists
+        if cam_active is not None:
+            ncam_active = sum(cam_active)
+        else:
+            ncam_active = mj_model.ncam
+
+        # Create the render context via the official MJX API.
+        # This internally creates warp Model/Data for initialization,
+        # handles memory management, and returns a JAX-compatible context.
+        self._ctx = mjx.create_render_context(
+            mjm=mj_model,
+            nworld=nworld,
             cam_res=(width, height),
-            render_depth=render_depth,
+            render_rgb=[True] * ncam_active,
+            render_depth=[render_depth] * ncam_active,
             use_textures=use_textures,
             use_shadows=use_shadows,
             enabled_geom_groups=enabled_geom_groups,
             cam_active=cam_active,
         )
 
-        # Store unpack functions
-        self._unpack_rgb = render_jax.unpack_rgb
-        self._unpack_grayscale = render_jax.unpack_grayscale
-
         logger.info(
             f"JaxVisionRenderer initialized: {nworld} worlds, "
-            f"{width}x{height}, {'grayscale' if grayscale else 'RGB'}, "
-            f"total_pixels={self._info['total_pixels']}"
+            f"{width}x{height}, {'grayscale' if grayscale else 'RGB'}"
         )
-
-    @property
-    def info(self) -> dict:
-        """Render info dict with shapes and metadata."""
-        return self._info
 
     @property
     def vision_shape(self) -> tuple[int, int, int]:
@@ -219,74 +188,41 @@ class JaxVisionRenderer:
         channels = 1 if self._grayscale else 3
         return (self._height, self._width, channels)
 
-    def render_from_arrays(
-        self,
-        geom_xpos: jnp.ndarray,
-        geom_xmat: jnp.ndarray,
-        cam_xpos: jnp.ndarray,
-        cam_xmat: jnp.ndarray,
-        light_xpos: jnp.ndarray,
-        light_xdir: jnp.ndarray,
-    ) -> jnp.ndarray:
-        """Render from explicit kinematic arrays.
+    def render(self, data: mjx.Data) -> jnp.ndarray:
+        """Render from mjx.Data.
 
-        All inputs are JAX arrays. This function is JAX-traceable and can be
-        used inside jax.jit and jax.lax.scan.
+        This is the main entry point for rendering during env.step().
+        JAX-traceable -- works inside jax.jit and jax.lax.scan.
+
+        Calls refit_bvh to update the BVH for the current pose, then
+        renders the scene to produce packed pixel buffers.
 
         Args:
-            geom_xpos: Geometry positions (nworld, ngeom, 3).
-            geom_xmat: Geometry rotation matrices (nworld, ngeom, 3, 3).
-            cam_xpos: Camera positions (nworld, ncam, 3).
-            cam_xmat: Camera rotation matrices (nworld, ncam, 3, 3).
-            light_xpos: Light positions (nworld, nlight, 3).
-            light_xdir: Light directions (nworld, nlight, 3).
+            data: mjx.Data with kinematic state after physics step.
+                Must have batch dimension (nworld, ...) -- not single-world.
 
         Returns:
             Float32 images of shape (nworld, height, width, channels).
             If render_depth=True, returns (images, depth) tuple.
         """
-        if self._render_depth:
-            rgb_packed, depth_packed = self._render_fn(
-                geom_xpos, geom_xmat, cam_xpos, cam_xmat,
-                light_xpos, light_xdir,
-            )
-        else:
-            rgb_packed = self._render_fn(
-                geom_xpos, geom_xmat, cam_xpos, cam_xmat,
-                light_xpos, light_xdir,
-            )
+        mx = self._mjx_model
+        ctx = self._ctx
 
+        # Refit BVH for current pose (returns updated data)
+        data = mjx.refit_bvh(mx, data, ctx)
+
+        # Render -- always returns (rgb_packed, depth_packed) tuple
+        rgb_packed, depth_packed = mjx.render(mx, data, ctx)
+
+        # Unpack pixels
         if self._grayscale:
-            images = self._unpack_grayscale(rgb_packed, self._height, self._width)
+            images = _unpack_grayscale(rgb_packed, self._height, self._width)
         else:
-            images = self._unpack_rgb(rgb_packed, self._height, self._width)
+            images = _unpack_rgb(rgb_packed, self._height, self._width)
 
         if self._render_depth:
             return images, depth_packed
         return images
-
-    def render(self, data) -> jnp.ndarray:
-        """Render from mjx.Data, extracting the needed kinematic arrays.
-
-        This is the main entry point for rendering during env.step().
-        JAX-traceable — works inside jax.jit and jax.lax.scan.
-
-        Args:
-            data: mjx.Data with kinematic state after physics step.
-                Must have batch dimension (nworld, ...) — not single-world.
-
-        Returns:
-            Float32 images of shape (nworld, height, width, channels).
-            If render_depth=True, returns (images, depth) tuple.
-        """
-        return self.render_from_arrays(
-            data.geom_xpos,
-            data.geom_xmat,
-            data.cam_xpos,
-            data.cam_xmat,
-            data._impl.light_xpos,
-            data._impl.light_xdir,
-        )
 
 
 class VisionRenderWrapper:
@@ -295,7 +231,7 @@ class VisionRenderWrapper:
     Wraps an already-batched environment (after VmapWrapper) and renders
     vision observations on the full batch of worlds at each step.
 
-    The rendering is JAX-traceable — it works inside jax.jit and
+    The rendering is JAX-traceable -- it works inside jax.jit and
     jax.lax.scan. No Python-level rendering loop is needed.
 
     This wrapper must go OUTSIDE the Brax training wrappers (VmapWrapper,
@@ -312,6 +248,7 @@ class VisionRenderWrapper:
         self,
         env: Any,
         mj_model: mujoco.MjModel,
+        mjx_model: mjx.Model,
         nworld: int | None = None,
         width: int = 32,
         height: int = 32,
@@ -326,6 +263,7 @@ class VisionRenderWrapper:
         Args:
             env: Inner (already-batched) environment.
             mj_model: Host MuJoCo model.
+            mjx_model: MJX model (warp backend). Needed for render calls.
             nworld: Number of parallel worlds.  If ``None``, detected
                 automatically from the batch size on the first ``reset()``.
             width: Render width in pixels.
@@ -338,6 +276,7 @@ class VisionRenderWrapper:
         """
         self.env = env
         self._mj_model = mj_model
+        self._mjx_model = mjx_model
         self._renderer_kwargs = dict(
             width=width,
             height=height,
@@ -350,7 +289,10 @@ class VisionRenderWrapper:
 
         if nworld is not None:
             self._renderer = JaxVisionRenderer(
-                mj_model=mj_model, nworld=nworld, **self._renderer_kwargs,
+                mj_model=mj_model,
+                mjx_model=mjx_model,
+                nworld=nworld,
+                **self._renderer_kwargs,
             )
         else:
             self._renderer = None  # lazy init on first reset
@@ -360,6 +302,7 @@ class VisionRenderWrapper:
         if self._renderer is None:
             self._renderer = JaxVisionRenderer(
                 mj_model=self._mj_model,
+                mjx_model=self._mjx_model,
                 nworld=nworld,
                 **self._renderer_kwargs,
             )
@@ -373,12 +316,37 @@ class VisionRenderWrapper:
         """The underlying JaxVisionRenderer (None until first reset)."""
         return self._renderer
 
+    @staticmethod
+    def _inject_vision(obs, vision):
+        """Replace vision placeholders in the obs dict with rendered images.
+
+        The env produces obs with structure::
+
+            OrderedDict(
+                state=OrderedDict(task_obs, proprioception, vision=zeros),
+                privileged_state=OrderedDict(...)
+            )
+
+        This replaces the zero placeholders in-place (preserving pytree
+        structure for lax.scan compatibility).
+        """
+        new_obs = collections.OrderedDict()
+        for key, val in obs.items():
+            if isinstance(val, dict) and "vision" in val:
+                new_inner = type(val)(
+                    [(k, vision if k == "vision" else v) for k, v in val.items()]
+                )
+                new_obs[key] = new_inner
+            else:
+                new_obs[key] = val
+        return new_obs
+
     def reset(self, rng: jax.Array) -> mjx_env.State:
         """Reset the environment and render initial vision observations."""
         state = self.env.reset(rng)
         self._ensure_renderer(rng.shape[0])
         vision = self._renderer.render(state.data)
-        state = state.replace(obs={**state.obs, "vision": vision})
+        state = state.replace(obs=self._inject_vision(state.obs, vision))
         return state
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
@@ -389,5 +357,5 @@ class VisionRenderWrapper:
         """
         state = self.env.step(state, action)
         vision = self._renderer.render(state.data)
-        state = state.replace(obs={**state.obs, "vision": vision})
+        state = state.replace(obs=self._inject_vision(state.obs, vision))
         return state
