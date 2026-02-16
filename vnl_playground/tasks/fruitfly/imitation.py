@@ -462,7 +462,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
         ghost_fly = mujoco.MjSpec.from_file(self._walker_xml_path)
         ghost_rescale = self._config.rescale_factor
         if ghost_rescale != 1.0:
-            ghost_fly = self._scale_fly_spec(ghost_fly, ghost_rescale)
+            ghost_fly = utils.scale_spec(ghost_fly, ghost_rescale, root_body="thorax")
         for body in ghost_fly.worldbody.bodies:
             utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
 

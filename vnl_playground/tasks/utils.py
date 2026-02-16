@@ -79,7 +79,7 @@ def _recolour_tree(body, rgba: list[float]) -> None:
         _recolour_tree(child, rgba)
 
 
-def dm_scale_spec(spec, scale):
+def scale_spec(spec, scale, root_body: str = "walker"):
     scaled_spec = spec.copy()
 
     # Traverse the kinematic tree, scaling all geoms
@@ -96,8 +96,6 @@ def dm_scale_spec(spec, scale):
             scale_bodies(body, scale)
             body = parent.next_body(body)
 
-    # if scale_actuators:
-    # # scale gear
     for actuator in scaled_spec.actuators:
         # scale the actuator gear by (scale ** 2),
         # this is because muscle force-generating capacity
@@ -109,7 +107,6 @@ def dm_scale_spec(spec, scale):
         qpos = keypoint.qpos
         qpos[2] = qpos[2] * scale
         keypoint.qpos = qpos
-        keypoint.qpos[2] = keypoint.qpos[2] * scale
 
-    scale_bodies(scaled_spec.body("walker"), scale)
+    scale_bodies(scaled_spec.body(root_body), scale)
     return scaled_spec

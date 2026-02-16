@@ -15,7 +15,7 @@ from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.rodent import consts
-from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
+from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
@@ -104,7 +104,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
         if rescale_factor != 1.0:
             logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
-            rodent = dm_scale_spec(rodent, rescale_factor)
+            rodent = scale_spec(rodent, rescale_factor)
 
         # Recolor the body if rgba is specified
         if rgba is not None:
