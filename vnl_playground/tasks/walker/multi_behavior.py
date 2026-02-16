@@ -45,9 +45,13 @@ def default_config() -> config_dict.ConfigDict:
         mujoco_impl="jax",
         nconmax=50_000,
         njmax=100,
-        # Behavior mode scheduling
-        mode_switch_prob=0.005,  # Probability of mode switch per step
-        fixed_mode=None,  # If set, fix to this mode index (no switching)
+        # Behavior mode scheduling (countdown timer with exponential sampling)
+        # Each mode lasts for a sampled duration, then transitions smoothly.
+        # Duration ~ mode_duration_min + Exponential(mode_duration_mean - mode_duration_min)
+        # This gives exact control over the mean with a guaranteed minimum.
+        mode_duration_mean=150,  # Average steps per mode (including transition)
+        mode_duration_min=60,    # Minimum steps before switching
+        fixed_mode=None,         # If set, fix to this mode index (no switching)
         transition_steps=consts.DEFAULT_TRANSITION_STEPS,  # Steps to blend
         # Reward weights
         stand_height_weight=3.0,
@@ -76,8 +80,25 @@ class MultiBehaviorWalker(WalkerEnv):
     ) -> None:
         super().__init__(config, config_overrides)
 
+    def _sample_mode_duration(self, rng: jax.Array) -> jax.Array:
+        """Sample next mode duration from shifted exponential distribution.
+
+        duration ~ mode_duration_min + Exp(mode_duration_mean - mode_duration_min)
+
+        This gives:
+        - Expected value = mode_duration_mean (exact)
+        - Minimum = mode_duration_min (guaranteed)
+        - Natural variety: some segments shorter, some longer
+        """
+        scale = self._config.mode_duration_mean - self._config.mode_duration_min
+        # Exponential sample: -scale * log(U) where U ~ Uniform(0, 1)
+        sample = self._config.mode_duration_min + (
+            jax.random.exponential(rng) * scale
+        )
+        return jp.int32(jp.round(sample))
+
     def reset(self, rng: jax.Array) -> mjx_env.State:
-        rng, rng_qpos, rng_joints, rng_mode = jax.random.split(rng, 4)
+        rng, rng_qpos, rng_joints, rng_mode, rng_dur = jax.random.split(rng, 5)
 
         # Randomize initial joint positions
         qpos = jp.zeros(self.mjx_model.nq)
@@ -109,10 +130,15 @@ class MultiBehaviorWalker(WalkerEnv):
             mode_idx = jax.random.randint(rng_mode, (), 0, consts.N_BEHAVIOR_MODES)
         behavior_mode = jax.nn.one_hot(mode_idx, consts.N_BEHAVIOR_MODES)
 
+        # Sample initial countdown until first mode switch
+        steps_until_switch = self._sample_mode_duration(rng_dur)
+
         info = {
             "rng": rng,
             "behavior_mode": behavior_mode,
             "mode_idx": mode_idx,
+            # Countdown timer: decrement each step, switch when 0
+            "steps_until_switch": steps_until_switch,
             # Transition state: source/target mode vectors and progress counter
             "transition_source": behavior_mode,
             "transition_target": behavior_mode,
@@ -142,24 +168,32 @@ class MultiBehaviorWalker(WalkerEnv):
         data = mjx_env.step(self.mjx_model, state.data, action, self.n_substeps)
 
         info = state.info
-        rng, rng_switch, rng_mode = jax.random.split(info["rng"], 3)
+        rng, rng_mode, rng_dur = jax.random.split(info["rng"], 3)
         info["rng"] = rng
         info["prev_action"] = state.info["action"]
         info["action"] = action
 
         if self._config.fixed_mode is None:
-            # Check if we should start a new transition
-            should_switch = (
-                jax.random.uniform(rng_switch) < self._config.mode_switch_prob
-            )
-            new_mode_idx = jax.random.randint(rng_mode, (), 0, consts.N_BEHAVIOR_MODES)
-            new_target = jax.nn.one_hot(new_mode_idx, consts.N_BEHAVIOR_MODES)
+            # Decrement countdown timer
+            info["steps_until_switch"] = info["steps_until_switch"] - 1
 
-            # Only start a new transition if the current one is complete
+            # Check if countdown expired AND current transition is complete
+            countdown_expired = info["steps_until_switch"] <= 0
             transition_done = info["transition_progress"] >= self._config.transition_steps
-            start_new = should_switch & transition_done
+            start_new = countdown_expired & transition_done
 
-            # If starting new transition: source = current mode, target = new mode, reset counter
+            # Sample new mode and new countdown duration
+            new_mode_idx = jax.random.randint(rng_mode, (), 0, consts.N_BEHAVIOR_MODES)
+            # Ensure we don't pick the same mode
+            new_mode_idx = jp.where(
+                new_mode_idx == info["mode_idx"],
+                (new_mode_idx + 1) % consts.N_BEHAVIOR_MODES,
+                new_mode_idx,
+            )
+            new_target = jax.nn.one_hot(new_mode_idx, consts.N_BEHAVIOR_MODES)
+            new_duration = self._sample_mode_duration(rng_dur)
+
+            # If starting new transition: source = current mode, target = new mode
             info["transition_source"] = jp.where(
                 start_new, info["behavior_mode"], info["transition_source"]
             )
@@ -170,6 +204,10 @@ class MultiBehaviorWalker(WalkerEnv):
                 start_new, jp.int32(0), info["transition_progress"] + 1
             )
             info["mode_idx"] = jp.where(start_new, new_mode_idx, info["mode_idx"])
+            # Reset countdown when a new transition starts
+            info["steps_until_switch"] = jp.where(
+                start_new, new_duration, info["steps_until_switch"]
+            )
 
             # Compute blended mode vector
             alpha = jp.clip(
