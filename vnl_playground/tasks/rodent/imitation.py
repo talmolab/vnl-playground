@@ -507,7 +507,7 @@ class Imitation(rodent_base.RodentEnv):
             ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
             ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
             if ghost_rescale != 1.0:
-                ghost_rodent = utils.dm_scale_spec(ghost_rodent, ghost_rescale)
+                ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
             for body in ghost_rodent.worldbody.bodies:
                 utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
             spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))

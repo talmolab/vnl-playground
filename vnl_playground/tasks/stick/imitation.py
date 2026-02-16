@@ -437,7 +437,9 @@ class Imitation(stick_base.StickBugEnv):
             ):
                 ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
             if ghost_rescale != 1.0:
-                ghost_stick = self._scale_stick_spec(ghost_stick, ghost_rescale)
+                ghost_stick = utils.scale_spec(
+                    ghost_stick, ghost_rescale, root_body="reference_base"
+                )
             for body in ghost_stick.worldbody.bodies:
                 utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
             spawn_frame = spec.worldbody.add_frame(pos=(0, 0, 0), quat=(1, 0, 0, 0))

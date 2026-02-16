@@ -14,7 +14,7 @@ from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.fruitfly import consts
-from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
+from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
@@ -100,7 +100,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
 
         if rescale_factor != 1.0:
             logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
-            fly = dm_scale_spec(fly, rescale_factor)
+            fly = scale_spec(fly, rescale_factor, root_body="thorax")
 
         # Recolor the body if rgba is specified
         if rgba is not None:
@@ -131,46 +131,6 @@ class FruitflyEnv(mjx_env.MjxEnv):
         # Attach as ghost at the offset frame
         spawn_frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         spawn_body = spawn_frame.attach_body(fly_spec.body("thorax"), "", suffix=suffix)
-
-    def _scale_fly_spec(self, spec, scale: float):
-        """Scale fly spec (uses thorax as root, not walker).
-
-        The dm_scale_spec utility looks for body("walker") which doesn't exist
-        in the fruitfly XML, so we need a fly-specific version.
-
-        Args:
-            spec: MuJoCo spec to scale.
-            scale: Scale factor to apply.
-
-        Returns:
-            Scaled MuJoCo spec.
-        """
-        scaled_spec = spec.copy()
-
-        def scale_bodies(parent, scale=1.0):
-            body = parent.first_body()
-            while body:
-                if body.pos is not None:
-                    body.pos = body.pos * scale
-                for geom in body.geoms:
-                    geom.fromto = geom.fromto * scale
-                    geom.size = geom.size * scale
-                    if geom.pos is not None:
-                        geom.pos = geom.pos * scale
-                scale_bodies(body, scale)
-                body = parent.next_body(body)
-
-        for actuator in scaled_spec.actuators:
-            actuator.gear = actuator.gear * scale * scale
-
-        for keypoint in scaled_spec.keys:
-            qpos = keypoint.qpos
-            qpos[2] = qpos[2] * scale
-            keypoint.qpos = qpos
-
-        # Use thorax as root (not walker)
-        scale_bodies(scaled_spec.body("thorax"), scale)
-        return scaled_spec
 
     def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and put models to mjx"""

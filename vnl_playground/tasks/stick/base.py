@@ -15,7 +15,7 @@ from mujoco import mjx
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.stick import consts
 from vnl_playground.tasks.reward_registry import RewardRegistry
-from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree
+from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -84,7 +84,7 @@ class StickBugEnv(mjx_env.MjxEnv):
 
         if rescale_factor != 1.0:
             logging.info(f"Rescaling stick bug with scale factor {rescale_factor}")
-            stick = self._scale_stick_spec(stick, rescale_factor)
+            stick = scale_spec(stick, rescale_factor, root_body="reference_base")
 
         if rgba is not None:
             for body in stick.worldbody.bodies:
@@ -122,43 +122,13 @@ class StickBugEnv(mjx_env.MjxEnv):
         """Adds a ghost stick bug model to the environment."""
         stick_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
         if rescale_factor != 1.0:
-            stick_spec = self._scale_stick_spec(stick_spec, rescale_factor)
+            stick_spec = scale_spec(
+                stick_spec, rescale_factor, root_body="reference_base"
+            )
         for body in stick_spec.worldbody.bodies:
             _recolour_tree(body, rgba=ghost_rgba)
         spawn_frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         spawn_frame.attach_body(stick_spec.body("reference_base"), "", suffix=suffix)
-
-    def _scale_stick_spec(self, spec, scale: float):
-        """Scale stick bug spec using reference_base as root.
-
-        The dm_scale_spec utility uses body("walker") which doesn't exist
-        in the stick XML, so we need a stick-specific version.
-        """
-        scaled_spec = spec.copy()
-
-        def scale_bodies(parent, scale=1.0):
-            body = parent.first_body()
-            while body:
-                if body.pos is not None:
-                    body.pos = body.pos * scale
-                for geom in body.geoms:
-                    geom.fromto = geom.fromto * scale
-                    geom.size = geom.size * scale
-                    if geom.pos is not None:
-                        geom.pos = geom.pos * scale
-                scale_bodies(body, scale)
-                body = parent.next_body(body)
-
-        for actuator in scaled_spec.actuators:
-            actuator.gear = actuator.gear * scale * scale
-
-        for keypoint in scaled_spec.keys:
-            qpos = keypoint.qpos
-            qpos[2] = qpos[2] * scale
-            keypoint.qpos = qpos
-
-        scale_bodies(scaled_spec.body("reference_base"), scale)
-        return scaled_spec
 
     def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and puts models to mjx."""
