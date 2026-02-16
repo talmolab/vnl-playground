@@ -50,6 +50,7 @@ def default_config() -> config_dict.ConfigDict:
         z_min_offset=0.0,
         sigma_smooth=30.0,
         distance_margin=0.5,
+        target_mode="generated",  # "generated" or "dataset"
         episode_length=500,
         action_repeat=1,
         reward_terms={
@@ -163,6 +164,26 @@ class FollowTarget(rodent_base.RodentEnv):
         self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
         self.compile()
 
+        # Dataset mode attributes (set via set_trajectory_dataset)
+        self._trajectory_dataset = None
+        self._initial_qpos_dataset = None
+        self._num_trajectories = 0
+        self._qpos_dataset = None
+
+    def set_trajectory_dataset(self, trajectories, initial_qpos, qpos_dataset=None):
+        """Set pre-extracted skull trajectories and initial poses for dataset mode.
+
+        Args:
+            trajectories: JAX array (N, T, 3) — absolute skull world positions.
+            initial_qpos: JAX array (N, qpos_dim) — initial qpos for each clip.
+            qpos_dataset: Optional JAX array (N, T, qpos_dim) — full qpos trajectories
+                for ghost rendering. Only needed when render_imitation=True.
+        """
+        self._trajectory_dataset = trajectories
+        self._initial_qpos_dataset = initial_qpos
+        self._num_trajectories = trajectories.shape[0]
+        self._qpos_dataset = qpos_dataset
+
     def reset(self, rng: jax.Array) -> mjx_env.State:
         rng, traj_rng = jax.random.split(rng)
 
@@ -178,29 +199,43 @@ class FollowTarget(rodent_base.RodentEnv):
             naconmax=self._config.naconmax,
             njmax=self._config.njmax,
         )
-        # Compute forward kinematics to get body positions at reset
-        data = mjx.forward(self.mjx_model, data)
 
-        # Get skull position to anchor trajectory
-        skull_pos = self._get_skull_pos(data)
+        if self._config.target_mode == "dataset":
+            # Sample a random clip from the dataset
+            idx = jax.random.randint(traj_rng, (), 0, self._num_trajectories)
+            info["dataset_clip_idx"] = idx
+            # Initialize rodent at the clip's starting pose
+            data = data.replace(
+                qpos=self._initial_qpos_dataset[idx],
+                qvel=jp.zeros_like(data.qvel),
+            )
+            data = mjx.forward(self.mjx_model, data)
+            # Use absolute skull trajectory directly (no offset needed)
+            info["target_trajectory"] = self._trajectory_dataset[idx]
+        else:  # "generated"
+            # Compute forward kinematics to get body positions at reset
+            data = mjx.forward(self.mjx_model, data)
 
-        # Generate smoothed random walk trajectory
-        episode_length = self._config.episode_length
-        amplitudes = jp.array(
-            [
-                self._config.amp_x,
-                self._config.amp_y,
-                self._config.amp_z,
-            ]
-        )
-        traj = _smoothed_random_walk_jax(
-            traj_rng,
-            episode_length,
-            amplitudes,
-            self._config.sigma_smooth,
-            self._config.z_min_offset,
-        )
-        info["target_trajectory"] = traj + skull_pos
+            # Get skull position to anchor trajectory
+            skull_pos = self._get_skull_pos(data)
+
+            # Generate smoothed random walk trajectory
+            episode_length = self._config.episode_length
+            amplitudes = jp.array(
+                [
+                    self._config.amp_x,
+                    self._config.amp_y,
+                    self._config.amp_z,
+                ]
+            )
+            traj = _smoothed_random_walk_jax(
+                traj_rng,
+                episode_length,
+                amplitudes,
+                self._config.sigma_smooth,
+                self._config.z_min_offset,
+            )
+            info["target_trajectory"] = traj + skull_pos
 
         metrics = {}
         obs = self._get_obs(data, info)
@@ -323,6 +358,7 @@ class FollowTarget(rodent_base.RodentEnv):
         camera: Optional[str] = None,
         scene_option: Optional[mujoco.MjvOption] = None,
         modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
+        render_ghost: bool = False,
     ) -> Sequence[np.ndarray]:
         """Renders a trajectory with the target sphere moving per frame.
 
@@ -334,11 +370,34 @@ class FollowTarget(rodent_base.RodentEnv):
             scene_option: Additional scene rendering options.
             modify_scene_fns: Sequence of functions to modify the scene before
                 rendering each frame.
+            render_ghost: Whether to render a translucent ghost rodent showing
+                the imitation qpos trajectory from the dataset. Requires
+                set_trajectory_dataset to have been called with qpos_dataset.
 
         Returns:
             List of rendered frames as numpy arrays.
         """
-        mj_model = self.mj_model
+        # Build ghost model if requested and qpos_dataset is available
+        if render_ghost and self._qpos_dataset is not None:
+            from vnl_playground.tasks.utils import dm_scale_spec, _recolour_tree
+
+            spec = self._spec.copy()
+            ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
+            rescale = self._config.rescale_factor
+            if rescale != 1.0:
+                ghost_rodent = dm_scale_spec(ghost_rodent, rescale)
+            for body in ghost_rodent.worldbody.bodies:
+                _recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
+            spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0), quat=(1, 0, 0, 0))
+            spawn_body = spawn_site.attach_body(
+                ghost_rodent.body("walker"), "", suffix="-ghost"
+            )
+            spawn_body.add_freejoint()
+            mj_model = spec.compile()
+        else:
+            render_ghost = False  # disable if no qpos_dataset
+            mj_model = self.mj_model
+
         mj_model.vis.global_.offwidth = width
         mj_model.vis.global_.offheight = height
         mj_data = mujoco.MjData(mj_model)
@@ -353,12 +412,25 @@ class FollowTarget(rodent_base.RodentEnv):
 
         rendered_frames = []
         for i, state in enumerate(trajectory):
-            mj_data.qpos = np.array(state.data.qpos)
-            mj_data.qvel = np.array(state.data.qvel)
+            step = int(state.info["step_count"])
+
+            if render_ghost:
+                clip_idx = int(state.info["dataset_clip_idx"])
+                ghost_qpos = np.array(self._qpos_dataset[clip_idx, step])
+                mj_data.qpos = np.concatenate([np.array(state.data.qpos), ghost_qpos])
+                mj_data.qvel = np.concatenate(
+                    [
+                        np.array(state.data.qvel),
+                        np.zeros_like(np.array(state.data.qvel)),
+                    ]
+                )
+            else:
+                mj_data.qpos = np.array(state.data.qpos)
+                mj_data.qvel = np.array(state.data.qvel)
+
             mujoco.mj_forward(mj_model, mj_data)
 
             # Move target sphere to current trajectory position
-            step = int(state.info["step_count"])
             target_pos = np.array(state.info["target_trajectory"][step])
             mj_data.geom_xpos[target_geom_id] = target_pos
 
