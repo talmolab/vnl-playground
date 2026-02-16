@@ -41,14 +41,31 @@ BEHAVIOR_MODES = {
     "walk_slow": 1,
     "run": 2,
     "knee_down": 3,
+    "walk_backward": 4,
+    "hop": 5,
+    "walk_fast": 6,
+    "tiptoe": 7,
 }
 N_BEHAVIOR_MODES = len(BEHAVIOR_MODES)
 
 # Target speeds for locomotion modes (m/s)
 WALK_SLOW_SPEED = 0.5
+WALK_FAST_SPEED = 3.0
 RUN_SPEED = 8.0
+WALK_BACKWARD_SPEED = -0.5  # Negative = backward
+
+# Hop parameters
+HOP_MIN_HEIGHT = 1.35  # Minimum torso height during hop apex
+HOP_VERTICAL_VEL_REWARD_SCALE = 0.5  # Reward upward velocity
+
+# Tiptoe parameters
+TIPTOE_HEIGHT = 1.4  # Target torso height (taller than normal stand)
+TIPTOE_ANKLE_RANGE = (0.3, 0.8)  # Ankle plantarflexion range (radians)
 
 # Physical constants for reward computation
 STAND_HEIGHT = 1.2          # Minimum torso height for standing
 KNEE_DOWN_HEIGHT_RANGE = (0.5, 0.9)  # Torso height range for knee_down
 KNEE_DOWN_ANGLE_RANGE = (-2.09, -1.05)  # Knee joint angle range: ~(-120, -60) degrees in radians
+
+# Smooth transition parameters
+DEFAULT_TRANSITION_STEPS = 40  # Steps to blend between modes (~1 second at 0.025 ctrl_dt)

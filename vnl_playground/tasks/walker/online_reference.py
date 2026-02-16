@@ -7,6 +7,10 @@ the walker imitation task.
 The generator produces trajectories as JAX arrays, compatible with
 jax.jit and jax.lax.scan for efficient batched generation.
 
+Behavior schedules use smooth linear blending at segment boundaries
+(matching the ``transition_steps`` parameter from MultiBehaviorWalker)
+so the Step 1 policy sees the same soft mode vectors it was trained on.
+
 Usage:
     generator = OnlineReferenceGenerator(
         policy_fn=make_inference_fn(params),
@@ -38,7 +42,7 @@ class WalkerTrajectory(NamedTuple):
     qvel: jp.ndarray           # (n_frames, nv=9)
     xpos: jp.ndarray           # (n_frames, nbody, 3)
     xquat: jp.ndarray          # (n_frames, nbody, 4)
-    behavior_labels: jp.ndarray  # (n_frames, n_modes=4) one-hot
+    behavior_labels: jp.ndarray  # (n_frames, n_modes=8) soft mode vectors
 
 
 class OnlineReferenceGenerator:
@@ -51,7 +55,7 @@ class OnlineReferenceGenerator:
     Args:
         policy_fn: Inference function from trained policy.
             Signature: policy_fn(obs, rng) -> action
-            The obs must include the behavior mode one-hot.
+            The obs must include the behavior mode vector (soft or one-hot).
         walker_env: A MultiBehaviorWalker environment instance (used for
             model access and observation computation).
         n_frames: Number of frames per generated trajectory.
@@ -85,8 +89,9 @@ class OnlineReferenceGenerator:
 
         Args:
             rng: JAX random key.
-            behavior_schedule: (n_frames, N_BEHAVIOR_MODES) one-hot array
-                specifying which behavior mode to use at each frame.
+            behavior_schedule: (n_frames, N_BEHAVIOR_MODES) soft mode vector
+                array specifying the behavior blend at each frame.  Can be
+                hard one-hot or smoothly blended (from ``sample_behavior_schedule``).
 
         Returns:
             WalkerTrajectory with all state data and behavior labels.
@@ -96,7 +101,7 @@ class OnlineReferenceGenerator:
         init_state = self.env.reset(rng_init)
         init_data = init_state.data
 
-        def step_fn(carry, behavior_onehot):
+        def step_fn(carry, behavior_vec):
             data, prev_action, rng = carry
             rng, action_rng = jax.random.split(rng)
 
@@ -107,7 +112,7 @@ class OnlineReferenceGenerator:
             joint_angles = data.qpos[consts.N_ROOT_QPOS:]
             obs = jp.concatenate([
                 orientations, height, velocity, joint_angles,
-                prev_action, behavior_onehot,
+                prev_action, behavior_vec,
             ])
 
             # Get action from policy
@@ -145,8 +150,14 @@ class OnlineReferenceGenerator:
         n_frames: int,
         n_transitions: int = 1,
         n_modes: int = consts.N_BEHAVIOR_MODES,
+        transition_steps: int = consts.DEFAULT_TRANSITION_STEPS,
     ) -> jp.ndarray:
-        """Sample a random behavior schedule with specified transitions.
+        """Sample a random behavior schedule with smooth transitions.
+
+        Creates equal-width segments with different modes, then applies
+        linear blending over ``transition_steps`` frames at each boundary.
+        This matches the smooth transition mechanism in MultiBehaviorWalker
+        so the Step 1 policy sees consistent input.
 
         Args:
             rng: Random key.
@@ -154,11 +165,14 @@ class OnlineReferenceGenerator:
             n_transitions: Number of behavior transitions (0 = single mode,
                 1 = one transition, etc.).
             n_modes: Number of behavior modes.
+            transition_steps: Number of frames to linearly blend between
+                modes at each boundary.
 
         Returns:
-            (n_frames, n_modes) one-hot array.
+            (n_frames, n_modes) soft mode vector array.  Pure one-hot in
+            segment interiors, linearly interpolated at boundaries.
         """
-        rng_modes, rng_splits = jax.random.split(rng)
+        rng_modes, _ = jax.random.split(rng)
         n_segments = n_transitions + 1
 
         # Sample mode for each segment
@@ -172,17 +186,55 @@ class OnlineReferenceGenerator:
         _, fixed_modes = jax.lax.scan(fix_consecutive, modes[0], modes[1:])
         modes = jp.concatenate([modes[:1], fixed_modes])
 
-        # Build per-frame mode indices using equal-width segments
+        # Build per-frame one-hot vectors using equal-width segments
         frames_per_segment = n_frames // n_segments
         frame_indices = jp.arange(n_frames)
-        # Each frame belongs to segment (frame_idx // frames_per_segment),
-        # clamped to the last segment
         segment_ids = jp.minimum(
             frame_indices // frames_per_segment, n_segments - 1
         )
-        frame_modes = modes[segment_ids]
+        frame_modes_onehot = jax.nn.one_hot(modes[segment_ids], n_modes)
 
-        return jax.nn.one_hot(frame_modes, n_modes)
+        # Apply smooth blending at segment boundaries
+        # For each frame, compute distance to the nearest segment boundary
+        # and blend between the two adjacent segment modes
+        half_blend = transition_steps // 2
+
+        def blend_frame(frame_idx):
+            seg_id = jp.minimum(frame_idx // frames_per_segment, n_segments - 1)
+            pos_in_seg = frame_idx - seg_id * frames_per_segment
+
+            # Current segment one-hot
+            current_mode = jax.nn.one_hot(modes[seg_id], n_modes)
+
+            # Distance from start of segment (blend with previous)
+            prev_seg_id = jp.maximum(seg_id - 1, 0)
+            prev_mode = jax.nn.one_hot(modes[prev_seg_id], n_modes)
+            # Alpha: 0 at boundary, 1 when half_blend frames into segment
+            alpha_start = jp.clip(pos_in_seg / jp.maximum(half_blend, 1), 0.0, 1.0)
+            # Only blend if we're actually at a boundary (seg_id > 0)
+            at_start_boundary = (seg_id > 0) & (pos_in_seg < half_blend)
+
+            # Distance from end of segment (blend with next)
+            next_seg_id = jp.minimum(seg_id + 1, n_segments - 1)
+            next_mode = jax.nn.one_hot(modes[next_seg_id], n_modes)
+            dist_from_end = frames_per_segment - 1 - pos_in_seg
+            alpha_end = jp.clip(dist_from_end / jp.maximum(half_blend, 1), 0.0, 1.0)
+            at_end_boundary = (seg_id < n_segments - 1) & (dist_from_end < half_blend)
+
+            # Apply blending: start boundary takes priority if somehow both
+            blended = jp.where(
+                at_start_boundary,
+                alpha_start * current_mode + (1.0 - alpha_start) * prev_mode,
+                jp.where(
+                    at_end_boundary,
+                    alpha_end * current_mode + (1.0 - alpha_end) * next_mode,
+                    current_mode,
+                ),
+            )
+            return blended
+
+        schedule = jax.vmap(blend_frame)(frame_indices)
+        return schedule
 
     @staticmethod
     def sample_fixed_schedule(
@@ -193,7 +245,7 @@ class OnlineReferenceGenerator:
         """Create a fixed single-mode schedule.
 
         Args:
-            mode_idx: Behavior mode index (0-3).
+            mode_idx: Behavior mode index (0-7).
             n_frames: Number of frames.
             n_modes: Number of modes.
 
