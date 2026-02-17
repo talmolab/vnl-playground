@@ -46,6 +46,7 @@ import mujoco
 from mujoco.mjx.warp.types import DATA_NON_VMAP
 import numpy as np
 import psutil
+import warp as wp
 import wandb
 from brax.training.agents.ppo import networks as brax_ppo_networks
 from brax.training.agents.ppo import train as brax_ppo_train
@@ -120,6 +121,38 @@ def _log_memory(label: str):
     rss_gb = proc.memory_info().rss / (1024**3)
     logging.info(f"[MEM] {label}: {rss_gb:.2f} GB RSS")
     return rss_gb
+
+
+def _log_gpu_memory(label: str):
+    """Log GPU memory usage from both JAX and CUDA perspectives."""
+    try:
+        backend = jax.lib.xla_bridge.get_backend()
+        for device in backend.devices():
+            stats = device.memory_stats()
+            if stats:
+                used_mb = stats.get("bytes_in_use", 0) / 1e6
+                peak_mb = stats.get("peak_bytes_in_use", 0) / 1e6
+                logging.info(
+                    f"[GPU-MEM] {label}: JAX used={used_mb:.0f}MB "
+                    f"peak={peak_mb:.0f}MB"
+                )
+    except Exception:
+        pass
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.free",
+             "--format=csv,nounits,noheader", "--id=0"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            used, free = result.stdout.strip().split(", ")
+            logging.info(
+                f"[GPU-MEM] {label}: CUDA used={used}MB free={free}MB"
+            )
+    except Exception:
+        pass
 
 
 def _prepare_ego_overlay(ego_frames_np, scale=2):
@@ -890,6 +923,15 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
     logging.info(f"Shared-CNN Vision+TaskObs HighLevelWrapper: action_size={env.action_size}")
     _log_memory("after Shared-CNN HighLevelWrapper")
 
+    # Set Warp's CUDA memory pool release threshold to 512 MB.
+    # Memory above this threshold is returned to CUDA on wp.synchronize().
+    try:
+        cuda_device = wp.get_device("cuda:0")
+        wp.set_mempool_release_threshold(cuda_device, 512 * 1024 * 1024)
+        logging.info("[MEM] Set Warp mempool release threshold to 512 MB")
+    except Exception as e:
+        logging.warning(f"Could not set Warp mempool release threshold: {e}")
+
     # Detect vision shape from environment
     unwrapped = env.env if hasattr(env, "env") else env
     vision_shape = (
@@ -1120,6 +1162,7 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
             logging.warning(f"Video rendering failed: {e}")
 
         _log_memory(f"shared_vision_policy_params_fn before cleanup step={current_step}")
+        _log_gpu_memory(f"before cleanup step={current_step}")
 
         del rollout
         del obs_with_vision, obs_blank_vision
@@ -1127,7 +1170,13 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         gc.collect()
         jax.clear_caches()
 
+        # Force Warp's CUDA memory pool to release deferred-free allocations.
+        # Without this, cudaFreeAsync'd memory stays in Warp's pool indefinitely
+        # and eventually exhausts GPU memory during long training runs.
+        wp.synchronize()
+
         _log_memory(f"shared_vision_policy_params_fn after cleanup step={current_step}")
+        _log_gpu_memory(f"after cleanup step={current_step}")
 
     # Checkpoint to restore (if any)
     checkpoint_to_restore = cfg.train_setup.get("checkpoint_to_restore", None)
