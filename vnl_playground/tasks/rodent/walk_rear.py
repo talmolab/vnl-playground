@@ -143,6 +143,7 @@ class WalkRear(rodent_base.RodentEnv):
             "prev_action": self.null_action(),
             "action": self.null_action(),
             "hold_steps": jp.array(0),
+            "episode_step": jp.array(0),
         }
 
         data = mjx.make_data(
@@ -166,6 +167,7 @@ class WalkRear(rodent_base.RodentEnv):
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
+        info["episode_step"] = info["episode_step"] + 1
         obs = self._get_obs(data, info)
 
         info["prev_action"] = info["action"]
@@ -309,6 +311,7 @@ def _distance_to_target_reward(env, data, info, metrics, weight) -> float:
 
     weighted_reward = reward_value * weight
     metrics["rewards/distance_to_target"] = weighted_reward
+    metrics["rewards/distance_to_target_per_step"] = weighted_reward
     metrics["skull_target_distance"] = distance
     return weighted_reward
 
@@ -324,6 +327,10 @@ def _walk_rear_success_reward(env, data, info, metrics, weight) -> float:
     weighted_reward = jp.astype(success, float) * weight
     metrics["rewards/walk_rear_success"] = weighted_reward
     metrics["hold_steps"] = hold_steps
+    metrics["success"] = jp.astype(success, float)
+    metrics["time_to_success"] = jp.where(
+        success, jp.astype(info["episode_step"], float), 0.0
+    )
     return weighted_reward
 
 
