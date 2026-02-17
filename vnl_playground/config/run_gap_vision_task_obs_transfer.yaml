@@ -25,15 +25,23 @@ env_config:
     gap_length_range: [0.03, 0.12]
     n_platforms: 20
     torque_actuators: true
+    termination_criteria:
+      fallen:
+        min_torso_z: 0.0325
+        max_torso_angle: 70
+      # stale_location:
+      #   patience: 100
+      #   min_displacement: 0.03
+      nan_termination: {}
 
 network_config:
   arch_name: shared_vision_task_obs
   vision_latent_size: 16
   vision_feature_size: 32
-  decoder_hidden_layer_sizes: [512, 512]
-  value_hidden_layer_sizes: [512, 512]
+  decoder_hidden_layer_sizes: [512, 512, 512]
+  value_hidden_layer_sizes: [512, 512, 512, 512]
   vision_channels: [4, 8, 16, 32]
-  fusion_hidden_layer_sizes: [256]
+  fusion_hidden_layer_sizes: [256, 256, 256]
 
 transfer:
   mimic_run_id: "260212_123718_492372"   # Replace with Phase 1 run ID
@@ -42,6 +50,7 @@ transfer:
   decoder_obs_key: proprioception
 
 train_setup:
+  # resume_run_id: "260214_110703"
   eval_every: 10_000_000
   train_config:
     episode_length: 1000
@@ -58,7 +67,7 @@ train_setup:
     unroll_length: 10
     reward_scaling: 1.0
     normalize_observations: true
-    seed: 0
+    seed: 1
     latent_kl_weight: 0.0
     latent_ar1_weight: 0.0
     use_kl_schedule: false
@@ -73,7 +82,7 @@ logging_config:
   group_name: run-gap-vision-task-obs-transfer
   model_path: highlvl_checkpoints
   notes: "Vision + TaskObs high-level transfer for RunGapVision"
-  exp_name: run_gap_vision_task_obs_transfer
+  exp_name: larger_policy_no_stale_term_1
 
 render_config:
   render_fps: 50
