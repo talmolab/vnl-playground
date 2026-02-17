@@ -69,7 +69,7 @@ def default_config() -> config_dict.ConfigDict:
         },
         termination_criteria={
             "fallen": {"min_torso_z": 0.01, "max_torso_angle": 70},
-            "stale_location": {"patience": 100, "min_displacement": 0.03},
+            # "stale_location": {"patience": 100, "min_displacement": 0.03},
             "nan_termination": {},
         },
     )
