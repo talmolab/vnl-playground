@@ -33,6 +33,15 @@ Usage::
     brax_env = wrap_for_brax_training(env, ...)
     vision_env = VisionRenderWrapper(brax_env, env.mj_model, nworld=num_envs,
                                       **vision_config)
+
+Monocular vs Binocular Experiment Protocol::
+
+    1. Train with default (binocular) vision using GapJumpTrialVision
+    2. Evaluate with monocular masking using gap_jump_experiments.py:
+       - BINOCULAR condition: no mask (baseline)
+       - MONOCULAR_LEFT: left half of image zeroed
+       - MONOCULAR_RIGHT: right half of image zeroed
+    3. Compare success rates and decision times across conditions
 """
 
 import collections
@@ -60,6 +69,7 @@ def default_config() -> config_dict.ConfigDict:
     cfg.render_depth = False
     cfg.use_textures = False
     cfg.use_shadows = False
+    cfg.vision_mode = "binocular"  # "binocular", "monocular_left", "monocular_right"
     return cfg
 
 

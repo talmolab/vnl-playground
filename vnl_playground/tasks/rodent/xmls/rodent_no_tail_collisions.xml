@@ -414,6 +414,8 @@
                       <joint name="atlas" class="atlas" pos="-0.02843583549004804 0 0"/>
                       <site name="head" class="sensor" type="box" size="0.002 0.002 0.002"/>
                       <camera name="egocentric" fovy="80.0" pos="0.015 0 0.01" euler="0 -1.570796326794897 -1.570796326794897"/>
+                      <camera name="eye_left" fovy="80.0" pos="0.015 0.004 0.01" euler="0 -1.570796326794897 -1.370796326794897"/>
+                      <camera name="eye_right" fovy="80.0" pos="0.015 -0.004 0.01" euler="0 -1.570796326794897 -1.770796326794897"/>
                       <body name="jaw" pos="0.0004529521741633299 -1.588797783766933e-08 -0.0164" euler="0 0.2617993877991494 0">
                         <geom name="jaw_back_collision" class="nonself_collision_primitive" type="ellipsoid" size="0.01215237540438202 0.01335652173913044 0.007000000000000001" density="314.057274977" pos="-0.01087085217991992 0 0.00205" euler="0 0.9599310885968813 0"/>
                         <geom name="jaw_F_collision" class="nonself_collision_primitive" type="ellipsoid" size="0.003314284201195097 0.006678260869565218 0.012" density="314.057274977" pos="0.002717713044979979 0 -0.00492" euler="0 1.832595714594046 0"/>

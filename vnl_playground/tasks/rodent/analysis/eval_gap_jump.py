@@ -41,6 +41,7 @@ import jax
 import jax.numpy as jp
 import mujoco
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 from flax.training import orbax_utils
@@ -415,6 +416,73 @@ def run_eval_rollout(
     return rollout
 
 
+PHASE_NAMES = {0: "HOLD", 1: "DECISION", 2: "JUMP"}
+
+
+def _overlay_trial_info(
+    frame: np.ndarray, state: mjx_env.State, step_idx: int
+) -> np.ndarray:
+    """Draw trial state info as text overlay on the top-left of a rendered frame.
+
+    Args:
+        frame: (H, W, 3) uint8 numpy array.
+        state: Environment state containing info dict with trial_phase,
+            gap_distance, trial_success.
+        step_idx: Current step index in the episode.
+
+    Returns:
+        Frame with text overlay drawn on it.
+    """
+    img = Image.fromarray(frame)
+
+    # Try to use a monospace font; fall back to default
+    try:
+        font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 14
+        )
+    except (IOError, OSError):
+        font = ImageFont.load_default()
+
+    info = state.info
+    phase_code = int(info.get("trial_phase", 0))
+    phase_name = PHASE_NAMES.get(phase_code, f"UNKNOWN({phase_code})")
+    gap_dist = float(info.get("gap_distance", 0.0))
+    reward = float(state.reward)
+    success = bool(info.get("trial_success", False))
+    done = float(state.done) > 0.5
+
+    lines = [
+        f"Step: {step_idx}",
+        f"Phase: {phase_name}",
+        f"Gap: {gap_dist * 100:.1f} cm",
+        f"Reward: {reward:.3f}",
+        f"Success: {success}",
+    ]
+    if done:
+        lines.append("DONE")
+
+    # Draw semi-transparent background box
+    line_height = 18
+    padding = 6
+    box_width = 180
+    box_height = len(lines) * line_height + 2 * padding
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    overlay_draw.rectangle(
+        [4, 4, 4 + box_width, 4 + box_height],
+        fill=(0, 0, 0, 160),
+    )
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    y = padding + 4
+    for line in lines:
+        draw.text((padding + 4, y), line, fill=(255, 255, 255), font=font)
+        y += line_height
+
+    return np.array(img)
+
+
 def render_trial_video(
     env: rodent_wrappers.HighLevelWrapper,
     policy_fn: Callable,
@@ -457,9 +525,15 @@ def render_trial_video(
         rollout, height=height, width=width, camera=camera
     )
 
+    # Apply trial state overlay to each frame
+    overlaid_frames = [
+        _overlay_trial_info(frame, state, step_idx=i)
+        for i, (frame, state) in enumerate(zip(frames, rollout))
+    ]
+
     fps = int(1.0 / env.dt)
-    imageio.mimsave(output_path, frames, fps=fps)
-    print(f"  Saved video: {output_path} ({len(frames)} frames, {fps} fps)")
+    imageio.mimsave(output_path, overlaid_frames, fps=fps)
+    print(f"  Saved video: {output_path} ({len(overlaid_frames)} frames, {fps} fps)")
 
 
 def render_comparison_video(
@@ -506,6 +580,7 @@ def render_comparison_video(
             break
 
     condition_frames = []
+    condition_rollouts = []
     min_length = episode_length
 
     for i, cond_name in enumerate(conditions):
@@ -515,15 +590,39 @@ def render_comparison_video(
             rollout, height=height, width=width, camera=camera
         )
         condition_frames.append(frames)
+        condition_rollouts.append(rollout)
         min_length = min(min_length, len(frames))
 
     # Trim all frame sequences to the same length
     condition_frames = [frames[:min_length] for frames in condition_frames]
 
-    # Tile frames horizontally with condition labels
+    # Try to load font once for condition labels
+    try:
+        label_font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 16
+        )
+    except (IOError, OSError):
+        label_font = ImageFont.load_default()
+
+    # Tile frames horizontally with condition labels and trial info overlay
     combined_frames = []
     for frame_idx in range(min_length):
-        panels = [condition_frames[c][frame_idx] for c in range(len(conditions))]
+        panels = []
+        for c in range(len(conditions)):
+            frame = condition_frames[c][frame_idx]
+            state = condition_rollouts[c][frame_idx]
+            # Apply trial info overlay
+            frame = _overlay_trial_info(frame, state, step_idx=frame_idx)
+            # Add condition label at bottom-left
+            img = Image.fromarray(frame)
+            draw = ImageDraw.Draw(img)
+            draw.text(
+                (8, height - 22),
+                conditions[c],
+                fill=(255, 255, 0),
+                font=label_font,
+            )
+            panels.append(np.array(img))
         combined = np.concatenate(panels, axis=1)
         combined_frames.append(combined)
 

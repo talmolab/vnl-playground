@@ -68,9 +68,13 @@ def default_config() -> config_dict.ConfigDict:
         # Reward terms
         reward_terms={
             "hold_stillness": {"weight": 0.3},
+            "forward_displacement": {"weight": 1.0},
+            "approach_velocity": {"weight": 0.5},
             "jump_success": {"weight": 10.0},
+            "landing_bonus": {"weight": 5.0},
             "decision_alive": {"weight": 0.05},
             "abort_penalty": {"weight": -1.0},
+            "fall_penalty": {"weight": -5.0},
         },
         # Termination criteria
         termination_criteria={
@@ -205,8 +209,8 @@ class GapJumpTrial(rodent_base.RodentEnv):
             type=mujoco.mjtJoint.mjJNT_SLIDE,
             axis=[1, 0, 0],
             range=[-(max_gap - min_gap), 0],
-            damping=1e6,
-            stiffness=1e6,
+            damping=1e8,
+            stiffness=1e8,
         )
         landing_body.add_geom(
             name="landing_platform_geom",
@@ -289,6 +293,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
         # Set landing platform position via the slide joint
         new_qpos = data.qpos.at[self._landing_slide_qpos_idx].set(slide_offset)
         data = data.replace(qpos=new_qpos)
+        data = mjx.forward(self.mjx_model, data)
 
         metrics = {}
         obs = self._get_obs(data, info)
@@ -480,6 +485,74 @@ class GapJumpTrial(rodent_base.RodentEnv):
         ).astype(jp.float32)
         reward_val = weight * behind  # weight is negative
         metrics["rewards/abort_penalty"] = reward_val
+        return reward_val
+
+    @_registry.reward("forward_displacement")
+    def _forward_displacement_reward(self, data, info, metrics, weight):
+        """Dense reward for forward displacement during DECISION phase.
+
+        Rewards the rodent's x-position relative to its spawn position,
+        normalized by the distance to the gap edge. Only active during
+        DECISION and JUMP phases.
+        """
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        torso_x = torso.xpos[0]
+
+        # Normalize displacement by takeoff platform length
+        # (rodent starts at spawn_x=0, platform edge is at takeoff_platform_length/2)
+        platform_edge = self._takeoff_trailing_edge_x
+        normalized_progress = jp.clip(torso_x / platform_edge, 0.0, 2.0)
+
+        is_active = (info["trial_phase"] >= PHASE_DECISION).astype(jp.float32)
+        reward_val = weight * normalized_progress * is_active
+        metrics["rewards/forward_displacement"] = reward_val
+        return reward_val
+
+    @_registry.reward("approach_velocity")
+    def _approach_velocity_reward(self, data, info, metrics, weight):
+        """Reward for forward velocity during DECISION phase.
+
+        Encourages the rodent to build momentum toward the gap.
+        Clamped to [0, 1] relative to a target approach speed.
+        """
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        forward_vel = torso.subtree_linvel[0]
+
+        target_speed = 0.3  # m/s approach speed target
+        vel_reward = jp.clip(forward_vel / target_speed, 0.0, 1.0)
+
+        is_active = (info["trial_phase"] >= PHASE_DECISION).astype(jp.float32)
+        reward_val = weight * vel_reward * is_active
+        metrics["rewards/approach_velocity"] = reward_val
+        return reward_val
+
+    @_registry.reward("landing_bonus")
+    def _landing_bonus_reward(self, data, info, metrics, weight):
+        """Bonus reward for landing that scales with gap distance.
+
+        Harder gaps (larger distance) yield higher reward. This encourages
+        the agent to attempt challenging jumps rather than only easy ones.
+        """
+        gap_dist = info["gap_distance"]
+        max_gap = self._max_gap
+        # Scale: min_gap -> 1.0x, max_gap -> 2.0x
+        difficulty_scale = 1.0 + (gap_dist / max_gap)
+        reward_val = weight * difficulty_scale * info["trial_success"].astype(jp.float32)
+        metrics["rewards/landing_bonus"] = reward_val
+        return reward_val
+
+    @_registry.reward("fall_penalty")
+    def _fall_penalty_reward(self, data, info, metrics, weight):
+        """Penalty when the torso drops below the platform surface.
+
+        Provides negative reward signal when the agent falls into the gap,
+        helping it learn to avoid the gap edge without sufficient momentum.
+        The weight should be negative.
+        """
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        fallen = (torso.xpos[2] < -0.1).astype(jp.float32)
+        reward_val = weight * fallen
+        metrics["rewards/fall_penalty"] = reward_val
         return reward_val
 
     # ------------------------------------------------------------------
