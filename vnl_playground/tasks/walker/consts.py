@@ -50,8 +50,8 @@ N_BEHAVIOR_MODES = len(BEHAVIOR_MODES)
 
 # Target speeds for locomotion modes (m/s)
 WALK_SLOW_SPEED = 0.5
-WALK_FAST_SPEED = 3.0
-RUN_SPEED = 8.0
+WALK_FAST_SPEED = 1
+RUN_SPEED = 3.0
 WALK_BACKWARD_SPEED = -0.5  # Negative = backward
 
 # Hop parameters
