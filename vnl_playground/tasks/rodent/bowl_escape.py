@@ -328,6 +328,32 @@ class BowlEscape(rodent_base.RodentEnv):
         metrics["rewards/escape_x_upright"] = reward
         return reward
 
+    @_named_reward("escape")
+    def _escape_reward(self, data, info, metrics, weight) -> float:
+        """Calculate escape reward based on torso distance from bowl center.
+
+        Unlike escape_x_upright, this does not penalize for non-upright posture.
+
+        Args:
+            data (mjx.Data): The simulation data.
+
+        Returns:
+            float: Escape reward value.
+        """
+        del info
+        terrain_size = float(self._config.bowl_hsize)
+        torso_xpos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
+        escape_reward = reward_fns.tolerance(
+            jp.linalg.norm(torso_xpos),
+            bounds=(terrain_size, float("inf")),
+            margin=terrain_size,
+            value_at_margin=0,
+            sigmoid="linear",
+        )
+        reward = escape_reward * weight
+        metrics["rewards/escape"] = reward
+        return reward
+
     @_named_reward("speed")
     def _speed_reward(self, data, info, metrics, weight) -> float:
         del info
