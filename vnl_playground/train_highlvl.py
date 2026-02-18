@@ -1247,6 +1247,419 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
     return make_policy, params, metrics
 
 
+# ---------------------------------------------------------------------------
+# Recurrent Vision + TaskObs mode: recurrent PPO with shared CNN+GRU
+# ---------------------------------------------------------------------------
+
+
+def _run_eval_rollout_recurrent(
+    jit_reset, jit_step, inference_fn, params,
+    episode_length, rng, init_hidden_fn,
+):
+    """Run eval rollout with hidden state management for recurrent policies.
+
+    Similar to ``_run_eval_rollout`` but maintains the GRU hidden state
+    across timesteps and resets it on episode termination.
+
+    Args:
+        jit_reset: JIT-compiled environment reset function.
+        jit_step: JIT-compiled environment step function.
+        inference_fn: Recurrent policy ``(params, obs, hidden, key) -> (action, extras, new_hidden)``.
+        params: Policy parameters.
+        episode_length: Number of environment steps to run.
+        rng: Random key.
+        init_hidden_fn: Callable ``(batch_size) -> hidden`` for zero-init.
+
+    Returns:
+        rollout: list of states (may span multiple episodes).
+        termination_events: list of ``(frame_index, reason_string)`` tuples.
+    """
+    _, reset_rng, act_rng = jax.random.split(rng, 3)
+    state = jit_reset(reset_rng)
+    # init hidden for batch_size=1, squeeze batch dim
+    hidden = init_hidden_fn(1)
+    hidden = jax.tree.map(lambda x: x[0], hidden)
+    rollout = [state]
+    termination_events = []
+
+    for _ in range(episode_length):
+        _, act_rng = jax.random.split(act_rng)
+        action, _, new_hidden = inference_fn(params, state.obs, hidden, act_rng)
+        hidden = new_hidden
+        state = jit_step(state, action)
+        rollout.append(state)
+
+        if float(state.done) > 0.5:
+            reason = _get_termination_reason(state)
+            termination_events.append((len(rollout) - 1, reason))
+            _, reset_rng = jax.random.split(act_rng)
+            state = jit_reset(reset_rng)
+            rollout.append(state)
+            hidden = jax.tree.map(lambda x: jp.zeros_like(x), hidden)
+
+    return rollout, termination_events
+
+
+def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpoint_path, cfg_dict, progress_fn):
+    """Train high-level vision+task_obs policy with recurrent CNN+GRU backbone.
+
+    Uses a shared ``RecurrentSharedVisionModule`` (CNN encoder + GRU + policy/value
+    heads) trained via the recurrent PPO pipeline.  The CNN and GRU weights are
+    shared between the policy and value heads, providing a strong vision learning
+    signal from both policy gradient and value-function gradients.
+
+    This mirrors ``_train_shared_vision_task_obs_highlvl`` but replaces the
+    feed-forward PPO trainer with the recurrent PPO trainer, enabling temporal
+    memory through GRU hidden states.
+    """
+    from track_mjx.agent.recurrent_ppo.recurrent_vision_networks import (
+        make_recurrent_vision_highlvl_ppo_networks,
+    )
+    from track_mjx.agent.recurrent_ppo.recurrent_vision_losses import (
+        compute_recurrent_shared_vision_ppo_loss,
+    )
+    from track_mjx.agent.recurrent_ppo import ppo as recurrent_ppo_train
+    from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
+
+    latent_size = mimic_cfg.network_config.intention_size
+    highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
+    decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
+
+    env = HighLevelWrapper(
+        env,
+        decoder_policy_fn,
+        latent_size,
+        highlvl_obs_key=highlvl_obs_key,
+        decoder_obs_key=decoder_obs_key,
+        pass_vision=True,
+        pass_task_obs=True,
+    )
+    eval_env = HighLevelWrapper(
+        eval_env,
+        decoder_policy_fn,
+        latent_size,
+        highlvl_obs_key=highlvl_obs_key,
+        decoder_obs_key=decoder_obs_key,
+        pass_vision=True,
+        pass_task_obs=True,
+    )
+
+    logging.info(f"Recurrent Vision+TaskObs HighLevelWrapper: action_size={env.action_size}")
+    _log_memory("after Recurrent Vision+TaskObs HighLevelWrapper")
+
+    # Set Warp's CUDA memory pool release threshold to 512 MB.
+    try:
+        cuda_device = wp.get_device("cuda:0")
+        wp.set_mempool_release_threshold(cuda_device, 512 * 1024 * 1024)
+        logging.info("[MEM] Set Warp mempool release threshold to 512 MB")
+    except Exception as e:
+        logging.warning(f"Could not set Warp mempool release threshold: {e}")
+
+    # Detect vision shape from environment
+    unwrapped = env.env if hasattr(env, "env") else env
+    vision_shape = (
+        unwrapped.vision_shape
+        if hasattr(unwrapped, "vision_shape")
+        else (
+            cfg.env_config.get("vision_height", 32),
+            cfg.env_config.get("vision_width", 32),
+            1 if cfg.env_config.get("grayscale", True) else 3,
+        )
+    )
+    logging.info(f"Vision shape: {vision_shape}")
+
+    # PPO training params
+    ppo_params = dict(
+        OmegaConf.to_container(cfg.train_setup.train_config, resolve=True)
+    )
+
+    # Pop vision_lr_multiplier from ppo_params (passed separately to train)
+    vision_lr_multiplier = ppo_params.pop("vision_lr_multiplier", 1.0)
+
+    # Network creation: shared CNN+GRU vision module
+    recurrent_ppo_network, shared_module = make_recurrent_vision_highlvl_ppo_networks(
+        obs_sizes=env.observation_size,
+        action_size=env.action_size,
+        vision_shape=tuple(vision_shape),
+        cnn_feature_size=cfg.network_config.get("vision_feature_size", 32),
+        cnn_channels=tuple(cfg.network_config.vision_channels),
+        gru_hidden_size=cfg.network_config.get("gru_hidden_size", 256),
+        policy_hidden_sizes=tuple(cfg.network_config.get("policy_head_sizes", [256])),
+        value_hidden_sizes=tuple(cfg.network_config.get("value_head_sizes", [256, 128])),
+    )
+
+    # Custom loss function for the recurrent shared vision network
+    custom_loss_fn = functools.partial(
+        compute_recurrent_shared_vision_ppo_loss,
+        recurrent_ppo_network=recurrent_ppo_network,
+        shared_module=shared_module,
+        entropy_cost=ppo_params.get("entropy_cost", 1e-3),
+        discounting=ppo_params.get("discounting", 0.97),
+        reward_scaling=ppo_params.get("reward_scaling", 1.0),
+        gae_lambda=ppo_params.get("gae_lambda", 0.95),
+        clipping_epsilon=ppo_params.get("clipping_epsilon", 0.2),
+        normalize_advantage=ppo_params.get("normalize_advantage", True),
+        vf_coefficient=ppo_params.get("vf_loss_coefficient", 0.5),
+    )
+
+    # Wrap network_factory to return the pre-built recurrent_ppo_network
+    def network_factory(obs_sizes, action_size):
+        return recurrent_ppo_network
+
+    # Compute num_evals
+    eval_every = cfg.train_setup.get("eval_every", 10_000_000)
+    num_evals = max(1, int(ppo_params["num_timesteps"] / eval_every))
+
+    # Create orbax CheckpointManager
+    ckpt_mgr_options = ocp.CheckpointManagerOptions(
+        save_interval_steps=1,
+        max_to_keep=50,
+        step_prefix="PPONetwork",
+        create=True,
+    )
+    ckpt_mgr = ocp.CheckpointManager(
+        str(checkpoint_path), options=ckpt_mgr_options
+    )
+
+    # Eval rendering setup
+    mj_model = eval_env.mj_model
+    mj_data = mujoco.MjData(mj_model)
+    renderer_obj = mujoco.Renderer(
+        mj_model,
+        height=cfg.render_config.render_height,
+        width=cfg.render_config.render_width,
+    )
+    # Create warp vision renderer (nworld=1) for egocentric overlay
+    _video_vision_renderer = None
+    from vnl_playground.tasks.rodent.vision_jax import (
+        JaxVisionRenderer,
+        VisionRenderWrapper,
+    )
+
+    _unwrapped = env.env if hasattr(env, "env") else env
+    while hasattr(_unwrapped, "env"):
+        _unwrapped = _unwrapped.env
+
+    _video_vision_renderer = JaxVisionRenderer(
+        mj_model=_unwrapped.mj_model,
+        mjx_model=_unwrapped.mjx_model,
+        nworld=1,
+        width=cfg.env_config.get("vision_width", 32),
+        height=cfg.env_config.get("vision_height", 32),
+        grayscale=cfg.env_config.get("grayscale", True),
+        camera_name=cfg.env_config.get("vision_camera_name", "egocentric-rodent"),
+    )
+    logging.info("Created warp vision renderer (nworld=1) for video overlay")
+
+    # Eval callback closures with vision rendering (uses _video_vision_renderer)
+    _eval_base_reset = eval_env.reset
+    _eval_base_step = eval_env.step
+
+    def _eval_reset_with_vision(rng):
+        state = _eval_base_reset(rng)
+        data_b = _add_batch_dim_for_warp(state.data)
+        vision = _video_vision_renderer.render(data_b)[0]
+        return state.replace(
+            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
+        )
+
+    def _eval_step_with_vision(state, action):
+        state = _eval_base_step(state, action)
+        data_b = _add_batch_dim_for_warp(state.data)
+        vision = _video_vision_renderer.render(data_b)[0]
+        return state.replace(
+            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
+        )
+
+    jit_reset = jax.jit(_eval_reset_with_vision)
+    jit_step = jax.jit(_eval_step_with_vision)
+
+    # Ensure render_config has render_interval
+    if "render_interval" not in cfg_dict.get("render_config", {}):
+        cfg_dict.setdefault("render_config", {})["render_interval"] = 1
+
+    # Update config_dict
+    cfg_dict["network_config"].update(
+        {
+            "arch_name": "recurrent_vision_task_obs",
+            "vision_feature_size": cfg.network_config.get("vision_feature_size", 32),
+            "gru_hidden_size": cfg.network_config.get("gru_hidden_size", 256),
+            "policy_head_sizes": list(cfg.network_config.get("policy_head_sizes", [256])),
+            "value_head_sizes": list(cfg.network_config.get("value_head_sizes", [256, 128])),
+        }
+    )
+
+    _render_video_fn = render_video
+
+    episode_length = cfg.train_setup.train_config.episode_length
+
+    # Create jit_logging_inference_fn from the recurrent network
+    make_logging_policy = recurrent_ppo_networks.make_logging_inference_fn(recurrent_ppo_network)
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
+
+    # Hidden state initializer for eval rollouts
+    init_hidden_fn = recurrent_ppo_network.policy_network.init_hidden
+
+    def recurrent_vision_policy_params_fn(
+        current_step,
+        jit_logging_inference_fn,
+        params,
+        policy_params_fn_key,
+        render_video,
+        ppo_network,
+    ):
+        """Callback for recurrent PPO: render video with egocentric overlay."""
+        if not render_video:
+            return
+
+        _log_memory(f"recurrent_vision_policy_params_fn entry step={current_step}")
+
+        # Run a recurrent evaluation rollout
+        rollout, termination_events = _run_eval_rollout_recurrent(
+            jit_reset, jit_step, jit_logging_inference_fn,
+            params, episode_length, policy_params_fn_key,
+            init_hidden_fn,
+        )
+
+        # Vision sensitivity diagnostic
+        mid = len(rollout) // 2
+        obs_with_vision = rollout[mid].obs
+        obs_blank_vision = {
+            k: (jp.zeros_like(v) if k == "vision" else v)
+            for k, v in obs_with_vision.items()
+        }
+        # For recurrent sensitivity check, use zero hidden state
+        hidden_for_check = init_hidden_fn(1)
+        hidden_for_check = jax.tree.map(lambda x: x[0], hidden_for_check)
+        _, sensitivity_rng = jax.random.split(policy_params_fn_key)
+        act_real, _, _ = jit_logging_inference_fn(params, obs_with_vision, hidden_for_check, sensitivity_rng)
+        act_blank, _, _ = jit_logging_inference_fn(params, obs_blank_vision, hidden_for_check, sensitivity_rng)
+        vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
+        wandb.log({"eval/vision_sensitivity": vision_sensitivity}, commit=False)
+
+        # Log per-step reward metrics
+        for metric_name in [
+            k for k in rollout[0].metrics.keys() if k.startswith("rewards/")
+        ]:
+            values = [float(s.metrics[metric_name]) for s in rollout]
+            table = wandb.Table(
+                data=[[i, v] for i, v in enumerate(values)],
+                columns=["frame", metric_name],
+            )
+            wandb.log(
+                {
+                    f"eval/rollout_{metric_name}": wandb.plot.line(
+                        table, "frame", metric_name, title=metric_name
+                    )
+                },
+                commit=False,
+            )
+
+        # Render video
+        video_path = str(checkpoint_path / f"{current_step}.mp4")
+        try:
+            _render_video_fn(
+                rollout,
+                mj_model,
+                mj_data,
+                renderer_obj,
+                video_path,
+                fps=cfg.render_config.render_fps,
+                vision_renderer=_video_vision_renderer,
+                termination_events=termination_events,
+            )
+            wandb.log(
+                {"videos/rollout": wandb.Video(video_path, format="mp4")},
+                commit=False,
+            )
+        except mujoco.FatalError as e:
+            logging.warning(f"Video rendering failed: {e}")
+
+        _log_memory(f"recurrent_vision_policy_params_fn before cleanup step={current_step}")
+        _log_gpu_memory(f"before cleanup step={current_step}")
+
+        del rollout
+        del obs_with_vision, obs_blank_vision
+        del act_real, act_blank
+        gc.collect()
+        jax.clear_caches()
+
+        # Force Warp's CUDA memory pool to release deferred-free allocations.
+        wp.synchronize()
+
+        _log_memory(f"recurrent_vision_policy_params_fn after cleanup step={current_step}")
+        _log_gpu_memory(f"after cleanup step={current_step}")
+
+    # Checkpoint to restore (if any)
+    checkpoint_to_restore = cfg.train_setup.get("checkpoint_to_restore", None)
+    if checkpoint_to_restore is None and cfg.train_setup.get("resume_run_id", None):
+        checkpoint_to_restore = str(checkpoint_path)
+        logging.info(f"Auto-setting checkpoint_to_restore={checkpoint_to_restore}")
+
+    # Vision rendering wrapper for training environments
+    unwrapped_env = env.env if hasattr(env, "env") else env
+    _raw_env = unwrapped_env
+    while hasattr(_raw_env, "env"):
+        _raw_env = _raw_env.env
+
+    vision_width = cfg.env_config.get("vision_width", 32)
+    vision_height = cfg.env_config.get("vision_height", 32)
+    grayscale = cfg.env_config.get("grayscale", True)
+    camera_name = cfg.env_config.get("vision_camera_name", "egocentric-rodent")
+
+    def wrap_with_vision(
+        environment,
+        episode_length: int = 1000,
+        action_repeat: int = 1,
+        randomization_fn=None,
+    ):
+        """Wrap env for brax training, then add vision rendering."""
+        brax_env = mp_wrapper.wrap_for_brax_training(
+            environment,
+            episode_length=episode_length,
+            action_repeat=action_repeat,
+            randomization_fn=randomization_fn,
+            full_reset=False,
+        )
+        return VisionRenderWrapper(
+            brax_env,
+            mj_model=_raw_env.mj_model,
+            mjx_model=_raw_env.mjx_model,
+            width=vision_width,
+            height=vision_height,
+            grayscale=grayscale,
+            camera_name=camera_name,
+        )
+
+    logging.info(
+        f"Recurrent Vision+TaskObs rendering: {vision_width}x{vision_height}, "
+        f"grayscale={grayscale}, camera={camera_name}"
+    )
+
+    # Build and run recurrent PPO train with custom shared loss
+    train_fn = functools.partial(
+        recurrent_ppo_train.train,
+        **ppo_params,
+        num_evals=num_evals,
+        ckpt_mgr=ckpt_mgr,
+        config_dict=cfg_dict,
+        checkpoint_to_restore=checkpoint_to_restore,
+        network_factory=network_factory,
+        progress_fn=progress_fn,
+        policy_params_fn=recurrent_vision_policy_params_fn,
+        wrap_for_training=wrap_with_vision,
+        custom_loss_fn=custom_loss_fn,
+        vision_lr_multiplier=vision_lr_multiplier,
+    )
+
+    logging.info("Starting recurrent vision+task_obs high-level PPO training...")
+    make_policy, params, metrics = train_fn(
+        environment=env,
+        eval_env=eval_env,
+    )
+    return make_policy, params, metrics
+
+
 @hydra.main(
     version_base=None,
     config_path="config",
@@ -1324,6 +1737,12 @@ def main(cfg: DictConfig):
         env_args["ctrl_dt"] = mimic_ctrl_dt
         logging.info(f"Enforcing ctrl_dt={mimic_ctrl_dt} from mimic config")
 
+    # Pass vision config to env so its reported vision_shape matches the
+    # VisionRenderWrapper dimensions used for actual rendering.
+    for vision_key in ("vision_width", "vision_height", "grayscale"):
+        if vision_key in cfg.env_config:
+            env_args[vision_key] = cfg.env_config[vision_key]
+
     env = tasks.load(
         env_name, flatten_obs=False, config_overrides=env_args if env_args else None
     )
@@ -1380,10 +1799,17 @@ def main(cfg: DictConfig):
             cfg, env, eval_env, decoder_policy_fn, mimic_cfg,
             checkpoint_path, cfg_dict, progress_fn=wandb_progress,
         )
+    elif arch_name == "recurrent_vision_task_obs":
+        logging.info("Architecture: Recurrent CNN+GRU Vision + TaskObs (recurrent PPO)")
+        _train_recurrent_vision_task_obs_highlvl(
+            cfg, env, eval_env, decoder_policy_fn, mimic_cfg,
+            checkpoint_path, cfg_dict, progress_fn=wandb_progress,
+        )
     else:
         raise ValueError(
             f"Unknown arch_name: {arch_name}. "
-            "Must be 'mlp', 'vision_task_obs', or 'shared_vision_task_obs'."
+            "Must be 'mlp', 'vision_task_obs', 'shared_vision_task_obs', "
+            "or 'recurrent_vision_task_obs'."
         )
 
     logging.info("Training complete.")
