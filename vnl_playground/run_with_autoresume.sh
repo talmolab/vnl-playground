@@ -91,6 +91,11 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
     echo "Running: ${CMD[*]}"
     echo ""
 
+    # Snapshot existing checkpoint dirs BEFORE training starts.
+    # Used to identify which new directory this job created (avoids
+    # picking up another GPU's directory via ls -td).
+    DIRS_BEFORE=$(ls -d "${MODEL_PATH}"/*/ 2>/dev/null | sort)
+
     # Run training, capture exit code
     set +e
     "${CMD[@]}" 2>&1 | tee "training_attempt_${attempt}_${_TAG}.log"
@@ -107,16 +112,18 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
     echo ""
     echo "=== Training exited with code ${EXIT_CODE} ==="
 
-    # If this was the first run, detect the run_id from the checkpoint directory
+    # If this was the first run, detect the run_id from the checkpoint directory.
+    # Compare current dirs against the pre-training snapshot to find exactly the
+    # directory this job created (immune to modification-time races with other GPUs).
     if [[ -z "$RESUME_RUN_ID" ]]; then
-        # Find the most recently created directory in MODEL_PATH
-        LATEST_DIR=$(ls -td "${MODEL_PATH}"/*/ 2>/dev/null | head -1)
-        if [[ -n "$LATEST_DIR" ]]; then
-            RESUME_RUN_ID=$(basename "$LATEST_DIR")
+        DIRS_AFTER=$(ls -d "${MODEL_PATH}"/*/ 2>/dev/null | sort)
+        NEW_DIR=$(comm -13 <(echo "$DIRS_BEFORE") <(echo "$DIRS_AFTER") | head -1)
+        if [[ -n "$NEW_DIR" ]]; then
+            RESUME_RUN_ID=$(basename "$NEW_DIR")
             echo "$RESUME_RUN_ID" > "$STATE_FILE"
             echo "Captured run_id=${RESUME_RUN_ID} for resume"
         else
-            echo "ERROR: Could not find checkpoint directory in ${MODEL_PATH}"
+            echo "ERROR: Could not find new checkpoint directory in ${MODEL_PATH}"
             echo "Cannot resume. Exiting."
             exit 1
         fi
