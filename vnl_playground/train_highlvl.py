@@ -227,6 +227,7 @@ def render_video(
     video_path,
     fps=50,
     vision_renderer=None,
+    right_vision_renderer=None,
     termination_events=None,
     termination_fade_seconds=1.0,
 ):
@@ -235,6 +236,10 @@ def render_video(
     If ``vision_renderer`` (a ``JaxVisionRenderer`` with nworld=1) is
     provided, the agent's egocentric view rendered by the warp GPU
     ray-tracer is overlaid in the upper-left corner of each frame.
+
+    If ``right_vision_renderer`` is also provided, both left and right
+    eye views are rendered and displayed side-by-side in the overlay
+    (binocular stereo visualization).
 
     Egocentric renders are batched into a single JAX call via
     ``jax.lax.scan`` to avoid per-call host-memory leaks from the
@@ -296,7 +301,29 @@ def render_video(
 
         ego_imgs_jax = _render_all_ego(all_data)
         ego_frames_np = np.array(ego_imgs_jax)  # single transfer to host
-        del ego_imgs_jax, all_data
+        del ego_imgs_jax
+
+        # Binocular: render right eye and place side-by-side with left
+        if right_vision_renderer is not None:
+            @jax.jit
+            def _render_all_right(stacked_data):
+                def body(carry, data_slice):
+                    batched = _add_batch_dim_for_warp(data_slice)
+                    img = right_vision_renderer.render(batched)
+                    return carry, img[0]
+                _, all_imgs = jax.lax.scan(body, None, stacked_data)
+                return all_imgs
+
+            right_imgs_jax = _render_all_right(all_data)
+            right_frames_np = np.array(right_imgs_jax)
+            del right_imgs_jax
+            # Side-by-side: concatenate left and right along width (axis=2)
+            # Add 2px gap between eyes
+            gap = np.ones_like(ego_frames_np[:, :, :2, :])  # (T, H, 2, C) white gap
+            ego_frames_np = np.concatenate([ego_frames_np, gap, right_frames_np], axis=2)
+            del right_frames_np, gap
+
+        del all_data
         gc.collect()
 
         # Vectorized ego overlay preparation (grayscale→RGB, uint8, 2x scale)
@@ -1536,7 +1563,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
                 commit=False,
             )
 
-        # Render video (use left eye renderer for egocentric overlay)
+        # Render video with binocular (side-by-side left+right) ego overlay
         video_path = str(checkpoint_path / f"{current_step}.mp4")
         try:
             _render_video_fn(
@@ -1547,6 +1574,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
                 video_path,
                 fps=cfg.render_config.render_fps,
                 vision_renderer=_video_left_renderer,
+                right_vision_renderer=_video_right_renderer,
                 termination_events=termination_events,
             )
             wandb.log(
