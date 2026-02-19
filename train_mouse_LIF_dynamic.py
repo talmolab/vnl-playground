@@ -1,8 +1,14 @@
 """
-Training script for mouse arm imitation with biologically plausible LIF policy.
+Training script for mouse arm imitation with spike-propagating LIF policy.
+
+Unlike the rate-based model (train_mouse_LIF.py) where each layer independently
+runs micro-steps and passes mean spike rates to the next layer, this script uses
+a single outer scan: at each micro-step, actual binary spikes propagate from
+layer to layer. Surrogate gradients enable backpropagation through the spikes.
 
 Features:
 - E/I populations (Dale's law, 80/20 split) with lateral connections
+- Spike propagation between layers (not rate-coded)
 - Refractory period (configurable micro-steps)
 - Heterogeneous membrane time constants (log-uniform, fixed)
 - Persistent membrane + refractory state across environment steps
@@ -59,98 +65,16 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 
 # =============================================================================
-# Biological LIF Network with E/I Populations
+# Spike-Propagating LIF Network with E/I Populations
 # =============================================================================
 
 
-class BiologicalLIFLayer(linen.Module):
-    """LIF layer with E/I populations, refractory period, heterogeneous tau.
+class SpikePropagatingPolicy(linen.Module):
+    """Spike-propagating LIF policy with E/I populations.
 
-    Dale's law: abs() on lateral weights enforces sign constraints.
-    Only excitatory spike rates are passed to the next layer.
-    """
-
-    n_exc: int
-    n_inh: int
-    n_micro_steps: int = 8
-    tau_min: float = 1.0
-    tau_max: float = 5.0
-    v_th: float = 0.3
-    v_reset: float = 0.0
-    beta_surrogate: float = 5.0
-    n_refractory: float = 2.0
-    dt: float = 1.0
-
-    @linen.compact
-    def __call__(self, x, v_carry, refrac_carry):
-        n_exc, n_inh = self.n_exc, self.n_inh
-        n_total = n_exc + n_inh
-        v_th = self.v_th
-        v_reset = self.v_reset
-        beta = self.beta_surrogate
-        n_refrac = self.n_refractory
-
-        I_input = linen.Dense(
-            n_total,
-            kernel_init=jax.nn.initializers.lecun_uniform(),
-            name="input_proj",
-        )(x)
-
-        # Heterogeneous time constants (fixed via stop_gradient)
-        tau_m = self.param(
-            'tau_m',
-            lambda key, shape: jp.exp(jax.random.uniform(
-                key, shape,
-                minval=jp.log(self.tau_min), maxval=jp.log(self.tau_max),
-            )),
-            (n_total,),
-        )
-        tau_m = jax.lax.stop_gradient(tau_m)
-        alpha = jp.exp(-self.dt / tau_m)
-
-        # Lateral weights (Dale's law via abs)
-        W_ie = self.param('W_ie', jax.nn.initializers.lecun_uniform(),
-                          (n_inh, n_exc))
-        W_ei = self.param('W_ei', jax.nn.initializers.lecun_uniform(),
-                          (n_exc, n_inh))
-
-        prev_spike = jp.zeros_like(v_carry)
-
-        def lif_step(carry, _):
-            v, refrac, prev_sp = carry
-            sp_e = prev_sp[:, :n_exc]
-            sp_i = prev_sp[:, n_exc:]
-            I_lat_e = -sp_i @ jp.abs(W_ie)
-            I_lat_i = sp_e @ jp.abs(W_ei)
-            I_lateral = jp.concatenate([I_lat_e, I_lat_i], axis=-1)
-            I_total = I_input + I_lateral
-
-            is_refractory = (refrac > 0.0).astype(v.dtype)
-            v = alpha * v + (1.0 - alpha) * I_total
-            v = v * (1.0 - is_refractory)
-
-            spike_hard = (v >= v_th).astype(v.dtype)
-            spike_soft = jax.nn.sigmoid(beta * (v - v_th))
-            spike = jax.lax.stop_gradient(spike_hard - spike_soft) + spike_soft
-            spike = spike * (1.0 - is_refractory)
-
-            v_new = v * (1.0 - spike) + v_reset * spike
-            new_refrac = jp.where(
-                spike > 0.5, n_refrac, jp.maximum(refrac - 1.0, 0.0)
-            )
-            return (v_new, new_refrac, spike), spike
-
-        (v_final, refrac_final, _), all_spikes = jax.lax.scan(
-            lif_step, (v_carry, refrac_carry, prev_spike),
-            None, length=self.n_micro_steps,
-        )
-        spike_rate = jp.mean(all_spikes, axis=0)
-        spike_rate_exc = spike_rate[:, :n_exc]
-        return spike_rate_exc, v_final, refrac_final
-
-
-class BiologicalSpikingPolicy(linen.Module):
-    """Spiking policy with E/I populations and persistent membrane state.
+    Unlike the rate model, all layers run in lockstep within a single scan.
+    At each micro-step, binary spikes (with surrogate gradients) propagate
+    from layer i excitatory population to layer i+1.
 
     carry_flat = concat([v_all_layers, refrac_all_layers]).
     Total dim = 2 * sum(layer_sizes).
@@ -159,9 +83,9 @@ class BiologicalSpikingPolicy(linen.Module):
     layer_sizes: Sequence[int]
     output_size: int
     exc_ratio: float = 0.8
-    n_micro_steps: int = 8
-    tau_min: float = 1.0
-    tau_max: float = 5.0
+    n_micro_steps: int = 16
+    tau_min: float = 3.0
+    tau_max: float = 15.0
     v_th: float = 0.3
     v_reset: float = 0.0
     beta_surrogate: float = 5.0
@@ -169,134 +93,169 @@ class BiologicalSpikingPolicy(linen.Module):
 
     @linen.compact
     def __call__(self, obs, carry_flat):
+        n_layers = len(self.layer_sizes)
         total_neurons = sum(self.layer_sizes)
+        v_th = self.v_th
+        v_reset = self.v_reset
+        beta = self.beta_surrogate
+        n_refrac = self.n_refractory
+
+        # Parse external carry
         v_flat = carry_flat[:, :total_neurons]
         refrac_flat = carry_flat[:, total_neurons:]
-
         splits = list(np.cumsum(self.layer_sizes[:-1]))
-        v_carries = jp.split(v_flat, splits, axis=-1)
-        refrac_carries = jp.split(refrac_flat, splits, axis=-1)
 
-        x = obs
-        new_v, new_r = [], []
-        for i, (n_total, v_c, r_c) in enumerate(
-            zip(self.layer_sizes, v_carries, refrac_carries)
-        ):
+        # Pre-compute per-layer info
+        layer_info = []  # (n_exc, n_inh, n_total, input_dim)
+        for i, n_total in enumerate(self.layer_sizes):
             n_exc = round(n_total * self.exc_ratio)
             n_inh = n_total - n_exc
-            x, v_new, r_new = BiologicalLIFLayer(
-                n_exc=n_exc, n_inh=n_inh,
-                n_micro_steps=self.n_micro_steps,
-                tau_min=self.tau_min, tau_max=self.tau_max,
-                v_th=self.v_th, v_reset=self.v_reset,
-                beta_surrogate=self.beta_surrogate,
-                n_refractory=self.n_refractory,
-                name=f"lif_{i}",
-            )(x, v_c, r_c)
-            new_v.append(v_new)
-            new_r.append(r_new)
+            if i == 0:
+                in_dim = obs.shape[-1]
+            else:
+                in_dim = round(self.layer_sizes[i - 1] * self.exc_ratio)
+            layer_info.append((n_exc, n_inh, n_total, in_dim))
 
-        logits = linen.Dense(
-            self.output_size,
-            kernel_init=jax.nn.initializers.lecun_uniform(),
-            name="readout",
-        )(x)
-        new_carry_flat = jp.concatenate(new_v + new_r, axis=-1)
+        # Create ALL parameters before the scan
+        W_ins, b_ins = [], []
+        W_ies, W_eis = [], []
+        alphas = []
+        for i, (n_exc, n_inh, n_total, in_dim) in enumerate(layer_info):
+            W_ins.append(self.param(
+                f'lif_{i}_W_in',
+                jax.nn.initializers.lecun_uniform(),
+                (in_dim, n_total),
+            ))
+            b_ins.append(self.param(
+                f'lif_{i}_b_in',
+                jax.nn.initializers.zeros,
+                (n_total,),
+            ))
+            tau_m = self.param(
+                f'lif_{i}_tau_m',
+                lambda key, shape: jp.exp(jax.random.uniform(
+                    key, shape,
+                    minval=jp.log(self.tau_min), maxval=jp.log(self.tau_max),
+                )),
+                (n_total,),
+            )
+            tau_m = jax.lax.stop_gradient(tau_m)
+            alphas.append(jp.exp(-1.0 / tau_m))
+            W_ies.append(self.param(
+                f'lif_{i}_W_ie',
+                jax.nn.initializers.lecun_uniform(),
+                (n_inh, n_exc),
+            ))
+            W_eis.append(self.param(
+                f'lif_{i}_W_ei',
+                jax.nn.initializers.lecun_uniform(),
+                (n_exc, n_inh),
+            ))
+
+        n_exc_last = layer_info[-1][0]
+        W_readout = self.param(
+            'readout_kernel',
+            jax.nn.initializers.lecun_uniform(),
+            (n_exc_last, self.output_size),
+        )
+        b_readout = self.param(
+            'readout_bias',
+            jax.nn.initializers.zeros,
+            (self.output_size,),
+        )
+
+        # Layer 0 input current is constant across micro-steps
+        I_input_0 = obs @ W_ins[0] + b_ins[0]
+
+        # Internal scan carry: v, refrac, prev_spikes
+        init_prev_spike = jp.zeros_like(v_flat)
+
+        def micro_step(carry, _):
+            v_f, refrac_f, prev_spike_f = carry
+
+            v_layers = jp.split(v_f, splits, axis=-1) if splits else [v_f]
+            refrac_layers = jp.split(refrac_f, splits, axis=-1) if splits else [refrac_f]
+            prev_spike_layers = jp.split(prev_spike_f, splits, axis=-1) if splits else [prev_spike_f]
+
+            new_v_parts = []
+            new_refrac_parts = []
+            new_spike_parts = []
+
+            for i in range(n_layers):
+                n_exc, n_inh, n_total, _ = layer_info[i]
+                v_i = v_layers[i]
+                refrac_i = refrac_layers[i]
+                prev_sp_i = prev_spike_layers[i]
+
+                # Feed-forward input
+                if i == 0:
+                    I_ff = I_input_0
+                else:
+                    # Excitatory spikes from previous layer
+                    prev_exc_spikes = new_spike_parts[i - 1][:, :layer_info[i - 1][0]]
+                    I_ff = prev_exc_spikes @ W_ins[i] + b_ins[i]
+
+                # Lateral E/I currents
+                sp_e = prev_sp_i[:, :n_exc]
+                sp_i = prev_sp_i[:, n_exc:]
+                I_lat_e = -sp_i @ jp.abs(W_ies[i])
+                I_lat_i = sp_e @ jp.abs(W_eis[i])
+                I_lateral = jp.concatenate([I_lat_e, I_lat_i], axis=-1)
+                I_total = I_ff + I_lateral
+
+                # LIF membrane dynamics
+                is_refractory = (refrac_i > 0.0).astype(v_i.dtype)
+                v_new = alphas[i] * v_i + (1.0 - alphas[i]) * I_total
+                v_new = v_new * (1.0 - is_refractory)
+
+                # Surrogate gradient spike
+                spike_hard = (v_new >= v_th).astype(v_new.dtype)
+                spike_soft = jax.nn.sigmoid(beta * (v_new - v_th))
+                spike = jax.lax.stop_gradient(spike_hard - spike_soft) + spike_soft
+                spike = spike * (1.0 - is_refractory)
+
+                # Reset and refractory
+                v_after = v_new * (1.0 - spike) + v_reset * spike
+                refrac_new = jp.where(
+                    spike > 0.5, n_refrac, jp.maximum(refrac_i - 1.0, 0.0)
+                )
+
+                new_v_parts.append(v_after)
+                new_refrac_parts.append(refrac_new)
+                new_spike_parts.append(spike)
+
+            # Emit final layer excitatory spikes
+            final_exc_spikes = new_spike_parts[-1][:, :n_exc_last]
+
+            new_v_f = jp.concatenate(new_v_parts, axis=-1)
+            new_refrac_f = jp.concatenate(new_refrac_parts, axis=-1)
+            new_spike_f = jp.concatenate(new_spike_parts, axis=-1)
+            return (new_v_f, new_refrac_f, new_spike_f), final_exc_spikes
+
+        (v_final, refrac_final, _), all_final_spikes = jax.lax.scan(
+            micro_step,
+            (v_flat, refrac_flat, init_prev_spike),
+            None,
+            length=self.n_micro_steps,
+        )
+
+        # Last micro-step's spikes -> readout (no averaging)
+        last_spikes = all_final_spikes[-1]  # (B, n_exc_last)
+        logits = last_spikes @ W_readout + b_readout
+
+        new_carry_flat = jp.concatenate([v_final, refrac_final], axis=-1)
         return logits, new_carry_flat
 
 
-# Diagnostic variants: same dynamics, also return E/I spike trains & voltages.
-
-class DiagnosticBiologicalLIFLayer(linen.Module):
-    """Same dynamics as BiologicalLIFLayer but returns full E/I traces."""
-
-    n_exc: int
-    n_inh: int
-    n_micro_steps: int = 8
-    tau_min: float = 1.0
-    tau_max: float = 5.0
-    v_th: float = 0.3
-    v_reset: float = 0.0
-    beta_surrogate: float = 5.0
-    n_refractory: float = 2.0
-    dt: float = 1.0
-
-    @linen.compact
-    def __call__(self, x, v_carry, refrac_carry):
-        n_exc, n_inh = self.n_exc, self.n_inh
-        n_total = n_exc + n_inh
-        v_th, v_reset = self.v_th, self.v_reset
-        n_refrac = self.n_refractory
-
-        I_input = linen.Dense(
-            n_total,
-            kernel_init=jax.nn.initializers.lecun_uniform(),
-            name="input_proj",
-        )(x)
-
-        tau_m = self.param(
-            'tau_m',
-            lambda key, shape: jp.exp(jax.random.uniform(
-                key, shape,
-                minval=jp.log(self.tau_min), maxval=jp.log(self.tau_max),
-            )),
-            (n_total,),
-        )
-        tau_m = jax.lax.stop_gradient(tau_m)
-        alpha = jp.exp(-self.dt / tau_m)
-
-        W_ie = self.param('W_ie', jax.nn.initializers.lecun_uniform(),
-                          (n_inh, n_exc))
-        W_ei = self.param('W_ei', jax.nn.initializers.lecun_uniform(),
-                          (n_exc, n_inh))
-
-        prev_spike = jp.zeros_like(v_carry)
-
-        def lif_step(carry, _):
-            v, refrac, prev_sp = carry
-            sp_e = prev_sp[:, :n_exc]
-            sp_i = prev_sp[:, n_exc:]
-            I_lat_e = -sp_i @ jp.abs(W_ie)
-            I_lat_i = sp_e @ jp.abs(W_ei)
-            I_lateral = jp.concatenate([I_lat_e, I_lat_i], axis=-1)
-            I_total = I_input + I_lateral
-
-            is_refractory = (refrac > 0.0).astype(v.dtype)
-            v_pre = alpha * v + (1.0 - alpha) * I_total
-            v_pre = v_pre * (1.0 - is_refractory)
-
-            spike = (v_pre >= v_th).astype(v_pre.dtype)
-            spike = spike * (1.0 - is_refractory)
-
-            v_new = v_pre * (1.0 - spike) + v_reset * spike
-            new_refrac = jp.where(
-                spike > 0.5, n_refrac, jp.maximum(refrac - 1.0, 0.0)
-            )
-            return (v_new, new_refrac, spike), (spike, v_pre)
-
-        (v_final, refrac_final, _), (all_spikes, all_voltages) = jax.lax.scan(
-            lif_step, (v_carry, refrac_carry, prev_spike),
-            None, length=self.n_micro_steps,
-        )
-        spike_rate = jp.mean(all_spikes, axis=0)
-        spike_rate_exc = spike_rate[:, :n_exc]
-        return spike_rate_exc, v_final, refrac_final, {
-            "spikes_exc": all_spikes[:, :, :n_exc],
-            "spikes_inh": all_spikes[:, :, n_exc:],
-            "voltages_exc": all_voltages[:, :, :n_exc],
-            "voltages_inh": all_voltages[:, :, n_exc:],
-        }
-
-
-class DiagnosticBiologicalPolicy(linen.Module):
-    """Same as BiologicalSpikingPolicy but returns per-layer E/I diagnostics."""
+class SpikePropDiagnosticPolicy(linen.Module):
+    """Same as SpikePropagatingPolicy but returns per-layer E/I traces."""
 
     layer_sizes: Sequence[int]
     output_size: int
     exc_ratio: float = 0.8
-    n_micro_steps: int = 8
-    tau_min: float = 1.0
-    tau_max: float = 5.0
+    n_micro_steps: int = 16
+    tau_min: float = 3.0
+    tau_max: float = 15.0
     v_th: float = 0.3
     v_reset: float = 0.0
     beta_surrogate: float = 5.0
@@ -304,41 +263,164 @@ class DiagnosticBiologicalPolicy(linen.Module):
 
     @linen.compact
     def __call__(self, obs, carry_flat):
+        n_layers = len(self.layer_sizes)
         total_neurons = sum(self.layer_sizes)
+        v_th = self.v_th
+        v_reset = self.v_reset
+        n_refrac = self.n_refractory
+
         v_flat = carry_flat[:, :total_neurons]
         refrac_flat = carry_flat[:, total_neurons:]
-
         splits = list(np.cumsum(self.layer_sizes[:-1]))
-        v_carries = jp.split(v_flat, splits, axis=-1)
-        refrac_carries = jp.split(refrac_flat, splits, axis=-1)
 
-        x = obs
-        new_v, new_r = [], []
-        layer_diag = {}
-        for i, (n_total, v_c, r_c) in enumerate(
-            zip(self.layer_sizes, v_carries, refrac_carries)
-        ):
+        layer_info = []
+        for i, n_total in enumerate(self.layer_sizes):
             n_exc = round(n_total * self.exc_ratio)
             n_inh = n_total - n_exc
-            x, v_new, r_new, diag = DiagnosticBiologicalLIFLayer(
-                n_exc=n_exc, n_inh=n_inh,
-                n_micro_steps=self.n_micro_steps,
-                tau_min=self.tau_min, tau_max=self.tau_max,
-                v_th=self.v_th, v_reset=self.v_reset,
-                beta_surrogate=self.beta_surrogate,
-                n_refractory=self.n_refractory,
-                name=f"lif_{i}",
-            )(x, v_c, r_c)
-            new_v.append(v_new)
-            new_r.append(r_new)
-            layer_diag[f"lif_{i}"] = diag
+            if i == 0:
+                in_dim = obs.shape[-1]
+            else:
+                in_dim = round(self.layer_sizes[i - 1] * self.exc_ratio)
+            layer_info.append((n_exc, n_inh, n_total, in_dim))
 
-        logits = linen.Dense(
-            self.output_size,
-            kernel_init=jax.nn.initializers.lecun_uniform(),
-            name="readout",
-        )(x)
-        new_carry_flat = jp.concatenate(new_v + new_r, axis=-1)
+        W_ins, b_ins = [], []
+        W_ies, W_eis = [], []
+        alphas = []
+        for i, (n_exc, n_inh, n_total, in_dim) in enumerate(layer_info):
+            W_ins.append(self.param(
+                f'lif_{i}_W_in',
+                jax.nn.initializers.lecun_uniform(),
+                (in_dim, n_total),
+            ))
+            b_ins.append(self.param(
+                f'lif_{i}_b_in',
+                jax.nn.initializers.zeros,
+                (n_total,),
+            ))
+            tau_m = self.param(
+                f'lif_{i}_tau_m',
+                lambda key, shape: jp.exp(jax.random.uniform(
+                    key, shape,
+                    minval=jp.log(self.tau_min), maxval=jp.log(self.tau_max),
+                )),
+                (n_total,),
+            )
+            tau_m = jax.lax.stop_gradient(tau_m)
+            alphas.append(jp.exp(-1.0 / tau_m))
+            W_ies.append(self.param(
+                f'lif_{i}_W_ie',
+                jax.nn.initializers.lecun_uniform(),
+                (n_inh, n_exc),
+            ))
+            W_eis.append(self.param(
+                f'lif_{i}_W_ei',
+                jax.nn.initializers.lecun_uniform(),
+                (n_exc, n_inh),
+            ))
+
+        n_exc_last = layer_info[-1][0]
+        W_readout = self.param(
+            'readout_kernel',
+            jax.nn.initializers.lecun_uniform(),
+            (n_exc_last, self.output_size),
+        )
+        b_readout = self.param(
+            'readout_bias',
+            jax.nn.initializers.zeros,
+            (self.output_size,),
+        )
+
+        I_input_0 = obs @ W_ins[0] + b_ins[0]
+
+        init_prev_spike = jp.zeros_like(v_flat)
+
+        def micro_step(carry, _):
+            v_f, refrac_f, prev_spike_f = carry
+
+            v_layers = jp.split(v_f, splits, axis=-1) if splits else [v_f]
+            refrac_layers = jp.split(refrac_f, splits, axis=-1) if splits else [refrac_f]
+            prev_spike_layers = jp.split(prev_spike_f, splits, axis=-1) if splits else [prev_spike_f]
+
+            new_v_parts = []
+            new_refrac_parts = []
+            new_spike_parts = []
+
+            for i in range(n_layers):
+                n_exc, n_inh, n_total, _ = layer_info[i]
+                v_i = v_layers[i]
+                refrac_i = refrac_layers[i]
+                prev_sp_i = prev_spike_layers[i]
+
+                if i == 0:
+                    I_ff = I_input_0
+                else:
+                    prev_exc_spikes = new_spike_parts[i - 1][:, :layer_info[i - 1][0]]
+                    I_ff = prev_exc_spikes @ W_ins[i] + b_ins[i]
+
+                sp_e = prev_sp_i[:, :n_exc]
+                sp_i = prev_sp_i[:, n_exc:]
+                I_lat_e = -sp_i @ jp.abs(W_ies[i])
+                I_lat_i = sp_e @ jp.abs(W_eis[i])
+                I_lateral = jp.concatenate([I_lat_e, I_lat_i], axis=-1)
+                I_total = I_ff + I_lateral
+
+                is_refractory = (refrac_i > 0.0).astype(v_i.dtype)
+                v_new = alphas[i] * v_i + (1.0 - alphas[i]) * I_total
+                v_new = v_new * (1.0 - is_refractory)
+
+                # Diagnostic: no surrogate, just hard spikes
+                spike = (v_new >= v_th).astype(v_new.dtype)
+                spike = spike * (1.0 - is_refractory)
+
+                v_after = v_new * (1.0 - spike) + v_reset * spike
+                refrac_new = jp.where(
+                    spike > 0.5, n_refrac, jp.maximum(refrac_i - 1.0, 0.0)
+                )
+
+                new_v_parts.append(v_after)
+                new_refrac_parts.append(refrac_new)
+                new_spike_parts.append(spike)
+
+            final_exc_spikes = new_spike_parts[-1][:, :n_exc_last]
+
+            new_v_f = jp.concatenate(new_v_parts, axis=-1)
+            new_refrac_f = jp.concatenate(new_refrac_parts, axis=-1)
+            new_spike_f = jp.concatenate(new_spike_parts, axis=-1)
+
+            # Emit per-step diagnostics
+            all_spikes_flat = jp.concatenate(new_spike_parts, axis=-1)
+            all_voltages_flat = jp.concatenate(new_v_parts, axis=-1)
+            return (new_v_f, new_refrac_f, new_spike_f), (all_spikes_flat, all_voltages_flat, final_exc_spikes)
+
+        (v_final, refrac_final, _), (all_spikes, all_voltages, all_final_spikes) = jax.lax.scan(
+            micro_step,
+            (v_flat, refrac_flat, init_prev_spike),
+            None,
+            length=self.n_micro_steps,
+        )
+
+        # Last micro-step's spikes -> readout (no averaging)
+        last_spikes = all_final_spikes[-1]  # (B, n_exc_last)
+        logits = last_spikes @ W_readout + b_readout
+        new_carry_flat = jp.concatenate([v_final, refrac_final], axis=-1)
+
+        # Split diagnostics per layer into E/I
+        # all_spikes: (n_micro_steps, B, total_neurons)
+        layer_ranges = []
+        offset = 0
+        for n_exc, n_inh, n_total, _ in layer_info:
+            layer_ranges.append((offset, offset + n_total, n_exc))
+            offset += n_total
+
+        layer_diag = {}
+        for i, (start, end, n_exc) in enumerate(layer_ranges):
+            layer_diag[f"lif_{i}"] = {
+                "spikes_exc": all_spikes[:, :, start:start + n_exc],
+                "spikes_inh": all_spikes[:, :, start + n_exc:end],
+                "voltages_exc": all_voltages[:, :, start:start + n_exc],
+                "voltages_inh": all_voltages[:, :, start + n_exc:end],
+            }
+
         return logits, new_carry_flat, layer_diag
 
 
@@ -476,12 +558,12 @@ ppo_params = config_dict.create(
     clip_eps=0.3,
     vf_coef=0.5,
     network_factory=config_dict.create(
-        policy_hidden_layer_sizes=(512, 512, 512),
+        policy_hidden_layer_sizes=(512, 512),
         value_hidden_layer_sizes=(512, 512, 512),
         exc_ratio=0.8,
         n_micro_steps=16,
-        tau_min=3.0,
-        tau_max=15.0,
+        tau_min=2.0,
+        tau_max=8.0,
         v_th=0.3,
         v_reset=0.0,
         beta_surrogate=5.0,
@@ -489,7 +571,7 @@ ppo_params = config_dict.create(
     ),
 )
 
-env_name = "mouse-imitation-biological-lif"
+env_name = "mouse-imitation-spike-propagation"
 SUFFIX = None
 FINETUNE_PATH = None
 
@@ -524,10 +606,10 @@ with open(ckpt_path / "config.json", "w") as fp:
 USE_WANDB = True
 if USE_WANDB:
     wandb.init(project="vnl-mjx-rl", config=env_cfg,
-               id=f"bio-lif-{exp_name}")
+               id=f"spike-prop-{exp_name}")
     wandb.config.update({
         "env_name": env_name,
-        "policy_type": "biological_spiking_lif",
+        "policy_type": "spike_propagating_lif",
         **dict(ppo_params.network_factory),
     })
 
@@ -538,7 +620,7 @@ if USE_WANDB:
 
 if __name__ == "__main__":
     print("=" * 80)
-    print("Mouse Arm Imitation -- Biological LIF Spiking Policy (E/I)")
+    print("Mouse Arm Imitation -- Spike-Propagating LIF Policy (E/I)")
     print("=" * 80)
     nf = ppo_params.network_factory
     n_exc_per = round(nf.policy_hidden_layer_sizes[0] * nf.exc_ratio)
@@ -621,7 +703,7 @@ if __name__ == "__main__":
     action_dist = distribution.NormalTanhDistribution(event_size=act_size)
     param_size = action_dist.param_size
 
-    policy_module = BiologicalSpikingPolicy(
+    policy_module = SpikePropagatingPolicy(
         layer_sizes=nf.policy_hidden_layer_sizes,
         output_size=param_size,
         exc_ratio=nf.exc_ratio,
@@ -633,7 +715,7 @@ if __name__ == "__main__":
         beta_surrogate=nf.beta_surrogate,
         n_refractory=nf.n_refractory,
     )
-    diag_policy_module = DiagnosticBiologicalPolicy(
+    diag_policy_module = SpikePropDiagnosticPolicy(
         layer_sizes=nf.policy_hidden_layer_sizes,
         output_size=param_size,
         exc_ratio=nf.exc_ratio,

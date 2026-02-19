@@ -30,12 +30,12 @@ def default_config() -> config_dict.ConfigDict:
     cfg = base_default_config()
     # Reference data settings
     cfg.reference_data_path = str(consts.MOUSE_REFERENCE_DATA_PATH)
-    cfg.mocap_hz = 50  # Frame rate of reference data
+    cfg.mocap_hz = 200  # Frame rate of reference data
     cfg.clip_length = 100  # Frames per clip
     cfg.clip_set = "all"  # Which clips to use
-    cfg.reference_length = 5  # Frames of future reference to include in observation
+    cfg.reference_length = 1  # Frames of future reference to include in observation
     cfg.start_frame_range = [0, 1]  # Always start at frame 0
-    cfg.qvel_init = "zeros"  # How to initialize velocities: "zeros", "reference"
+    cfg.qvel_init = "reference"  # How to initialize velocities: "zeros", "reference"
     cfg.keep_clips_idx = None  # Indices of clips to keep (None = all)
 
     # Walker-specific settings (can be overridden via config)
@@ -44,12 +44,12 @@ def default_config() -> config_dict.ConfigDict:
 
     # Reward terms
     cfg.reward_terms = {
-        "joints": {"exp_scale": 1.0, "weight": 1.0},
-        "joints_vel": {"exp_scale": 1.0, "weight": 0.5},
-        "wrist_pos": {"exp_scale": 0.005, "weight": 2.0},  # End effector tracking
-        "bodies_pos": {"exp_scale": 0.01, "weight": 1.0},
+        "joints": {"exp_scale": 0.2, "weight": 5.0},
+        "joints_vel": {"exp_scale": 0.2, "weight": 0.5},
+        "wrist_pos": {"exp_scale": 0.005, "weight": 0.1},  # End effector tracking
+        "bodies_pos": {"exp_scale": 0.01, "weight": 0.1},
         "control_cost": {"weight": 0.01},
-        "control_diff_cost": {"weight": 0.01},
+        "control_diff_cost": {"weight": 0.00},
     }
 
     # Termination criteria

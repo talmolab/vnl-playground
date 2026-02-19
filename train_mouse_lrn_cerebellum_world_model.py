@@ -9,9 +9,11 @@ Architecture based on Alstermark & Ekerot (2015):
     Receives from both E and I PNs, computes, and relays as mossy fiber
     input to cerebellum.
   - Cerebellum: Sensory forward model (Wolpert & Kawato 1998) implemented as a
-    differentiable Kalman filter. Receives sensory feedback as observation (z)
-    and efference copy via LRN as motor input (u). Innovation = sensory
-    prediction error: small during voluntary movement, large during perturbation.
+    nonlinear neural world model. Learned MLP networks estimate the state
+    transition, observation mapping, and state update. Receives sensory feedback
+    as observation (z) and efference copy via LRN as motor input (u).
+    Innovation = sensory prediction error: small during voluntary movement,
+    large during perturbation.
 
 References:
   Alstermark B, Ekerot C-F (2015) "The lateral reticular nucleus; integration
@@ -305,23 +307,25 @@ class MotorNeuronModule(linen.Module):
 
 
 # =============================================================================
-# Module 4: Cerebellum (Differentiable Kalman Filter)
+# Module 4: Cerebellum (Nonlinear World Model)
 # =============================================================================
 
 
 class CerebellumModule(linen.Module):
-    """Cerebellum as a sensory forward model (differentiable Kalman filter).
+    """Cerebellum as a nonlinear sensory forward model.
 
     Predicts sensory consequences of motor commands (Wolpert & Kawato 1998).
     Innovation = actual sensory feedback - predicted sensory feedback.
     Small during voluntary movement, large during external perturbation.
 
-    Uses diagonal covariance approximation for JAX efficiency.
+    Replaces the linear Kalman filter with learned nonlinear networks:
+      transition_net: MLP predicting next state from (x_hat, efference_copy)
+      observation_net: MLP predicting sensory observation from state
+      update_net: MLP computing state correction from (x_hat_pred, innovation)
 
     Biological interpretation:
-      F: internal model of limb dynamics (state transition)
-      B: maps efference copy (motor command via LRN) into state prediction
-      H: maps internal state to predicted sensory observation
+      transition_net: internal model of limb dynamics
+      observation_net: maps internal state to predicted sensory observation
       innovation: sensory prediction error (climbing fiber analogue)
       correction: output to modify motor command via deep cerebellar nuclei
     """
@@ -330,81 +334,51 @@ class CerebellumModule(linen.Module):
     obs_dim: int
     motor_dim: int
     output_dim: int
+    hidden_dim: int = 128
 
     @linen.compact
-    def __call__(self, sensory_obs, efference_copy, x_hat, P_diag):
+    def __call__(self, sensory_obs, efference_copy, x_hat):
         """
         Args:
             sensory_obs: (B, obs_dim) - sensory feedback (proprioception + targets)
             efference_copy: (B, motor_dim) - LRN mossy fiber spike rates
             x_hat: (B, state_dim) - previous state estimate
-            P_diag: (B, state_dim) - diagonal covariance
         Returns:
             correction: (B, output_dim)
             x_hat_new: (B, state_dim)
-            P_diag_new: (B, state_dim)
+            sensory_pred_loss: (B,)
         """
         sd = self.state_dim
-        od = self.obs_dim
+        hd = self.hidden_dim
 
-        # Learnable dynamics matrices
-        F = self.param('F', jax.nn.initializers.orthogonal(), (sd, sd))
-        B = self.param('B', jax.nn.initializers.lecun_uniform(), (sd, self.motor_dim))
-        H = self.param('H', jax.nn.initializers.lecun_uniform(), (od, sd))
+        # --- Transition network: f(x_hat, efference_copy) -> x_hat_pred ---
+        trans_input = jp.concatenate([x_hat, efference_copy], axis=-1)
+        h = linen.Dense(hd, name="trans_h1")(trans_input)
+        h = linen.swish(h)
+        h = linen.Dense(hd, name="trans_h2")(h)
+        h = linen.swish(h)
+        # Residual connection + tanh to bound state
+        x_hat_pred = jp.tanh(x_hat + linen.Dense(sd, name="trans_out")(h))
 
-        # Learnable noise (diagonal, via softplus for positivity)
-        log_Q = self.param('log_Q_diag', lambda k, s: jp.full(s, -2.0), (sd,))
-        log_R = self.param('log_R_diag', lambda k, s: jp.full(s, -1.0), (od,))
-        Q_diag = jax.nn.softplus(log_Q)
-        R_diag = jax.nn.softplus(log_R)
-
-        # P_init bias so covariance > 0 even from zero carry
-        P_init_raw = self.param('P_init_raw', lambda k, s: jp.zeros(s), (sd,))
-        P_diag_eff = P_diag + jax.nn.softplus(P_init_raw)
-
-        # --- Predict step ---
-        x_hat_pred = x_hat @ F.T + efference_copy @ B.T  # (B, sd)
-        # Diagonal covariance propagation: P_pred = F P F^T + Q
-        # Diagonal approx: P_pred_diag[j] = sum_k F[j,k]^2 * P_diag[k] + Q_diag[j]
-        P_pred_diag = jp.minimum(
-            P_diag_eff @ (F ** 2).T + Q_diag, 10.0)  # (B, sd) clamped
+        # --- Observation network: g(x_hat_pred) -> z_pred ---
+        h = linen.Dense(hd, name="obs_h1")(x_hat_pred)
+        h = linen.swish(h)
+        z_pred = linen.Dense(self.obs_dim, name="obs_out")(h)
 
         # --- Innovation (sensory prediction error) ---
-        z_pred = x_hat_pred @ H.T  # (B, od)
-        innovation = sensory_obs - z_pred  # (B, od)
+        innovation = sensory_obs - z_pred  # (B, obs_dim)
 
-        # --- Kalman gain (diagonal P approximation) ---
-        # S_diag[i] = sum_j H[i,j]^2 * P_pred_diag[j] + R_diag[i]
-        S_diag = P_pred_diag @ (H ** 2).T + R_diag  # (B, od)
-
-        # K_T[i,j] = H[i,j] * P_pred_diag[j] / S_diag[i]
-        # For batched: K_T = H * (P_pred_diag[:, None, :] / S_diag[:, :, None])
-        # Then x_hat_new = x_hat_pred + innovation @ K_T
-        # But need shape (B, od, sd) for K_T_batched
-        # Simpler: compute the update directly
-        # K @ innovation = sum_i K[j,i] * innovation[i]
-        #   where K[j,i] = P_pred_diag[j] * H[i,j] / S_diag[i]
-        # = P_pred_diag[j] * sum_i (H[i,j] * innovation[i] / S_diag[i])
-        weighted_innov = innovation / (S_diag + 1e-6)  # (B, od)
-        K_times_innov = P_pred_diag * (weighted_innov @ H)  # (B, sd)
-
-        # --- Update step (tanh bounds state to prevent recurrent blowup) ---
-        x_hat_new = jp.tanh(x_hat_pred + K_times_innov)  # (B, sd) ∈ [-1, 1]
-
-        # Covariance update: P_new = (I - KH) P, diagonal approx
-        # KH_diag[j] = P_pred_diag[j] * sum_i H[i,j]^2 / S_diag[i]
-        inv_S = 1.0 / (S_diag + 1e-6)  # (B, od)
-        KH_diag = P_pred_diag * (inv_S @ (H ** 2))  # (B, sd)
-
-        P_diag_new = P_pred_diag * (1.0 - KH_diag)  # (B, sd)
-        P_diag_new = jp.clip(P_diag_new, 1e-6, 10.0)  # clamp covariance
-
-        # --- Supervised prediction loss (trains forward model F, B, H) ---
+        # --- Supervised prediction loss ---
         sensory_pred_loss = jp.mean(innovation ** 2, axis=-1)  # (B,)
 
+        # --- Update network: h(x_hat_pred, innovation) -> state correction ---
+        update_input = jp.concatenate([x_hat_pred, innovation], axis=-1)
+        h = linen.Dense(hd, name="update_h1")(update_input)
+        h = linen.swish(h)
+        state_correction = linen.Dense(sd, name="update_out")(h)
+        x_hat_new = jp.tanh(x_hat_pred + state_correction)  # bounded ∈ [-1, 1]
+
         # --- Innovation-gated correction (DCN output ∝ climbing fiber error) ---
-        # Sigmoid gate with learnable threshold: ~0 when prediction is good,
-        # ~1 when surprise exceeds threshold (perturbation detection)
         innov_magnitude = jp.sqrt(
             jp.sum(innovation ** 2, axis=-1, keepdims=True) + 1e-6)
         gate_threshold_raw = self.param(
@@ -423,11 +397,7 @@ class CerebellumModule(linen.Module):
         )(correction_input)
         correction = jp.tanh(raw_correction) * gate  # gated by surprise
 
-        # Subtract P_init bias from carry output so carry stays near zero at reset
-        P_diag_carry = P_diag_new - jax.lax.stop_gradient(jax.nn.softplus(P_init_raw))
-        P_diag_carry = jp.maximum(P_diag_carry, 0.0)
-
-        return correction, x_hat_new, P_diag_carry, sensory_pred_loss
+        return correction, x_hat_new, sensory_pred_loss
 
 
 # =============================================================================
@@ -439,8 +409,8 @@ class LRNCerebellumPolicy(linen.Module):
     """Combined ProprioSpinal -> LRN -> Cerebellum -> Motor Neurons policy.
 
     Carry layout:
-      [ps_v | lrn_v | mn_v | ps_r | lrn_r | mn_r | cb_x_hat | cb_P_diag]
-       (ps)   (lrn)  (mn)   (ps)   (lrn)   (mn)    (cb)       (cb)
+      [ps_v | lrn_v | mn_v | ps_r | lrn_r | mn_r | cb_x_hat]
+       (ps)   (lrn)  (mn)   (ps)   (lrn)   (mn)    (cb)
     """
 
     propriospinal_size: int = 512
@@ -474,8 +444,7 @@ class LRNCerebellumPolicy(linen.Module):
         ps_r = carry_flat[:, idx:idx + n_ps]; idx += n_ps
         lrn_r = carry_flat[:, idx:idx + n_lrn]; idx += n_lrn
         mn_r = carry_flat[:, idx:idx + n_mn]; idx += n_mn
-        cb_x_hat = carry_flat[:, idx:idx + n_cb]; idx += n_cb
-        cb_P_diag = carry_flat[:, idx:idx + n_cb]
+        cb_x_hat = carry_flat[:, idx:idx + n_cb]
 
         # 1. ProprioSpinal: obs -> E/I LIF -> spike rates (full population)
         spike_rate, ps_v_new, ps_r_new = ProprioSpinalModule(
@@ -507,14 +476,14 @@ class LRNCerebellumPolicy(linen.Module):
             name="lrn_relay",
         )(spike_rate, lrn_v, lrn_r)
 
-        # 4. Cerebellum: sensory forward model predicts + corrects
-        correction, cb_x_hat_new, cb_P_new, sensory_pred_loss = CerebellumModule(
+        # 4. Cerebellum: nonlinear sensory forward model predicts + corrects
+        correction, cb_x_hat_new, sensory_pred_loss = CerebellumModule(
             state_dim=n_cb,
             obs_dim=obs.shape[-1],
             motor_dim=n_lrn,
             output_dim=self.output_size,
             name="cerebellum",
-        )(obs, mossy_fiber, cb_x_hat, cb_P_diag)
+        )(obs, mossy_fiber, cb_x_hat)
 
         # 5. Combine: motor command + weighted cerebellar correction
         w_raw = self.param('correction_weight_raw',
@@ -544,7 +513,7 @@ class LRNCerebellumPolicy(linen.Module):
         # 8. Reassemble carry
         new_carry = jp.concatenate([
             ps_v_new, lrn_v_new, mn_v_new, ps_r_new, lrn_r_new, mn_r_new,
-            cb_x_hat_new, cb_P_new,
+            cb_x_hat_new,
         ], axis=-1)
 
         return logits, new_carry, sensory_pred_loss, scaled_correction
@@ -760,50 +729,44 @@ class DiagnosticMotorNeuronModule(linen.Module):
 
 
 class DiagnosticCerebellumModule(linen.Module):
-    """Cerebellum sensory forward model with diagnostic output."""
+    """Cerebellum nonlinear sensory forward model with diagnostic output."""
 
     state_dim: int
     obs_dim: int
     motor_dim: int
     output_dim: int
+    hidden_dim: int = 128
 
     @linen.compact
-    def __call__(self, sensory_obs, efference_copy, x_hat, P_diag):
+    def __call__(self, sensory_obs, efference_copy, x_hat):
         sd = self.state_dim
-        od = self.obs_dim
+        hd = self.hidden_dim
 
-        F = self.param('F', jax.nn.initializers.orthogonal(), (sd, sd))
-        B = self.param('B', jax.nn.initializers.lecun_uniform(), (sd, self.motor_dim))
-        H = self.param('H', jax.nn.initializers.lecun_uniform(), (od, sd))
+        # --- Transition network ---
+        trans_input = jp.concatenate([x_hat, efference_copy], axis=-1)
+        h = linen.Dense(hd, name="trans_h1")(trans_input)
+        h = linen.swish(h)
+        h = linen.Dense(hd, name="trans_h2")(h)
+        h = linen.swish(h)
+        x_hat_pred = jp.tanh(x_hat + linen.Dense(sd, name="trans_out")(h))
 
-        log_Q = self.param('log_Q_diag', lambda k, s: jp.full(s, -2.0), (sd,))
-        log_R = self.param('log_R_diag', lambda k, s: jp.full(s, -1.0), (od,))
-        Q_diag = jax.nn.softplus(log_Q)
-        R_diag = jax.nn.softplus(log_R)
+        # --- Observation network ---
+        h = linen.Dense(hd, name="obs_h1")(x_hat_pred)
+        h = linen.swish(h)
+        z_pred = linen.Dense(self.obs_dim, name="obs_out")(h)
 
-        P_init_raw = self.param('P_init_raw', lambda k, s: jp.zeros(s), (sd,))
-        P_diag_eff = P_diag + jax.nn.softplus(P_init_raw)
-
-        x_hat_pred = x_hat @ F.T + efference_copy @ B.T
-        P_pred_diag = jp.minimum(
-            P_diag_eff @ (F ** 2).T + Q_diag, 10.0)  # clamped
-
-        z_pred = x_hat_pred @ H.T
+        # --- Innovation ---
         innovation = sensory_obs - z_pred
 
-        S_diag = P_pred_diag @ (H ** 2).T + R_diag
-        weighted_innov = innovation / (S_diag + 1e-6)
-        K_times_innov = P_pred_diag * (weighted_innov @ H)
-
-        x_hat_new = jp.tanh(x_hat_pred + K_times_innov)  # bounded state
-
-        inv_S = 1.0 / (S_diag + 1e-6)
-        KH_diag = P_pred_diag * (inv_S @ (H ** 2))
-        P_diag_new = P_pred_diag * (1.0 - KH_diag)
-        P_diag_new = jp.clip(P_diag_new, 1e-6, 10.0)  # clamped
-
         # --- Supervised prediction loss ---
-        sensory_pred_loss = jp.mean(innovation ** 2, axis=-1)  # (B,)
+        sensory_pred_loss = jp.mean(innovation ** 2, axis=-1)
+
+        # --- Update network ---
+        update_input = jp.concatenate([x_hat_pred, innovation], axis=-1)
+        h = linen.Dense(hd, name="update_h1")(update_input)
+        h = linen.swish(h)
+        state_correction = linen.Dense(sd, name="update_out")(h)
+        x_hat_new = jp.tanh(x_hat_pred + state_correction)
 
         # --- Innovation-gated correction ---
         innov_magnitude = jp.sqrt(
@@ -824,22 +787,17 @@ class DiagnosticCerebellumModule(linen.Module):
         )(correction_input)
         correction = jp.tanh(raw_correction) * gate
 
-        P_diag_carry = P_diag_new - jax.lax.stop_gradient(jax.nn.softplus(P_init_raw))
-        P_diag_carry = jp.maximum(P_diag_carry, 0.0)
-
         diagnostics = {
             "x_hat_pred": x_hat_pred,
             "x_hat_new": x_hat_new,
             "innovation": innovation,
             "innovation_norm": jp.sqrt(jp.sum(innovation ** 2, axis=-1)),
-            "P_diag_pred": P_pred_diag,
-            "P_diag_new": P_diag_new,
             "correction": correction,
             "gate": jp.squeeze(gate, axis=-1),
             "sensory_pred_loss": sensory_pred_loss,
         }
 
-        return correction, x_hat_new, P_diag_carry, diagnostics
+        return correction, x_hat_new, diagnostics
 
 
 class DiagnosticLRNCerebellumPolicy(linen.Module):
@@ -875,8 +833,7 @@ class DiagnosticLRNCerebellumPolicy(linen.Module):
         ps_r = carry_flat[:, idx:idx + n_ps]; idx += n_ps
         lrn_r = carry_flat[:, idx:idx + n_lrn]; idx += n_lrn
         mn_r = carry_flat[:, idx:idx + n_mn]; idx += n_mn
-        cb_x_hat = carry_flat[:, idx:idx + n_cb]; idx += n_cb
-        cb_P_diag = carry_flat[:, idx:idx + n_cb]
+        cb_x_hat = carry_flat[:, idx:idx + n_cb]
 
         spike_rate, ps_v_new, ps_r_new, ps_diag = DiagnosticProprioSpinalModule(
             n_exc=n_exc, n_inh=n_inh,
@@ -905,13 +862,13 @@ class DiagnosticLRNCerebellumPolicy(linen.Module):
             name="lrn_relay",
         )(spike_rate, lrn_v, lrn_r)
 
-        correction, cb_x_hat_new, cb_P_new, cb_diag = DiagnosticCerebellumModule(
+        correction, cb_x_hat_new, cb_diag = DiagnosticCerebellumModule(
             state_dim=n_cb,
             obs_dim=obs.shape[-1],
             motor_dim=n_lrn,
             output_dim=self.output_size,
             name="cerebellum",
-        )(obs, mossy_fiber, cb_x_hat, cb_P_diag)
+        )(obs, mossy_fiber, cb_x_hat)
 
         w_raw = self.param('correction_weight_raw',
                            lambda k, s: jp.full(s, -1.0), (1,))
@@ -939,7 +896,7 @@ class DiagnosticLRNCerebellumPolicy(linen.Module):
 
         new_carry = jp.concatenate([
             ps_v_new, lrn_v_new, mn_v_new, ps_r_new, lrn_r_new, mn_r_new,
-            cb_x_hat_new, cb_P_new,
+            cb_x_hat_new,
         ], axis=-1)
 
         diagnostics = {
@@ -1961,7 +1918,7 @@ if __name__ == "__main__":
     print(f"ProprioSpinal: {nf.propriospinal_size} neurons ({n_exc}E + {n_inh}I)")
     print(f"LRN relay: {nf.lrn_size} neurons (all excitatory)")
     print(f"Motor neurons: {nf.motor_neuron_size} neurons (all excitatory)")
-    print(f"Cerebellum: state_dim={nf.cerebellum_state_dim} (Kalman filter)")
+    print(f"Cerebellum: state_dim={nf.cerebellum_state_dim} (nonlinear world model)")
     print(f"Micro-steps: {nf.n_micro_steps}, v_th={nf.v_th}")
 
     # Environment setup
@@ -2147,7 +2104,7 @@ if __name__ == "__main__":
         2 * nf.propriospinal_size   # ps_v + ps_r
         + 2 * nf.lrn_size           # lrn_v + lrn_r
         + 2 * nf.motor_neuron_size  # mn_v + mn_r
-        + 2 * nf.cerebellum_state_dim  # x_hat + P_diag
+        + nf.cerebellum_state_dim   # x_hat (no P_diag with nonlinear world model)
     )
     print(f"Carry dim: {carry_dim}")
 
