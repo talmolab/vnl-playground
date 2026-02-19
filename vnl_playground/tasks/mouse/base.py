@@ -43,7 +43,7 @@ def default_config() -> config_dict.ConfigDict:
         noslip_iterations=0,
         Kp=35.0,
         Kd=0.5,
-        episode_length=150,
+        episode_length=100,
         mujoco_impl="jax",
     )
 
