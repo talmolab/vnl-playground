@@ -372,3 +372,105 @@ class VisionRenderWrapper:
         vision = self._renderer.render(state.data)
         state = state.replace(obs=self._inject_vision(state.obs, vision))
         return state
+
+
+class BinocularVisionRenderWrapper:
+    """Brax-compatible wrapper that renders binocular (stereo) vision.
+
+    Creates two JaxVisionRenderer instances — one for each eye camera —
+    and concatenates the rendered images along the channel dimension.
+    Output shape per world: (H, W, 2*C) where C=1 (grayscale) or C=3 (RGB).
+
+    The concatenated image is injected into the observation dict under
+    the standard "vision" key, maintaining compatibility with
+    HighLevelWrapper and _inject_vision.
+
+    Channel layout: [left_channels..., right_channels...]
+    For grayscale: (H, W, 2) — channel 0 = left eye, channel 1 = right eye.
+    """
+
+    def __init__(
+        self,
+        env,
+        mj_model,
+        mjx_model,
+        nworld=None,
+        width=32,
+        height=32,
+        grayscale=True,
+        render_depth=False,
+        use_textures=False,
+        use_shadows=False,
+        left_camera_name="eye_left-rodent",
+        right_camera_name="eye_right-rodent",
+    ):
+        self.env = env
+        self._mj_model = mj_model
+        self._mjx_model = mjx_model
+        self._left_camera_name = left_camera_name
+        self._right_camera_name = right_camera_name
+        self._renderer_kwargs = dict(
+            width=width,
+            height=height,
+            grayscale=grayscale,
+            render_depth=render_depth,
+            use_textures=use_textures,
+            use_shadows=use_shadows,
+        )
+
+        if nworld is not None:
+            self._left_renderer = JaxVisionRenderer(
+                mj_model=mj_model, mjx_model=mjx_model, nworld=nworld,
+                camera_name=left_camera_name, **self._renderer_kwargs,
+            )
+            self._right_renderer = JaxVisionRenderer(
+                mj_model=mj_model, mjx_model=mjx_model, nworld=nworld,
+                camera_name=right_camera_name, **self._renderer_kwargs,
+            )
+        else:
+            self._left_renderer = None
+            self._right_renderer = None
+
+    def _ensure_renderers(self, nworld):
+        if self._left_renderer is None:
+            self._left_renderer = JaxVisionRenderer(
+                mj_model=self._mj_model, mjx_model=self._mjx_model,
+                nworld=nworld, camera_name=self._left_camera_name,
+                **self._renderer_kwargs,
+            )
+            self._right_renderer = JaxVisionRenderer(
+                mj_model=self._mj_model, mjx_model=self._mjx_model,
+                nworld=nworld, camera_name=self._right_camera_name,
+                **self._renderer_kwargs,
+            )
+
+    def __getattr__(self, name):
+        return getattr(self.env, name)
+
+    @property
+    def left_renderer(self):
+        """The left-eye JaxVisionRenderer (None until first reset)."""
+        return self._left_renderer
+
+    @property
+    def right_renderer(self):
+        """The right-eye JaxVisionRenderer (None until first reset)."""
+        return self._right_renderer
+
+    def _render_binocular(self, data):
+        left = self._left_renderer.render(data)   # (nworld, H, W, C)
+        right = self._right_renderer.render(data)  # (nworld, H, W, C)
+        return jnp.concatenate([left, right], axis=-1)  # (nworld, H, W, 2C)
+
+    def reset(self, rng):
+        state = self.env.reset(rng)
+        self._ensure_renderers(rng.shape[0])
+        vision = self._render_binocular(state.data)
+        state = state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
+        return state
+
+    def step(self, state, action):
+        state = self.env.step(state, action)
+        vision = self._render_binocular(state.data)
+        state = state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
+        return state

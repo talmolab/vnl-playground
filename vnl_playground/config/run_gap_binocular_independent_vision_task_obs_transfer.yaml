@@ -1,0 +1,95 @@
+# Binocular Vision + TaskObs high-level transfer training (Independent Dual-CNN)
+# Uses ff_ppo with BinocularVisionEncoder (independent dual-CNN, experimental control)
+#
+# The high-level policy receives stereo egocentric vision (left + right eye)
+# AND body-state signals. Two independent CNNs (no shared weights) process
+# each eye separately, then concatenated features are fused with task_obs
+# to produce latent intentions for the frozen Phase 1 decoder.
+#
+# This is Option B (independent dual-CNN) serving as an experimental control
+# against the biologically plausible Option C (Siamese shared-weight CNN).
+#
+# binocular_mode: "shared" = Option C (Siamese, biologically plausible)
+# binocular_mode: "independent" = Option B (separate CNNs, experimental control)
+#
+# Usage:
+#   cd vnl-playground
+#   python -m vnl_playground.train_highlvl --config-name=run_gap_binocular_independent_vision_task_obs_transfer
+
+env_config:
+  env_name: RodentRunGapBinocularVision
+  task_name: run_gap_binocular_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  binocular: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  env_args:
+    target_speed: 1
+    platform_length_range: [0.3, 0.6]
+    gap_length_range: [0.03, 0.12]
+    n_platforms: 20
+    torque_actuators: true
+    termination_criteria:
+      fallen:
+        min_torso_z: 0.0325
+        max_torso_angle: 70
+      nan_termination: {}
+
+network_config:
+  arch_name: binocular_shared_vision_task_obs
+  binocular_mode: "independent"
+  vision_latent_size: 16
+  vision_feature_size: 32
+  decoder_hidden_layer_sizes: [512, 512, 512]
+  value_hidden_layer_sizes: [512, 512, 512, 512]
+  vision_channels: [4, 8, 16, 32]
+  fusion_hidden_layer_sizes: [256, 256, 256]
+
+transfer:
+  mimic_run_id: "260212_123718_492372"
+  mimic_checkpoint_dir: /home/talmolab/Desktop/SalkResearch/track-mjx/model_checkpoints
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+train_setup:
+  eval_every: 10_000_000
+  train_config:
+    episode_length: 1000
+    num_envs: 1024
+    num_timesteps: 1_000_000_000
+    batch_size: 1024
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 3e-4
+    clipping_epsilon: 0.2
+    discounting: 0.97
+    entropy_cost: 1e-3
+    action_repeat: 1
+    unroll_length: 10
+    reward_scaling: 1.0
+    normalize_observations: true
+    seed: 1
+    latent_kl_weight: 0.0
+    latent_ar1_weight: 0.0
+    use_kl_schedule: false
+    num_eval_envs: 128
+    deterministic_eval: false
+    grad_clip_threshold: 20.0
+    vf_loss_coefficient: 0.5
+    vision_lr_multiplier: 3.0
+
+logging_config:
+  project_name: vnl-playground
+  group_name: run-gap-binocular-vision-transfer
+  model_path: highlvl_checkpoints
+  notes: "Binocular vision + TaskObs transfer with independent dual-CNN (experimental control)"
+  exp_name: binocular_independent_dual_cnn_1
+
+render_config:
+  render_fps: 50
+  render_height: 480
+  render_width: 640
