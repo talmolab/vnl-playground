@@ -13,6 +13,7 @@ Termination occurs if:
 """
 
 import collections
+import pathlib
 from typing import Any, Dict, Optional, Union
 
 import jax
@@ -64,8 +65,10 @@ def default_config() -> config_dict.ConfigDict:
         action_repeat=1,
         spawn_x=0.5,
         randomize_gaps=True,
+        aesthetic="default",
         reward_terms={
             "forward_velocity": {"weight": 1.0},
+            "termination_penalty": {"weight": 10.0},
         },
         termination_criteria={
             "fallen": {"min_torso_z": 0.01, "max_torso_angle": 70},
@@ -101,6 +104,14 @@ class RunGap(rodent_base.RodentEnv):
         super().__init__(config, config_overrides)
         self._rng = rng
 
+        # Default platform material (from corridor_arena.xml)
+        self._platform_material = "platform_mat"
+
+        # Apply aesthetic textures before building corridor so platforms use
+        # the correct material from the start
+        if self._config.aesthetic == "outdoor_natural":
+            self._apply_outdoor_natural_aesthetic()
+
         # Build the corridor platforms before adding the rodent
         self._build_corridor()
 
@@ -116,7 +127,18 @@ class RunGap(rodent_base.RodentEnv):
             pos=[init_x, init_y, init_z],
             quat=init_quat,
         )
-        self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
+
+        # Lighting
+        if self._config.aesthetic == "outdoor_natural":
+            self._spec.worldbody.add_light(
+                pos=[2, 2, 8],
+                dir=[-0.2, -0.2, -1],
+                diffuse=[0.7, 0.7, 0.7],
+                specular=[0.3, 0.3, 0.3],
+                castshadow=1,
+            )
+        else:
+            self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
         self.compile()
 
         # Stale location termination config (read at init to avoid tracing issues)
@@ -170,6 +192,50 @@ class RunGap(rodent_base.RodentEnv):
             # Root joint DOF address (for qfrc_actuator slicing)
             self._rodent_root_dof = self._mj_model.jnt_dofadr[root_jnt_id]
 
+    def _apply_outdoor_natural_aesthetic(self) -> None:
+        """Apply outdoor natural aesthetic: grass platforms, blue sky, better lighting."""
+        assets_dir = pathlib.Path(__file__).parent / "xmls" / "assets"
+
+        # Point MjSpec compiler at the assets directory so file= paths resolve
+        self._spec.compiler.texturedir = str(assets_dir)
+
+        # --- Skybox ---
+        # Remove existing procedural/builtin skybox textures if any
+        for tex in list(self._spec.textures):
+            if tex.type == mujoco.mjtTexture.mjTEXTURE_SKYBOX:
+                tex.delete()
+
+        self._spec.add_texture(
+            name="outdoor_skybox",
+            type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
+            file="OutdoorSkybox2048.png",
+            gridsize=[3, 4],
+            gridlayout=".U..LFRB.D..",
+        )
+
+        # --- Ground/Platform texture ---
+        self._spec.add_texture(
+            name="grass_texture",
+            type=mujoco.mjtTexture.mjTEXTURE_2D,
+            file="OutdoorGrassFloorD.png",
+        )
+
+        grass_mat = self._spec.add_material(name="grass_mat")
+        grass_mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "grass_texture"
+        grass_mat.texuniform = True
+
+        self._platform_material = "grass_mat"
+
+        # --- Headlight for outdoor scene (matching dm_control) ---
+        self._spec.visual.headlight.ambient = [0.4, 0.4, 0.4]
+        self._spec.visual.headlight.diffuse = [0.8, 0.8, 0.8]
+        self._spec.visual.headlight.specular = [0.1, 0.1, 0.1]
+
+        # Disable dark fog
+        self._spec.visual.map.fogstart = 10.0
+        self._spec.visual.map.fogend = 20.0
+        self._spec.visual.rgba.fog = [0.0, 0.0, 0.0, 0.0]
+
     def _build_corridor(self) -> None:
         """Procedurally build corridor platforms with gaps.
 
@@ -200,7 +266,7 @@ class RunGap(rodent_base.RodentEnv):
             name="platform_start_geom",
             type=mujoco.mjtGeom.mjGEOM_BOX,
             size=[start_length / 2.0, half_width, half_thickness],
-            material="platform_mat",
+            material=self._platform_material,
             contype=1,
             conaffinity=1,
         )
@@ -243,7 +309,7 @@ class RunGap(rodent_base.RodentEnv):
                     name=f"platform_{i}_geom",
                     type=mujoco.mjtGeom.mjGEOM_BOX,
                     size=[max_plat / 2.0, half_width, half_thickness],
-                    material="platform_mat",
+                    material=self._platform_material,
                     contype=1,
                     conaffinity=1,
                 )
@@ -271,7 +337,7 @@ class RunGap(rodent_base.RodentEnv):
                     name=f"platform_{i}_geom",
                     type=mujoco.mjtGeom.mjGEOM_BOX,
                     size=[plat_length / 2.0, half_width, half_thickness],
-                    material="platform_mat",
+                    material=self._platform_material,
                     contype=1,
                     conaffinity=1,
                 )
@@ -642,6 +708,28 @@ class RunGap(rodent_base.RodentEnv):
         metrics["rewards/forward_velocity"] = weighted_reward
 
         return weighted_reward
+
+    @_registry.reward("termination_penalty")
+    def _termination_penalty(self, data, info, metrics, weight) -> float:
+        """Negative reward applied on the timestep when the episode terminates.
+
+        Discourages the agent from optimizing for shorter episodes to game
+        the speed reward. The penalty is applied once on the terminal step.
+
+        Args:
+            data: Simulation data (unused).
+            info: State info (unused).
+            metrics: Metrics dict; reads terminations/any set by _is_done().
+            weight: Penalty magnitude (positive number, applied as negative reward).
+
+        Returns:
+            Weighted termination penalty (negative on terminal step, 0 otherwise).
+        """
+        del data, info
+        terminated = metrics.get("terminations/any", 0.0)
+        penalty = -weight * terminated
+        metrics["rewards/termination_penalty"] = penalty
+        return penalty
 
     # ---- Termination criteria ----
 
