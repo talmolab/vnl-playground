@@ -16,7 +16,6 @@ from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_vel
 from vnl_playground.tasks.rodent import joystick as rodent_joystick
 from vnl_playground.tasks.rodent import run_gap as rodent_run_gap
 from vnl_playground.tasks.rodent import run_gap_vision as rodent_run_gap_vision
-from vnl_playground.tasks.rodent import run_gap_binocular_vision as rodent_run_gap_binocular_vision
 from vnl_playground.tasks.rodent import gap_jump_trial as rodent_gap_jump_trial
 from vnl_playground.tasks.rodent import gap_jump_trial_vision as rodent_gap_jump_trial_vision
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
@@ -39,7 +38,7 @@ _envs = {
     "RodentJoystick": rodent_joystick.Joystick,
     "RodentRunGap": rodent_run_gap.RunGap,
     "RodentRunGapVision": rodent_run_gap_vision.RunGapVision,
-    "RodentRunGapBinocularVision": rodent_run_gap_binocular_vision.RunGapBinocularVision,
+    "RodentRunGapBinocularVision": rodent_run_gap_vision.RunGapVision,
     "RodentGapJumpTrial": rodent_gap_jump_trial.GapJumpTrial,
     "RodentGapJumpTrialVision": rodent_gap_jump_trial_vision.GapJumpTrialVision,
     "FruitflyImitation": fruitfly_imitation.Imitation,
@@ -48,6 +47,14 @@ _envs = {
     "WalkerMultiBehavior": walker_multi_behavior.MultiBehaviorWalker,
     "WalkerImitation": walker_imitation.WalkerImitation,
 }
+
+
+def _binocular_default_config():
+    """Default config for binocular mode of RunGapVision."""
+    cfg = rodent_run_gap_vision.default_config()
+    cfg.binocular = True
+    return cfg
+
 
 _cfgs = {
     "RodentImitation": rodent_imitation.default_config,
@@ -58,7 +65,7 @@ _cfgs = {
     "RodentJoystick": rodent_joystick.default_config,
     "RodentRunGap": rodent_run_gap.default_config,
     "RodentRunGapVision": rodent_run_gap_vision.default_config,
-    "RodentRunGapBinocularVision": rodent_run_gap_binocular_vision.default_config,
+    "RodentRunGapBinocularVision": _binocular_default_config,
     "RodentGapJumpTrial": rodent_gap_jump_trial.default_config,
     "RodentGapJumpTrialVision": rodent_gap_jump_trial_vision.default_config,
     "FruitflyImitation": fruitfly_imitation.default_config,

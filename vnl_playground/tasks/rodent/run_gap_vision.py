@@ -1,7 +1,9 @@
 """Vision-enabled run through corridor with gaps task.
 
 Extends RunGap with egocentric camera observations rendered via the
-JAX-callable mujoco_warp GPU ray-tracer.
+JAX-callable mujoco_warp GPU ray-tracer.  Supports both monocular
+(single camera) and binocular (stereo left/right eye) modes via the
+``config.binocular`` flag.
 
 The observation dict from _get_obs() returns::
 
@@ -14,14 +16,18 @@ The observation dict from _get_obs() returns::
         "privileged_state": OrderedDict(...),   # same as state
     }
 
+In monocular mode the vision placeholder has shape (H, W, C) where C is 1
+(grayscale) or 3 (RGB).  In binocular mode the shape is (H, W, 2*C) — left
+and right eye images concatenated along the channel dimension.
+
 ``task_obs`` contains body-state signals (prev_action, kinematic sensors,
 touch sensors, origin) rather than hand-crafted gap features — gap
 information should be inferred from vision.
 
-Vision rendering happens in ``VisionRenderWrapper`` (vision_jax.py), which
-wraps the vmapped/batched env and renders on all worlds at once using the
-JAX-callable warp renderer. The wrapper replaces the zero placeholders with
-real rendered images.
+Vision rendering happens in ``VisionRenderWrapper`` (monocular) or
+``BinocularVisionRenderWrapper`` (binocular), which wrap the vmapped/batched
+env and render on all worlds at once using the JAX-callable warp renderer.
+The wrapper replaces the zero placeholders with real rendered images.
 
 Compatible with ``HighLevelWrapper`` for transfer learning pipelines
 and direct ff_ppo training.  Downstream ``observation_utils.flatten_obs_dict()``
@@ -59,19 +65,28 @@ def default_config() -> config_dict.ConfigDict:
     cfg.render_depth = False
     cfg.use_textures = False
     cfg.use_shadows = False
+    # Binocular parameters (disabled by default = monocular mode)
+    cfg.binocular = False
+    cfg.left_camera_name = "eye_left-rodent"
+    cfg.right_camera_name = "eye_right-rodent"
     return cfg
 
 
 class RunGapVision(run_gap.RunGap):
-    """RunGap with egocentric vision observations.
+    """RunGap with egocentric vision observations (monocular or binocular).
 
     Observations are returned with state/privileged_state wrapping containing
     task_obs, proprioception, and vision keys. The vision key contains
-    placeholder zeros — real rendering is handled by ``VisionRenderWrapper``
-    which wraps the batched env.
+    placeholder zeros -- real rendering is handled by ``VisionRenderWrapper``
+    (monocular) or ``BinocularVisionRenderWrapper`` (binocular) which wraps
+    the batched env.
+
+    When ``config.binocular`` is False (default), vision shape is (H, W, C).
+    When ``config.binocular`` is True, vision shape is (H, W, 2*C) for stereo
+    left/right eye images concatenated along the channel dimension.
 
     ``task_obs`` provides body-state signals (prev_action, kinematic sensors,
-    touch sensors, origin). Gap information is not included — the agent should
+    touch sensors, origin). Gap information is not included -- the agent should
     infer it from vision.
 
     Compatible with both track-mjx's ff_ppo observation_utils and
@@ -96,8 +111,9 @@ class RunGapVision(run_gap.RunGap):
 
     @property
     def vision_shape(self):
-        """Shape of the vision observation: (H, W, C) where C=1 if grayscale else 3."""
-        channels = 1 if self._grayscale else 3
+        """Shape of the vision observation: (H, W, C) or (H, W, 2*C) for binocular."""
+        mono_channels = 1 if self._grayscale else 3
+        channels = 2 * mono_channels if self._config.get("binocular", False) else mono_channels
         return (self._vision_height, self._vision_width, channels)
 
     @property
