@@ -28,11 +28,16 @@ env_config:
   left_camera_name: "eye_left-rodent"
   right_camera_name: "eye_right-rodent"
   env_args:
-    target_speed: 1
     platform_length_range: [0.3, 0.6]
     gap_length_range: [0.03, 0.12]
     n_platforms: 20
     torque_actuators: true
+    reward_terms:
+      forward_velocity:
+        weight: 1.0
+        target_speed: 1
+      termination_penalty:
+        weight: 10.0
     termination_criteria:
       fallen:
         min_torso_z: 0.0325

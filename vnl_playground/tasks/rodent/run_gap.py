@@ -60,14 +60,13 @@ def default_config() -> config_dict.ConfigDict:
         platform_length_range=(0.3, 0.6),
         gap_length_range=(0.03, 0.12),
         n_platforms=10,
-        target_speed=0.3,
         episode_length=2000,
         action_repeat=1,
         spawn_x=0.5,
         randomize_gaps=True,
         aesthetic="default",
         reward_terms={
-            "forward_velocity": {"weight": 1.0},
+            "forward_velocity": {"weight": 1.0, "target_speed": 0.3},
             "termination_penalty": {"weight": 10.0},
         },
         termination_criteria={
@@ -679,7 +678,7 @@ class RunGap(rodent_base.RodentEnv):
     # ---- Reward functions ----
 
     @_registry.reward("forward_velocity")
-    def _forward_velocity_reward(self, data, info, metrics, weight) -> float:
+    def _forward_velocity_reward(self, data, info, metrics, weight, target_speed=0.3) -> float:
         """Reward for forward velocity along the corridor (+x direction).
 
         Linear reward proportional to x-velocity, clamped to [0, 1].
@@ -701,7 +700,6 @@ class RunGap(rodent_base.RodentEnv):
         body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
         forward_vel = body.subtree_linvel[0]
 
-        target_speed = self._config.target_speed
         reward_value = jp.clip(forward_vel / target_speed, 0.0, 1.0)
 
         weighted_reward = reward_value * weight
