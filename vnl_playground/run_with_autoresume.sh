@@ -5,8 +5,8 @@
 #   ./vnl_playground/run_with_autoresume.sh [--config-name CONFIG] [HYDRA_OVERRIDES...]
 #
 # Examples:
-#   ./vnl_playground/run_with_autoresume.sh --config-name=run_gap_vision_task_obs_transfer
-#   ./vnl_playground/run_with_autoresume.sh --config-name=run_gap_vision_task_obs_transfer \
+#   ./vnl_playground/run_with_autoresume.sh --config-name=rodent_run_gap/vision_task_obs_transfer
+#   ./vnl_playground/run_with_autoresume.sh --config-name=rodent_run_gap/vision_task_obs_transfer \
 #       train_setup.train_config.num_envs=512
 #
 # Multi-GPU usage (run two jobs in the same directory):

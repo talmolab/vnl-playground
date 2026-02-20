@@ -8,8 +8,8 @@
 #
 # Usage:
 #   cd vnl-playground
-#   python -m vnl_playground.train --config-name=run_gap
-#   python -m vnl_playground.train --config-name=run_gap train_setup.train_config.num_envs=2048
+#   python -m vnl_playground.train --config-name=rodent_run_gap/run_gap
+#   python -m vnl_playground.train --config-name=rodent_run_gap/run_gap train_setup.train_config.num_envs=2048
 
 env_config:
   env_name: RodentRunGap

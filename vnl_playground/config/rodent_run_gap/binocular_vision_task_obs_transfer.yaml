@@ -1,24 +1,29 @@
-# Vision + TaskObs high-level transfer training for RunGapVision
-# Uses ff_ppo with VisionTaskObsNetwork (CNN + task_obs fusion MLP)
+# Binocular Vision + TaskObs high-level transfer training (Shared Siamese CNN)
+# Uses ff_ppo with BinocularVisionEncoder (shared-weight Siamese CNN)
 #
-# The high-level policy receives both egocentric vision pixels AND
-# body-state signals (prev_action, kinematic sensors, touch, origin).
-# CNN features are fused with task_obs through an MLP to produce latent
-# intentions for the frozen Phase 1 decoder.
+# The high-level policy receives stereo egocentric vision (left + right eye)
+# AND body-state signals. A shared-weight Siamese CNN processes each eye
+# independently with the same weights, then concatenated features are fused
+# with task_obs to produce latent intentions for the frozen Phase 1 decoder.
+#
+# binocular_mode: "shared" = Option C (Siamese, biologically plausible)
+# binocular_mode: "independent" = Option B (separate CNNs, experimental control)
 #
 # Usage:
 #   cd vnl-playground
-#   python -m vnl_playground.train_highlvl --config-name=run_gap_vision_task_obs_transfer
+#   python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/binocular_vision_task_obs_transfer
 
 env_config:
-  env_name: RodentRunGapVision
-  task_name: run_gap_vision
+  env_name: RodentRunGapBinocularVision
+  task_name: run_gap_binocular_vision
   walker_name: rodent
   render_camera_name: close_profile
   vision_width: 32
   vision_height: 32
   grayscale: true
-  vision_camera_name: "egocentric-rodent"
+  binocular: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
   env_args:
     platform_length_range: [0.3, 0.6]
     gap_length_range: [0.03, 0.12]
@@ -34,13 +39,11 @@ env_config:
       fallen:
         min_torso_z: 0.0325
         max_torso_angle: 70
-      # stale_location:
-      #   patience: 100
-      #   min_displacement: 0.03
       nan_termination: {}
 
 network_config:
-  arch_name: shared_vision_task_obs
+  arch_name: binocular_shared_vision_task_obs
+  binocular_mode: "shared"
   vision_latent_size: 16
   vision_feature_size: 32
   decoder_hidden_layer_sizes: [512, 512, 512]
@@ -49,13 +52,12 @@ network_config:
   fusion_hidden_layer_sizes: [256, 256, 256]
 
 transfer:
-  mimic_run_id: "260212_123718_492372"   # Replace with Phase 1 run ID
+  mimic_run_id: "260212_123718_492372"
   mimic_checkpoint_dir: /home/talmolab/Desktop/SalkResearch/track-mjx/model_checkpoints
   highlvl_obs_key: task_obs
   decoder_obs_key: proprioception
 
 train_setup:
-  # resume_run_id: "260214_110703"
   eval_every: 10_000_000
   train_config:
     episode_length: 1000
@@ -84,10 +86,10 @@ train_setup:
 
 logging_config:
   project_name: vnl-playground
-  group_name: run-gap-vision-task-obs-transfer
+  group_name: run-gap-binocular-vision-transfer
   model_path: highlvl_checkpoints
-  notes: "Vision + TaskObs high-level transfer for RunGapVision"
-  exp_name: larger_policy_no_stale_term_1
+  notes: "Binocular (stereo) vision + TaskObs transfer with Siamese shared CNN"
+  exp_name: binocular_siamese_shared_cnn_1
 
 render_config:
   render_fps: 50

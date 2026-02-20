@@ -9,7 +9,7 @@
 # Usage:
 #   cd vnl-playground
 #   python -m vnl_playground.train
-#   python -m vnl_playground.train --config-name=run_gap_vision
+#   python -m vnl_playground.train --config-name=rodent_run_gap/run_gap_vision
 #   python -m vnl_playground.train train_setup.train_config.num_envs=64
 
 env_config:

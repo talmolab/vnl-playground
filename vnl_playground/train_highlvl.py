@@ -15,8 +15,8 @@ Vision+TaskObs mode (arch_name="vision_task_obs"):
 Usage:
     cd vnl-playground
     python -m vnl_playground.train_highlvl
-    python -m vnl_playground.train_highlvl --config-name=run_gap_task_obs_transfer
-    python -m vnl_playground.train_highlvl --config-name=run_gap_vision_task_obs_transfer
+    python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/task_obs_transfer
+    python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/vision_task_obs_transfer
 """
 
 import os
@@ -2082,7 +2082,7 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
 @hydra.main(
     version_base=None,
     config_path="config",
-    config_name="run_gap_vision_task_obs_transfer",
+    config_name="rodent_run_gap/vision_task_obs_transfer",
 )
 def main(cfg: DictConfig):
     """Main training function for high-level transfer learning."""

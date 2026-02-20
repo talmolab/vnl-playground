@@ -1,29 +1,19 @@
-# Binocular Vision + TaskObs high-level transfer training (Shared Siamese CNN)
-# Uses ff_ppo with BinocularVisionEncoder (shared-weight Siamese CNN)
-#
-# The high-level policy receives stereo egocentric vision (left + right eye)
-# AND body-state signals. A shared-weight Siamese CNN processes each eye
-# independently with the same weights, then concatenated features are fused
-# with task_obs to produce latent intentions for the frozen Phase 1 decoder.
-#
-# binocular_mode: "shared" = Option C (Siamese, biologically plausible)
-# binocular_mode: "independent" = Option B (separate CNNs, experimental control)
+# Recurrent Vision (CNN+GRU) high-level transfer training for RunGapVision
+# Uses recurrent PPO with shared CNN+GRU backbone
 #
 # Usage:
 #   cd vnl-playground
-#   python -m vnl_playground.train_highlvl --config-name=run_gap_binocular_vision_task_obs_transfer
+#   python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/recurrent_vision_transfer
 
 env_config:
-  env_name: RodentRunGapBinocularVision
-  task_name: run_gap_binocular_vision
+  env_name: RodentRunGapVision
+  task_name: run_gap_vision
   walker_name: rodent
   render_camera_name: close_profile
   vision_width: 32
   vision_height: 32
   grayscale: true
-  binocular: true
-  left_camera_name: "eye_left-rodent"
-  right_camera_name: "eye_right-rodent"
+  vision_camera_name: "egocentric-rodent"
   env_args:
     platform_length_range: [0.3, 0.6]
     gap_length_range: [0.03, 0.12]
@@ -32,7 +22,7 @@ env_config:
     reward_terms:
       forward_velocity:
         weight: 1.0
-        target_speed: 1
+        target_speed: 2
       termination_penalty:
         weight: 10.0
     termination_criteria:
@@ -42,14 +32,12 @@ env_config:
       nan_termination: {}
 
 network_config:
-  arch_name: binocular_shared_vision_task_obs
-  binocular_mode: "shared"
-  vision_latent_size: 16
+  arch_name: recurrent_vision_task_obs
   vision_feature_size: 32
-  decoder_hidden_layer_sizes: [512, 512, 512]
-  value_hidden_layer_sizes: [512, 512, 512, 512]
   vision_channels: [4, 8, 16, 32]
-  fusion_hidden_layer_sizes: [256, 256, 256]
+  gru_hidden_size: 256
+  policy_head_sizes: [256]
+  value_head_sizes: [256, 128]
 
 transfer:
   mimic_run_id: "260212_123718_492372"
@@ -86,10 +74,10 @@ train_setup:
 
 logging_config:
   project_name: vnl-playground
-  group_name: run-gap-binocular-vision-transfer
+  group_name: run-gap-recurrent-vision-transfer
   model_path: highlvl_checkpoints
-  notes: "Binocular (stereo) vision + TaskObs transfer with Siamese shared CNN"
-  exp_name: binocular_siamese_shared_cnn_1
+  notes: "Recurrent CNN+GRU Vision high-level transfer for RunGapVision"
+  exp_name: recurrent_vision_v1
 
 render_config:
   render_fps: 50

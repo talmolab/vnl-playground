@@ -1,18 +1,18 @@
-# TaskObs-only high-level transfer training for RunGapVision (no vision)
-# Uses standard Brax PPO with MLP policy on handcrafted body-state features.
+# Handcrafted gap feature high-level transfer for RunGap
+# Uses the base RunGap environment (not RunGapVision) with handcrafted
+# gap features as the imitation_target encoder input.
 #
-# This is a baseline comparison for the vision_task_obs architecture.
-# The high-level policy receives task_obs (prev_action + kinematic sensors +
-# touch sensors + origin) and maps them directly to latent intentions via MLP,
-# without any visual input.
+# The 16-dim gap feature vector encodes terrain-ahead information:
+# distances to next 3 gaps, gap widths, platform lengths, velocity,
+# height, lateral position, heading, and edge distance.
 #
 # Usage:
 #   cd vnl-playground
-#   python -m vnl_playground.train_highlvl --config-name=run_gap_task_obs_transfer
+#   python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/handcrafted_transfer
 
 env_config:
-  env_name: RodentRunGapVision
-  task_name: run_gap_vision
+  env_name: RodentRunGap
+  task_name: run_gap
   walker_name: rodent
   render_camera_name: close_profile
   env_args:
@@ -33,9 +33,9 @@ network_config:
   value_hidden_layer_sizes: [512, 512]
 
 transfer:
-  mimic_run_id: "260212_123718_492372"   # Replace with Phase 1 run ID
+  mimic_run_id: "260212_123718_492372"
   mimic_checkpoint_dir: /home/talmolab/Desktop/SalkResearch/track-mjx/model_checkpoints
-  highlvl_obs_key: task_obs
+  highlvl_obs_key: imitation_target    # KEY: use gap features, not body signals
   decoder_obs_key: proprioception
 
 train_setup:
@@ -59,10 +59,10 @@ train_setup:
 
 logging_config:
   project_name: vnl-playground
-  group_name: run-gap-task-obs-transfer
+  group_name: run-gap-handcrafted-transfer
   model_path: highlvl_checkpoints
-  notes: "TaskObs-only MLP high-level transfer for RunGapVision (baseline, no vision)"
-  exp_name: run_gap_task_obs_transfer
+  notes: "Handcrafted gap features high-level transfer for RunGap"
+  exp_name: run_gap_handcrafted_transfer
 
 render_config:
   render_fps: 50

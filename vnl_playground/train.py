@@ -12,7 +12,7 @@ environments are loaded WITHOUT FlattenObsWrapper.
 
 Usage:
     python -m vnl_playground.train
-    python -m vnl_playground.train --config-name=run_gap_vision
+    python -m vnl_playground.train --config-name=rodent_run_gap/run_gap_vision
     python -m vnl_playground.train train_setup.train_config.num_envs=2048
     python -m vnl_playground.train env_config.env_name=RodentRunGap
 """
@@ -176,7 +176,7 @@ def render_video(
             writer.append_data(frame)
 
 
-@hydra.main(version_base=None, config_path="config", config_name="run_gap_vision")
+@hydra.main(version_base=None, config_path="config", config_name="rodent_run_gap/run_gap_vision")
 def main(cfg: DictConfig):
     """Main training function."""
     try:
