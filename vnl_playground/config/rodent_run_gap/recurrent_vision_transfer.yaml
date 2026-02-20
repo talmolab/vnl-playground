@@ -10,21 +10,52 @@ env_config:
   task_name: run_gap_vision
   walker_name: rodent
   render_camera_name: close_profile
+  vision: true
   vision_width: 32
   vision_height: 32
   grayscale: true
   vision_camera_name: "egocentric-rodent"
+  render_depth: false
+  use_textures: false
+  use_shadows: false
   env_args:
+    # -- Simulation --
+    # NOTE: ctrl_dt is overridden at runtime by train_highlvl.py to match the
+    # frozen decoder's mimic config. Changing it here has no effect for transfer training.
+    ctrl_dt: 0.02
+    sim_dt: 0.002
+    solver: "newton"
+    mujoco_impl: "warp"
+    # -- Solver memory --
+    naconmax: 19456       # 19 * 1024
+    njmax: 400
+    iterations: 5
+    ls_iterations: 5
+    noslip_iterations: 0
+    # -- Rodent --
+    torque_actuators: true
+    rescale_factor: 0.9
+    # -- Corridor geometry --
+    corridor_length: 4.0
+    corridor_width: 2.0
     platform_length_range: [0.3, 0.6]
     gap_length_range: [0.03, 0.12]
     n_platforms: 20
-    torque_actuators: true
+    # -- Environment --
+    spawn_x: 0.5
+    randomize_gaps: true
+    aesthetic: "default"
+    # -- Episode --
+    episode_length: 2000
+    action_repeat: 1
+    # -- Reward --
     reward_terms:
       forward_velocity:
         weight: 1.0
         target_speed: 2
       termination_penalty:
         weight: 10.0
+    # -- Termination --
     termination_criteria:
       fallen:
         min_torso_z: 0.0325

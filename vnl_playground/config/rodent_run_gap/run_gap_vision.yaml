@@ -19,22 +19,56 @@ env_config:
   render_camera_name: close_profile
 
   # Vision rendering parameters (used by vision_ppo training loop)
+  vision: true
   vision_width: 32
   vision_height: 32
   grayscale: true
   vision_camera_name: "egocentric-rodent"
+  render_depth: false
+  use_textures: false
+  use_shadows: false
 
   env_args:
+    # -- Simulation --
+    ctrl_dt: 0.02
+    sim_dt: 0.002
+    solver: "newton"
+    mujoco_impl: "warp"
+    # -- Solver memory --
+    naconmax: 19456       # 19 * 1024
+    njmax: 400
+    iterations: 5
+    ls_iterations: 5
+    noslip_iterations: 0
+    # -- Rodent --
+    torque_actuators: false
+    rescale_factor: 0.9
+    # -- Corridor geometry --
+    corridor_length: 4.0
+    corridor_width: 2.0
     platform_length_range: [0.3, 0.6]
     gap_length_range: [0.03, 0.12]
     n_platforms: 20
-    torque_actuators: false
+    # -- Environment --
+    spawn_x: 0.5
+    randomize_gaps: true
+    aesthetic: "default"
+    # -- Episode --
+    episode_length: 2000
+    action_repeat: 1
+    # -- Reward --
     reward_terms:
       forward_velocity:
         weight: 1.0
         target_speed: 0.5
       termination_penalty:
         weight: 10.0
+    # -- Termination --
+    termination_criteria:
+      fallen:
+        min_torso_z: 0.01
+        max_torso_angle: 70
+      nan_termination: {}
 
 network_config:
   arch_name: vision
