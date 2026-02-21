@@ -380,6 +380,7 @@ class RunGap(rodent_base.RodentEnv):
             "action": self.null_action(),
             "stale_ref_x": jp.array(self._config.spawn_x, dtype=jp.float32),
             "stale_steps": jp.array(0, dtype=jp.int32),
+            "gaps_crossed": jp.array(0, dtype=jp.int32),
         }
 
         data = mjx.make_data(
@@ -467,6 +468,16 @@ class RunGap(rodent_base.RodentEnv):
             reset_stale, jp.array(0, dtype=jp.int32), stale_steps
         )
         info["stale_ref_x"] = jp.where(reset_stale, current_x, ref_x)
+
+        # Gap-crossing detection
+        if self._config.randomize_gaps:
+            plat_centers = data.xpos[self._platform_body_ids, 0]
+            gap_ends = plat_centers - self._platform_half_length
+        else:
+            gap_ends = self._static_gap_ends
+        new_gaps_crossed = jp.sum(current_x > gap_ends).astype(jp.int32)
+        info["just_crossed_gap"] = new_gaps_crossed > info["gaps_crossed"]
+        info["gaps_crossed"] = new_gaps_crossed
 
         done = self._is_done(data, info, state.metrics)
         reward = self._get_reward(data, info, state.metrics)
@@ -728,6 +739,27 @@ class RunGap(rodent_base.RodentEnv):
         penalty = -weight * terminated
         metrics["rewards/termination_penalty"] = penalty
         return penalty
+
+    @_registry.reward("gap_crossing_bonus")
+    def _gap_crossing_bonus(self, data, info, metrics, weight) -> float:
+        """Sparse bonus awarded each time the agent crosses a new gap.
+
+        The crossing flag is computed in step() by comparing the agent's
+        x-position against gap far-edges (leading edges of landing platforms).
+
+        Args:
+            data: Simulation data (unused).
+            info: State info containing just_crossed_gap flag.
+            metrics: Metrics dict for logging.
+            weight: Bonus magnitude per gap crossed.
+
+        Returns:
+            Weighted bonus (weight if gap just crossed, 0 otherwise).
+        """
+        del data
+        bonus = jp.where(info.get("just_crossed_gap", False), weight, 0.0)
+        metrics["rewards/gap_crossing_bonus"] = bonus
+        return bonus
 
     # ---- Termination criteria ----
 
