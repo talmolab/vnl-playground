@@ -381,6 +381,7 @@ class RunGap(rodent_base.RodentEnv):
             "stale_ref_x": jp.array(self._config.spawn_x, dtype=jp.float32),
             "stale_steps": jp.array(0, dtype=jp.int32),
             "gaps_crossed": jp.array(0, dtype=jp.int32),
+            "just_crossed_gap": jp.array(False),
         }
 
         data = mjx.make_data(
