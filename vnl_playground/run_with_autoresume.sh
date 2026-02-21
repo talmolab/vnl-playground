@@ -71,6 +71,7 @@ if [[ -f "$STATE_FILE" ]]; then
     fi
 fi
 
+_MONITOR_PID=""
 for attempt in $(seq 1 "$MAX_RETRIES"); do
     echo ""
     echo "=========================================="
@@ -91,16 +92,38 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
     echo "Running: ${CMD[*]}"
     echo ""
 
-    # Snapshot existing checkpoint dirs BEFORE training starts.
-    # Used to identify which new directory this job created (avoids
-    # picking up another GPU's directory via ls -td).
-    DIRS_BEFORE=$(ls -d "${MODEL_PATH}"/*/ 2>/dev/null | sort)
+    ATTEMPT_LOG="training_attempt_${attempt}_${_TAG}.log"
+
+    # Background monitor: eagerly write state file as soon as run_id appears in log
+    if [[ -z "$RESUME_RUN_ID" ]]; then
+        (
+            for _ in $(seq 1 60); do [[ -f "$ATTEMPT_LOG" ]] && break; sleep 0.5; done
+            if [[ -f "$ATTEMPT_LOG" ]]; then
+                tail -f "$ATTEMPT_LOG" 2>/dev/null | while IFS= read -r line; do
+                    if [[ "$line" == *"NEW run_id: "* ]]; then
+                        _rid="${line##*NEW run_id: }"
+                        _rid="${_rid%% *}"
+                        _rid="${_rid%%$'\r'}"
+                        echo "$_rid" > "$STATE_FILE"
+                        break
+                    fi
+                done
+            fi
+        ) &
+        _MONITOR_PID=$!
+    fi
 
     # Run training, capture exit code
     set +e
-    "${CMD[@]}" 2>&1 | tee "training_attempt_${attempt}_${_TAG}.log"
+    "${CMD[@]}" 2>&1 | tee "$ATTEMPT_LOG"
     EXIT_CODE=${PIPESTATUS[0]}
     set -e
+
+    if [[ -n "${_MONITOR_PID:-}" ]]; then
+        kill "$_MONITOR_PID" 2>/dev/null
+        wait "$_MONITOR_PID" 2>/dev/null || true
+        _MONITOR_PID=""
+    fi
 
     if [[ $EXIT_CODE -eq 0 ]]; then
         echo ""
@@ -112,18 +135,29 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
     echo ""
     echo "=== Training exited with code ${EXIT_CODE} ==="
 
-    # If this was the first run, detect the run_id from the checkpoint directory.
-    # Compare current dirs against the pre-training snapshot to find exactly the
-    # directory this job created (immune to modification-time races with other GPUs).
     if [[ -z "$RESUME_RUN_ID" ]]; then
-        DIRS_AFTER=$(ls -d "${MODEL_PATH}"/*/ 2>/dev/null | sort)
-        NEW_DIR=$(comm -13 <(echo "$DIRS_BEFORE") <(echo "$DIRS_AFTER") | head -1)
-        if [[ -n "$NEW_DIR" ]]; then
-            RESUME_RUN_ID=$(basename "$NEW_DIR")
+        # Check if background monitor already wrote state file
+        if [[ -f "$STATE_FILE" ]]; then
+            RESUME_RUN_ID=$(cat "$STATE_FILE")
+            if [[ -d "${MODEL_PATH}/${RESUME_RUN_ID}" ]]; then
+                echo "Captured run_id=${RESUME_RUN_ID} for resume (from eager monitor)"
+            else
+                echo "WARNING: Eager state references ${RESUME_RUN_ID} but dir missing."
+                RESUME_RUN_ID=""
+                rm -f "$STATE_FILE"
+            fi
+        fi
+    fi
+
+    # Fallback: grep the per-instance training log
+    if [[ -z "$RESUME_RUN_ID" ]]; then
+        DETECTED_ID=$(grep -oP 'NEW run_id: \K\S+' "$ATTEMPT_LOG" 2>/dev/null | head -1)
+        if [[ -n "$DETECTED_ID" && -d "${MODEL_PATH}/${DETECTED_ID}" ]]; then
+            RESUME_RUN_ID="$DETECTED_ID"
             echo "$RESUME_RUN_ID" > "$STATE_FILE"
-            echo "Captured run_id=${RESUME_RUN_ID} for resume"
+            echo "Captured run_id=${RESUME_RUN_ID} for resume (from training log)"
         else
-            echo "ERROR: Could not find new checkpoint directory in ${MODEL_PATH}"
+            echo "ERROR: Could not detect run_id from ${ATTEMPT_LOG}"
             echo "Cannot resume. Exiting."
             exit 1
         fi
