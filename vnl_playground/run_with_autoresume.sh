@@ -120,7 +120,7 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
     set -e
 
     if [[ -n "${_MONITOR_PID:-}" ]]; then
-        kill "$_MONITOR_PID" 2>/dev/null
+        kill "$_MONITOR_PID" 2>/dev/null || true
         wait "$_MONITOR_PID" 2>/dev/null || true
         _MONITOR_PID=""
     fi
@@ -164,7 +164,7 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
     fi
 
     # Check if there are actually checkpoints to resume from
-    CKPT_COUNT=$(ls -d "${MODEL_PATH}/${RESUME_RUN_ID}"/PPONetwork_* 2>/dev/null | wc -l)
+    CKPT_COUNT=$(ls -d "${MODEL_PATH}/${RESUME_RUN_ID}"/PPONetwork_* 2>/dev/null | wc -l || true)
     if [[ "$CKPT_COUNT" -eq 0 ]]; then
         echo "WARNING: No PPONetwork checkpoints found. Starting fresh on next attempt."
         RESUME_RUN_ID=""
