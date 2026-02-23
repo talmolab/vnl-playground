@@ -1816,7 +1816,7 @@ def make_perturbed_eval_fn(eval_env, diag_policy_module, action_dist,
 
 ppo_params = config_dict.create(
     num_timesteps=600_000_000,
-    num_evals=12,
+    num_evals=30,
     reward_scaling=1.0,
     episode_length=80,
     normalize_observations=True,
