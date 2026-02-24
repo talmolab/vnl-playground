@@ -172,7 +172,6 @@ print("Checkpoint loaded.")
 # JIT compile
 jit_eval_reset = jax.jit(eval_env.reset)
 jit_eval_step = jax.jit(eval_env.step)
-jit_policy_apply = jax.jit(policy_module.apply)
 jit_diag_apply = jax.jit(diag_policy_module.apply)
 
 # =============================================================================
@@ -180,24 +179,19 @@ jit_diag_apply = jax.jit(diag_policy_module.apply)
 # =============================================================================
 
 
-def diag_rollout(params, norm_params, seed=0):
-    """Run one episode with diagnostic policy.
 
-    Returns dict with keys:
-        ps_spikes_exc: (T, K, n_exc)  — PS excitatory spikes per micro-step
-        ps_spikes_inh: (T, K, n_inh)  — PS inhibitory spikes per micro-step
-        mn_spikes:     (T, K, n_mn)   — motor neuron spikes per micro-step
-        ps_voltages_exc: (T, K, n_exc)
-        ps_voltages_inh: (T, K, n_inh)
-        mn_voltages:     (T, K, n_mn)
-        mn_input_exc:  (T, n_mn)  — excitatory drive to MN
-        mn_input_inh:  (T, n_mn)  — inhibitory drive to MN
-        actions:       (T, act_size)
-        rewards:       (T,)
+def collect_full_data(params, norm_params, label, seed=42):
+    """Single rollout that collects BOTH diagnostic data AND states for rendering.
+
+    Uses the diagnostic policy for everything so neural data and behavior
+    are from the exact same trajectory.
     """
+    print(f"  [{label}] Rollout (diag + states)...")
     rng = jax.random.PRNGKey(seed)
     state = jit_eval_reset(rng)
     carry = jp.zeros((1, carry_dim))
+    rollout_states = [state]
+    total_reward = 0.0
 
     data = {k: [] for k in [
         'ps_spikes_exc', 'ps_spikes_inh', 'mn_spikes',
@@ -212,6 +206,8 @@ def diag_rollout(params, norm_params, seed=0):
         action = jp.squeeze(action_dist.mode(logits), axis=0)
         state = jit_eval_step(state, action)
         carry = new_carry * (1.0 - state.done.reshape(1, 1))
+        rollout_states.append(state)
+        total_reward += float(state.reward)
 
         ps_diag = diagnostics['propriospinal']
         mn_diag = diagnostics['motor_neurons']
@@ -227,45 +223,16 @@ def diag_rollout(params, norm_params, seed=0):
         data['actions'].append(np.array(action))
         data['rewards'].append(float(state.reward))
 
-    # Stack: spikes/voltages -> (T, K, N), drive/actions -> (T, N), rewards -> (T,)
-    return {k: np.stack(v) if k != 'rewards' else np.array(v)
-            for k, v in data.items()}
+    # Stack arrays
+    result = {k: np.stack(v) if k != 'rewards' else np.array(v)
+              for k, v in data.items()}
 
-
-def video_rollout(params, norm_params, seed=0):
-    """Run one episode for rendering, return (states_list, total_reward)."""
-    rng = jax.random.PRNGKey(seed)
-    state = jit_eval_reset(rng)
-    carry = jp.zeros((1, carry_dim))
-    rollout_states = [state]
-    total_reward = 0.0
-    for _ in range(episode_length):
-        flat_obs = flatten_obs(state.obs)
-        obs_norm = running_statistics.normalize(flat_obs[None], norm_params)
-        logits, new_carry = jit_policy_apply(params, obs_norm, carry)
-        action = jp.squeeze(action_dist.mode(logits), axis=0)
-        state = jit_eval_step(state, action)
-        carry = new_carry * (1.0 - state.done.reshape(1, 1))
-        rollout_states.append(state)
-        total_reward += float(state.reward)
-    return rollout_states, total_reward
-
-
-def collect_full_data(params, norm_params, label, seed=42):
-    """Collect both diagnostic data and rendered frames for one condition.
-
-    Returns dict with all diagnostic signals + 'frames' key.
-    """
-    print(f"  [{label}] Diagnostic rollout...")
-    data = diag_rollout(params, norm_params, seed=seed)
-    print(f"  [{label}] Video rollout...")
-    states, reward = video_rollout(params, norm_params, seed=seed)
     print(f"  [{label}] Rendering frames...")
-    frames = eval_env.render(states, height=480, width=480, render_ghost=True)
-    data['frames'] = [np.array(f) for f in frames]
-    data['total_reward'] = reward
-    print(f"  [{label}] Done. Reward={reward:.2f}")
-    return data
+    frames = eval_env.render(rollout_states, height=480, width=480, render_ghost=True)
+    result['frames'] = [np.array(f) for f in frames]
+    result['total_reward'] = total_reward
+    print(f"  [{label}] Done. Reward={total_reward:.2f}")
+    return result
 
 
 # =============================================================================
