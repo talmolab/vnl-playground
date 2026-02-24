@@ -77,8 +77,7 @@ CMAP_MN  = LinearSegmentedColormap.from_list('mn',  ['#ffffff', C_MN])
 # Args & checkpoint
 # =============================================================================
 DEFAULT_CKPT = (
-    "/root/vast/eric/vnl-playground/checkpoints/"
-    "mouse-propriospinal-mn-20260223-202959/600023040"
+    "/root/vast/eric/vnl-playground/checkpoints/mouse-propriospinal-mn-20260224-075820/80035840"
 )
 CHECKPOINT_PATH = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CKPT
 OUTPUT_DIR = sys.argv[2] if len(sys.argv) > 2 else "outputs/lab_meeting_2_23_26"
@@ -277,12 +276,21 @@ STIM_FACTORS = [2.0, 5.0, 10.0, 20.0, 50.0]
 ABLATION_FRACS = [0.25, 0.50, 0.75, 1.00]
 
 
+_baseline_wie_norm = None  # set once to verify control is never mutated
+
+
 def make_stimulated_params(scale_factor):
     """Scale W_ie (I->E lateral weights) in the propriospinal module."""
     stim = unfreeze(policy_params)
     ps = stim['params']['propriospinal']
     ps['W_ie'] = ps['W_ie'] * scale_factor
-    return freeze(stim)
+    result = freeze(stim)
+    # Verify original params untouched
+    orig_norm = float(jp.linalg.norm(policy_params['params']['propriospinal']['W_ie']))
+    new_norm = float(jp.linalg.norm(result['params']['propriospinal']['W_ie']))
+    print(f"    [verify] control W_ie norm={orig_norm:.4f}, "
+          f"stim {scale_factor}x W_ie norm={new_norm:.4f}")
+    return result
 
 
 def make_ablated_params(frac):
@@ -303,7 +311,13 @@ def make_ablated_params(frac):
     ps['W_ie'] = ps['W_ie'].at[:, ablate_idx].set(0.0)
     # Also zero ablated E -> MN output
     abl['params']['W_exc_mn'] = abl['params']['W_exc_mn'].at[:, ablate_idx].set(0.0)
-    return freeze(abl)
+    result = freeze(abl)
+    # Verify original params untouched
+    orig_k = float(jp.sum(jp.abs(policy_params['params']['propriospinal']['input_proj']['kernel'])))
+    new_k = float(jp.sum(jp.abs(result['params']['propriospinal']['input_proj']['kernel'])))
+    print(f"    [verify] control kernel sum={orig_k:.4f}, "
+          f"ablation {frac*100:.0f}% kernel sum={new_k:.4f}")
+    return result
 
 
 # =============================================================================
