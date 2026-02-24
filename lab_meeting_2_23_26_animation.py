@@ -663,11 +663,12 @@ def make_baseline_full_video(data, output_path):
 
 
 def make_baseline_membrane_video(data, output_path):
-    """2x2 grid: PS-E voltage | PS-I voltage
-                  MN voltage   | MN drive traces
+    """2x3 grid: MuJoCo     | PS-E voltage | PS-I voltage
+                  MN voltage | MN drive     | Actions
     """
     print("Generating baseline_membrane_potentials.mp4...")
     T = data['ps_voltages_exc'].shape[0]
+    mujoco_frames = data['frames']
 
     panel_pse_v = render_voltage_heatmap(data['ps_voltages_exc'],
                                           'PS-E Membrane Voltages (100/410)',
@@ -677,16 +678,23 @@ def make_baseline_membrane_video(data, output_path):
     panel_mn_v  = render_voltage_heatmap(data['mn_voltages'],
                                           'MN Membrane Voltages (128)')
     panel_drive = render_drive_panel(data['mn_input_exc'], data['mn_input_inh'])
+    panel_act = render_action_heatmap(data['actions'])
+
+    def resize_frame(frame):
+        return np.array(Image.fromarray(frame).resize((PANEL_W, PANEL_H), Image.LANCZOS))
 
     composed = []
-    for t in range(T):
+    for t in range(min(T, len(mujoco_frames))):
+        mj = resize_frame(mujoco_frames[t])
         row0 = np.concatenate([
+            mj,
             draw_time_cursor(panel_pse_v, t, T),
             draw_time_cursor(panel_psi_v, t, T),
         ], axis=1)
         row1 = np.concatenate([
             draw_time_cursor(panel_mn_v, t, T),
             draw_time_cursor(panel_drive, t, T),
+            draw_time_cursor(panel_act, t, T),
         ], axis=1)
         composed.append(np.concatenate([row0, row1], axis=0))
 
@@ -694,12 +702,14 @@ def make_baseline_membrane_video(data, output_path):
 
 
 def make_spike_diagnostics_video(data, output_path):
-    """3x2 neural focus: PS-E raster   | PS-I raster
-                          MN raster     | Firing rate traces
-                          PCA spikes    | PCA voltages
+    """4x2 neural focus: MuJoCo        | PS-E raster
+                          PS-I raster   | MN raster
+                          Firing rates  | PCA spikes
+                          PCA voltages  | Actions
     """
     print("Generating spike_diagnostics_baseline.mp4...")
     T = data['ps_spikes_exc'].shape[0]
+    mujoco_frames = data['frames']
 
     panel_pse = render_raster_panel(data['ps_spikes_exc'], 'PS Excitatory (100/410)',
                                      CMAP_EXC, n_show=100)
@@ -715,22 +725,31 @@ def make_spike_diagnostics_video(data, output_path):
         np.concatenate([data['ps_voltages_exc'], data['ps_voltages_inh'],
                         data['mn_voltages']], axis=-1),
         'PCA — Voltages')
+    panel_act = render_action_heatmap(data['actions'])
+
+    def resize_frame(frame):
+        return np.array(Image.fromarray(frame).resize((PANEL_W, PANEL_H), Image.LANCZOS))
 
     composed = []
-    for t in range(T):
+    for t in range(min(T, len(mujoco_frames))):
+        mj = resize_frame(mujoco_frames[t])
         row0 = np.concatenate([
+            mj,
             draw_time_cursor(panel_pse, t, T),
-            draw_time_cursor(panel_psi, t, T),
         ], axis=1)
         row1 = np.concatenate([
+            draw_time_cursor(panel_psi, t, T),
             draw_time_cursor(panel_mn, t, T),
-            draw_time_cursor(panel_rates, t, T),
         ], axis=1)
         row2 = np.concatenate([
+            draw_time_cursor(panel_rates, t, T),
             draw_time_cursor(panel_pca_sp, t, T),
-            draw_time_cursor(panel_pca_v, t, T),
         ], axis=1)
-        composed.append(np.concatenate([row0, row1, row2], axis=0))
+        row3 = np.concatenate([
+            draw_time_cursor(panel_pca_v, t, T),
+            draw_time_cursor(panel_act, t, T),
+        ], axis=1)
+        composed.append(np.concatenate([row0, row1, row2, row3], axis=0))
 
     make_video(composed, output_path)
 
@@ -799,7 +818,8 @@ def make_comparison_video(data_normal, data_condition, label_normal, label_condi
 def make_stim_neural_detail_video(data_normal, data_stim, sf, output_path):
     """Neural detail comparison for stimulation.
 
-    2x4 grid:
+    2x5 grid:
+      Normal MuJoCo       | Stim MuJoCo
       Normal PS-E raster  | Stim PS-E raster
       Normal PS-I raster  | Stim PS-I raster
       Normal MN raster    | Stim MN raster
@@ -807,6 +827,8 @@ def make_stim_neural_detail_video(data_normal, data_stim, sf, output_path):
     """
     print(f"Generating {os.path.basename(output_path)}...")
     T = data_normal['ps_spikes_exc'].shape[0]
+    frames_n = data_normal['frames']
+    frames_s = data_stim['frames']
 
     # Normal side
     n_pse = render_raster_panel(data_normal['ps_spikes_exc'], 'Normal PS-E',
@@ -828,8 +850,14 @@ def make_stim_neural_detail_video(data_normal, data_stim, sf, output_path):
                                   data_stim['mn_input_inh'],
                                   f'Stim {sf:.0f}x MN Drive')
 
+    def resize_frame(frame):
+        return np.array(Image.fromarray(frame).resize((PANEL_W, PANEL_H), Image.LANCZOS))
+
     composed = []
-    for t in range(T):
+    for t in range(min(T, len(frames_n), len(frames_s))):
+        mj_n = resize_frame(frames_n[t])
+        mj_s = resize_frame(frames_s[t])
+        row_mj = np.concatenate([mj_n, mj_s], axis=1)
         row0 = np.concatenate([
             draw_time_cursor(n_pse, t, T),
             draw_time_cursor(s_pse, t, T),
@@ -846,7 +874,7 @@ def make_stim_neural_detail_video(data_normal, data_stim, sf, output_path):
             draw_time_cursor(n_drive, t, T),
             draw_time_cursor(s_drive, t, T),
         ], axis=1)
-        composed.append(np.concatenate([row0, row1, row2, row3], axis=0))
+        composed.append(np.concatenate([row_mj, row0, row1, row2, row3], axis=0))
 
     make_video(composed, output_path)
 
