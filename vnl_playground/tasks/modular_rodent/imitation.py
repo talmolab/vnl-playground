@@ -26,6 +26,7 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.MODULAR_RODENT_WALKER_XML_PATH,
         arena_xml_path=consts.MODULAR_RODENT_ARENA_XML_PATH,
+        rescale_factor=0.9,
         mujoco_impl="warp",
         sim_dt=0.002,
         ctrl_dt=0.01,
@@ -571,11 +572,14 @@ class ModularImitation(modular_base.ModularRodentEnv):
         render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """Render trajectory with optional ghost overlay of imitation target."""
-        from vnl_playground.tasks.utils import _recolour_tree
+        from vnl_playground.tasks.utils import _recolour_tree, dm_scale_spec
 
         if render_ghost:
             spec = self._spec.copy()
             ghost_spec = mujoco.MjSpec.from_file(str(consts.MODULAR_RODENT_WALKER_XML_PATH))
+            ghost_rescale = self._config.rescale_factor
+            if ghost_rescale != 1.0:
+                ghost_spec = dm_scale_spec(ghost_spec, ghost_rescale)
             # Recolor walker bodies to white/transparent
             for body in ghost_spec.worldbody.bodies:
                 _recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])

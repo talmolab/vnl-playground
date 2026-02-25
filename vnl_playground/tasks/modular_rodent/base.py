@@ -15,12 +15,14 @@ from mujoco_playground._src import mjx_env
 from mujoco_playground._src.mjx_env import get_sensor_data
 
 from . import consts
+from vnl_playground.tasks.utils import dm_scale_spec
 
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.MODULAR_RODENT_WALKER_XML_PATH,
         arena_xml_path=consts.MODULAR_RODENT_ARENA_XML_PATH,
+        rescale_factor=0.9,
         sim_dt=0.002,
         ctrl_dt=0.01,
         solver="cg",
@@ -47,6 +49,8 @@ class ModularRodentEnv(mjx_env.MjxEnv):
         super().__init__(config, config_overrides)
         self._spec = mujoco.MjSpec.from_file(str(self._config.arena_xml_path))
         walker_spec = mujoco.MjSpec.from_file(str(self._config.walker_xml_path))
+        if self._config.rescale_factor != 1.0:
+            walker_spec = dm_scale_spec(walker_spec, self._config.rescale_factor)
         frame = self._spec.worldbody.add_frame()
         body = frame.attach_body(walker_spec.body("walker"), "", suffix="")
         body.add_freejoint(name="root")
