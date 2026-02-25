@@ -1,0 +1,794 @@
+<mujoco model="floor">
+  <compiler boundmass="1.0000000000000001e-05" boundinertia="9.9999999999999994e-12" coordinate="local" angle="radian" eulerseq="xyz"/>
+  <option timestep="0.002" cone="elliptic" />
+  <size njmax="512" nconmax="512"/>
+  <visual>
+    <quality shadowsize="2048"/>
+    <headlight ambient="0.40000000000000002 0.40000000000000002 0.40000000000000002" diffuse="0.80000000000000004 0.80000000000000004 0.80000000000000004" specular="0.10000000000000001 0.10000000000000001 0.10000000000000001"/>
+    <map znear="0.01"/>
+    <scale forcewidth="0.01" contactwidth="0.059999999999999998" contactheight="0.01" jointwidth="0.01" framelength="0.29999999999999999" framewidth="0.01"/>
+  </visual>
+  <statistic meansize="0.0030000000000000001"/>
+  <default>
+    <default class="/"/>
+    <default class="walker/">
+      <joint limited="true" solreflimit="0.01 1" solimplimit="0.98999999999999999 0.99990000000000001 0" armature="5.9999999999999997e-07" damping="0.001"/>
+      <geom friction="0.69999999999999996 0.0050000000000000001 0.0001" solref="0.0050000000000000001 1"/>
+      <site group="3" rgba="0 0 1 1"/>
+      <tendon limited="false"/>
+      <general ctrllimited="true" forcelimited="false" ctrlrange="-1 1" gainprm="0.01"/>
+      <default class="walker/bone">
+        <geom contype="0" conaffinity="0" group="0" rgba="0.5 0.5 0.5 1" density="1100"/>
+      </default>
+      <default class="walker/collision">
+        <geom contype="1" conaffinity="1" condim="1" group="2"/>
+        <default class="walker/collision_primitive">
+          <geom type="capsule" group="2" rgba="0 0.5 0.5 1" density="500"/>
+          <default class="walker/collision_primitive_paw">
+            <geom condim="3" priority="1" rgba="0 0.59999999999999998 0.69999999999999996 1" friction="1.5 0.0050000000000000001 0.0001"/>
+          </default>
+          <default class="walker/nonself_collision_primitive">
+            <geom conaffinity="0"/>
+          </default>
+        </default>
+      </default>
+      <default class="walker/lumbar">
+        <joint group="3" pos="0.0030000000000000001 0 -0.0030000000000000001" armature="1.0000000000000001e-05" damping="0.029999999999999999"/>
+        <general gainprm="0.14999999999999999"/>
+        <default class="walker/lumbar_extend">
+          <joint stiffness="0.02" range="-0.52359877559829882 0.78539816339744828"/>
+          <tendon range="-1 1"/>
+          <general gainprm="0.40000000000000002"/>
+        </default>
+        <default class="walker/lumbar_bend">
+          <joint stiffness="0.029999999999999999" range="-0.52359877559829882 0.52359877559829882"/>
+          <tendon range="-1 1"/>
+        </default>
+        <default class="walker/lumbar_twist">
+          <joint stiffness="0.029999999999999999" range="-0.52359877559829882 0.52359877559829882"/>
+          <tendon range="-1 1"/>
+        </default>
+      </default>
+      <default class="walker/cervical">
+        <joint group="3" pos="-0.02 0 -0.050000000000000003" stiffness="1" armature="0.001" damping="1"/>
+        <default class="walker/cervical_extend">
+          <joint range="-0.40724349213201022 0.6108652381980153"/>
+          <tendon range="-1 1"/>
+          <general gainprm="2.5"/>
+        </default>
+        <default class="walker/cervical_bend">
+          <joint range="-0.6108652381980153 0.6108652381980153"/>
+          <tendon range="-1 1"/>
+          <general gainprm="2.5"/>
+        </default>
+        <default class="walker/cervical_twist">
+          <joint range="-0.6108652381980153 0.6108652381980153"/>
+          <tendon range="-1 1"/>
+          <general gainprm="2.5"/>
+        </default>
+      </default>
+      <default class="walker/atlas">
+        <joint axis="0 -1 0" stiffness="0.002" range="-0.087266462599716474 0.78539816339744828" damping="0.002"/>
+        <general gainprm="0.025000000000000001"/>
+      </default>
+      <default class="walker/mandible">
+        <joint stiffness="0.002" range="-0.29670597283903599 0.26179938779914941" springref="-0.31415926535900002" damping="0.002"/>
+        <general gainprm="0.025000000000000001"/>
+      </default>
+      <default class="walker/caudal">
+        <joint group="3" stiffness="1.0000000000000001e-05" damping="0.002"/>
+        <general gainprm="0.0050000000000000001"/>
+        <default class="walker/caudal_extend">
+          <joint range="-0.087266462599716474 0.087266462599716474"/>
+          <tendon range="-0.050000000000000003 0.050000000000000003"/>
+        </default>
+        <default class="walker/caudal_bend">
+          <joint range="-0.087266462599716474 0.087266462599716474"/>
+          <tendon range="-0.20000000000000001 0.20000000000000001"/>
+        </default>
+      </default>
+      <default class="walker/hip">
+        <joint armature="1.0000000000000001e-05" damping="0.02"/>
+        <general gainprm="0.20000000000000001"/>
+        <default class="walker/hip_supinate">
+          <joint range="-0.69813170079773179 0.52359877559829882"/>
+        </default>
+        <default class="walker/hip_abduct">
+          <joint range="-0.52359877559829882 1.0471975511965981"/>
+        </default>
+        <default class="walker/hip_extend">
+          <joint range="-1.570796326794897 1.0471975511965981"/>
+          <general gainprm="0.29999999999999999"/>
+        </default>
+      </default>
+      <default class="walker/knee">
+        <joint range="-1.2217304763960311 1.5358897417550099" damping="0.0050000000000000001"/>
+        <general gainprm="0.20000000000000001"/>
+      </default>
+      <default class="walker/ankle">
+        <joint range="-0.10000000000000001 2" damping="0.0030000000000000001"/>
+        <general gainprm="0.20000000000000001"/>
+      </default>
+      <default class="walker/toe">
+        <joint range="-0.69999999999999996 0.87" damping="0.001"/>
+        <general gainprm="0.025000000000000001"/>
+      </default>
+      <default class="walker/scapula">
+        <joint damping="0.0050000000000000001"/>
+        <general gainprm="0.25"/>
+        <default class="walker/scapula_supinate">
+          <joint pos="0 0.005000000000000001 0" range="-0.017453292519943299 0.17453292519943289"/>
+        </default>
+        <default class="walker/scapula_abduct">
+          <joint pos="0 0.005000000000000001 -0.01" range="-0.26179938779914941 0.26179938779914941"/>
+        </default>
+        <default class="walker/scapula_extend">
+          <joint pos="0 0 0" range="-0.034906585039886591 0.034906585039886591"/>
+          <general gainprm="0.25"/>
+        </default>
+      </default>
+      <default class="walker/shoulder">
+        <joint range="-1.308996938995747 0.87266462599716477" damping="0.0050000000000000001"/>
+        <general gainprm="0.14999999999999999"/>
+      </default>
+      <default class="walker/shoulder_sup">
+        <joint range="-0.05235987755982989 1.134464013796314" damping="0.0050000000000000001"/>
+        <general gainprm="0.14999999999999999"/>
+      </default>
+      <default class="walker/elbow">
+        <joint range="-1.308996938995747 0.69813170079773179" damping="0.0030000000000000001"/>
+        <general gainprm="0.14999999999999999"/>
+      </default>
+      <default class="walker/wrist">
+        <joint range="-0.3490658503988659 2.0943951023931948" damping="0.002"/>
+        <general gainprm="0.050000000000000003"/>
+      </default>
+      <default class="walker/finger">
+        <joint range="0 1.570796326794897" damping="0.002"/>
+        <general gainprm="0.025000000000000001"/>
+      </default>
+      <default class="walker/sensor">
+        <site group="4"/>
+      </default>
+    </default>
+  </default>
+  <asset>
+    <texture name="groundplane" type="2d" builtin="checker" rgb1="0.20000000000000001 0.29999999999999999 0.40000000000000002" rgb2="0.10000000000000001 0.20000000000000001 0.29999999999999999" mark="edge" markrgb="0.80000000000000004 0.80000000000000004 0.80000000000000004" width="200" height="200"/>
+    <material name="groundplane" class="/" texture="groundplane" texrepeat="2 2" texuniform="true" reflectance="0.20000000000000001"/>
+    <!-- <skin name="walker/skin" file="rodent_walker_skin-734561cd8042e528cff246c5da3ed9ab4586932a.skn"/> -->
+  </asset>
+  <worldbody>
+    <geom name="groundplane" class="/" type="plane" size="8 8 0.25" material="groundplane"/>
+    <camera name="top_camera" class="/" fovy="10.058147163570894" pos="0 0 100" quat="1 0 0 0"/>
+    <body name="walker/">
+      <freejoint name="walker/"/>
+      <body name="walker/torso" pos="0.030995260545782881 2.058524937651458e-07 0.065089572631199674">
+        <light name="walker/tracking_light" class="walker/" mode="trackcom" pos="0 0 3"/>
+        <camera name="walker/back" class="walker/" mode="trackcom" pos="-1 0 0.5" xyaxes="0 -1 0 1 0 2"/>
+        <camera name="walker/side" class="walker/" mode="trackcom" pos="0 -1 0.5" xyaxes="1 0 0 0 1 2"/>
+        <camera name="walker/side_alt" class="walker/" mode="trackcom" pos="0.5 -0.56100000000000005 0.19900000000000001" xyaxes="0.76600000000000001 0.64300000000000002 0 -0.16200000000000001 0.192 0.96799999999999997"/>
+        <camera name="walker/top" class="walker/" mode="trackcom" fovy="100" pos="0 0 1" zaxis="0 -0.20000000000000001 1"/>
+        <site name="walker/back" class="walker/" type="box" pos="0 0 0.02" size="0.002 0.002 0.002"/>
+        <geom name="walker/collision_torso" class="walker/nonself_collision_primitive" type="ellipsoid" size="0.050000000000000003 0.024 0.025999999999999999" density="468.25126000900002" pos="-0.0082000000000000007 0 0" euler="0 0.17453292519943289 0"/>
+        <body name="walker/vertebra_1" pos="-0.01917944366660853 -1.8803355927589691e-07 0.016846456906490889">
+          <geom name="walker/vertebra_1_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.01" pos="0 0 -0.00164"/>
+          <body name="walker/vertebra_2" pos="-0.0056297163353177171 2.5948035886584432e-06 0.00053209226987832364">
+            <geom name="walker/vertebra_2_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.01" pos="0 0 -0.00164"/>
+            <body name="walker/vertebra_3" pos="-0.0065171666725424094 -1.0410628653607659e-05 -9.4672188948204946e-05">
+              <geom name="walker/vertebra_3_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.01" pos="0 0 -0.00164"/>
+              <body name="walker/vertebra_4" pos="-0.0067777041851870348 8.7461011271629018e-06 -0.0012993147728524749">
+                <geom name="walker/vertebra_4_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.01" pos="0 0 -0.00164"/>
+                <body name="walker/vertebra_5" pos="-0.0068900665623031019 -6.2043336497232209e-06 -0.0024980649787824539">
+                  <geom name="walker/vertebra_5_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.01" pos="0 0 -0.00164"/>
+                  <body name="walker/vertebra_6" pos="-0.0061852844346815122 5.2544421289550487e-06 -0.0036411224530278341">
+                    <geom name="walker/vertebra_6_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.01" pos="0 0 -0.00164"/>
+                    <joint name="walker/vertebra_6_twist" class="walker/lumbar_twist" axis="1 0 0"/>
+                    <body name="walker/pelvis" pos="-0.01307140919884396 3.513221433820909e-06 -0.0081209828297725325">
+                      <geom name="walker/collision_pelvis_L" class="walker/nonself_collision_primitive" size="0.012999999999999999 0.021000000000000001 0" density="1548.57736929" pos="-0.00081999999999999998 0.0065599999999999999 -0.0057400000000000003" euler="0 0.87266462599716477 0"/>
+                      <geom name="walker/collision_pelvis_R" class="walker/nonself_collision_primitive" size="0.012999999999999999 0.021000000000000001 0" density="1548.57736929" pos="-0.00081999999999999998 -0.0065599999999999999 -0.0057400000000000003" euler="0 0.87266462599716477 0"/>
+                      <geom name="walker/collision_pelvis_gut" class="walker/nonself_collision_primitive" type="ellipsoid" size="0.02 0.02 0.017999999999999999" density="1548.57736929" pos="0.020500000000000001 0 -0.016400000000000001" euler="0 -0.52359877559829882 0"/>
+                      <site name="walker/hip_L" class="walker/" size="0.0022000000000000001" pos="-0.0048102924167646149 0.011491254106715469 -0.0098878233011272642"/>
+                      <site name="walker/hip_R" class="walker/" size="0.0022000000000000001" pos="-0.0048102924167646149 -0.011491254106715469 -0.0098878233011272642"/>
+                      <body name="walker/upper_leg_L" pos="-0.0048102924167646149 0.011491254106715469 -0.0098878233011272642">
+                        <joint name="walker/hip_L_supinate" class="walker/hip_supinate" axis="-0 -0 1"/>
+                        <joint name="walker/hip_L_abduct" class="walker/hip_abduct" axis="1 -0 -0"/>
+                        <joint name="walker/hip_L_extend" class="walker/hip_extend" axis="0 1 0"/>
+                        <site name="walker/knee_L" class="walker/" type="cylinder" size="0.00060000000000000006 0.0040000000000000001" pos="0.01542264534586861 0.01747899805865108 -0.025704408909781009" zaxis="0 1 0"/>
+                        <geom name="walker/upper_leg_L0_collision" class="walker/collision_primitive" size="0.008742403002230982 0.017484806004461961" density="1561.7555055600001" pos="0.0086025245541952854 0.010753155692744111 -0.012903786831292931" euler="0.6108652381980153 -0.69813170079773179 0"/>
+                        <body name="walker/lower_leg_L" pos="0.01542264534586861 0.01747899805865108 -0.025704408909781009">
+                          <joint name="walker/knee_L" class="walker/knee" axis="0.5 -1 0"/>
+                          <site name="walker/ankle_L" class="walker/" type="cylinder" size="0.00060000000000000006 0.0025999999999999999" pos="-0.032301540337834063 -0.0047270546835854717 -0.022059588523398871" zaxis="0 1 0"/>
+                          <body name="walker/foot_L" pos="-0.032301540337834063 -0.0047270546835854717 -0.022059588523398871">
+                            <joint name="walker/ankle_L" class="walker/ankle" axis="-0.29999999999999999 1 0"/>
+                            <geom name="walker/foot_L_collision" class="walker/collision_primitive_paw" size="0.003210712207833968 0.01238417565878816" density="2041.1597822799999" pos="0.0082744640327606835 0.0022566720089347309 -0.0022566720089347309" euler="1.570796326794897 -1.2217304763960311 0"/>
+                            <site name="walker/toe_L" class="walker/" type="cylinder" size="0.00060000000000000006 0.005000000000000001" pos="0.02109994311367263 0.0076143272975427306 -0.0027521664930877342" zaxis="0 1 0"/>
+                            <site name="walker/heel_L" class="walker/sensor" type="box" size="0.015 0.006 0.006" pos="0.0082744640327606835 0.0022566720089347309 -0.0022566720089347309" euler="0 0 0.3490658503988659"/>
+                            <body name="walker/toe_L" pos="0.02109994311367263 0.0076143272975427306 -0.0027521664930877342">
+                              <joint name="walker/toe_L" class="walker/toe" axis="0 1 0"/>
+                              <geom name="walker/toe_L0_collision" class="walker/collision_primitive_paw" size="0.002383208424149982 0.0072532430300216834" pos="0.0084966561208825436 -0.0008496656120882542 0" euler="1.570796326794897 -1.2217304763960311 0"/>
+                              <geom name="walker/toe_L1_collision" class="walker/collision_primitive_paw" size="0.002383208424149982 0.0077713318178803739" pos="0.0080718233148384163 0.0025489968362647632 0" euler="1.570796326794897 -1.2217304763960311 0"/>
+                              <geom name="walker/toe_L2_collision" class="walker/collision_primitive_paw" size="0.002383208424149982 0.0072532430300216834" pos="0.0067973248967060336 0.0055228264785736536 0" euler="1.570796326794897 -1.2217304763960311 0"/>
+                              <site name="walker/sole_L" class="walker/sensor" type="box" size="0.015000000000000001 0.0060000000000000001 0.002" pos="0.0082000000000000007 0.0024599999999999999 -0.00164" euler="0 0 0.3490658503988659"/>
+                            </body>
+                          </body>
+                          <geom name="walker/lower_leg_L_collision" class="walker/collision_primitive" size="0.0065568022516732357 0.01923328660490816" density="1302.86687267" pos="-0.012263390469294311 0.00012247924262217709 -0.01071813365303941" quat="0.58439398761405215 0.27858155227390202 0.39004539538183519 0.65478284607542836"/>
+                        </body>
+                      </body>
+                      <body name="walker/upper_leg_R" pos="-0.0048102924167646149 -0.011491254106715469 -0.0098878233011272642">
+                        <joint name="walker/hip_R_supinate" class="walker/hip_supinate" axis="0 0 -1"/>
+                        <joint name="walker/hip_R_abduct" class="walker/hip_abduct" axis="-1 0 0"/>
+                        <joint name="walker/hip_R_extend" class="walker/hip_extend" axis="0 1 0"/>
+                        <site name="walker/knee_R" class="walker/" type="cylinder" size="0.00060000000000000006 0.0040000000000000001" pos="0.01542264534586861 -0.01747899805865108 -0.025704408909781009" zaxis="0 1 0"/>
+                        <geom name="walker/upper_leg_R0_collision" class="walker/collision_primitive" size="0.008742403002230982 0.017484806004461961" density="1561.7555055600001" pos="0.0086025245541952854 -0.010753155692744111 -0.012903786831292931" euler="-0.6108652381980153 -0.69813170079773179 0"/>
+                        <body name="walker/lower_leg_R" pos="0.01542264534586861 -0.01747899805865108 -0.025704408909781009">
+                          <joint name="walker/knee_R" class="walker/knee" axis="-0.5 -1 0"/>
+                          <site name="walker/ankle_R" class="walker/" type="cylinder" size="0.00060000000000000006 0.0025999999999999999" pos="-0.032301540337834063 0.0047270546835854717 -0.022059588523398871" zaxis="0 1 0"/>
+                          <body name="walker/foot_R" pos="-0.032301540337834063 0.0047270546835854717 -0.022059588523398871">
+                            <joint name="walker/ankle_R" class="walker/ankle" axis="0.29999999999999999 1 0"/>
+                            <geom name="walker/foot_R_collision" class="walker/collision_primitive_paw" size="0.003210712207833968 0.01238417565878816" density="2041.1597822799999" pos="0.0082744640327606835 -0.0022566720089347309 -0.0022566720089347309" euler="1.570796326794897 1.2217304763960311 0"/>
+                            <site name="walker/toe_R" class="walker/" type="cylinder" size="0.00060000000000000006 0.005000000000000001" pos="0.02109994311367263 -0.0076143272975427306 -0.0027521664930877342" zaxis="0 1 0"/>
+                            <site name="walker/heel_R" class="walker/sensor" type="box" size="0.015 0.006 0.006" pos="0.0082744640327606835 -0.0022566720089347309 -0.0022566720089347309" euler="0 0 -0.3490658503988659"/>
+                            <body name="walker/toe_R" pos="0.02109994311367263 -0.0076143272975427306 -0.0027521664930877342">
+                              <joint name="walker/toe_R" class="walker/toe" axis="0 1 0"/>
+                              <geom name="walker/toe_R0_collision" class="walker/collision_primitive_paw" size="0.002383208424149982 0.0072532430300216834" pos="0.0084966561208825436 0.0008496656120882542 0" euler="1.570796326794897 1.2217304763960311 0"/>
+                              <geom name="walker/toe_R1_collision" class="walker/collision_primitive_paw" size="0.002383208424149982 0.0077713318178803739" pos="0.0080718233148384163 -0.0025489968362647632 0" euler="1.570796326794897 1.2217304763960311 0"/>
+                              <geom name="walker/toe_R2_collision" class="walker/collision_primitive_paw" size="0.002383208424149982 0.0072532430300216834" pos="0.0067973248967060336 -0.0055228264785736536 0" euler="1.570796326794897 1.2217304763960311 0"/>
+                              <site name="walker/sole_R" class="walker/sensor" type="box" size="0.0150000000000000001 0.0060000000000000001 0.002" pos="0.0082000000000000007 -0.0024599999999999999 -0.00164" euler="0 0 -0.3490658503988659"/>
+                            </body>
+                          </body>
+                          <geom name="walker/lower_leg_R_collision" class="walker/collision_primitive" size="0.0065568022516732357 0.01923328660490816" density="1302.86687267" pos="-0.01202896613332032 -0.00016157869540389129 -0.0105741369075766" quat="0.65643150361110036 0.39014177197659983 0.27795769268188453 0.58277491358567579"/>
+                        </body>
+                      </body>
+                      <body name="walker/vertebra_C1" pos="-0.015789911729839672 0 -0.01188162292618369">
+                        <body name="walker/vertebra_C2" pos="-0.0038770537821393178 0 -0.0042264312045172652">
+                          <body name="walker/vertebra_C3" pos="-0.0034240268125903012 0 -0.0042630774361130091">
+                            <body name="walker/vertebra_C4" pos="-0.0032718746666582431 0 -0.0044168381522190761">
+                              <body name="walker/vertebra_C5" pos="-0.0031759742710189948 0 -0.0045693408592138648">
+                                <body name="walker/vertebra_C6" pos="-0.0031191938504819979 0 -0.0049013552813431029">
+                                  <body name="walker/vertebra_C7" pos="-0.003215811269353427 0 -0.005644371131998142">
+                                    <body name="walker/vertebra_C8" pos="-0.0034458535044797462 0 -0.0055181812721850163">
+                                      <body name="walker/vertebra_C9" pos="-0.0042851727751805502 0 -0.0051150182800653058">
+                                        <body name="walker/vertebra_C10" pos="-0.0048615451646428186 0 -0.0045621863426624741">
+                                          <body name="walker/vertebra_C11" pos="-0.0053747869848973116 0 -0.0043642071689941591">
+                                            <body name="walker/vertebra_C12" pos="-0.0061344784606154447 0 -0.0038415028019160788">
+                                              <body name="walker/vertebra_C13" pos="-0.0068974274502133096 0 -0.0025924281851720079">
+                                                <body name="walker/vertebra_C14" pos="-0.0068250377373438526 0 -0.00090889989329263519">
+                                                  <body name="walker/vertebra_C15" pos="-0.0065262110691343264 0 -0.00031533099688660588">
+                                                    <body name="walker/vertebra_C16" pos="-0.0066939094479125088 0 -0.00013848852705565469">
+                                                      <body name="walker/vertebra_C17" pos="-0.0064854262468500281 0 -1.6704671392166639e-05">
+                                                        <body name="walker/vertebra_C18" pos="-0.0062074321817976556 0 1.8255731314229671e-10">
+                                                          <body name="walker/vertebra_C19" pos="-0.0062042595978254352 0 -8.201902227376357e-10">
+                                                            <body name="walker/vertebra_C20" pos="-0.0062283768199425816 0 2.5165204728144109e-06">
+                                                            <body name="walker/vertebra_C21" pos="-0.006117653417468877 0 -0.0001096641718318435">
+                                                            <body name="walker/vertebra_C22" pos="-0.0065081078495339024 0 -1.3119874836490391e-05">
+                                                            <body name="walker/vertebra_C23" pos="-0.0063907554126239642 0 1.751401410207947e-09">
+                                                            <body name="walker/vertebra_C24" pos="-0.0061807151952515882 0 -1.247135173292058e-09">
+                                                            <body name="walker/vertebra_C25" pos="-0.0059681989517360139 0 1.3794923497782719e-10">
+                                                            <body name="walker/vertebra_C26" pos="-0.0056286765801418339 0 -1.365630198950016e-09">
+                                                            <body name="walker/vertebra_C27" pos="-0.0051931202822717831 0 1.395692942078239e-09">
+                                                            <body name="walker/vertebra_C28" pos="-0.005036239104451245 0 5.0739823560597707e-07">
+                                                            <body name="walker/vertebra_C29" pos="-0.0047738968371697282 0 -6.2055545704212819e-11">
+                                                            <body name="walker/vertebra_C30" pos="-0.0040053516229491297 0 -4.1971831871537379e-07">
+                                                            <geom name="walker/vertebra_C30_collision" class="walker/collision_primitive" size="0.001297856215387583 0.0061625257367268196 0.0034565399400889869" density="507.157357703" pos="-3.4139358007223557e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                            </body>
+                                                            <joint name="walker/vertebra_C29_bend" class="walker/caudal_bend" pos="0.0037407763302326198 0 4.862608565869494e-11" axis="1.299892892972596e-08 0 -0.99999999999999989" range="-0.26179938779914941 0.26179938779914941"/>
+                                                            <geom name="walker/vertebra_C29_collision" class="walker/collision_primitive" size="0.0012968324590474369 0.0059637751837726682 0.002618767786771059" density="507.157357703" pos="2.2759572004815711e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                            </body>
+                                                            <geom name="walker/vertebra_C28_collision" class="walker/collision_primitive" size="0.0012968323426321151 0.0057649202208267516 0.002877779770642519" density="507.157357703" pos="-2.2759572004815711e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                            </body>
+                                                            <joint name="walker/vertebra_C27_extend" class="walker/caudal_extend" pos="0.0038538170047102958 0 -1.0357443889557421e-09" axis="0 0.99999999999999989 0" range="-0.26179938779914941 0.26179938779914941"/>
+                                                            <geom name="walker/vertebra_C27_collision" class="walker/collision_primitive" size="0.001379601657390594 0.0055661828373558819 0.0030614486895501609" density="507.157357703" pos="-2.2759572004815711e-17 -5.6898930012039269e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                            </body>
+                                                            <geom name="walker/vertebra_C26_collision" class="walker/collision_primitive" size="0.001379605033434927 0.0053673316579079264 0.0030614288989454512" density="507.157357703" pos="0 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                            </body>
+                                                            <joint name="walker/vertebra_C25_bend" class="walker/caudal_bend" pos="0.0035962350666522971 0 -8.3123548704893099e-11" axis="-2.311404765380703e-08 0 -0.99999999999999978" range="-0.26179938779914941 0.26179938779914941"/>
+                                                            <geom name="walker/vertebra_C25_collision" class="walker/collision_primitive" size="0.001379601657390594 0.0051685892685782164 0.0034789224155247211" density="507.157357703" pos="2.2759572004815711e-17 5.6898930012039269e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                            </body>
+                                                            <geom name="walker/vertebra_C24_collision" class="walker/collision_primitive" size="0.00137960200663656 0.0049697726353770122 0.0034789186902344231" density="507.157357703" pos="0 5.6898930012039269e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                            </body>
+                                                            <joint name="walker/vertebra_C23_extend" class="walker/caudal_extend" pos="0.0035962192341683951 0 -9.8555225970593182e-10" axis="0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
+                                                            <geom name="walker/vertebra_C23_collision" class="walker/collision_primitive" size="0.001379598979838192 0.0047709754435345531 0.0037407763302326198" density="507.157357703" pos="0 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                            </body>
+                                                            <geom name="walker/vertebra_C22_collision" class="walker/collision_primitive" size="0.0013796032872051001 0.0045721781061729416 0.0037407784257084131" density="507.157357703" pos="2.2759572004815711e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                            </body>
+                                                            <joint name="walker/vertebra_C21_bend" class="walker/caudal_bend" pos="0.0038631568632350941 0 6.9250392128042483e-05" axis="0.017922976189593771 0 -0.99983937056134542" range="-0.26179938779914941 0.26179938779914941"/>
+                                                            <geom name="walker/vertebra_C21_collision" class="walker/collision_primitive" size="0.0015305152628570799 0.0049721287796273828 0.0038538170047104359" density="507.157357703" pos="-2.2759572004815711e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                            </body>
+                                                            <geom name="walker/vertebra_C20_collision" class="walker/collision_primitive" size="0.001498286379501224 0.0051765363605227321 0.0035961582325398922" density="507.157357703" pos="0 2.8449465006019631e-18 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                            </body>
+                                                            <joint name="walker/vertebra_C19_extend" class="walker/caudal_extend" pos="0.0042785652913152799 0 5.6561743814062333e-10" axis="-0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
+                                                            <geom name="walker/vertebra_C19_collision" class="walker/collision_primitive" size="0.00163395400159061 0.0051713781431317329 0.003596235066652298" density="507.157357703" pos="0 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                          </body>
+                                                          <geom name="walker/vertebra_C18_collision" class="walker/collision_primitive" size="0.001633956097066402 0.0049127749516628683 0.0035962301772087808" density="507.157357703" pos="-4.5519144009631422e-17 3.5561831257524539e-19 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                        </body>
+                                                        <joint name="walker/vertebra_C17_bend" class="walker/caudal_bend" pos="0.0042794102408467479 0 1.102258187892252e-05" axis="0.0025757159736695379 0 -0.99999668283810972" range="-0.26179938779914941 0.26179938779914941"/>
+                                                        <geom name="walker/vertebra_C17_collision" class="walker/collision_primitive" size="0.0016339556314051149 0.004654210468288511 0.0035962192341685299" density="507.157357703" pos="4.5519144009631422e-17 3.5561831257524539e-19 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                      </body>
+                                                      <geom name="walker/vertebra_C16_collision" class="walker/collision_primitive" size="0.0018781144171953199 0.0043956402514595538 0.0038668927736580372" density="507.157357703" pos="4.5519144009631422e-17 0 0" quat="0 0.70710678118654746 0 0.70710678118654757"/>
+                                                    </body>
+                                                    <joint name="walker/vertebra_C15_extend" class="walker/caudal_extend" pos="0.0039328323309841236 0 0.00019002510436451429" axis="-0 0.99999999999999989 0" range="-0.26179938779914941 0.26179938779914941"/>
+                                                    <geom name="walker/vertebra_C15_collision" class="walker/collision_primitive" size="0.001845342689193785 0.0041370675899088383 0.003863777499645948" density="507.157357703" pos="0 -2.8449465006019631e-18 0" quat="-3.0484114965156431e-15 0.69918484550468107 3.117107305228081e-15 0.71494094288730958"/>
+                                                  </body>
+                                                  <geom name="walker/vertebra_C14_collision" class="walker/collision_primitive" size="0.0018450607312843199 0.0038785065407864749 0.003863667836412787" density="507.157357703" pos="-4.5519144009631422e-17 -4.2674197509029446e-18 0" quat="0 0.68661127709289849 0 0.72702472734347823"/>
+                                                </body>
+                                                <joint name="walker/vertebra_C13_bend" class="walker/caudal_bend" pos="0.0035122350315847208 0 0.0013200888526268069" axis="0.35182448335084782 0 -0.93606598747893233" range="-0.26179938779914941 0.26179938779914941"/>
+                                                <geom name="walker/vertebra_C13_collision" class="walker/collision_primitive" size="0.0020907062571495771 0.0039599778247065842 0.0042785652913153172" density="507.157357703" pos="-1.1379786002407849e-17 0 1.7780915628762269e-19" quat="1.8921649036461709e-16 0.62939320922622977 -2.3361814295972612e-16 0.7770869888113604"/>
+                                              </body>
+                                              <geom name="walker/vertebra_C12_collision" class="walker/collision_primitive" size="0.002433547750115395 0.004146181046962738 0.0042790831066668034" density="507.157357703" pos="0 0 0" quat="1.235560731911126e-17 0.50807932657268906 -7.2884636281232995e-18 0.86131027969567553"/>
+                                            </body>
+                                            <joint name="walker/vertebra_C11_extend" class="walker/caudal_extend" pos="0.0027370420728427452 0 0.0022224171245676192" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
+                                            <geom name="walker/vertebra_C11_collision" class="walker/collision_primitive" size="0.002499659545719624 0.0038969448069110508 0.0042794244363903999" density="507.157357703" pos="-2.2759572004815711e-17 0 0" quat="8.0408085539503005e-17 0.43494441859157318 -3.8839207519475621e-17 0.90045730200606311"/>
+                                          </body>
+                                          <geom name="walker/vertebra_C10_collision" class="walker/collision_primitive" size="0.0034211957827210431 0.0051967769977636644 0.0039378739893436432" density="507.157357703" pos="0 0 -1.4224732503009819e-18" quat="6.6069271991940225e-17 0.40482247803803101 -2.9250288648812828e-17 0.91439529814798803"/>
+                                        </body>
+                                        <joint name="walker/vertebra_C9_bend" class="walker/caudal_bend" pos="0.0028864568034881548 0 0.0034454338457423641" axis="0.76654874165088338 0 -0.64218613086351128" range="-0.26179938779914941 0.26179938779914941"/>
+                                        <geom name="walker/vertebra_C9_collision" class="walker/collision_primitive" size="0.0031305868178606029 0.0044948977301828563 0.0039374204352498046" density="507.157357703" pos="0 0 -2.8449465006019631e-18" quat="0.93393633089552841 -2.1886851297021869e-17 0.35743940721945872 5.718710691193161e-17"/>
+                                      </body>
+                                      <geom name="walker/vertebra_C8_collision" class="walker/collision_primitive" size="0.0030158183071762319 0.003957028646254912 0.0039368746802210808" density="507.157357703" pos="0 0 -2.8449465006019631e-18" quat="0.95575629612546076 -1.8012083974514359e-17 0.29415965463764848 5.8523194440748775e-17"/>
+                                    </body>
+                                    <joint name="walker/vertebra_C7_extend" class="walker/caudal_extend" pos="0.00269018377049155 0 0.0047217931470789941" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
+                                    <geom name="walker/vertebra_C7_collision" class="walker/collision_primitive" size="0.0032569435425102711 0.0046388986520469189 0.003752123331651092" density="507.157357703" pos="0 0 0" quat="-0.95871816238736907 -0.028643871421635381 -0.2629262253293439 0.10444526687519259"/>
+                                  </body>
+                                  <joint name="walker/vertebra_C6_extend" class="walker/caudal_extend" pos="0.002103353485914151 0 0.0033051112597967201" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
+                                  <joint name="walker/vertebra_C6_bend" class="walker/caudal_bend" pos="0.002103353485914151 0 0.0033051112597967201" axis="0.84364982580455439 0 -0.53689381763989852" range="-0.26179938779914941 0.26179938779914941"/>
+                                  <geom name="walker/vertebra_C6_collision" class="walker/collision_primitive" size="0.0038491310551762581 0.0044417925528250626 0.0039176340214908123" density="507.157357703" pos="0 0 -5.6898930012039269e-18" quat="-0.9684724633255426 -0.020165366545190799 -0.2338356379719502 0.083518502060948033"/>
+                                </body>
+                                <joint name="walker/vertebra_C5_extend" class="walker/caudal_extend" pos="0.0020122482295807328 0 0.0028950637724637299" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
+                                <joint name="walker/vertebra_C5_bend" class="walker/caudal_bend" pos="0.0020122482295807328 0 0.0028950637724637299" axis="0.82113239539061988 0 -0.57073775872992871" range="-0.26179938779914941 0.26179938779914941"/>
+                                <geom name="walker/vertebra_C5_collision" class="walker/collision_primitive" size="0.0045453296042978764 0.0037766372552141552 0.0035256966948509221" density="507.157357703" pos="0 0 0" quat="0.95955512298200196 -1.7238177888175469e-17 0.28152080910475341 5.8755805498267679e-17"/>
+                              </body>
+                              <joint name="walker/vertebra_C4_extend" class="walker/caudal_extend" pos="0.0025360502954255761 0 0.003423518576346546" axis="-0 0.99999999999999956 0" range="-0.26179938779914941 0.26179938779914941"/>
+                              <joint name="walker/vertebra_C4_bend" class="walker/caudal_bend" pos="0.0025360502954255761 0 0.003423518576346546" axis="0.80354477582822592 0 -0.59524431390746202" range="-0.26179938779914941 0.26179938779914941"/>
+                              <geom name="walker/vertebra_C4_collision" class="walker/collision_primitive" size="0.0066528264433145523 0.0038516992935910821 0.0042605199851095676" density="507.157357703" pos="0 0 -5.6898930012039269e-18" quat="0.6698964656770412 0.22635972537845331 0.22635972537845331 0.6698964656770412"/>
+                            </body>
+                            <joint name="walker/vertebra_C3_extend" class="walker/caudal_extend" pos="0.0028146329163340751 0 0.003504352837554861" axis="-0 0.99999999999999978 0" range="-0.26179938779914941 0.26179938779914941"/>
+                            <joint name="walker/vertebra_C3_bend" class="walker/caudal_bend" pos="0.0028146329163340751 0 0.003504352837554861" axis="0.77965718635053116 0 -0.62620657276331149" range="-0.26179938779914941 0.26179938779914941"/>
+                            <geom name="walker/vertebra_C3_collision" class="walker/collision_primitive" size="0.0078959781676530838 0.0040974398143589497 0.0044947355054318896" density="507.157357703" pos="0 0 5.6898930012039269e-18" quat="0.658413368499565 0.25786010971272011 0.25786010971272011 0.658413368499565"/>
+                          </body>
+                          <joint name="walker/vertebra_C2_extend" class="walker/caudal_extend" pos="0.0035585268213887099 0 0.003879200456107687" axis="-0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
+                          <joint name="walker/vertebra_C2_bend" class="walker/caudal_bend" pos="0.0035585268213887099 0 0.003879200456107687" axis="0.73690872595059942 0 -0.6759922555901543" range="-0.26179938779914941 0.26179938779914941"/>
+                          <geom name="walker/vertebra_C2_collision" class="walker/collision_primitive" size="0.0083603663370013237 0.003506151144392788 0.0052641532383859158" density="507.157357703" pos="0 0 0" quat="0.61659450065834553 0.34613757634484821 0.34613757634484821 0.61659450065834553"/>
+                        </body>
+                        <joint name="walker/vertebra_C1_extend" class="walker/caudal_extend" pos="0.0043423205380006616 0 0.0032675176492370961" axis="0 1 0" range="-0.26179938779914941 0.26179938779914941"/>
+                        <joint name="walker/vertebra_C1_bend" class="walker/caudal_bend" pos="0.0043423205380006616 0 0.0032675176492370961" axis="0.60126846879252016 0 -0.79904707523142726" range="-0.26179938779914941 0.26179938779914941"/>
+                        <geom name="walker/vertebra_C1_collision" class="walker/collision_primitive" size="0.01096499338746071 0.0023704245686531071 0.0054343738593161106" density="507.157357703" pos="0 -2.7782680669941049e-21 0" quat="0.57724085518430246 0.3506607415056362 0.32402767637757213 0.66244705781984103"/>
+                      </body>
+                    </body>
+                  </body>
+                  <joint name="walker/vertebra_5_bend" class="walker/lumbar_bend" axis="0 0 1"/>
+                </body>
+                <joint name="walker/vertebra_4_extend" class="walker/lumbar_extend" axis="0 1 0"/>
+              </body>
+              <joint name="walker/vertebra_3_twist" class="walker/lumbar_twist" axis="1 0 0"/>
+            </body>
+            <joint name="walker/vertebra_2_bend" class="walker/lumbar_bend" axis="0 0 1"/>
+          </body>
+          <joint name="walker/vertebra_1_extend" class="walker/lumbar_extend" axis="0 1 0"/>
+        </body>
+        <body name="walker/vertebra_cervical_5" pos="0.02770906497757163 1.182614387058484e-05 -0.001000314910384547">
+          <geom name="walker/vertebra_cervical_5_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.0089999999999999993" density="300"/>
+          <body name="walker/vertebra_cervical_4" pos="0.0024090406000515448 -1.2014969707070049e-05 0.00080957699388570779">
+            <geom name="walker/vertebra_cervical_4_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.0083999999999999995" density="300"/>
+            <body name="walker/vertebra_cervical_3" pos="0.002150279591154259 1.2081540557691769e-10 0.00094152678442587564">
+              <geom name="walker/vertebra_cervical_3_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.0077999999999999988" density="300"/>
+              <body name="walker/vertebra_cervical_2" pos="0.0018999600588887921 1.2839797205897251e-10 0.00087476208315739933">
+                <geom name="walker/vertebra_cervical_2_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.0071999999999999981" density="300"/>
+                <body name="walker/vertebra_cervical_1" pos="0.0017775116335614111 4.5221276410848841e-10 0.00093507352721358672">
+                  <geom name="walker/vertebra_cervical_1_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.0065999999999999982" density="300"/>
+                  <body name="walker/vertebra_axis" pos="0.001882316665146777 -1.7566504879528999e-06 0.001705860606049519">
+                    <geom name="walker/vertebra_axis_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.0059999999999999984" density="300"/>
+                    <body name="walker/vertebra_atlant" pos="0.0024521821591785859 1.756985238485304e-06 0.001369554727844564">
+                      <geom name="walker/vertebra_atlant_collision" class="walker/nonself_collision_primitive" type="sphere" size="0.0053999999999999994" density="300"/>
+                      <joint name="walker/vertebra_atlant_extend" class="walker/cervical_extend" pos="2.7405829199983609e-05 -4.9553778337723157e-08 -0.00021152928958272321" axis="0 1 0"/>
+                      <body name="walker/skull" pos="0.025955069118141879 4.2023543244686657e-09 0.001770509875790047">
+                        <geom name="walker/skull_0_collision" class="walker/collision_primitive" type="ellipsoid" size="0.022095228007967319 0.016695652173913039 0.01" density="703.10773841000002" pos="-0.0090590434832665996 0 0.00081999999999999998" euler="0 0.17453292519943289 0"/>
+                        <geom name="walker/skull_0b_collision" class="walker/collision_primitive" type="ellipsoid" size="0.022095228007967319 0.016695652173913039 0.01" density="1.4062154768199999" pos="-0.0090590434832665996 0 0.0032799999999999999" euler="0 0.17453292519943289 0"/>
+                        <geom name="walker/skull_F_collision" class="walker/collision_primitive" type="ellipsoid" size="0.0071809491025893778 0.0089043478260869575 0.02" density="703.10773841000002" pos="0.014494469573226559 0 -0.00081999999999999998" euler="0 1.919862177193763 0"/>
+                        <geom name="walker/skull_Fb_collision" class="walker/collision_primitive" type="ellipsoid" size="0.0071809491025893778 0.0089043478260869575 0.02" density="1.4062154768199999" pos="0.014494469573226559 0 0.00164" euler="0 1.919862177193763 0"/>
+                        <geom name="walker/skull_L_collision" class="walker/collision_primitive" type="ellipsoid" size="0.0071809491025893778 0.013356521739130441 0.014" density="703.10773841000002" pos="0.0054354260899599589 0.0045634782608695657 -0.00081999999999999998" euler="0 1.919862177193763 0"/>
+                        <geom name="walker/eye_L_collision" class="walker/collision_primitive" type="sphere" group="1" size="0.0040000000000000001 0.0040000000000000001 0.0040000000000000001" rgba="0 0 0 1" pos="0.001104761400398366 0.012800000000000001 0.0025000000000000001"/>
+                        <geom name="walker/skull_R_collision" class="walker/collision_primitive" type="ellipsoid" size="0.0071809491025893778 0.013356521739130441 0.014" density="703.10773841000002" pos="0.0054354260899599589 -0.0045634782608695657 -0.00081999999999999998" euler="0 1.919862177193763 0"/>
+                        <geom name="walker/eye_R_collision" class="walker/collision_primitive" type="sphere" group="1" size="0.0040000000000000001 0.0040000000000000001 0.0040000000000000001" rgba="0 0 0 1" pos="0.001104761400398366 -0.012800000000000001 0.0025000000000000001"/>
+                        <geom name="walker/skull_P0_collision" class="walker/collision_primitive" type="box" size="0.0066285684023901954 0.0062330434782608708 0.0016000000000000001" density="703.10773841000002" pos="0.0018118086966533199 0 -0.0057400000000000003"/>
+                        <geom name="walker/skull_P1_collision" class="walker/collision_primitive" type="box" size="0.0044190456015934616 0.0040069565217391301 0.0011999999999999999" density="703.10773841000002" pos="0.0063413304382866197 0 -0.0057400000000000003"/>
+                        <geom name="walker/skull_P2_collision" class="walker/collision_primitive" type="box" size="0.001104761400398366 0.0033391304347826088 0.00080000000000000004" density="703.10773841000002" pos="0.0086060913091032705 0 -0.0057400000000000003"/>
+                        <geom name="walker/skull_T0_collision" class="walker/collision_primitive" type="ellipsoid" size="0.0055238070019918298 0.0066782608695652177 0.0040000000000000001" density="703.10773841000002" pos="0.02989484349477978 0 -0.0065599999999999999" euler="0 0.52359877559829882 0"/>
+                        <geom name="walker/skull_T1_collision" class="walker/collision_primitive" type="ellipsoid" group="1" size="0.0022095228007967308 0.001669565217391304 0.007000000000000001" rgba="1 1 1 1" density="703.10773841000002" pos="0.02808303479812645 0.00091269565217391301 -0.0123" euler="0 0.52359877559829882 0"/>
+                        <geom name="walker/skull_T2_collision" class="walker/collision_primitive" type="ellipsoid" group="1" size="0.0022095228007967308 0.001669565217391304 0.007000000000000001" rgba="1 1 1 1" density="703.10773841000002" pos="0.02808303479812645 -0.00091269565217391301 -0.0123" euler="0 0.52359877559829882 0"/>
+                        <joint name="walker/atlas" class="walker/atlas" pos="-0.02843583549004804 0 0"/>
+                        <site name="walker/head" class="walker/sensor" type="box" size="0.002 0.002 0.002"/>
+                        <camera name="walker/egocentric" class="walker/" fovy="80" pos="0.01 0 0.0050000000000000001" euler="0 -1.570796326794897 -1.570796326794897"/>
+                        <body name="walker/jaw" pos="0.00045295217416332993 -1.5887977837669331e-08 -0.016400000000000001" euler="0 0.26179938779914941 0">
+                          <geom name="walker/jaw_back_collision" class="walker/collision_primitive" type="ellipsoid" size="0.012152375404382019 0.013356521739130441 0.007000000000000001" density="314.05727497700002" pos="-0.01087085217991992 0 0.0020500000000000002" euler="0 0.95993108859688125 0"/>
+                          <geom name="walker/jaw_F_collision" class="walker/collision_primitive" type="ellipsoid" size="0.0033142842011950968 0.0066782608695652177 0.012" density="314.05727497700002" pos="0.002717713044979979 0 -0.0049199999999999999" euler="0 1.8325957145940459 0"/>
+                          <geom name="walker/jaw_L_collision" class="walker/collision_primitive" type="ellipsoid" size="0.0099428526035852897 0.003895652173913044 0.016" density="314.05727497700002" pos="-0.0054354260899599589 0.008214260869565216 0.00081999999999999998" euler="-0.69813170079773179 2.1816615649929121 0.52359877559829882"/>
+                          <geom name="walker/jaw_R_collision" class="walker/collision_primitive" type="ellipsoid" size="0.0099428526035852897 0.003895652173913044 0.016" density="314.05727497700002" pos="-0.0054354260899599589 -0.008214260869565216 0.00081999999999999998" euler="0.69813170079773179 2.1816615649929121 -0.52359877559829882"/>
+                          <geom name="walker/jaw_T0_collision" class="walker/collision_primitive" type="ellipsoid" size="0.0033142842011950968 0.0033391304347826088 0.0060000000000000001" density="314.05727497700002" pos="0.012682660876573239 0 -0.0057400000000000003" euler="0 1.2217304763960311 0"/>
+                          <geom name="walker/jaw_T1_collision" class="walker/collision_primitive" type="ellipsoid" group="1" size="0.0022095228007967308 0.001335652173913044 0.007000000000000001" rgba="1 1 1 1" density="314.05727497700002" pos="0.017212182618206541 0.00091269565217391301 -0.0041000000000000003" euler="0 1.134464013796314 0"/>
+                          <geom name="walker/jaw_T2_collision" class="walker/collision_primitive" type="ellipsoid" group="1" size="0.0022095228007967308 0.001335652173913044 0.007000000000000001" rgba="1 1 1 1" density="314.05727497700002" pos="0.017212182618206541 -0.00091269565217391301 -0.0041000000000000003" euler="0 1.134464013796314 0"/>
+                          <geom name="walker/jaw_P0_collision" class="walker/collision_primitive" type="box" size="0.0066285684023901954 0.0062330434782608708 0.0016000000000000001" density="314.05727497700002" pos="-0.002717713044979979 0 0.00081999999999999998" euler="0 0.95993108859688125 0"/>
+                          <geom name="walker/jaw_P1_collision" class="walker/collision_primitive" type="box" size="0.0044190456015934616 0.0048973913043478274 0.001" density="314.05727497700002" pos="0 0 -0.00098400000000000007" euler="0 0.52359877559829882 0"/>
+                          <geom name="walker/jaw_P2_collision" class="walker/collision_primitive" type="box" size="0.0044190456015934616 0.0040069565217391301 0.001" density="314.05727497700002" pos="0.002717713044979979 0 -0.0022959999999999999" euler="0 0.43633231299858238 0"/>
+                          <geom name="walker/jaw_P3_collision" class="walker/collision_primitive" type="box" size="0.0033142842011950968 0.002893913043478261 0.00060000000000000006" density="314.05727497700002" pos="0.0047107026112986304 0 -0.0028700000000000002" euler="0 0.26179938779914941 0"/>
+                          <joint name="walker/mandible" class="walker/mandible" pos="-0.018499999999999999 0 0.0040000000000000001" axis="0 1 0"/>
+                        </body>
+                      </body>
+                    </body>
+                    <joint name="walker/vertebra_axis_twist" class="walker/cervical_twist" pos="9.9439267225693242e-05 7.3323041593157166e-08 -0.00026762400899821309" axis="0.74098459448325726 -0.00069151539353932078 0.6715216694529994"/>
+                  </body>
+                  <joint name="walker/vertebra_cervical_1_bend" class="walker/cervical_bend" pos="2.7469839671064701e-05 -2.2175703241969479e-11 -0.0002637692890460073" axis="-0.46556749786463181 0 0.88501237558127699"/>
+                </body>
+                <joint name="walker/vertebra_cervical_2_extend" class="walker/cervical_extend" pos="1.2951560981522581e-05 -5.7953729860696879e-12 -0.00025387484726577692" axis="0 1 0"/>
+              </body>
+              <joint name="walker/vertebra_cervical_3_twist" class="walker/cervical_twist" pos="8.1975708702249013e-06 -4.86590177453699e-12 -0.00025442947362712192" axis="0.91603535672916836 5.1468275847153093e-08 0.40109752582391073"/>
+            </body>
+            <joint name="walker/vertebra_cervical_4_bend" class="walker/cervical_bend" pos="-1.5375952702610769e-05 4.7972607130889212e-07 -0.00027279087898873908" axis="-0.31854757960001961 0 0.94789508360576713"/>
+          </body>
+          <joint name="walker/vertebra_cervical_5_extend" class="walker/cervical_extend" pos="-0.00019345864674152679 -3.9985802498100721e-07 -0.0002296866127457893" axis="0 1 0"/>
+        </body>
+        <body name="walker/scapula_L" pos="0.0065599999999999999 0.00164 0.011480000000000001">
+          <joint name="walker/scapula_L_supinate" class="walker/scapula_supinate" pos="0 -0.005000000000000001 0" axis="-0 -0 1"/>
+          <joint name="walker/scapula_L_abduct" class="walker/scapula_abduct" pos="0 -0.005000000000000001 -0.01" axis="1 -0 -0"/>
+          <joint name="walker/scapula_L_extend" class="walker/scapula_extend" pos="0 0 0" axis="0.29999999999999999 1 0"/>
+          <site name="walker/shoulder_L" class="walker/" size="0.002" pos="0.0287 0.0098399999999999998 -0.025420000000000002"/>
+          <body name="walker/upper_arm_L" pos="0.0287 0.0098399999999999998 -0.025420000000000002">
+            <joint name="walker/shoulder_L" class="walker/shoulder" axis="0 1 0"/>
+            <joint name="walker/shoulder_sup_L" class="walker/shoulder_sup" axis="0 0 -1"/>
+            <site name="walker/elbow_L" class="walker/" type="cylinder" size="0.00060000000000000006 0.0040000000000000001" pos="-0.015931208361332182 0.01035528543486592 -0.022303691705865051" zaxis="0 1 0.20000000000000001"/>
+            <body name="walker/lower_arm_L" pos="-0.015931208361332182 0.01035528543486592 -0.022303691705865051">
+              <joint name="walker/elbow_L" class="walker/elbow" axis="0 1 0.20000000000000001"/>
+              <site name="walker/wrist_L" class="walker/" type="cylinder" size="0.00080000000000000004 0.0033999999999999998" pos="0.021602653764793079 0.012601548029462631 -0.019802432617726989" zaxis="0 1 0"/>
+              <body name="walker/hand_L" pos="0.021602653764793079 0.012601548029462631 -0.019802432617726989">
+                <joint name="walker/wrist_L" class="walker/wrist" axis="0.59999999999999998 -1 0"/>
+                <geom name="walker/hand_L_collision" class="walker/collision_primitive_paw" type="ellipsoid" size="0.0064701915886817918 0.0036972523363895948 0.0022183514018337572" density="2531.7812283100002" pos="0.0015158734579197341 0.00075793672895986693 -0.0045476203737592012" euler="-0.69813170079773179 0.87266462599716477 0.78539816339744828"/>
+                <site name="walker/finger_L" class="walker/" type="cylinder" size="0.00060000000000000006 0.005000000000000001" pos="0.0030317469158394682 0.0015158734579197341 -0.0083373040185585369" zaxis="-0.20000000000000001 1 0"/>
+                <body name="walker/finger_L" pos="0.0030317469158394682 0.0015158734579197341 -0.0083373040185585369">
+                  <joint name="walker/finger_L" class="walker/finger" axis="-0.5 1 0"/>
+                  <geom name="walker/finger_L0_collision" class="walker/collision_primitive_paw" size="0.001848626168194797 0.0032350957943408959" pos="0.0049265887382391356 -0.00075793672895986693 0" euler="1.570796326794897 -1.308996938995747 0"/>
+                  <geom name="walker/finger_L1_collision" class="walker/collision_primitive_paw" size="0.001848626168194797 0.0036972523363895948" pos="0.0045476203737592012 0.001894841822399667 0" euler="1.570796326794897 -1.099557428756428 0"/>
+                  <geom name="walker/finger_L2_collision" class="walker/collision_primitive_paw" size="0.001848626168194797 0.0032350957943408959" pos="0.0026527785513595342 0.0037896836447993349 0" euler="1.570796326794897 -0.95993108859688125 0"/>
+                  <site name="walker/palm_L" class="walker/sensor" type="box" size="0.0120000000000000001 0.0060000000000000001 0.002" pos="0.0049199999999999999 0.0024599999999999999 -0.00164" euler="0 0 0.48869219055841229"/>
+                </body>
+              </body>
+              <geom name="walker/radius_L_collision" class="walker/collision_primitive" size="0.003732165792697991 0.015916589410035549" pos="0.01150545467526729 0.0068507326671297629 -0.012226324913508861" quat="0.023764932308462921 0.79177214415182184 0.42322934679317159 0.43978292344135678"/>
+              <geom name="walker/ulna_L_collision" class="walker/collision_primitive" size="0.0043907832855270479 0.013172349856581139" pos="0.006749764363547758 0.0049924186526332636 -0.0094898484523118134" quat="0.012822444520418631 0.74462498727826065 0.47760656071953278 0.46611284727523911"/>
+            </body>
+            <geom name="walker/humerus_L_collision" class="walker/collision_primitive" size="0.0077713211518693559 0.01554264230373871" pos="-0.0077433444500642871 0.0057879788900726649 -0.01198335273722202" quat="0.47256099918016298 0.34500828054201771 0.00070160501549135191 0.8109592444517103"/>
+          </body>
+          <geom name="walker/scapula_L_collision" class="walker/nonself_collision_primitive" type="ellipsoid" size="0.0050053708255290994 0.014631827920675281 0.024311044067144391" density="513.56461230299999" pos="0.01757062251063465 0.0086369166801125875 -0.01522952249267691" quat="0.18441940626963749 0.76922228553766514 0.47403228455170038 0.38675567381237091"/>
+        </body>
+        <body name="walker/scapula_R" pos="0.0065599999999999999 -0.00164 0.011480000000000001">
+          <joint name="walker/scapula_R_supinate" class="walker/scapula_supinate" pos="0 0.005000000000000001 0" axis="0 0 -1"/>
+          <joint name="walker/scapula_R_abduct" class="walker/scapula_abduct" pos="0 0.005000000000000001 -0.01" axis="-1 0 0"/>
+          <joint name="walker/scapula_R_extend" class="walker/scapula_extend" pos="0 0 0" axis="-0.29999999999999999 1 0"/>
+          <site name="walker/shoulder_R" class="walker/" size="0.002" pos="0.0287 -0.0098399999999999998 -0.025420000000000002"/>
+          <body name="walker/upper_arm_R" pos="0.0287 -0.0098399999999999998 -0.025420000000000002">
+            <joint name="walker/shoulder_R" class="walker/shoulder" axis="0 1 0"/>
+            <joint name="walker/shoulder_sup_R" class="walker/shoulder_sup" axis="-0 -0 1"/>
+            <site name="walker/elbow_R" class="walker/" type="cylinder" size="0.00060000000000000006 0.0040000000000000001" pos="-0.015931208361332182 -0.01035528543486592 -0.022303691705865051" zaxis="0 1 -0.20000000000000001"/>
+            <body name="walker/lower_arm_R" pos="-0.015931208361332182 -0.01035528543486592 -0.022303691705865051">
+              <joint name="walker/elbow_R" class="walker/elbow" axis="0 1 -0.20000000000000001"/>
+              <site name="walker/wrist_R" class="walker/" type="cylinder" size="0.00080000000000000004 0.0033999999999999998" pos="0.021602653764793079 -0.012601548029462631 -0.019802432617726989" zaxis="0 1 0"/>
+              <body name="walker/hand_R" pos="0.021602653764793079 -0.012601548029462631 -0.019802432617726989">
+                <joint name="walker/wrist_R" class="walker/wrist" axis="-0.59999999999999998 -1 0"/>
+                <geom name="walker/hand_R_collision" class="walker/collision_primitive_paw" type="ellipsoid" size="0.0064701915886817918 0.0036972523363895948 0.0022183514018337572" density="2531.7812283100002" pos="0.0015158734579197341 -0.00075793672895986693 -0.0045476203737592012" euler="0.69813170079773179 0.87266462599716477 -0.78539816339744828"/>
+                <site name="walker/finger_R" class="walker/" type="cylinder" size="0.00060000000000000006 0.005000000000000001" pos="0.0030317469158394682 -0.0015158734579197341 -0.0083373040185585369" zaxis="0.20000000000000001 1 0"/>
+                <body name="walker/finger_R" pos="0.0030317469158394682 -0.0015158734579197341 -0.0083373040185585369">
+                  <joint name="walker/finger_R" class="walker/finger" axis="0.5 1 0"/>
+                  <geom name="walker/finger_R0_collision" class="walker/collision_primitive_paw" size="0.001848626168194797 0.0032350957943408959" pos="0.0049265887382391356 0.00075793672895986693 0" euler="1.570796326794897 1.308996938995747 0"/>
+                  <geom name="walker/finger_R1_collision" class="walker/collision_primitive_paw" size="0.001848626168194797 0.0036972523363895948" pos="0.0045476203737592012 -0.001894841822399667 0" euler="1.570796326794897 1.099557428756428 0"/>
+                  <geom name="walker/finger_R2_collision" class="walker/collision_primitive_paw" size="0.001848626168194797 0.0032350957943408959" pos="0.0026527785513595342 -0.0037896836447993349 0" euler="1.570796326794897 0.95993108859688125 0"/>
+                  <site name="walker/palm_R" class="walker/sensor" type="box" size="0.0120000000000000001 0.0060000000000000001 0.002" pos="0.0049199999999999999 -0.0024599999999999999 -0.00164" euler="0 0 -0.48869219055841229"/>
+                </body>
+              </body>
+              <geom name="walker/radius_R_collision" class="walker/collision_primitive" size="0.003732165792697991 0.015916589410035549" pos="0.01150546139578159 -0.0068511746740595996 -0.01222632995360402" quat="0.43978285859011762 0.42323047325609903 0.79177155870747651 0.023765576358593481"/>
+              <geom name="walker/ulna_R_collision" class="walker/collision_primitive" size="0.0043907832855270479 0.013172349856581139" pos="0.0067497669307536876 -0.0049928587360002054 -0.0094898485071555749" quat="0.46611278282571561 0.47760677953250608 0.74462488546938377 0.01282254930824632"/>
+            </body>
+            <geom name="walker/humerus_R_collision" class="walker/collision_primitive" size="0.0077713211518693559 0.01554264230373871" pos="-0.0077433418895144464 -0.0057883475605501732 -0.011983350671240119" quat="0.81095939353104862 0.00070139480829139946 0.34500827950404478 0.47256074441571583"/>
+          </body>
+          <geom name="walker/scapula_R_collision" class="walker/nonself_collision_primitive" type="ellipsoid" size="0.0050053702667355532 0.014631831273436551 0.024311039596796039" density="513.56464639299998" pos="0.01757062018850453 -0.0086372952673672183 -0.015229520628109941" quat="0.38675569721296882 0.47403213120406879 0.76922234964236824 0.1844194839763772"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <contact>
+    <exclude name="walker/pelvis:vertebra_C2" body1="walker/pelvis" body2="walker/vertebra_C2"/>
+    <exclude name="walker/pelvis:vertebra_C3" body1="walker/pelvis" body2="walker/vertebra_C3"/>
+    <exclude name="walker/pelvis:vertebra_C4" body1="walker/pelvis" body2="walker/vertebra_C4"/>
+    <exclude name="walker/vertebra_C1:vertebra_C3" body1="walker/vertebra_C1" body2="walker/vertebra_C3"/>
+    <exclude name="walker/vertebra_C1:vertebra_C4" body1="walker/vertebra_C1" body2="walker/vertebra_C4"/>
+    <exclude name="walker/vertebra_C2:vertebra_C4" body1="walker/vertebra_C2" body2="walker/vertebra_C4"/>
+    <exclude name="walker/vertebra_C3:vertebra_C5" body1="walker/vertebra_C3" body2="walker/vertebra_C5"/>
+    <exclude name="walker/vertebra_C4:vertebra_C6" body1="walker/vertebra_C4" body2="walker/vertebra_C6"/>
+    <exclude name="walker/vertebra_C5:vertebra_C7" body1="walker/vertebra_C5" body2="walker/vertebra_C7"/>
+    <exclude name="walker/vertebra_axis:skull" body1="walker/vertebra_axis" body2="walker/skull"/>
+    <exclude name="walker/pelvis:vertebra_C5" body1="walker/pelvis" body2="walker/vertebra_C5"/>
+    <exclude name="walker/pelvis:vertebra_C6" body1="walker/pelvis" body2="walker/vertebra_C6"/>
+    <exclude name="walker/vertebra_C2:vertebra_C5" body1="walker/vertebra_C2" body2="walker/vertebra_C5"/>
+    <exclude name="walker/vertebra_C3:vertebra_C6" body1="walker/vertebra_C3" body2="walker/vertebra_C6"/>
+    <exclude name="walker/vertebra_C4:vertebra_C7" body1="walker/vertebra_C4" body2="walker/vertebra_C7"/>
+    <exclude name="walker/upper_arm_L:upper_arm_R" body1="walker/upper_arm_L" body2="walker/upper_arm_R"/>
+    <exclude name="walker/upper_leg_L:vertebra_C1" body1="walker/upper_leg_L" body2="walker/vertebra_C1"/>
+    <exclude name="walker/upper_leg_L:vertebra_C2" body1="walker/upper_leg_L" body2="walker/vertebra_C2"/>
+    <exclude name="walker/upper_leg_R:vertebra_C1" body1="walker/upper_leg_R" body2="walker/vertebra_C1"/>
+    <exclude name="walker/upper_leg_R:vertebra_C2" body1="walker/upper_leg_R" body2="walker/vertebra_C2"/>
+    <exclude name="walker/vertebra_cervical_1:skull" body1="walker/vertebra_cervical_1" body2="walker/skull"/>
+    <exclude name="walker/vertebra_cervical_2:skull" body1="walker/vertebra_cervical_2" body2="walker/skull"/>
+    <exclude name="walker/upper_arm_L:torso" body1="walker/upper_arm_L" body2="walker/torso"/>
+    <exclude name="walker/upper_arm_R:torso" body1="walker/upper_arm_R" body2="walker/torso"/>
+    <exclude name="walker/lower_leg_L:pelvis" body1="walker/lower_leg_L" body2="walker/pelvis"/>
+    <exclude name="walker/lower_leg_R:pelvis" body1="walker/lower_leg_R" body2="walker/pelvis"/>
+  </contact>
+  <tendon>
+    <fixed name="walker/lumbar_extend" class="walker/lumbar_extend">
+      <joint joint="walker/vertebra_1_extend" coef="0.60498346583200002"/>
+      <joint joint="walker/vertebra_4_extend" coef="0.39501653416799998"/>
+    </fixed>
+    <fixed name="walker/lumbar_bend" class="walker/lumbar_bend">
+      <joint joint="walker/vertebra_2_bend" coef="0.65821232655299999"/>
+      <joint joint="walker/vertebra_5_bend" coef="0.34178767344700001"/>
+    </fixed>
+    <fixed name="walker/lumbar_twist" class="walker/lumbar_twist">
+      <joint joint="walker/vertebra_3_twist" coef="0.57066998362099997"/>
+      <joint joint="walker/vertebra_6_twist" coef="0.42933001637899998"/>
+    </fixed>
+    <fixed name="walker/cervical_extend" class="walker/cervical_extend">
+      <joint joint="walker/vertebra_cervical_5_extend" coef="0.34171354717399999"/>
+      <joint joint="walker/vertebra_cervical_2_extend" coef="0.33240829293599999"/>
+      <joint joint="walker/vertebra_atlant_extend" coef="0.32587815989000002"/>
+    </fixed>
+    <fixed name="walker/cervical_bend" class="walker/cervical_bend">
+      <joint joint="walker/vertebra_cervical_4_bend" coef="0.50743949691000001"/>
+      <joint joint="walker/vertebra_cervical_1_bend" coef="0.49256050308999999"/>
+    </fixed>and
+    <fixed name="walker/cervical_twist" class="walker/cervical_twist">
+      <joint joint="walker/vertebra_cervical_3_twist" coef="0.496142185731"/>
+      <joint joint="walker/vertebra_axis_twist" coef="0.503857814269"/>
+    </fixed>
+    <fixed name="walker/caudal_extend" class="walker/caudal_extend">
+      <joint joint="walker/vertebra_C1_extend" coef="0.29007246307000001"/>
+      <joint joint="walker/vertebra_C2_extend" coef="0.20766904003100001"/>
+      <joint joint="walker/vertebra_C3_extend" coef="0.151635169821"/>
+      <joint joint="walker/vertebra_C4_extend" coef="0.115426643422"/>
+      <joint joint="walker/vertebra_C5_extend" coef="0.087549782338600002"/>
+      <joint joint="walker/vertebra_C6_extend" coef="0.0692562920379"/>
+      <joint joint="walker/vertebra_C7_extend" coef="0.055869163346399998"/>
+      <joint joint="walker/vertebra_C11_extend" coef="0.017530663271300002"/>
+      <joint joint="walker/vertebra_C15_extend" coef="0.0041441737883599998"/>
+      <joint joint="walker/vertebra_C19_extend" coef="0.00074642278889000004"/>
+      <joint joint="walker/vertebra_C23_extend" coef="8.5912797066999995e-05"/>
+      <joint joint="walker/vertebra_C27_extend" coef="1.4273287336800001e-05"/>
+    </fixed>
+    <fixed name="walker/caudal_bend" class="walker/caudal_bend">
+      <joint joint="walker/vertebra_C1_bend" coef="0.37079288112600001"/>
+      <joint joint="walker/vertebra_C2_bend" coef="0.233517805262"/>
+      <joint joint="walker/vertebra_C3_bend" coef="0.15089435017799999"/>
+      <joint joint="walker/vertebra_C4_bend" coef="0.101885012096"/>
+      <joint joint="walker/vertebra_C5_bend" coef="0.067174353242899998"/>
+      <joint joint="walker/vertebra_C6_bend" coef="0.043956122370899998"/>
+      <joint joint="walker/vertebra_C9_bend" coef="0.018819911962900001"/>
+      <joint joint="walker/vertebra_C13_bend" coef="0.0099988981986100008"/>
+      <joint joint="walker/vertebra_C17_bend" coef="0.0025264296805199999"/>
+      <joint joint="walker/vertebra_C21_bend" coef="0.000378783618491"/>
+      <joint joint="walker/vertebra_C25_bend" coef="4.1065656652200003e-05"/>
+      <joint joint="walker/vertebra_C29_bend" coef="1.43866075466e-05"/>
+    </fixed>
+  </tendon>
+  <actuator>
+    <general name="lumbar_extend" class="walker/" forcerange="-2 2" tendon="walker/lumbar_extend" dyntype="filter" dynprm="0.040000000000000001" gainprm="1"/>
+    <general name="lumbar_bend" class="walker/" forcerange="-2 2" tendon="walker/lumbar_bend" dyntype="filter" dynprm="0.040000000000000001" gainprm="1"/>
+    <general name="lumbar_twist" class="walker/" forcerange="-2 2" tendon="walker/lumbar_twist" dyntype="filter" dynprm="0.040000000000000001" gainprm="1"/>
+    <general name="cervical_extend" class="walker/" forcerange="-2 2" tendon="walker/cervical_extend" dyntype="filter" dynprm="0.040000000000000001" gainprm="20"/>
+    <general name="cervical_bend" class="walker/" forcerange="-2 2" tendon="walker/cervical_bend" dyntype="filter" dynprm="0.040000000000000001" gainprm="20"/>
+    <general name="cervical_twist" class="walker/" forcerange="-2 2" tendon="walker/cervical_twist" dyntype="filter" dynprm="0.040000000000000001" gainprm="20"/>
+    <general name="caudal_extend" class="walker/" forcerange="-0.10000000000000001 0.10000000000000001" tendon="walker/caudal_extend" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.10000000000000001"/>
+    <general name="caudal_bend" class="walker/" forcerange="-0.10000000000000001 0.10000000000000001" tendon="walker/caudal_bend" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.10000000000000001"/>
+    <general name="hip_L_supinate" class="walker/" forcerange="-0.20000000000000001 0.20000000000000001" joint="walker/hip_L_supinate" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.20000000000000001"/>
+    <general name="hip_L_abduct" class="walker/" forcerange="-0.20000000000000001 0.20000000000000001" joint="walker/hip_L_abduct" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.20000000000000001"/>
+    <general name="hip_L_extend" class="walker/" forcerange="-0.29999999999999999 0.29999999999999999" joint="walker/hip_L_extend" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.29999999999999999"/>
+    <general name="knee_L" class="walker/" forcerange="-0.20000000000000001 0.20000000000000001" joint="walker/knee_L" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.20000000000000001"/>
+    <general name="ankle_L" class="walker/" forcerange="-0.20000000000000001 0.20000000000000001" joint="walker/ankle_L" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.20000000000000001"/>
+    <general name="toe_L" class="walker/" forcerange="-0.025000000000000001 0.025000000000000001" joint="walker/toe_L" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.025000000000000001"/>
+    <general name="hip_R_supinate" class="walker/" forcerange="-0.20000000000000001 0.20000000000000001" joint="walker/hip_R_supinate" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.20000000000000001"/>
+    <general name="hip_R_abduct" class="walker/" forcerange="-0.20000000000000001 0.20000000000000001" joint="walker/hip_R_abduct" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.20000000000000001"/>
+    <general name="hip_R_extend" class="walker/" forcerange="-0.29999999999999999 0.29999999999999999" joint="walker/hip_R_extend" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.29999999999999999"/>
+    <general name="knee_R" class="walker/" forcerange="-0.20000000000000001 0.20000000000000001" joint="walker/knee_R" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.20000000000000001"/>
+    <general name="ankle_R" class="walker/" forcerange="-0.20000000000000001 0.20000000000000001" joint="walker/ankle_R" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.20000000000000001"/>
+    <general name="toe_R" class="walker/" forcerange="-0.025000000000000001 0.025000000000000001" joint="walker/toe_R" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.025000000000000001"/>
+    <general name="atlas" class="walker/" forcerange="-0.025000000000000001 0.025000000000000001" joint="walker/atlas" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.025000000000000001"/>
+    <general name="mandible" class="walker/" forcerange="-0.025000000000000001 0.025000000000000001" joint="walker/mandible" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.025000000000000001"/>
+    <general name="scapula_L_supinate" class="walker/" forcerange="-0.25 0.25" joint="walker/scapula_L_supinate" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.25"/>
+    <general name="scapula_L_abduct" class="walker/" forcerange="-0.25 0.25" joint="walker/scapula_L_abduct" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.25"/>
+    <general name="scapula_L_extend" class="walker/" forcerange="-0.25 0.25" joint="walker/scapula_L_extend" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.25"/>
+    <general name="shoulder_L" class="walker/" forcerange="-0.14999999999999999 0.14999999999999999" joint="walker/shoulder_L" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.14999999999999999"/>
+    <general name="shoulder_sup_L" class="walker/" forcerange="-0.14999999999999999 0.14999999999999999" joint="walker/shoulder_sup_L" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.14999999999999999"/>
+    <general name="elbow_L" class="walker/" forcerange="-0.14999999999999999 0.14999999999999999" joint="walker/elbow_L" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.14999999999999999"/>
+    <general name="wrist_L" class="walker/" forcerange="-0.050000000000000003 0.050000000000000003" joint="walker/wrist_L" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.050000000000000003"/>
+    <general name="finger_L" class="walker/" forcerange="-0.025000000000000001 0.025000000000000001" joint="walker/finger_L" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.025000000000000001"/>
+    <general name="scapula_R_supinate" class="walker/" forcerange="-0.25 0.25" joint="walker/scapula_R_supinate" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.25"/>
+    <general name="scapula_R_abduct" class="walker/" forcerange="-0.25 0.25" joint="walker/scapula_R_abduct" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.25"/>
+    <general name="scapula_R_extend" class="walker/" forcerange="-0.25 0.25" joint="walker/scapula_R_extend" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.25"/>
+    <general name="shoulder_R" class="walker/" forcerange="-0.14999999999999999 0.14999999999999999" joint="walker/shoulder_R" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.14999999999999999"/>
+    <general name="shoulder_sup_R" class="walker/" forcerange="-0.14999999999999999 0.14999999999999999" joint="walker/shoulder_sup_R" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.14999999999999999"/>
+    <general name="elbow_R" class="walker/" forcerange="-0.14999999999999999 0.14999999999999999" joint="walker/elbow_R" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.14999999999999999"/>
+    <general name="wrist_R" class="walker/" forcerange="-0.050000000000000003 0.050000000000000003" joint="walker/wrist_R" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.050000000000000003"/>
+    <general name="finger_R" class="walker/" forcerange="-0.025000000000000001 0.025000000000000001" joint="walker/finger_R" dyntype="filter" dynprm="0.040000000000000001" gainprm="0.025000000000000001"/>
+  </actuator>
+  <sensor>
+    <touch name="hand_L/palm_contact" site="walker/palm_L"/>
+    <framepos name="hand_L/egocentric_hand_pos" objtype="xbody" objname="walker/hand_L" reftype="xbody" refname="walker/torso" /> 
+    <jointpos name="hand_L/elbow_angle" joint="walker/elbow_L" /> 
+    <jointpos name="hand_L/wrist_angle" joint="walker/wrist_L" />
+    <jointpos name="hand_L/finger_angle" joint="walker/finger_L" />
+    <jointvel name="hand_L/elbow_angle_vel" joint="walker/elbow_L" /> 
+    <jointvel name="hand_L/wrist_angle_vel" joint="walker/wrist_L" />
+    <jointvel name="hand_L/finger_angle_vel" joint="walker/finger_L" />
+    <jointlimitpos name="hand_L/finger_limit" joint="walker/finger_L" />
+    <jointlimitpos name="hand_L/wrist_limit" joint="walker/wrist_L" />
+    <framexaxis name="hand_L/xaxis" objtype="xbody" objname="walker/hand_L" reftype="xbody" refname="walker/torso" />
+    <framezaxis name="hand_L/finger_global_zaxis" objtype="xbody" objname="walker/finger_L" />
+    <force name="hand_L/finger_force" site="walker/palm_L" />
+    <force name="hand_L/wrist_force" site="walker/finger_L" />
+
+    <framepos name="arm_L/egocentric_hand_pos" objtype="xbody" objname="walker/hand_L" reftype="xbody" refname="walker/torso" />
+    <framepos name="arm_L/egocentric_elbow_pos" objtype="xbody" objname="walker/lower_arm_L" reftype="xbody" refname="walker/torso" />
+    <jointpos name="arm_L/wrist_angle" joint="walker/wrist_L" />
+    <jointpos name="arm_L/elbow_angle" joint="walker/elbow_L" />
+    <jointpos name="arm_L/shoulder_sup" joint="walker/shoulder_sup_L" />
+    <jointpos name="arm_L/shoulder" joint="walker/shoulder_L" />
+    <jointpos name="arm_L/scapula_extend" joint="walker/scapula_L_extend" />
+    <jointpos name="arm_L/scapula_abduct" joint="walker/scapula_L_abduct" />
+    <jointpos name="arm_L/scapula_supinate" joint="walker/scapula_L_supinate" />
+    <jointvel name="arm_L/wrist_angle_vel" joint="walker/wrist_L" />
+    <jointvel name="arm_L/elbow_angle_vel" joint="walker/elbow_L" />
+    <jointvel name="arm_L/shoulder_sup_vel" joint="walker/shoulder_sup_L" />
+    <jointvel name="arm_L/shoulder_vel" joint="walker/shoulder_L" />
+    <jointvel name="arm_L/scapula_extend_vel" joint="walker/scapula_L_extend" />
+    <jointvel name="arm_L/scapula_abduct_vel" joint="walker/scapula_L_abduct" />
+    <jointvel name="arm_L/scapula_supinate_vel" joint="walker/scapula_L_supinate" />
+    <jointlimitpos name="arm_L/elbow_limit" joint="walker/elbow_L" />
+    <force name="arm_L/wrist_force" site="walker/wrist_L" />
+    <force name="arm_L/elbow_force" site="walker/elbow_L" />
+    <force name="arm_L/shoulder_force" site="walker/shoulder_L" />
+    <framelinvel name="arm_L/hand_linvel" objtype="xbody" objname="walker/hand_L" />
+    
+    <touch name="hand_R/palm_contact" site="walker/palm_R"/>
+    <framepos name="hand_R/egocentric_hand_pos" objtype="xbody" objname="walker/hand_R" reftype="xbody" refname="walker/torso" />
+    <jointpos name="hand_R/elbow_angle" joint="walker/elbow_R" />
+    <jointpos name="hand_R/wrist_angle" joint="walker/wrist_R" />
+    <jointpos name="hand_R/finger_angle" joint="walker/finger_R" />
+    <jointvel name="hand_R/elbow_angle_vel" joint="walker/elbow_R" />
+    <jointvel name="hand_R/wrist_angle_vel" joint="walker/wrist_R" />
+    <jointvel name="hand_R/finger_angle_vel" joint="walker/finger_R" />
+    <jointlimitpos name="hand_R/finger_limit" joint="walker/finger_R" />
+    <jointlimitpos name="hand_R/wrist_limit" joint="walker/wrist_R" />
+    <framexaxis name="hand_R/xaxis" objtype="xbody" objname="walker/hand_R" reftype="xbody" refname="walker/torso" />
+    <framezaxis name="hand_R/finger_global_zaxis" objtype="xbody" objname="walker/finger_R" />
+    <force name="hand_R/finger_force" site="walker/palm_R" />
+    <force name="hand_R/wrist_force" site="walker/finger_R" />
+
+    <framepos name="arm_R/egocentric_hand_pos" objtype="xbody" objname="walker/hand_R" reftype="xbody" refname="walker/torso" />
+    <framepos name="arm_R/egocentric_elbow_pos" objtype="xbody" objname="walker/lower_arm_R" reftype="xbody" refname="walker/torso" />
+    <jointpos name="arm_R/wrist_angle" joint="walker/wrist_R" />
+    <jointpos name="arm_R/elbow_angle" joint="walker/elbow_R" />
+    <jointpos name="arm_R/shoulder_sup" joint="walker/shoulder_sup_R" />
+    <jointpos name="arm_R/shoulder" joint="walker/shoulder_R" />
+    <jointpos name="arm_R/scapula_extend" joint="walker/scapula_R_extend" />
+    <jointpos name="arm_R/scapula_abduct" joint="walker/scapula_R_abduct" />
+    <jointpos name="arm_R/scapula_supinate" joint="walker/scapula_R_supinate" />
+    <jointvel name="arm_R/wrist_angle_vel" joint="walker/wrist_R" />
+    <jointvel name="arm_R/elbow_angle_vel" joint="walker/elbow_R" />
+    <jointvel name="arm_R/shoulder_sup_vel" joint="walker/shoulder_sup_R" />
+    <jointvel name="arm_R/shoulder_vel" joint="walker/shoulder_R" />
+    <jointvel name="arm_R/scapula_extend_vel" joint="walker/scapula_R_extend" />
+    <jointvel name="arm_R/scapula_abduct_vel" joint="walker/scapula_R_abduct" />
+    <jointvel name="arm_R/scapula_supinate_vel" joint="walker/scapula_R_supinate" />
+    <jointlimitpos name="arm_R/elbow_limit" joint="walker/elbow_R" />
+    <force name="arm_R/wrist_force" site="walker/wrist_R" />
+    <force name="arm_R/elbow_force" site="walker/elbow_R" />
+    <force name="arm_R/shoulder_force" site="walker/shoulder_R" />
+    <framelinvel name="arm_R/hand_linvel" objtype="xbody" objname="walker/hand_R" />
+
+    <touch name="foot_L/sole_contact" site="walker/sole_L"/>
+    <touch name="foot_L/heel_contact" site="walker/heel_L"/>
+    <framepos name="foot_L/egocentric_foot_pos" objtype="xbody" objname="walker/foot_L" reftype="xbody" refname="walker/torso" />
+    <jointpos name="foot_L/knee_angle" joint="walker/knee_L" />
+    <jointpos name="foot_L/ankle_angle" joint="walker/ankle_L" />
+    <jointpos name="foot_L/toe_angle" joint="walker/toe_L" />
+    <jointvel name="foot_L/knee_angle_vel" joint="walker/knee_L" />
+    <jointvel name="foot_L/ankle_angle_vel" joint="walker/ankle_L" />
+    <jointvel name="foot_L/toe_angle_vel" joint="walker/toe_L" />
+    <jointlimitpos name="foot_L/toe_limit" joint="walker/toe_L" />
+    <jointlimitpos name="foot_L/foot_limit" joint="walker/ankle_L" />
+    <framexaxis name="foot_L/xaxis" objtype="xbody" objname="walker/foot_L" reftype="xbody" refname="walker/torso" />
+    <framezaxis name="foot_L/toe_global_zaxis" objtype="xbody" objname="walker/toe_L" />
+    <force name="foot_L/toe_force" site="walker/sole_L" />
+    <force name="foot_L/ankle_force" site="walker/heel_L" />
+
+    <framepos name="leg_L/egocentric_foot_pos" objtype="xbody" objname="walker/foot_L" reftype="xbody" refname="walker/torso" />
+    <framepos name="leg_L/egocentric_knee_pos" objtype="site" objname="walker/knee_L" reftype="xbody" refname="walker/torso" />
+    <jointpos name="leg_L/hip_supinate" joint="walker/hip_L_supinate" />
+    <jointpos name="leg_L/hip_abduct" joint="walker/hip_L_abduct" />
+    <jointpos name="leg_L/hip_extend" joint="walker/hip_L_extend" />
+    <jointpos name="leg_L/knee_angle" joint="walker/knee_L" />
+    <jointpos name="leg_L/ankle_angle" joint="walker/ankle_L" />
+    <jointvel name="leg_L/hip_supinate_vel" joint="walker/hip_L_supinate" />
+    <jointvel name="leg_L/hip_abduct_vel" joint="walker/hip_L_abduct" />
+    <jointvel name="leg_L/hip_extend_vel" joint="walker/hip_L_extend" />
+    <jointvel name="leg_L/knee_angle_vel" joint="walker/knee_L" />
+    <jointvel name="leg_L/ankle_angle_vel" joint="walker/ankle_L" />
+    <jointlimitpos name="leg_L/knee_limit" joint="walker/knee_L" />
+    <force name="leg_L/ankle_force" site="walker/heel_L" />
+    <force name="leg_L/knee_force" site="walker/ankle_L" />
+    <force name="leg_L/hip_force" site="walker/knee_L" />
+    <accelerometer name="leg_L/hip_accelerometer" site="walker/hip_L"/>
+    <gyro name="leg_L/hip_gyro" site="walker/hip_L"/>
+
+    <touch name="foot_R/sole_contact" site="walker/sole_R"/>
+    <touch name="foot_R/heel_contact" site="walker/heel_R"/>
+    <framepos name="foot_R/egocentric_foot_pos" objtype="xbody" objname="walker/foot_R" reftype="xbody" refname="walker/torso" />
+    <jointpos name="foot_R/knee_angle" joint="walker/knee_R" />
+    <jointpos name="foot_R/ankle_angle" joint="walker/ankle_R" />
+    <jointpos name="foot_R/toe_angle" joint="walker/toe_R" />
+    <jointvel name="foot_R/knee_angle_vel" joint="walker/knee_R" />
+    <jointvel name="foot_R/ankle_angle_vel" joint="walker/ankle_R" />
+    <jointvel name="foot_R/toe_angle_vel" joint="walker/toe_R" />
+    <jointlimitpos name="foot_R/toe_limit" joint="walker/toe_R" />
+    <jointlimitpos name="foot_R/foot_limit" joint="walker/ankle_R" />
+    <framexaxis name="foot_R/xaxis" objtype="xbody" objname="walker/foot_R" reftype="xbody" refname="walker/torso" />
+    <framezaxis name="foot_R/toe_global_zaxis" objtype="xbody" objname="walker/toe_R" />
+    <force name="foot_R/toe_force" site="walker/sole_R" />
+    <force name="foot_R/ankle_force" site="walker/heel_R" />
+
+    <framepos name="leg_R/egocentric_foot_pos" objtype="xbody" objname="walker/foot_R" reftype="xbody" refname="walker/torso" />
+    <framepos name="leg_R/egocentric_knee_pos" objtype="site" objname="walker/knee_R" reftype="xbody" refname="walker/torso" />
+    <jointpos name="leg_R/hip_supinate" joint="walker/hip_R_supinate" />
+    <jointpos name="leg_R/hip_abduct" joint="walker/hip_R_abduct" />
+    <jointpos name="leg_R/hip_extend" joint="walker/hip_R_extend" />
+    <jointpos name="leg_R/knee_angle" joint="walker/knee_R" />
+    <jointpos name="leg_R/ankle_angle" joint="walker/ankle_R" />
+    <jointvel name="leg_R/hip_supinate_vel" joint="walker/hip_R_supinate" />
+    <jointvel name="leg_R/hip_abduct_vel" joint="walker/hip_R_abduct" />
+    <jointvel name="leg_R/hip_extend_vel" joint="walker/hip_R_extend" />
+    <jointvel name="leg_R/knee_angle_vel" joint="walker/knee_R" />
+    <jointvel name="leg_R/ankle_angle_vel" joint="walker/ankle_R" />
+    <jointlimitpos name="leg_R/knee_limit" joint="walker/knee_R" />
+    <force name="leg_R/ankle_force" site="walker/heel_R" />
+    <force name="leg_R/knee_force" site="walker/ankle_R" />
+    <force name="leg_R/hip_force" site="walker/knee_R" />
+    <accelerometer name="leg_R/hip_accelerometer" site="walker/hip_R"/>
+    <gyro name="leg_R/hip_gyro" site="walker/hip_R"/>
+
+    <accelerometer name="torso/accelerometer" site="walker/back"/>
+    <gyro name="torso/gyro" site="walker/back"/>
+    <tendonpos name="torso/lumbar_extend" tendon="walker/lumbar_extend"/>
+    <tendonpos name="torso/lumbar_bend" tendon="walker/lumbar_bend"/>
+    <tendonpos name="torso/lumbar_twist" tendon="walker/lumbar_twist"/>
+    <tendonvel name="torso/lumbar_extend_vel" tendon="walker/lumbar_extend"/>
+    <tendonvel name="torso/lumbar_bend_vel" tendon="walker/lumbar_bend"/>
+    <tendonvel name="torso/lumbar_twist_vel" tendon="walker/lumbar_twist"/>
+    <subtreelinvel name="torso/linvel" body="walker/torso"/>
+    <framezaxis name="torso/zaxis" objtype="xbody" objname="walker/torso"/>
+
+    <accelerometer name="head/accelerometer" site="walker/head"/>
+    <framepos name="head/egocentric_pos" objtype="xbody" objname="walker/skull" reftype="xbody" refname="walker/torso" />
+    <framexaxis name="head/xaxis" objtype="xbody" objname="walker/skull" reftype="xbody" refname="walker/torso" />
+    <framezaxis name="head/zaxis" objtype="xbody" objname="walker/skull" reftype="xbody" refname="walker/torso" />
+    <force name="head/neck_force" site="walker/head" />
+    <jointpos name="head/atlas" joint="walker/atlas" />
+    <jointpos name="head/atlant_extend" joint="walker/vertebra_atlant_extend" />
+    <jointpos name="head/mandible" joint="walker/mandible" />
+    <jointvel name="head/atlas_vel" joint="walker/atlas" />
+    <jointvel name="head/atlant_extend_vel" joint="walker/vertebra_atlant_extend" />
+    <jointvel name="head/mandible_vel" joint="walker/mandible" />
+    <tendonpos name="head/cervical_extend" tendon="walker/cervical_extend"/>
+    <tendonpos name="head/cervical_bend" tendon="walker/cervical_bend"/>
+    <tendonpos name="head/cervical_twist" tendon="walker/cervical_twist"/>
+    <tendonvel name="head/cervical_extend_vel" tendon="walker/cervical_extend"/>
+    <tendonvel name="head/cervical_bend_vel" tendon="walker/cervical_bend"/>
+    <tendonvel name="head/cervical_twist_vel" tendon="walker/cervical_twist"/>
+    <framelinvel name="head/linvel" objtype="xbody" objname="walker/skull" reftype="xbody" refname="walker/torso" />
+    
+    <framezaxis name="pelvis/zaxis" objtype="xbody" objname="walker/pelvis" />
+  </sensor>
+</mujoco>

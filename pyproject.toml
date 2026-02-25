@@ -24,7 +24,7 @@ dependencies = [
     "wandb",
     "mujoco",
     "dm_control",
-    "mujoco-mjx[warp]>=3.4.0",
+    "mujoco-mjx[warp]>=3.5.1",
     "warp-lang>=1.11.0",
     "mediapy",
     "jax>=0.7.2",

@@ -63,6 +63,9 @@ class FlattenObsWrapper(wrapper.Wrapper):
 
         rec(metrics)
         return new_metrics
+        
+    def render(self, trajectory, **kwargs):
+        return self.env.render(trajectory, **kwargs)
 
     @property
     def unwrapped(self) -> mjx_env.MjxEnv:
