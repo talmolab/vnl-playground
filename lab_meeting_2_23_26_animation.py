@@ -723,81 +723,77 @@ def make_spike_diagnostics_video(data, output_path):
 
 def make_comparison_video(data_normal, data_condition, label_normal, label_condition,
                            output_path):
-    """Left/Right comparison video.
+    """Landscape comparison: top row = normal, bottom row = treatment.
 
-    Each side (5 rows): MuJoCo | PS-E raster | PS-I raster | MN raster | Actions | MN Voltages
-    Separator in between. Labels on top.
+    Each row: Label | MuJoCo | PS-E raster | PS-I raster | MN raster | Actions
+    Separator bar between rows.
     """
     print(f"Generating {os.path.basename(output_path)}...")
     T = min(data_normal['ps_spikes_exc'].shape[0],
             data_condition['ps_spikes_exc'].shape[0])
 
-    def render_side_panels(data):
+    def render_side_panels(data, prefix):
         return {
-            'pse': render_raster_panel(data['ps_spikes_exc'], 'PS-E (100)',
+            'pse': render_raster_panel(data['ps_spikes_exc'], f'{prefix} PS-E (100)',
                                         CMAP_EXC, n_show=100),
-            'psi': render_raster_panel(data['ps_spikes_inh'], 'PS-I (102)',
+            'psi': render_raster_panel(data['ps_spikes_inh'], f'{prefix} PS-I',
                                         CMAP_INH),
-            'mn':  render_raster_panel(data['mn_spikes'], 'MN (128)', CMAP_MN),
-            'act': render_action_heatmap(data['actions']),
-            'mn_v': render_voltage_heatmap(data['mn_voltages'], 'MN Voltages'),
+            'mn':  render_raster_panel(data['mn_spikes'], f'{prefix} MN', CMAP_MN),
+            'act': render_action_heatmap(data['actions'], f'{prefix} Actions'),
+            'mn_v': render_voltage_heatmap(data['mn_voltages'], f'{prefix} MN Voltages'),
         }
 
-    panels_l = render_side_panels(data_normal)
-    panels_r = render_side_panels(data_condition)
+    panels_top = render_side_panels(data_normal, 'Normal')
+    panels_bot = render_side_panels(data_condition, 'Treatment')
 
-    # Labels (sizes chosen so total is divisible by 16 for ffmpeg)
-    label_h = 48
-    sep_w = 16
-    lbl_l = render_text_bar(label_normal, PANEL_W, label_h, bg_color=(44, 160, 44))
-    lbl_r = render_text_bar(label_condition, PANEL_W, label_h, bg_color=(180, 40, 100))
-    sep_label = np.zeros((label_h, sep_w, 3), dtype=np.uint8)
-    header = np.concatenate([lbl_l, sep_label, lbl_r], axis=1)
+    # Row labels
+    label_w = 160
+    lbl_top = render_text_bar(label_normal, label_w, PANEL_H, bg_color=(44, 160, 44),
+                               fontsize=10)
+    lbl_bot = render_text_bar(label_condition, label_w, PANEL_H, bg_color=(180, 40, 100),
+                               fontsize=10)
 
-    separator = np.zeros((PANEL_H, sep_w, 3), dtype=np.uint8)
+    sep_h = 16
+    n_panels = 5  # pse, psi, mn, act, mn_v
+    row_w = label_w + PANEL_W + n_panels * PANEL_W
+    separator = np.zeros((sep_h, row_w, 3), dtype=np.uint8)
 
     def resize_frame(frame):
         return np.array(Image.fromarray(frame).resize((PANEL_W, PANEL_H), Image.LANCZOS))
 
     composed = []
-    frames_l = data_normal['frames']
-    frames_r = data_condition['frames']
+    frames_top = data_normal['frames']
+    frames_bot = data_condition['frames']
 
-    for t in range(min(T, len(frames_l), len(frames_r))):
-        rows = []
-        # Row 0: MuJoCo
-        mj_l = resize_frame(frames_l[t])
-        mj_r = resize_frame(frames_r[t])
-        rows.append(np.concatenate([mj_l, separator, mj_r], axis=1))
+    for t in range(min(T, len(frames_top), len(frames_bot))):
+        mj_top = resize_frame(frames_top[t])
+        mj_bot = resize_frame(frames_bot[t])
 
-        # Row 1-5: rasters + actions + voltages
-        for key in ['pse', 'psi', 'mn', 'act', 'mn_v']:
-            pl = draw_time_cursor(panels_l[key], t, T)
-            pr = draw_time_cursor(panels_r[key], t, T)
-            rows.append(np.concatenate([pl, separator, pr], axis=1))
+        row_top = np.concatenate([lbl_top, mj_top] + [
+            draw_time_cursor(panels_top[k], t, T)
+            for k in ['pse', 'psi', 'mn', 'act', 'mn_v']
+        ], axis=1)
+        row_bot = np.concatenate([lbl_bot, mj_bot] + [
+            draw_time_cursor(panels_bot[k], t, T)
+            for k in ['pse', 'psi', 'mn', 'act', 'mn_v']
+        ], axis=1)
 
-        frame = np.concatenate([header] + rows, axis=0)
-        composed.append(frame)
+        composed.append(np.concatenate([row_top, separator, row_bot], axis=0))
 
     make_video(composed, output_path)
 
 
 def make_stim_neural_detail_video(data_normal, data_stim, sf, output_path):
-    """Neural detail comparison for stimulation.
+    """Landscape neural detail: top row = normal, bottom row = stimulated.
 
-    2x5 grid:
-      Normal MuJoCo       | Stim MuJoCo
-      Normal PS-E raster  | Stim PS-E raster
-      Normal PS-I raster  | Stim PS-I raster
-      Normal MN raster    | Stim MN raster
-      Normal MN Drive     | Stim MN Drive
+    Each row: Label | MuJoCo | PS-E raster | PS-I raster | MN raster | MN Drive
     """
     print(f"Generating {os.path.basename(output_path)}...")
     T = data_normal['ps_spikes_exc'].shape[0]
     frames_n = data_normal['frames']
     frames_s = data_stim['frames']
 
-    # Normal side
+    # Normal side panels
     n_pse = render_raster_panel(data_normal['ps_spikes_exc'], 'Normal PS-E',
                                  CMAP_EXC, n_show=100)
     n_psi = render_raster_panel(data_normal['ps_spikes_inh'], 'Normal PS-I',
@@ -806,7 +802,7 @@ def make_stim_neural_detail_video(data_normal, data_stim, sf, output_path):
     n_drive = render_drive_panel(data_normal['mn_input_exc'],
                                   data_normal['mn_input_inh'], 'Normal MN Drive')
 
-    # Stim side
+    # Stim side panels
     s_pse = render_raster_panel(data_stim['ps_spikes_exc'],
                                  f'Stim {sf:.0f}x PS-E', CMAP_EXC, n_show=100)
     s_psi = render_raster_panel(data_stim['ps_spikes_inh'],
@@ -817,6 +813,18 @@ def make_stim_neural_detail_video(data_normal, data_stim, sf, output_path):
                                   data_stim['mn_input_inh'],
                                   f'Stim {sf:.0f}x MN Drive')
 
+    # Row labels
+    label_w = 160
+    lbl_top = render_text_bar("NORMAL", label_w, PANEL_H, bg_color=(44, 160, 44),
+                               fontsize=11)
+    lbl_bot = render_text_bar(f"STIM {sf:.0f}x", label_w, PANEL_H,
+                               bg_color=(180, 40, 100), fontsize=11)
+
+    sep_h = 16
+    n_panels = 4  # pse, psi, mn, drive
+    row_w = label_w + PANEL_W + n_panels * PANEL_W
+    separator = np.zeros((sep_h, row_w, 3), dtype=np.uint8)
+
     def resize_frame(frame):
         return np.array(Image.fromarray(frame).resize((PANEL_W, PANEL_H), Image.LANCZOS))
 
@@ -824,24 +832,21 @@ def make_stim_neural_detail_video(data_normal, data_stim, sf, output_path):
     for t in range(min(T, len(frames_n), len(frames_s))):
         mj_n = resize_frame(frames_n[t])
         mj_s = resize_frame(frames_s[t])
-        row_mj = np.concatenate([mj_n, mj_s], axis=1)
-        row0 = np.concatenate([
+
+        row_top = np.concatenate([lbl_top, mj_n,
             draw_time_cursor(n_pse, t, T),
-            draw_time_cursor(s_pse, t, T),
-        ], axis=1)
-        row1 = np.concatenate([
             draw_time_cursor(n_psi, t, T),
-            draw_time_cursor(s_psi, t, T),
-        ], axis=1)
-        row2 = np.concatenate([
             draw_time_cursor(n_mn, t, T),
-            draw_time_cursor(s_mn, t, T),
-        ], axis=1)
-        row3 = np.concatenate([
             draw_time_cursor(n_drive, t, T),
+        ], axis=1)
+        row_bot = np.concatenate([lbl_bot, mj_s,
+            draw_time_cursor(s_pse, t, T),
+            draw_time_cursor(s_psi, t, T),
+            draw_time_cursor(s_mn, t, T),
             draw_time_cursor(s_drive, t, T),
         ], axis=1)
-        composed.append(np.concatenate([row_mj, row0, row1, row2, row3], axis=0))
+
+        composed.append(np.concatenate([row_top, separator, row_bot], axis=0))
 
     make_video(composed, output_path)
 
