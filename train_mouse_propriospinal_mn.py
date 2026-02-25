@@ -1015,7 +1015,7 @@ def make_eval_fn(eval_env, diag_policy_module, action_dist, episode_length,
 
 ppo_params = config_dict.create(
     num_timesteps=600_000_000,
-    num_evals=12,
+    num_evals=30,
     reward_scaling=1.0,
     episode_length=80,
     normalize_observations=True,
@@ -1072,6 +1072,7 @@ ckpt_path.mkdir(parents=True, exist_ok=True)
 print(f"{ckpt_path}")
 
 env_cfg = default_config()
+env_cfg.reward_terms["control_cost"]["weight"] = 0.01
 env_cfg_dict = env_cfg.to_dict()
 for k, v in env_cfg_dict.items():
     if hasattr(v, "__fspath__"):
