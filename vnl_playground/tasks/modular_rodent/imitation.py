@@ -5,7 +5,6 @@ Follows the same structure as tasks/rodent/imitation.py.
 """
 
 import collections
-import warnings
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
 import brax.math
@@ -25,14 +24,15 @@ from vnl_playground.tasks.reference_clips import ReferenceClips
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
-        xml_path=consts.MODULAR_RODENT_XML_PATH,
-        mujoco_impl="warp",  # JAX impl does not support ELLIPSOID-BOX collision pairs
+        walker_xml_path=consts.MODULAR_RODENT_WALKER_XML_PATH,
+        arena_xml_path=consts.MODULAR_RODENT_ARENA_XML_PATH,
+        mujoco_impl="warp",
         sim_dt=0.002,
-        ctrl_dt=0.02,
+        ctrl_dt=0.01,
         solver="cg",
         iterations=5,
         ls_iterations=5,
-        naconmax=256,
+        naconmax=128*512,
         njmax=256,
         noslip_iterations=0,
         reference_data_path=consts.IMITATION_REFERENCE_PATH,
@@ -112,6 +112,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
             impl=self._config.mujoco_impl,
             njmax=self._config.njmax,
             naconmax=self._config.naconmax,
+            #nccdmax=self._config.nccdmax # Available in mujoco-warp, but not yet in MJX?
         )
 
         def compute_for_frame(qpos, qvel):
@@ -535,6 +536,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
             impl=self._config.mujoco_impl,
             njmax=self._config.njmax,
             naconmax=self._config.naconmax,
+            #nccdmax=self._config.naccdmax, #Available in mujoco-warp, but not yet in MJX?
         )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         data = data.replace(qpos=reference.qpos)
@@ -573,11 +575,10 @@ class ModularImitation(modular_base.ModularRodentEnv):
 
         if render_ghost:
             spec = self._spec.copy()
-            ghost_spec = mujoco.MjSpec.from_file(str(consts.MODULAR_RODENT_XML_PATH))
+            ghost_spec = mujoco.MjSpec.from_file(str(consts.MODULAR_RODENT_WALKER_XML_PATH))
             # Recolor walker bodies to white/transparent
             for body in ghost_spec.worldbody.bodies:
-                if body.name == "walker":
-                    _recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
+                _recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
             spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.0), quat=(1, 0, 0, 0))
             spawn_body = spawn_site.attach_body(
                 ghost_spec.body("walker"), "", suffix="-ghost"

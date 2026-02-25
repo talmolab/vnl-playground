@@ -4,7 +4,6 @@ Corresponds to modular_rodent.jl in the Julia implementation.
 """
 
 import collections
-import warnings
 from typing import Any, Dict, Mapping, Optional, Union
 
 import jax
@@ -20,23 +19,24 @@ from . import consts
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
-        xml_path=consts.MODULAR_RODENT_XML_PATH,
+        walker_xml_path=consts.MODULAR_RODENT_WALKER_XML_PATH,
+        arena_xml_path=consts.MODULAR_RODENT_ARENA_XML_PATH,
         sim_dt=0.002,
         ctrl_dt=0.01,
         solver="cg",
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
-        mujoco_impl="warp",  # JAX impl does not support ELLIPSOID-BOX collision pairs
+        mujoco_impl="warp",
     )
 
 
 class ModularRodentEnv(mjx_env.MjxEnv):
     """Base class for modular rodent environments.
 
-    Loads the standalone rodent_extra_sensors.xml directly (no separate arena
-    attachment). Provides hierarchical proprioception organized by body module,
-    matching the Julia ModularRodent implementation.
+    Composes arena + walker at runtime (same pattern as rodent/ environments).
+    Provides hierarchical proprioception organized by body module, matching
+    the Julia ModularRodent implementation.
     """
 
     def __init__(
@@ -45,24 +45,21 @@ class ModularRodentEnv(mjx_env.MjxEnv):
         config_overrides: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(config, config_overrides)
-        self._spec = mujoco.MjSpec.from_file(str(self._config.xml_path))
+        self._spec = mujoco.MjSpec.from_file(str(self._config.arena_xml_path))
+        walker_spec = mujoco.MjSpec.from_file(str(self._config.walker_xml_path))
+        frame = self._spec.worldbody.add_frame()
+        body = frame.attach_body(walker_spec.body("walker"), "", suffix="")
+        body.add_freejoint(name="root")
         self._compiled = False
 
     def compile(self, forced: bool = False) -> None:
         """Compile the model spec into mj_model and mjx_model."""
         if not self._compiled or forced:
-            if self._config.mujoco_impl == "jax":
-                warnings.warn(
-                    "ModularRodentEnv: mujoco_impl='jax' is not supported because "
-                    "the rodent XML contains ELLIPSOID-BOX geom pairs which the JAX "
-                    "MJX backend cannot handle. Use mujoco_impl='warp' instead.",
-                    stacklevel=2,
-                )
             self._spec.option.noslip_iterations = self._config.noslip_iterations
             # The XML has CPU-optimised njmax/nconmax (8000/4000). Warp requires
             # much smaller values; override them here.
-            self._spec.njmax = self._config.njmax
-            self._spec.nconmax = self._config.naconmax
+            # self._spec.njmax = self._config.njmax
+            # self._spec.nconmax = self._config.naconmax
             self._mj_model = self._spec.compile()
             self._mj_model.opt.timestep = self._config.sim_dt
             self._mj_model.vis.global_.offwidth = 3840
@@ -88,7 +85,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
         Extracts only the yaw angle from the full torso rotation, giving a
         horizontal reference frame aligned with the animal's heading direction.
         """
-        xmat = data.xmat[self._mj_model.body("walker/torso").id].reshape(3, 3)
+        xmat = data.xmat[self._mj_model.body("torso").id].reshape(3, 3)
         yaw = jp.arctan2(xmat[1, 0], xmat[0, 0])
         c, s = jp.cos(yaw), jp.sin(yaw)
         return jp.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
@@ -100,7 +97,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
         body's absolute height above ground.
         """
         body_pos = data.xpos[self._mj_model.body(body_name).id]
-        torso_pos = data.xpos[self._mj_model.body("walker/torso").id]
+        torso_pos = data.xpos[self._mj_model.body("torso").id]
         torso_xy = jp.array([torso_pos[0], torso_pos[1], 0.0])
         return self.torso_yawmat(data) @ (body_pos - torso_xy)
 
@@ -110,11 +107,11 @@ class ModularRodentEnv(mjx_env.MjxEnv):
 
     def root_pos(self, data: mjx.Data) -> jp.ndarray:
         """Global position of the torso (used as the root)."""
-        return data.xpos[self._mj_model.body("walker/torso").id]
+        return data.xpos[self._mj_model.body("torso").id]
 
     def root_xquat(self, data: mjx.Data) -> jp.ndarray:
         """Global quaternion of the torso."""
-        return data.xquat[self._mj_model.body("walker/torso").id]
+        return data.xquat[self._mj_model.body("torso").id]
 
     # -------------------------------------------------------------------------
     # Modular proprioception (matching Julia's proprioception() function)
@@ -134,7 +131,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
         return {
             "hand_L": {
                 "palm_contact": get_sensor_data(m, data, "hand_L/palm_contact"),
-                "egocentric_hand_pos": self.body_relpos(data, "walker/hand_L"),
+                "egocentric_hand_pos": self.body_relpos(data, "hand_L"),
                 "wrist_angle": get_sensor_data(m, data, "hand_L/wrist_angle"),
                 "finger_angle": get_sensor_data(m, data, "hand_L/finger_angle"),
                 "wrist_angle_vel": get_sensor_data(m, data, "hand_L/wrist_angle_vel"),
@@ -166,16 +163,16 @@ class ModularRodentEnv(mjx_env.MjxEnv):
                 "elbow_force": get_sensor_data(m, data, "arm_L/elbow_force"),
                 "shoulder_force": get_sensor_data(m, data, "arm_L/shoulder_force"),
                 "elbow_height": jp.expand_dims(
-                    self.site_z(data, "walker/elbow_L"), axis=0
+                    self.site_z(data, "elbow_L"), axis=0
                 ),
                 "shoulder_height": jp.expand_dims(
-                    self.site_z(data, "walker/shoulder_L"), axis=0
+                    self.site_z(data, "shoulder_L"), axis=0
                 ),
                 "hand_linvel": yaw_mat @ get_sensor_data(m, data, "arm_L/hand_linvel"),
             },
             "hand_R": {
                 "palm_contact": get_sensor_data(m, data, "hand_R/palm_contact"),
-                "egocentric_hand_pos": self.body_relpos(data, "walker/hand_R"),
+                "egocentric_hand_pos": self.body_relpos(data, "hand_R"),
                 "wrist_angle": get_sensor_data(m, data, "hand_R/wrist_angle"),
                 "finger_angle": get_sensor_data(m, data, "hand_R/finger_angle"),
                 "wrist_angle_vel": get_sensor_data(m, data, "hand_R/wrist_angle_vel"),
@@ -209,17 +206,17 @@ class ModularRodentEnv(mjx_env.MjxEnv):
                 "elbow_force": get_sensor_data(m, data, "arm_R/elbow_force"),
                 "shoulder_force": get_sensor_data(m, data, "arm_R/shoulder_force"),
                 "elbow_height": jp.expand_dims(
-                    self.site_z(data, "walker/elbow_R"), axis=0
+                    self.site_z(data, "elbow_R"), axis=0
                 ),
                 "shoulder_height": jp.expand_dims(
-                    self.site_z(data, "walker/shoulder_R"), axis=0
+                    self.site_z(data, "shoulder_R"), axis=0
                 ),
                 "hand_linvel": yaw_mat @ get_sensor_data(m, data, "arm_R/hand_linvel"),
             },
             "foot_L": {
                 "sole_contact": get_sensor_data(m, data, "foot_L/sole_contact"),
                 "heel_contact": get_sensor_data(m, data, "foot_L/heel_contact"),
-                "egocentric_foot_pos": self.body_relpos(data, "walker/foot_L"),
+                "egocentric_foot_pos": self.body_relpos(data, "foot_L"),
                 "knee_angle": get_sensor_data(m, data, "foot_L/knee_angle"),
                 "ankle_angle": get_sensor_data(m, data, "foot_L/ankle_angle"),
                 "toe_angle": get_sensor_data(m, data, "foot_L/toe_angle"),
@@ -250,7 +247,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
                 "hip_force": get_sensor_data(m, data, "leg_L/hip_force"),
                 "pelvis_zaxis": yaw_mat @ get_sensor_data(m, data, "pelvis/zaxis"),
                 "hip_height": jp.expand_dims(
-                    self.site_z(data, "walker/hip_L"), axis=0
+                    self.site_z(data, "hip_L"), axis=0
                 ),
                 "hip_accelerometer": (
                     get_sensor_data(m, data, "leg_L/hip_accelerometer") * 0.1
@@ -260,7 +257,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
             "foot_R": {
                 "sole_contact": get_sensor_data(m, data, "foot_R/sole_contact"),
                 "heel_contact": get_sensor_data(m, data, "foot_R/heel_contact"),
-                "egocentric_foot_pos": self.body_relpos(data, "walker/foot_R"),
+                "egocentric_foot_pos": self.body_relpos(data, "foot_R"),
                 "knee_angle": get_sensor_data(m, data, "foot_R/knee_angle"),
                 "ankle_angle": get_sensor_data(m, data, "foot_R/ankle_angle"),
                 "toe_angle": get_sensor_data(m, data, "foot_R/toe_angle"),
@@ -294,7 +291,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
                 "hip_force": get_sensor_data(m, data, "leg_R/hip_force"),
                 "pelvis_zaxis": yaw_mat @ get_sensor_data(m, data, "pelvis/zaxis"),
                 "hip_height": jp.expand_dims(
-                    self.site_z(data, "walker/hip_R"), axis=0
+                    self.site_z(data, "hip_R"), axis=0
                 ),
                 "hip_accelerometer": get_sensor_data(m, data, "leg_R/hip_accelerometer"),
                 "hip_gyro": get_sensor_data(m, data, "leg_R/hip_gyro"),
@@ -311,13 +308,13 @@ class ModularRodentEnv(mjx_env.MjxEnv):
                 "lumbar_twist_vel": get_sensor_data(m, data, "torso/lumbar_twist_vel"),
                 "linvel": get_sensor_data(m, data, "torso/linvel"),
                 "height_above_ground": jp.expand_dims(
-                    self.body_relpos(data, "walker/torso")[2], axis=0
+                    self.body_relpos(data, "torso")[2], axis=0
                 ),
                 "pelvis_zaxis": yaw_mat @ get_sensor_data(m, data, "pelvis/zaxis"),
             },
             "head": {
                 "accelerometer": get_sensor_data(m, data, "head/accelerometer"),
-                "egocentric_pos": self.body_relpos(data, "walker/skull"),
+                "egocentric_pos": self.body_relpos(data, "skull"),
                 "xaxis": get_sensor_data(m, data, "head/xaxis"),
                 "zaxis": get_sensor_data(m, data, "head/zaxis"),
                 "neck_force": get_sensor_data(m, data, "head/neck_force"),
@@ -349,7 +346,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
         m = self._mj_model
         return {
             "hand_L": {
-                "pos": self.body_relpos(data, "walker/hand_L"),
+                "pos": self.body_relpos(data, "hand_L"),
                 "wrist_angle": get_sensor_data(m, data, "hand_L/wrist_angle"),
                 "finger_angle": get_sensor_data(m, data, "hand_L/finger_angle"),
                 "xaxis": get_sensor_data(m, data, "hand_L/xaxis"),
@@ -357,14 +354,14 @@ class ModularRodentEnv(mjx_env.MjxEnv):
             "arm_L": {
                 "elbow_angle": get_sensor_data(m, data, "arm_L/elbow_angle"),
                 "elbow_height": jp.expand_dims(
-                    self.site_z(data, "walker/elbow_L"), axis=0
+                    self.site_z(data, "elbow_L"), axis=0
                 ),
                 "shoulder_height": jp.expand_dims(
-                    self.site_z(data, "walker/shoulder_L"), axis=0
+                    self.site_z(data, "shoulder_L"), axis=0
                 ),
             },
             "hand_R": {
-                "pos": self.body_relpos(data, "walker/hand_R"),
+                "pos": self.body_relpos(data, "hand_R"),
                 "wrist_angle": get_sensor_data(m, data, "hand_R/wrist_angle"),
                 "finger_angle": get_sensor_data(m, data, "hand_R/finger_angle"),
                 "xaxis": get_sensor_data(m, data, "hand_R/xaxis"),
@@ -372,14 +369,14 @@ class ModularRodentEnv(mjx_env.MjxEnv):
             "arm_R": {
                 "elbow_angle": get_sensor_data(m, data, "arm_R/elbow_angle"),
                 "elbow_height": jp.expand_dims(
-                    self.site_z(data, "walker/elbow_R"), axis=0
+                    self.site_z(data, "elbow_R"), axis=0
                 ),
                 "shoulder_height": jp.expand_dims(
-                    self.site_z(data, "walker/shoulder_R"), axis=0
+                    self.site_z(data, "shoulder_R"), axis=0
                 ),
             },
             "foot_L": {
-                "pos": self.body_relpos(data, "walker/foot_L"),
+                "pos": self.body_relpos(data, "foot_L"),
                 "toe_angle": get_sensor_data(m, data, "foot_L/toe_angle"),
                 "ankle_angle": get_sensor_data(m, data, "foot_L/ankle_angle"),
                 "xaxis": get_sensor_data(m, data, "foot_L/xaxis"),
@@ -388,11 +385,11 @@ class ModularRodentEnv(mjx_env.MjxEnv):
                 "knee_pos": get_sensor_data(m, data, "leg_L/egocentric_knee_pos"),
                 "knee_angle": get_sensor_data(m, data, "leg_L/knee_angle"),
                 "hip_height": jp.expand_dims(
-                    self.site_z(data, "walker/hip_L"), axis=0
+                    self.site_z(data, "hip_L"), axis=0
                 ),
             },
             "foot_R": {
-                "pos": self.body_relpos(data, "walker/foot_R"),
+                "pos": self.body_relpos(data, "foot_R"),
                 "toe_angle": get_sensor_data(m, data, "foot_R/toe_angle"),
                 "ankle_angle": get_sensor_data(m, data, "foot_R/ankle_angle"),
                 "xaxis": get_sensor_data(m, data, "foot_R/xaxis"),
@@ -401,7 +398,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
                 "knee_pos": get_sensor_data(m, data, "leg_R/egocentric_knee_pos"),
                 "knee_angle": get_sensor_data(m, data, "leg_R/knee_angle"),
                 "hip_height": jp.expand_dims(
-                    self.site_z(data, "walker/hip_R"), axis=0
+                    self.site_z(data, "hip_R"), axis=0
                 ),
             },
             "torso": {
@@ -411,13 +408,13 @@ class ModularRodentEnv(mjx_env.MjxEnv):
                 "lumbar_twist": get_sensor_data(m, data, "torso/lumbar_twist"),
                 "lumbar_extend": get_sensor_data(m, data, "torso/lumbar_extend"),
                 "height_above_ground": jp.expand_dims(
-                    self.body_relpos(data, "walker/torso")[2], axis=0
+                    self.body_relpos(data, "torso")[2], axis=0
                 ),
             },
             "head": {
                 "xaxis": get_sensor_data(m, data, "head/xaxis"),
                 "zaxis": get_sensor_data(m, data, "head/zaxis"),
-                "egocentric_pos": self.body_relpos(data, "walker/skull"),
+                "egocentric_pos": self.body_relpos(data, "skull"),
                 "mandible": get_sensor_data(m, data, "head/mandible"),
             },
             "root": {
@@ -448,7 +445,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
     def _action_to_ctrl(self, action: dict[str, jp.ndarray]) -> jp.ndarray:
         """Map action dict to the 38-element ctrl array.
 
-        Actuator ordering in rodent_extra_sensors.xml:
+        Actuator ordering in rodent_modular_walker.xml:
           [0:3]   torso:  lumbar_extend, lumbar_bend, lumbar_twist
           [3:6]   head:   cervical_extend, cervical_bend, cervical_twist
           [6:8]   tail:   caudal_extend, caudal_bend  (uncontrolled, set to 0)
@@ -483,7 +480,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
 
     @property
     def xml_path(self) -> str:
-        return str(self._config.xml_path)
+        return str(self._config.walker_xml_path)
 
     @property
     def action_size(self) -> int:
