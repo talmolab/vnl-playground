@@ -676,7 +676,6 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
     # Create orbax CheckpointManager for ff_ppo
     ckpt_mgr_options = ocp.CheckpointManagerOptions(
         save_interval_steps=1,
-        max_to_keep=50,
         step_prefix="PPONetwork",
         create=True,
     )
@@ -712,6 +711,9 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
         height=cfg.env_config.get("vision_height", 32),
         grayscale=cfg.env_config.get("grayscale", True),
         camera_name=cfg.env_config.get("vision_camera_name", "egocentric-rodent"),
+        render_depth=cfg.env_config.get("render_depth", False),
+        use_textures=cfg.env_config.get("use_textures", False),
+        use_shadows=cfg.env_config.get("use_shadows", False),
     )
     logging.info("Created warp vision renderer (nworld=1) for video overlay")
 
@@ -856,6 +858,9 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
     vision_height = cfg.env_config.get("vision_height", 32)
     grayscale = cfg.env_config.get("grayscale", True)
     camera_name = cfg.env_config.get("vision_camera_name", "egocentric-rodent")
+    render_depth = cfg.env_config.get("render_depth", False)
+    use_textures = cfg.env_config.get("use_textures", False)
+    use_shadows = cfg.env_config.get("use_shadows", False)
 
     def wrap_with_vision(
         environment,
@@ -879,6 +884,9 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
             height=vision_height,
             grayscale=grayscale,
             camera_name=camera_name,
+            render_depth=render_depth,
+            use_textures=use_textures,
+            use_shadows=use_shadows,
         )
 
     logging.info(
@@ -1067,6 +1075,9 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         height=cfg.env_config.get("vision_height", 32),
         grayscale=cfg.env_config.get("grayscale", True),
         camera_name=cfg.env_config.get("vision_camera_name", "egocentric-rodent"),
+        render_depth=cfg.env_config.get("render_depth", False),
+        use_textures=cfg.env_config.get("use_textures", False),
+        use_shadows=cfg.env_config.get("use_shadows", False),
     )
     logging.info("Created warp vision renderer (nworld=1) for video overlay")
 
@@ -1221,6 +1232,9 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
     vision_height = cfg.env_config.get("vision_height", 32)
     grayscale = cfg.env_config.get("grayscale", True)
     camera_name = cfg.env_config.get("vision_camera_name", "egocentric-rodent")
+    render_depth = cfg.env_config.get("render_depth", False)
+    use_textures = cfg.env_config.get("use_textures", False)
+    use_shadows = cfg.env_config.get("use_shadows", False)
 
     def wrap_with_vision(
         environment,
@@ -1244,6 +1258,9 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
             height=vision_height,
             grayscale=grayscale,
             camera_name=camera_name,
+            render_depth=render_depth,
+            use_textures=use_textures,
+            use_shadows=use_shadows,
         )
 
     logging.info(
@@ -1439,6 +1456,9 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
     grayscale = cfg.env_config.get("grayscale", True)
     left_camera = cfg.env_config.get("left_camera_name", "eye_left-rodent")
     right_camera = cfg.env_config.get("right_camera_name", "eye_right-rodent")
+    render_depth = cfg.env_config.get("render_depth", False)
+    use_textures = cfg.env_config.get("use_textures", False)
+    use_shadows = cfg.env_config.get("use_shadows", False)
 
     _video_left_renderer = JaxVisionRenderer(
         mj_model=_unwrapped.mj_model,
@@ -1448,6 +1468,9 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
         height=vision_height,
         grayscale=grayscale,
         camera_name=left_camera,
+        render_depth=render_depth,
+        use_textures=use_textures,
+        use_shadows=use_shadows,
     )
     _video_right_renderer = JaxVisionRenderer(
         mj_model=_unwrapped.mj_model,
@@ -1457,6 +1480,9 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
         height=vision_height,
         grayscale=grayscale,
         camera_name=right_camera,
+        render_depth=render_depth,
+        use_textures=use_textures,
+        use_shadows=use_shadows,
     )
     logging.info("Created binocular warp vision renderers (nworld=1) for video overlay")
 
@@ -1636,6 +1662,9 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
             grayscale=grayscale,
             left_camera_name=left_camera,
             right_camera_name=right_camera,
+            render_depth=render_depth,
+            use_textures=use_textures,
+            use_shadows=use_shadows,
         )
 
     logging.info(
@@ -1867,6 +1896,9 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
         height=cfg.env_config.get("vision_height", 32),
         grayscale=cfg.env_config.get("grayscale", True),
         camera_name=cfg.env_config.get("vision_camera_name", "egocentric-rodent"),
+        render_depth=cfg.env_config.get("render_depth", False),
+        use_textures=cfg.env_config.get("use_textures", False),
+        use_shadows=cfg.env_config.get("use_shadows", False),
     )
     logging.info("Created warp vision renderer (nworld=1) for video overlay")
 
@@ -2025,6 +2057,9 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
     vision_height = cfg.env_config.get("vision_height", 32)
     grayscale = cfg.env_config.get("grayscale", True)
     camera_name = cfg.env_config.get("vision_camera_name", "egocentric-rodent")
+    render_depth = cfg.env_config.get("render_depth", False)
+    use_textures = cfg.env_config.get("use_textures", False)
+    use_shadows = cfg.env_config.get("use_shadows", False)
 
     def wrap_with_vision(
         environment,
@@ -2048,6 +2083,9 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
             height=vision_height,
             grayscale=grayscale,
             camera_name=camera_name,
+            render_depth=render_depth,
+            use_textures=use_textures,
+            use_shadows=use_shadows,
         )
 
     logging.info(

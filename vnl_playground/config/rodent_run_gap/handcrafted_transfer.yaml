@@ -1,3 +1,4 @@
+# @package _global_
 # Handcrafted gap feature high-level transfer for RunGap
 # Uses the base RunGap environment (not RunGapVision) with handcrafted
 # gap features as the imitation_target encoder input.
@@ -52,6 +53,8 @@ env_config:
         target_speed: 2
       termination_penalty:
         weight: 10.0
+      gap_crossing_bonus:
+        weight: 2.0
     # -- Termination --
     termination_criteria:
       fallen:

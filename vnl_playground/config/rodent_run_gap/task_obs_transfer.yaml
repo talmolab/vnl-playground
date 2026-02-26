@@ -1,3 +1,4 @@
+# @package _global_
 # TaskObs-only high-level transfer training for RunGapVision (no vision)
 # Uses standard Brax PPO with MLP policy on handcrafted body-state features.
 #
@@ -52,6 +53,8 @@ env_config:
         target_speed: 2
       termination_penalty:
         weight: 10.0
+      gap_crossing_bonus:
+        weight: 2.0
     # -- Termination --
     termination_criteria:
       fallen:

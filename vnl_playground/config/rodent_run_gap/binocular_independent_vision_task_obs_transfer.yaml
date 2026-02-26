@@ -1,3 +1,4 @@
+# @package _global_
 # Binocular Vision + TaskObs high-level transfer training (Independent Dual-CNN)
 # Uses ff_ppo with BinocularVisionEncoder (independent dual-CNN, experimental control)
 #
@@ -69,6 +70,8 @@ env_config:
         target_speed: 1
       termination_penalty:
         weight: 10.0
+      gap_crossing_bonus:
+        weight: 2.0
     # -- Termination --
     termination_criteria:
       fallen:

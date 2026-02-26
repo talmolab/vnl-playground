@@ -22,10 +22,12 @@ Usage:
     # trajectory.qpos.shape == (200, 9)
 """
 
+from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
 import jax
 import jax.numpy as jp
+import numpy as np
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
@@ -60,6 +62,11 @@ class OnlineReferenceGenerator:
             model access and observation computation).
         n_frames: Number of frames per generated trajectory.
         deterministic: If True, use policy mean (no sampling noise).
+        warmup_frames: Number of standing-mode frames to prepend before the
+            actual behavior schedule. Lets the walker settle from a random
+            initial pose into a stable standing posture. Set to 0 to disable.
+        warmup_transition_frames: Number of frames to linearly blend from
+            standing to the first mode of the actual schedule.
     """
 
     def __init__(
@@ -68,11 +75,15 @@ class OnlineReferenceGenerator:
         walker_env: Any,
         n_frames: int = 200,
         deterministic: bool = True,
+        warmup_frames: int = 0,
+        warmup_transition_frames: int = 40,
     ):
         self.policy_fn = policy_fn
         self.env = walker_env
         self.n_frames = n_frames
         self.deterministic = deterministic
+        self.warmup_frames = warmup_frames
+        self.warmup_transition_frames = warmup_transition_frames
 
         # Cache model references
         self._mjx_model = walker_env.mjx_model
@@ -100,6 +111,24 @@ class OnlineReferenceGenerator:
         rng, rng_init = jax.random.split(rng)
         init_state = self.env.reset(rng_init)
         init_data = init_state.data
+
+        # Prepend standing warmup + smooth transition to schedule
+        if self.warmup_frames > 0:
+            stand_idx = consts.BEHAVIOR_MODES["stand"]
+            stand_schedule = self.sample_fixed_schedule(
+                stand_idx, self.warmup_frames
+            )
+            stand_vec = jax.nn.one_hot(stand_idx, consts.N_BEHAVIOR_MODES)
+            first_mode = behavior_schedule[0]
+            alphas = jp.linspace(
+                0.0, 1.0, self.warmup_transition_frames
+            ).reshape(-1, 1)
+            transition = (1.0 - alphas) * stand_vec + alphas * first_mode
+            full_schedule = jp.concatenate(
+                [stand_schedule, transition, behavior_schedule], axis=0
+            )
+        else:
+            full_schedule = behavior_schedule
 
         def step_fn(carry, behavior_vec):
             data, prev_action, rng = carry
@@ -134,106 +163,131 @@ class OnlineReferenceGenerator:
             return (data, action, rng), frame
 
         init_carry = (init_data, jp.zeros(self.env.action_size), rng)
-        _, frames = jax.lax.scan(step_fn, init_carry, behavior_schedule)
+        _, frames = jax.lax.scan(step_fn, init_carry, full_schedule)
+
+        # Trim warmup frames from output
+        trim = (
+            self.warmup_frames + self.warmup_transition_frames
+            if self.warmup_frames > 0
+            else 0
+        )
 
         return WalkerTrajectory(
-            qpos=frames["qpos"],
-            qvel=frames["qvel"],
-            xpos=frames["xpos"],
-            xquat=frames["xquat"],
-            behavior_labels=behavior_schedule,
+            qpos=frames["qpos"][trim:],
+            qvel=frames["qvel"][trim:],
+            xpos=frames["xpos"][trim:],
+            xquat=frames["xquat"][trim:],
+            behavior_labels=full_schedule[trim:],
         )
 
     @staticmethod
     def sample_behavior_schedule(
         rng: jax.Array,
         n_frames: int,
-        n_transitions: int = 1,
         n_modes: int = consts.N_BEHAVIOR_MODES,
         transition_steps: int = consts.DEFAULT_TRANSITION_STEPS,
+        mode_duration_mean: int = 150,
+        mode_duration_min: int = 60,
     ) -> jp.ndarray:
-        """Sample a random behavior schedule with smooth transitions.
+        """Sample a random behavior schedule matching MultiBehaviorWalker timing.
 
-        Creates equal-width segments with different modes, then applies
-        linear blending over ``transition_steps`` frames at each boundary.
-        This matches the smooth transition mechanism in MultiBehaviorWalker
-        so the Step 1 policy sees consistent input.
+        Replicates the countdown-timer with exponential duration sampling from
+        ``MultiBehaviorWalker.step()``'s mode-switching logic:
+
+            duration ~ mode_duration_min + Exp(mode_duration_mean - mode_duration_min)
+
+        Transitions are linearly blended over ``transition_steps`` frames,
+        matching the smooth blending the Step 1 policy was trained on.
 
         Args:
             rng: Random key.
             n_frames: Total number of frames.
-            n_transitions: Number of behavior transitions (0 = single mode,
-                1 = one transition, etc.).
             n_modes: Number of behavior modes.
-            transition_steps: Number of frames to linearly blend between
-                modes at each boundary.
+            transition_steps: Frames to linearly blend between modes.
+            mode_duration_mean: Average steps per mode (shifted exponential mean).
+            mode_duration_min: Minimum steps before mode switch.
 
         Returns:
-            (n_frames, n_modes) soft mode vector array.  Pure one-hot in
-            segment interiors, linearly interpolated at boundaries.
+            (n_frames, n_modes) soft mode vector array.
         """
-        rng_modes, _ = jax.random.split(rng)
-        n_segments = n_transitions + 1
+        scale = jp.float32(mode_duration_mean - mode_duration_min)
 
-        # Sample mode for each segment
-        modes = jax.random.randint(rng_modes, (n_segments,), 0, n_modes)
+        def step_fn(carry, _):
+            (mode_idx, steps_until_switch, transition_progress,
+             behavior_mode, transition_source, transition_target, rng) = carry
 
-        # Ensure consecutive segments have different modes
-        def fix_consecutive(prev_mode, mode):
-            fixed = jp.where(mode == prev_mode, (mode + 1) % n_modes, mode)
-            return fixed, fixed
+            rng, rng_mode, rng_dur = jax.random.split(rng, 3)
 
-        _, fixed_modes = jax.lax.scan(fix_consecutive, modes[0], modes[1:])
-        modes = jp.concatenate([modes[:1], fixed_modes])
+            # Decrement countdown
+            steps_until_switch = steps_until_switch - 1
 
-        # Build per-frame one-hot vectors using equal-width segments
-        frames_per_segment = n_frames // n_segments
-        frame_indices = jp.arange(n_frames)
-        segment_ids = jp.minimum(
-            frame_indices // frames_per_segment, n_segments - 1
-        )
-        frame_modes_onehot = jax.nn.one_hot(modes[segment_ids], n_modes)
+            # Check if countdown expired AND current transition is complete
+            countdown_expired = steps_until_switch <= 0
+            transition_done = transition_progress >= transition_steps
+            start_new = countdown_expired & transition_done
 
-        # Apply smooth blending at segment boundaries
-        # For each frame, compute distance to the nearest segment boundary
-        # and blend between the two adjacent segment modes
-        half_blend = transition_steps // 2
-
-        def blend_frame(frame_idx):
-            seg_id = jp.minimum(frame_idx // frames_per_segment, n_segments - 1)
-            pos_in_seg = frame_idx - seg_id * frames_per_segment
-
-            # Current segment one-hot
-            current_mode = jax.nn.one_hot(modes[seg_id], n_modes)
-
-            # Distance from start of segment (blend with previous)
-            prev_seg_id = jp.maximum(seg_id - 1, 0)
-            prev_mode = jax.nn.one_hot(modes[prev_seg_id], n_modes)
-            # Alpha: 0 at boundary, 1 when half_blend frames into segment
-            alpha_start = jp.clip(pos_in_seg / jp.maximum(half_blend, 1), 0.0, 1.0)
-            # Only blend if we're actually at a boundary (seg_id > 0)
-            at_start_boundary = (seg_id > 0) & (pos_in_seg < half_blend)
-
-            # Distance from end of segment (blend with next)
-            next_seg_id = jp.minimum(seg_id + 1, n_segments - 1)
-            next_mode = jax.nn.one_hot(modes[next_seg_id], n_modes)
-            dist_from_end = frames_per_segment - 1 - pos_in_seg
-            alpha_end = jp.clip(dist_from_end / jp.maximum(half_blend, 1), 0.0, 1.0)
-            at_end_boundary = (seg_id < n_segments - 1) & (dist_from_end < half_blend)
-
-            # Apply blending: start boundary takes priority if somehow both
-            blended = jp.where(
-                at_start_boundary,
-                alpha_start * current_mode + (1.0 - alpha_start) * prev_mode,
-                jp.where(
-                    at_end_boundary,
-                    alpha_end * current_mode + (1.0 - alpha_end) * next_mode,
-                    current_mode,
-                ),
+            # Sample new target mode (ensure different from current)
+            new_mode_idx = jax.random.randint(rng_mode, (), 0, n_modes)
+            new_mode_idx = jp.where(
+                new_mode_idx == mode_idx,
+                (new_mode_idx + 1) % n_modes,
+                new_mode_idx,
             )
-            return blended
+            new_target = jax.nn.one_hot(new_mode_idx, n_modes)
 
-        schedule = jax.vmap(blend_frame)(frame_indices)
+            # Sample new countdown duration (shifted exponential)
+            new_duration = mode_duration_min + jp.int32(
+                jp.round(jax.random.exponential(rng_dur) * scale)
+            )
+
+            # Conditionally start new transition
+            transition_source = jp.where(
+                start_new, behavior_mode, transition_source
+            )
+            transition_target = jp.where(
+                start_new, new_target, transition_target
+            )
+            transition_progress = jp.where(
+                start_new, jp.int32(0), transition_progress + 1
+            )
+            mode_idx = jp.where(start_new, new_mode_idx, mode_idx)
+            steps_until_switch = jp.where(
+                start_new, new_duration, steps_until_switch
+            )
+
+            # Compute blended mode vector
+            alpha = jp.clip(
+                transition_progress / transition_steps, 0.0, 1.0
+            )
+            behavior_mode = (
+                (1.0 - alpha) * transition_source + alpha * transition_target
+            )
+
+            new_carry = (
+                mode_idx, steps_until_switch, transition_progress,
+                behavior_mode, transition_source, transition_target, rng,
+            )
+            return new_carry, behavior_mode
+
+        # Initialize: random first mode, sample first countdown
+        rng, rng_init_mode, rng_init_dur = jax.random.split(rng, 3)
+        init_mode_idx = jax.random.randint(rng_init_mode, (), 0, n_modes)
+        init_behavior = jax.nn.one_hot(init_mode_idx, n_modes)
+        init_duration = mode_duration_min + jp.int32(
+            jp.round(jax.random.exponential(rng_init_dur) * scale)
+        )
+
+        init_carry = (
+            init_mode_idx,
+            init_duration,
+            jp.int32(transition_steps),   # Start fully transitioned
+            init_behavior,
+            init_behavior,                # source = current
+            init_behavior,                # target = current
+            rng,
+        )
+
+        _, schedule = jax.lax.scan(step_fn, init_carry, jp.arange(n_frames))
         return schedule
 
     @staticmethod
@@ -255,4 +309,89 @@ class OnlineReferenceGenerator:
         return jp.tile(
             jax.nn.one_hot(mode_idx, n_modes),
             (n_frames, 1),
+        )
+
+
+class PrecomputedTrajectoryDataset:
+    """Pre-generated trajectory pool that replaces OnlineReferenceGenerator.
+
+    Holds N pre-generated trajectories in memory (as a single stacked
+    WalkerTrajectory with leading batch dimension). The ``generate()`` method
+    randomly indexes into the pool — O(1) array lookup instead of a full
+    jax.lax.scan rollout.
+
+    Usage:
+        dataset = PrecomputedTrajectoryDataset.load("trajectories.npz")
+        # Drop-in replacement for OnlineReferenceGenerator:
+        trajectory = dataset.generate(rng, behavior_schedule)
+
+    Args:
+        trajectories: WalkerTrajectory with shape (N, n_frames, ...) per field.
+    """
+
+    def __init__(self, trajectories: WalkerTrajectory):
+        self.trajectories = trajectories
+        self.n_trajectories = trajectories.qpos.shape[0]
+        self.n_frames = trajectories.qpos.shape[1]
+
+    def generate(
+        self,
+        rng: jax.Array,
+        behavior_schedule: jp.ndarray,
+    ) -> WalkerTrajectory:
+        """Pick a random trajectory from the pool.
+
+        Args:
+            rng: JAX random key (used to select trajectory index).
+            behavior_schedule: Ignored — the pre-generated trajectories
+                already have their own behavior labels.
+
+        Returns:
+            WalkerTrajectory with shape (n_frames, ...).
+        """
+        idx = jax.random.randint(rng, (), 0, self.n_trajectories)
+        return WalkerTrajectory(
+            qpos=self.trajectories.qpos[idx],
+            qvel=self.trajectories.qvel[idx],
+            xpos=self.trajectories.xpos[idx],
+            xquat=self.trajectories.xquat[idx],
+            behavior_labels=self.trajectories.behavior_labels[idx],
+        )
+
+    @classmethod
+    def load(cls, path: str) -> "PrecomputedTrajectoryDataset":
+        """Load a dataset from an NPZ file.
+
+        Expected keys: qpos, qvel, xpos, xquat, behavior_labels,
+        each with shape (N, n_frames, ...).
+        """
+        path = Path(path)
+        data = np.load(path)
+        trajectories = WalkerTrajectory(
+            qpos=jp.array(data["qpos"]),
+            qvel=jp.array(data["qvel"]),
+            xpos=jp.array(data["xpos"]),
+            xquat=jp.array(data["xquat"]),
+            behavior_labels=jp.array(data["behavior_labels"]),
+        )
+        return cls(trajectories)
+
+    @staticmethod
+    def save(
+        path: str,
+        trajectories: WalkerTrajectory,
+    ) -> None:
+        """Save stacked trajectories to an NPZ file.
+
+        Args:
+            path: Output file path (.npz).
+            trajectories: WalkerTrajectory with (N, n_frames, ...) arrays.
+        """
+        np.savez_compressed(
+            path,
+            qpos=np.asarray(trajectories.qpos),
+            qvel=np.asarray(trajectories.qvel),
+            xpos=np.asarray(trajectories.xpos),
+            xquat=np.asarray(trajectories.xquat),
+            behavior_labels=np.asarray(trajectories.behavior_labels),
         )

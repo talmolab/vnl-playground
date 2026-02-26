@@ -1,3 +1,4 @@
+# @package _global_
 # Vision + TaskObs high-level transfer training for RunGapVision
 # Uses ff_ppo with VisionTaskObsNetwork (CNN + task_obs fusion MLP)
 #
@@ -60,6 +61,8 @@ env_config:
         target_speed: 1
       termination_penalty:
         weight: 10.0
+      gap_crossing_bonus:
+        weight: 2.0
     # -- Termination --
     termination_criteria:
       fallen:

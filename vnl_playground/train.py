@@ -345,6 +345,9 @@ def main(cfg: DictConfig):
             height=cfg.env_config.get("vision_height", 32),
             grayscale=cfg.env_config.get("grayscale", True),
             camera_name=cfg.env_config.get("vision_camera_name", "egocentric-rodent"),
+            render_depth=cfg.env_config.get("render_depth", False),
+            use_textures=cfg.env_config.get("use_textures", False),
+            use_shadows=cfg.env_config.get("use_shadows", False),
         )
         logging.info("Created warp vision renderer (nworld=1) for video overlay")
 
@@ -438,6 +441,9 @@ def main(cfg: DictConfig):
         vision_height = cfg.env_config.get("vision_height", 32)
         grayscale = cfg.env_config.get("grayscale", True)
         camera_name = cfg.env_config.get("vision_camera_name", "egocentric-rodent")
+        render_depth = cfg.env_config.get("render_depth", False)
+        use_textures = cfg.env_config.get("use_textures", False)
+        use_shadows = cfg.env_config.get("use_shadows", False)
 
         def wrap_with_vision(
             environment,
@@ -465,6 +471,9 @@ def main(cfg: DictConfig):
                 height=vision_height,
                 grayscale=grayscale,
                 camera_name=camera_name,
+                render_depth=render_depth,
+                use_textures=use_textures,
+                use_shadows=use_shadows,
             )
 
         logging.info(

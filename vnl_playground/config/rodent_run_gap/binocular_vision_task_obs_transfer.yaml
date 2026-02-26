@@ -1,3 +1,4 @@
+# @package _global_
 # Binocular Vision + TaskObs high-level transfer training (Shared Siamese CNN)
 # Uses ff_ppo with BinocularVisionEncoder (shared-weight Siamese CNN)
 #
@@ -55,7 +56,7 @@ env_config:
     # -- Environment --
     spawn_x: 0.5
     randomize_gaps: true
-    aesthetic: "default"
+    aesthetic: "natural"
     # -- Episode --
     episode_length: 2000
     action_repeat: 1
@@ -63,9 +64,11 @@ env_config:
     reward_terms:
       forward_velocity:
         weight: 1.0
-        target_speed: 1
-      termination_penalty:
-        weight: 10.0
+        target_speed: 0.75
+      # termination_penalty:
+      #   weight: 10.0
+      gap_crossing_bonus:
+        weight: 2.0
     # -- Termination --
     termination_criteria:
       fallen:
@@ -90,11 +93,11 @@ transfer:
   decoder_obs_key: proprioception
 
 train_setup:
-  eval_every: 10_000_000
+  eval_every: 25_000_000
   train_config:
     episode_length: 1000
     num_envs: 1024
-    num_timesteps: 1_000_000_000
+    num_timesteps: 2_000_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4

@@ -51,7 +51,10 @@ def default_config() -> config_dict.ConfigDict:
         reference_length=5,        # Future frames to include in observation
         trajectory_length=200,     # Total frames per generated trajectory
         mocap_hz=40,               # Frame rate = 1 / ctrl_dt
-        n_transitions=1,           # Number of behavior transitions per trajectory
+        mode_duration_mean=150,
+        mode_duration_min=60,
+        warmup_frames=0,               # Standing warmup before actual behavior (0 = disabled)
+        warmup_transition_frames=40,   # Smooth blend from standing to first mode
         # Reward terms
         reward_terms={
             "root_pos": {"exp_scale": 0.1, "weight": 1.0},
@@ -117,7 +120,12 @@ class WalkerImitation(WalkerEnv):
             behavior_schedule = OnlineReferenceGenerator.sample_behavior_schedule(
                 gen_rng,
                 n_frames=self._config.trajectory_length,
-                n_transitions=self._config.n_transitions,
+                mode_duration_mean=self._config.get(
+                    "mode_duration_mean", 150
+                ),
+                mode_duration_min=self._config.get(
+                    "mode_duration_min", 60
+                ),
             )
 
         # Generate reference trajectory
@@ -165,6 +173,45 @@ class WalkerImitation(WalkerEnv):
         return mjx_env.State(
             data, obs, reward, jp.astype(done, float), metrics, info
         )
+
+    def soft_reset(self, state: mjx_env.State) -> mjx_env.State:
+        """Reset agent to qpos[0] of the *existing* reference trajectory.
+
+        Unlike ``reset()``, this does NOT generate a new trajectory.
+        The agent is placed back at the start of the same reference,
+        making it cheap enough to call on every episode termination.
+        """
+        reference = state.info["reference"]
+        start_frame = 0
+
+        data = state.data.replace(
+            qpos=reference.qpos[start_frame],
+            qvel=jp.zeros(self.mjx_model.nv),
+            time=jp.float32(0),
+        )
+        data = mjx.forward(self.mjx_model, data)
+
+        info = {
+            **state.info,
+            "start_frame": jp.array(start_frame, dtype=jp.int32),
+            "prev_action": jp.zeros(self.action_size),
+            "action": jp.zeros(self.action_size),
+            "truncated": jp.float32(0),
+        }
+
+        metrics = {
+            **state.metrics,
+            "current_frame": jp.float32(start_frame),
+            "behavior_mode": jp.float32(
+                jp.argmax(reference.behavior_labels[start_frame])
+            ),
+        }
+
+        obs = self._get_obs(data, info)
+        reward = self._get_reward(data, info, metrics)
+        done = jp.float32(0)
+
+        return mjx_env.State(data, obs, reward, done, metrics, info)
 
     def step(
         self, state: mjx_env.State, action: jax.Array

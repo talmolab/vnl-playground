@@ -1,3 +1,4 @@
+# @package _global_
 # RunGap FF-PPO Training Config (Intention encoder-decoder)
 #
 # Train a policy on the rodent gap-running task using the intention architecture
@@ -52,6 +53,8 @@ env_config:
         target_speed: 0.5
       termination_penalty:
         weight: 10.0
+      gap_crossing_bonus:
+        weight: 2.0
     # -- Termination --
     termination_criteria:
       fallen:
