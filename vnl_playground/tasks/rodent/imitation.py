@@ -41,6 +41,7 @@ def default_config() -> config_dict.ConfigDict:
         clip_length=250,
         clip_set="all",  # NOTE: Charles added keep_clips_idx which basically is the same as this for indices to reduce memory usage
         reference_length=5,
+        reference_stride=1,
         start_frame_range=[0, 44],
         qvel_init="zeros",
         keep_clips_idx=None,
@@ -168,8 +169,7 @@ class Imitation(rodent_base.RodentEnv):
             "start_frame": start_frame,
             "reference_clip": clip_idx,
         }
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        truncated = self._get_cur_frame(data, info) > last_valid_frame
+        truncated = self._get_cur_frame(data, info) > self._last_valid_frame()
         info["truncated"] = jp.astype(truncated, float)
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
@@ -199,8 +199,7 @@ class Imitation(rodent_base.RodentEnv):
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        truncated = self._get_cur_frame(data, info) > last_valid_frame
+        truncated = self._get_cur_frame(data, info) > self._last_valid_frame()
         info["truncated"] = jp.astype(truncated, float)
         info["prev_action"] = state.info["action"]
         info["action"] = action
@@ -263,6 +262,13 @@ class Imitation(rodent_base.RodentEnv):
     def _clip_length(self):
         return self.reference_clips.qpos.shape[1]
 
+    def _last_valid_frame(self):
+        return (
+            self._clip_length()
+            - (self._config.reference_length - 1) * self._config.reference_stride
+            - 2
+        )
+
     def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
         time_in_frames = data.time * self._config.mocap_hz
         return jp.floor(time_in_frames + info["start_frame"]).astype(int)
@@ -283,6 +289,7 @@ class Imitation(rodent_base.RodentEnv):
             clip=info["reference_clip"],
             start_frame=self._get_cur_frame(data, info) + 1,
             length=self._config.reference_length,
+            stride=self._config.reference_stride,
         )
 
     def _get_imitation_target(
