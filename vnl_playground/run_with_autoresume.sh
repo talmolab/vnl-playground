@@ -117,7 +117,11 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
     set +e
     "${CMD[@]}" 2>&1 | tee "$ATTEMPT_LOG"
     EXIT_CODE=${PIPESTATUS[0]}
-    set -e
+
+    # Keep errexit disabled through the entire retry-handling section.
+    # Previously, set -e was re-enabled here, which caused silent script
+    # exits when kill (on an already-dead monitor) returned non-zero,
+    # preventing the retry loop from ever executing.
 
     if [[ -n "${_MONITOR_PID:-}" ]]; then
         kill "$_MONITOR_PID" 2>/dev/null || true
@@ -151,7 +155,7 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
 
     # Fallback: grep the per-instance training log
     if [[ -z "$RESUME_RUN_ID" ]]; then
-        DETECTED_ID=$(grep -oP 'NEW run_id: \K\S+' "$ATTEMPT_LOG" 2>/dev/null | head -1)
+        DETECTED_ID=$(grep -oP 'NEW run_id: \K\S+' "$ATTEMPT_LOG" 2>/dev/null | head -1) || true
         if [[ -n "$DETECTED_ID" && -d "${MODEL_PATH}/${DETECTED_ID}" ]]; then
             RESUME_RUN_ID="$DETECTED_ID"
             echo "$RESUME_RUN_ID" > "$STATE_FILE"
@@ -164,7 +168,12 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
     fi
 
     # Check if there are actually checkpoints to resume from
-    CKPT_COUNT=$(ls -d "${MODEL_PATH}/${RESUME_RUN_ID}"/PPONetwork_* 2>/dev/null | wc -l || true)
+    CKPT_FILES=( "${MODEL_PATH}/${RESUME_RUN_ID}"/PPONetwork_* )
+    if [[ -e "${CKPT_FILES[0]}" ]]; then
+        CKPT_COUNT=${#CKPT_FILES[@]}
+    else
+        CKPT_COUNT=0
+    fi
     if [[ "$CKPT_COUNT" -eq 0 ]]; then
         echo "WARNING: No PPONetwork checkpoints found. Starting fresh on next attempt."
         RESUME_RUN_ID=""
@@ -177,6 +186,8 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
         echo "Waiting ${SLEEP_BETWEEN}s before retry..."
         sleep "$SLEEP_BETWEEN"
     fi
+
+    set -e
 done
 
 echo ""
