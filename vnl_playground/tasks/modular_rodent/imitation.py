@@ -164,6 +164,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
         obs = self._get_obs(data, info)
         reward = self._get_reward(data, info, metrics)
         done = self._is_done(data, info, metrics)
+        self._add_extra_metrics(data, info, metrics)
 
         return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
 
@@ -188,6 +189,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
         done = jp.logical_or(terminated, info["truncated"])
         reward = self._get_reward(data, info, state.metrics)
         reward = jp.nan_to_num(reward)
+        self._add_extra_metrics(data, info, state.metrics)
 
         state = state.replace(
             data=data,
@@ -479,19 +481,50 @@ class ModularImitation(modular_base.ModularRodentEnv):
 
         return total_reward
 
+    def _add_extra_metrics(self, data: mjx.Data, info: Mapping[str, Any], metrics: dict) -> None:
+        '''Add a selection of extra metrics useful for tuning reward terms.'''
+        prop = self._get_modular_proprioception(data)
+        target = self._interpolated_target(data, info, time_ahead=0.0)
+        root_quat_cur = self.root_xquat(data)
+        root_ang = 2.0 * jp.arccos(
+            jp.minimum(
+                1.0,
+                jp.abs(jp.dot(target["root"]["rot"], root_quat_cur)),
+            )
+        )
+        metrics["hand_L"] = {
+            "finger_level": prop["hand_L"]["finger_zz"][0],
+            "wrist_angle_err": prop["hand_L"]["wrist_angle"] - target["hand_L"]["wrist_angle"],
+            "pos_err": jp.linalg.norm(prop["hand_L"]["egocentric_hand_pos"] - target["hand_L"]["pos"]),
+        }
+        metrics["arm_L"] = {
+            "elbow_joint_err": prop["arm_L"]["elbow_angle"] - target["arm_L"]["elbow_angle"],
+            "elbow_height_err": prop["arm_L"]["elbow_height"] - target["arm_L"]["elbow_height"],
+        }
+        metrics["foot_L"] = {
+            "pos_err": jp.linalg.norm(prop["foot_L"]["egocentric_foot_pos"] - target["foot_L"]["pos"]),
+        }
+        metrics["leg_L"] = {
+            "orientation_match": jp.dot(prop["foot_L"]["xaxis"], target["foot_L"]["xaxis"]),
+        }
+        metrics["root"] = {
+            "pos_err": jp.linalg.norm(target["root"]["pos"] - self.root_pos(data)),
+            "ang_err": root_ang,
+        }
+
     def _is_done(
         self, data: mjx.Data, info: Mapping[str, Any], metrics: dict
     ) -> bool:
         # 1. Torso too low (matching Julia's height_above_ground/10 < min_torso_z)
         torso_z = self.root_pos(data)[2]
         too_low = torso_z < self._config.min_torso_z
-        metrics["terminations/torso_too_low"] = jp.astype(too_low, float)
+        metrics["terminations/torso_too_low"] = too_low
 
         # 2. Root too far from target (uses raw global positions, not egocentric)
         target = self._interpolated_target(data, info, time_ahead=0.0)
         root_dist = jp.linalg.norm(target["root"]["pos"] - self.root_pos(data))
         too_far = root_dist > self._config.max_target_distance
-        metrics["terminations/root_too_far"] = jp.astype(too_far, float)
+        metrics["terminations/root_too_far"] = too_far
 
         # 3. NaN check
         flattened_vals, _ = flatten_util.ravel_pytree(data)
@@ -499,7 +532,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
         metrics["terminations/nan_termination"] = jp.astype(nan_terminated, float)
 
         any_terminated = jp.logical_or(too_low, jp.logical_or(too_far, nan_terminated))
-        metrics["terminations/any"] = jp.astype(any_terminated, float)
+        metrics["terminations/any"] = any_terminated
         return any_terminated
 
     # -------------------------------------------------------------------------
