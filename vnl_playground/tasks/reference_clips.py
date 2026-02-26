@@ -334,8 +334,10 @@ class ReferenceClips:
         }
         return subslice
 
-    def slice(self, clip: int, start_frame: int, length: int) -> "ReferenceClips":
-        """Extract a contiguous slice of frames from a specific clip.
+    def slice(
+        self, clip: int, start_frame: int, length: int, stride: int = 1
+    ) -> "ReferenceClips":
+        """Extract a slice of frames from a specific clip, optionally strided.
 
         Parameters
         ----------
@@ -344,7 +346,11 @@ class ReferenceClips:
         start_frame : int
             Starting frame index within the clip.
         length : int
-            Number of frames to include in the slice.
+            Number of frames to include in the output slice.
+        stride : int, default=1
+            Step size between selected frames. When stride > 1, a contiguous
+            block of ``(length - 1) * stride + 1`` frames is fetched via
+            ``dynamic_slice`` and then subsampled with ``[::stride]``.
 
         Returns
         -------
@@ -359,18 +365,19 @@ class ReferenceClips:
         """
         if len(self._data_arrays[self._shape_check_key].shape) < 3:
             raise IndexError("Trying to slice already sliced ReferenceClip.")
+        total_length = (length - 1) * stride + 1
         subslice = copy.copy(self)
         subslice._data_arrays = {}
         for key in self._data_array_keys:
             if key not in self._data_arrays:
                 continue
             clip_array = self._data_arrays[key][clip]
-            slice_data = jax.lax.dynamic_slice(
+            contiguous = jax.lax.dynamic_slice(
                 clip_array,
                 (start_frame, *jp.zeros(clip_array.ndim - 1, dtype=int)),
-                (length, *clip_array.shape[1:]),
+                (total_length, *clip_array.shape[1:]),
             )
-            subslice._data_arrays[key] = slice_data
+            subslice._data_arrays[key] = contiguous[::stride]
         return subslice
 
     def split(
