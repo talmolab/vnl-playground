@@ -99,8 +99,6 @@ class Imitation(rodent_base.RodentEnv):
                 Pre-loaded ReferenceClips object. If provided, it overrides
                 loading from `config.reference_data_path`.
         """
-        if not hasattr(config, 'reference_stride'):
-            config.reference_stride = 1
         super().__init__(config, config_overrides)
         self.add_rodent(
             rescale_factor=self._config.rescale_factor,
