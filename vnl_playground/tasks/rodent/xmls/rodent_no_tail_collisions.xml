@@ -179,11 +179,11 @@
       <!-- <camera name="overhead_wide" mode="trackcom" fovy="90.0" pos="0 0 2" xyaxes="1 0 0 0 1 0"/> -->
       <!-- <camera name="front" mode="trackcom" pos="1 0 0" xyaxes="0 1 0 0 0 1"/> -->
       <!-- <camera name="front_left" mode="trackcom" pos="0.707 0.707 0" xyaxes="-0.707 0.707 0 0 0 1"/> -->
-      <!-- <camera name="left" mode="trackcom" pos="0 1 0" xyaxes="-1 0 0 0 0 1"/> -->
+      <camera name="left" mode="trackcom" pos="0 0.25 0" xyaxes="-1 0 0 0 0 1"/>
       <!-- <camera name="back_left" mode="trackcom" pos="-0.707 0.707 0" xyaxes="-0.707 -0.707 0 0 0 1"/> -->
       <!-- <camera name="back" mode="trackcom" pos="-1 0 0" xyaxes="0 -1 0 0 0 1"/> -->
       <!-- <camera name="back_right" mode="trackcom" pos="-0.707 -0.707 0" xyaxes="0.707 -0.707 0 0 0 1"/> -->
-      <!-- <camera name="right" mode="trackcom" pos="0 -1 0" xyaxes="1 0 0 0 0 1"/> -->
+      <camera name="right" mode="trackcom" pos="0 -0.35 0" xyaxes="1 0 0 0 0 1"/>
       <!-- <camera name="front_right" mode="trackcom" pos="0.707 -0.707 0" xyaxes="0.707 0.707 0 0 0 1"/> -->
       <camera name="side_alt" mode="trackcom" pos="0.5 -0.561 0.199" xyaxes="0.766 0.643 0.000 -0.162 0.192 0.968"/>
       <camera name="top" mode="trackcom" fovy="100.0" pos="0 0 1" zaxis="0 -0.2 1"/>
@@ -225,7 +225,7 @@
                             <geom name="toe_L0_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007253243030021683" pos="0.008496656120882544 -0.0008496656120882542 0" euler="1.570796326794897 -1.221730476396031 0"/>
                             <geom name="toe_L1_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007771331817880374" pos="0.008071823314838416 0.002548996836264763 0" euler="1.570796326794897 -1.221730476396031 0"/>
                             <geom name="toe_L2_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007253243030021683" pos="0.006797324896706034 0.005522826478573654 0" euler="1.570796326794897 -1.221730476396031 0"/>
-                            <site name="sole_L" class="sensor" type="box" size="0.012 0.004 0.002" pos="0.006 0.00246 -0.00164" euler="0 0 0.3490658503988659"/>
+                            <site name="sole_L" class="sensor" type="box" size="0.008 0.005 0.002" pos="0.010 0.00346 -0.00164" euler="0 0 0.3490658503988659"/>
                           </body>
                         </body>
                         <geom name="lower_leg_L_collision" class="nonself_collision_primitive" size="0.006556802251673236 0.01923328660490816" density="1302.86687267" pos="-0.01226339046929431 0.0001224792426221771 -0.01071813365303941" quat="0.5843939876140521 0.278581552273902 0.3900453953818352 0.6547828460754284"/>
@@ -249,7 +249,7 @@
                             <geom name="toe_R0_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007253243030021683" pos="0.008496656120882544 0.0008496656120882542 0" euler="1.570796326794897 1.221730476396031 0"/>
                             <geom name="toe_R1_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007771331817880374" pos="0.008071823314838416 -0.002548996836264763 0" euler="1.570796326794897 1.221730476396031 0"/>
                             <geom name="toe_R2_collision" class="nonself_collision_primitive_paw" size="0.002383208424149982 0.007253243030021683" pos="0.006797324896706034 -0.005522826478573654 0" euler="1.570796326794897 1.221730476396031 0"/>
-                            <site name="sole_R" class="sensor" type="box" size="0.012 0.004 0.002" pos="0.006 -0.00246 -0.00164" euler="0 0 -0.3490658503988659"/>
+                            <site name="sole_R" class="sensor" type="box" size="0.008 0.005 0.002" pos="0.010 -0.00346 -0.00164" euler="0 0 -0.3490658503988659"/>
                           </body>
                         </body>
                         <geom name="lower_leg_R_collision" class="nonself_collision_primitive" size="0.006556802251673236 0.01923328660490816" density="1302.86687267" pos="-0.01202896613332032 -0.0001615786954038913 -0.0105741369075766" quat="0.6564315036111004 0.3901417719765998 0.2779576926818845 0.5827749135856758"/>
