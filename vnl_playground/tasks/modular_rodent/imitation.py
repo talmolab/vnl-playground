@@ -27,6 +27,7 @@ def default_config() -> config_dict.ConfigDict:
         walker_xml_path=consts.MODULAR_RODENT_WALKER_XML_PATH,
         arena_xml_path=consts.MODULAR_RODENT_ARENA_XML_PATH,
         rescale_factor=0.9,
+        torque_actuators=True,
         mujoco_impl="warp",
         sim_dt=0.002,
         ctrl_dt=0.01,

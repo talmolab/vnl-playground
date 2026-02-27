@@ -9,6 +9,7 @@ from typing import Any, Dict, Mapping, Optional, Union
 import jax
 import jax.numpy as jp
 import mujoco
+import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
@@ -23,6 +24,7 @@ def default_config() -> config_dict.ConfigDict:
         walker_xml_path=consts.MODULAR_RODENT_WALKER_XML_PATH,
         arena_xml_path=consts.MODULAR_RODENT_ARENA_XML_PATH,
         rescale_factor=0.9,
+        torque_actuators=True,
         sim_dt=0.002,
         ctrl_dt=0.01,
         solver="cg",
@@ -51,6 +53,12 @@ class ModularRodentEnv(mjx_env.MjxEnv):
         walker_spec = mujoco.MjSpec.from_file(str(self._config.walker_xml_path))
         if self._config.rescale_factor != 1.0:
             walker_spec = dm_scale_spec(walker_spec, self._config.rescale_factor)
+        if self._config.torque_actuators:
+            for actuator in walker_spec.actuators:
+                if actuator.forcerange.size >= 2:
+                    actuator.gainprm[0] = actuator.forcerange[1]
+                actuator.biastype = mujoco.mjtBias.mjBIAS_NONE
+                actuator.biasprm = np.zeros((10, 1))
         frame = self._spec.worldbody.add_frame()
         body = frame.attach_body(walker_spec.body("walker"), "", suffix="")
         body.add_freejoint(name="root")
