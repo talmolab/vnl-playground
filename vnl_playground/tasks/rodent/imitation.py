@@ -637,9 +637,7 @@ class Imitation(rodent_base.RodentEnv):
                 ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
             for body in ghost_rodent.worldbody.bodies:
                 utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
-            spawn_site = spec.worldbody.add_frame(
-                pos=(0, 0, 0.05), quat=(1, 0, 0, 0)
-            )
+            spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
             spawn_body = spawn_site.attach_body(
                 ghost_rodent.worldbody, "", suffix="-ghost"
             )
@@ -659,9 +657,9 @@ class Imitation(rodent_base.RodentEnv):
             time = np.asarray(rollout_states.data.time)
             start_frame = np.asarray(rollout_states.info["start_frame"])
             clip_indices = np.asarray(rollout_states.info["reference_clip"]).astype(int)
-            frame_indices = np.floor(
-                time * self._config.mocap_hz + start_frame
-            ).astype(int)
+            frame_indices = np.floor(time * self._config.mocap_hz + start_frame).astype(
+                int
+            )
             ref_qpos = np.asarray(self.reference_clips.qpos)
             ref_qvel = np.asarray(self.reference_clips.qvel)
 
@@ -683,9 +681,7 @@ class Imitation(rodent_base.RodentEnv):
                 mj_data.qpos = qpos[i]
                 mj_data.qvel = qvel[i]
             mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(
-                mj_data, camera=camera, scene_option=scene_option
-            )
+            renderer.update_scene(mj_data, camera=camera, scene_option=scene_option)
             frames.append(renderer.render())
 
         renderer.close()
