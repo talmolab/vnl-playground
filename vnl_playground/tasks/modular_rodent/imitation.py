@@ -48,7 +48,7 @@ def default_config() -> config_dict.ConfigDict:
         min_torso_z=0.03,         # meters, from Julia's min_torso_z
         # Reward scales (defaults match Julia's hardcoded values)
         reward_terms={
-            "limb_pos_exp_scale": 0.5,   # sigma for reward_shape(a, b) = exp(-(norm(a-b)/scale)^2)
+            "limb_pos_exp_scale": 0.025, # sigma for reward_shape(a, b) = exp(-(norm(a-b)/scale)^2)
             "root_pos_scale": 0.05,      # sigma for root position reward (meters)
             "root_pos_weight": 5.0,      # weight for root position reward
             "root_ang_scale": 0.5,       # sigma for root angle reward (radians)
@@ -339,17 +339,6 @@ class ModularImitation(modular_base.ModularRodentEnv):
                     target["foot_L"]["pos"],
                     scale,
                 ),
-                "foot_grounded": jp.astype(
-                    jp.logical_and(
-                        jp.linalg.norm(
-                            prop["foot_L"]["egocentric_foot_pos"]
-                            - target["foot_L"]["pos"]
-                        )
-                        < 0.3,
-                        jp.sum(prop["foot_L"]["heel_contact"]) > 0.0,
-                    ),
-                    float,
-                ),
             },
             "leg_L": {
                 "knee_joint": _reward_shape(
@@ -362,9 +351,9 @@ class ModularImitation(modular_base.ModularRodentEnv):
                     target["leg_L"]["knee_pos"],
                     scale,
                 ),
-                "orientation": jp.dot(
-                    prop["foot_L"]["xaxis"], target["foot_L"]["xaxis"]
-                ),
+                #"orientation": jp.dot(
+                #    prop["foot_L"]["xaxis"], target["foot_L"]["xaxis"]
+                #),
                 "hip_height": _reward_shape(
                     prop["leg_L"]["hip_height"],
                     target["leg_L"]["hip_height"],
@@ -386,17 +375,6 @@ class ModularImitation(modular_base.ModularRodentEnv):
                     target["foot_R"]["pos"],
                     scale,
                 ),
-                "foot_grounded": jp.astype(
-                    jp.logical_and(
-                        jp.linalg.norm(
-                            prop["foot_R"]["egocentric_foot_pos"]
-                            - target["foot_R"]["pos"]
-                        )
-                        < 0.3,
-                        jp.sum(prop["foot_R"]["heel_contact"]) > 0.0,
-                    ),
-                    float,
-                ),
             },
             "leg_R": {
                 "knee_joint": _reward_shape(
@@ -409,9 +387,9 @@ class ModularImitation(modular_base.ModularRodentEnv):
                     target["leg_R"]["knee_pos"],
                     scale,
                 ),
-                "orientation": jp.dot(
-                    prop["foot_R"]["xaxis"], target["foot_R"]["xaxis"]
-                ),
+                #"orientation": jp.dot(
+                #    prop["foot_R"]["xaxis"], target["foot_R"]["xaxis"]
+                #),
                 "hip_height": _reward_shape(
                     prop["leg_R"]["hip_height"],
                     target["leg_R"]["hip_height"],
