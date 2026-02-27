@@ -1,4 +1,5 @@
 import collections
+import tqdm
 import warnings
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
@@ -595,6 +596,100 @@ class Imitation(rodent_base.RodentEnv):
                     faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
                     rendered_frames.append(faded_frame)
         return rendered_frames
+
+    def render_optimized(
+        self,
+        rollout_states: Any,
+        height: int = 480,
+        width: int = 640,
+        camera: Optional[str] = None,
+        scene_option: Optional[mujoco.MjvOption] = None,
+        render_ghost: bool = True,
+    ) -> List[np.ndarray]:
+        """Render stacked rollout states with ghost reference model.
+
+        Optimized alternative to :meth:`render` that works directly with the
+        stacked ``State`` pytree produced by ``jax.lax.scan``, avoiding
+        per-frame pytree unbatching and repeated ``MjData`` allocation.
+
+        Args:
+            rollout_states: Stacked State pytree from ``jax.lax.scan`` where
+                each leaf has a leading time dimension.  Reads
+                ``data.{qpos, qvel, time}`` and
+                ``info.{start_frame, reference_clip}``.
+            height: Image height in pixels.
+            width: Image width in pixels.
+            camera: Camera name for rendering.  Defaults to the environment's
+                default render camera.
+            scene_option: Additional scene rendering options.
+            render_ghost: Whether to render a white transparent ghost showing
+                the reference motion.  Defaults to True.
+
+        Returns:
+            List of ``(height, width, 3)`` uint8 numpy arrays (RGB frames).
+        """
+        # Build ghost model (same setup as render())
+        if render_ghost:
+            spec = self._spec.copy()
+            ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
+            ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
+            if ghost_rescale != 1.0:
+                ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
+            for body in ghost_rodent.worldbody.bodies:
+                utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
+            spawn_site = spec.worldbody.add_frame(
+                pos=(0, 0, 0.05), quat=(1, 0, 0, 0)
+            )
+            spawn_body = spawn_site.attach_body(
+                ghost_rodent.worldbody, "", suffix="-ghost"
+            )
+            spawn_body.add_freejoint()
+            mj_model = spec.compile()
+        else:
+            mj_model = self.mj_model
+
+        mj_model.vis.global_.offwidth = width
+        mj_model.vis.global_.offheight = height
+
+        # Bulk-transfer only the needed fields from JAX to numpy
+        qpos = np.asarray(rollout_states.data.qpos)
+        qvel = np.asarray(rollout_states.data.qvel)
+
+        if render_ghost:
+            time = np.asarray(rollout_states.data.time)
+            start_frame = np.asarray(rollout_states.info["start_frame"])
+            clip_indices = np.asarray(rollout_states.info["reference_clip"]).astype(int)
+            frame_indices = np.floor(
+                time * self._config.mocap_hz + start_frame
+            ).astype(int)
+            ref_qpos = np.asarray(self.reference_clips.qpos)
+            ref_qvel = np.asarray(self.reference_clips.qvel)
+
+        n_steps = qpos.shape[0]
+        mj_data = mujoco.MjData(mj_model)
+        renderer = mujoco.Renderer(mj_model, height=height, width=width)
+
+        if camera is None:
+            camera = self._default_render_camera
+
+        frames = []
+        for i in tqdm.tqdm(range(n_steps), desc="Rendering"):
+            if render_ghost:
+                ghost_qpos = ref_qpos[clip_indices[i], frame_indices[i]]
+                ghost_qvel = ref_qvel[clip_indices[i], frame_indices[i]]
+                mj_data.qpos = np.concatenate((qpos[i], ghost_qpos))
+                mj_data.qvel = np.concatenate((qvel[i], ghost_qvel))
+            else:
+                mj_data.qpos = qpos[i]
+                mj_data.qvel = qvel[i]
+            mujoco.mj_forward(mj_model, mj_data)
+            renderer.update_scene(
+                mj_data, camera=camera, scene_option=scene_option
+            )
+            frames.append(renderer.render())
+
+        renderer.close()
+        return frames
 
     def verify_reference_data(self, atol: float = 5e-3) -> bool:
         """A set of non-exhaustive sanity checks that the reference data found in
