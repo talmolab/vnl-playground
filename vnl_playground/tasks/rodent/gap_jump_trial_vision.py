@@ -53,7 +53,16 @@ from jax import flatten_util
 from ml_collections import config_dict
 
 from vnl_playground.tasks.rodent import gap_jump_trial
-from vnl_playground.tasks.rodent.gap_jump_trial import PHASE_HOLD
+from vnl_playground.tasks.rodent.gap_jump_trial import (
+    PHASE_HOLD,
+    PHASE_DECISION,
+    PHASE_JUMP,
+    OUTCOME_ONGOING,
+    OUTCOME_SUCCESS,
+    OUTCOME_FAILURE,
+    OUTCOME_ABORT,
+    OUTCOME_TIMEOUT,
+)
 
 
 def default_config() -> config_dict.ConfigDict:
