@@ -327,6 +327,12 @@ class GapJumpTrial(rodent_base.RodentEnv):
         reward = self._get_reward(data, info, metrics)
         done = self._is_done(data, info, metrics)
 
+        # Initialize trial outcome metrics so the pytree structure matches step()
+        metrics["trial/outcome"] = jp.float32(0.0)
+        metrics["trial/success"] = jp.float32(0.0)
+        metrics["trial/failure"] = jp.float32(0.0)
+        metrics["trial/abort"] = jp.float32(0.0)
+
         return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
