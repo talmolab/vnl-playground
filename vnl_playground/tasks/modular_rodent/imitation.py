@@ -45,7 +45,7 @@ def default_config() -> config_dict.ConfigDict:
         qvel_init="zeros",
         keep_clips_idx=None,
         # Termination
-        max_target_distance=0.05  # meters
+        max_target_distance=0.05, # meters
         min_torso_z=0.03,         # meters
         # Reward scales
         reward_terms={
