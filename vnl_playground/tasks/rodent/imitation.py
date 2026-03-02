@@ -599,37 +599,44 @@ class Imitation(rodent_base.RodentEnv):
 
     def render_optimized(
         self,
-        rollout_states: Any,
+        rollout_source: Any,
         height: int = 480,
         width: int = 640,
         camera: Optional[str] = None,
         scene_option: Optional[mujoco.MjvOption] = None,
         render_ghost: bool = True,
     ) -> List[np.ndarray]:
-        """Render stacked rollout states with ghost reference model.
+        """Render from precomputed qposes using the old track-mjx logic.
 
-        Optimized alternative to :meth:`render` that works directly with the
-        stacked ``State`` pytree produced by ``jax.lax.scan``, avoiding
-        per-frame pytree unbatching and repeated ``MjData`` allocation.
-
-        Args:
-            rollout_states: Stacked State pytree from ``jax.lax.scan`` where
-                each leaf has a leading time dimension.  Reads
-                ``data.{qpos, qvel, time}`` and
-                ``info.{start_frame, reference_clip}``.
-            height: Image height in pixels.
-            width: Image width in pixels.
-            camera: Camera name for rendering.  Defaults to the environment's
-                default render camera.
-            scene_option: Additional scene rendering options.
-            render_ghost: Whether to render a white transparent ghost showing
-                the reference motion.  Defaults to True.
-
-        Returns:
-            List of ``(height, width, 3)`` uint8 numpy arrays (RGB frames).
+        Accepts either a rollout dictionary containing ``qposes_rollout`` and
+        ``qposes_ref`` or stacked rollout states. The rendering path stays on the
+        host side and mirrors the historical ``track_mjx.analysis.render`` logic.
         """
-        # Build ghost model (same setup as render())
+        if isinstance(rollout_source, Mapping) and "qposes_rollout" in rollout_source:
+            qposes_rollout = np.asarray(rollout_source["qposes_rollout"])
+            qposes_ref = (
+                np.asarray(rollout_source["qposes_ref"])
+                if render_ghost and "qposes_ref" in rollout_source
+                else None
+            )
+        else:
+            qposes_rollout = np.asarray(rollout_source.data.qpos)
+            qposes_ref = None
+            if render_ghost:
+                clip_idx = int(
+                    np.asarray(rollout_source.info["reference_clip"]).reshape(-1)[0]
+                )
+                start_frame = np.asarray(rollout_source.info["start_frame"])
+                times = np.asarray(rollout_source.data.time)
+                frame_indices = np.floor(
+                    times * float(self._config.mocap_hz) + start_frame
+                ).astype(np.int32)
+                ref_qpos = np.asarray(self.reference_clips.qpos[clip_idx])
+                qposes_ref = ref_qpos[frame_indices]
+
         if render_ghost:
+            # Reuse the environment spec so the compiled model matches the
+            # rollout qpos size exactly, but keep the old host-side qpos path.
             spec = self._spec.copy()
             ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
             ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
@@ -643,43 +650,29 @@ class Imitation(rodent_base.RodentEnv):
             )
             spawn_body.add_freejoint()
             mj_model = spec.compile()
+            qpos_list = [
+                np.concatenate((qroll, qref))
+                for qroll, qref in zip(qposes_rollout, qposes_ref, strict=False)
+            ]
         else:
             mj_model = self.mj_model
+            qpos_list = qposes_rollout
 
         mj_model.vis.global_.offwidth = width
         mj_model.vis.global_.offheight = height
 
-        # Bulk-transfer only the needed fields from JAX to numpy
-        qpos = np.asarray(rollout_states.data.qpos)
-        qvel = np.asarray(rollout_states.data.qvel)
-
-        if render_ghost:
-            time = np.asarray(rollout_states.data.time)
-            start_frame = np.asarray(rollout_states.info["start_frame"])
-            clip_indices = np.asarray(rollout_states.info["reference_clip"]).astype(int)
-            frame_indices = np.floor(time * self._config.mocap_hz + start_frame).astype(
-                int
-            )
-            ref_qpos = np.asarray(self.reference_clips.qpos)
-            ref_qvel = np.asarray(self.reference_clips.qvel)
-
-        n_steps = qpos.shape[0]
         mj_data = mujoco.MjData(mj_model)
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
 
         if camera is None:
             camera = self._default_render_camera
+        if scene_option is None:
+            scene_option = mujoco.MjvOption()
+            scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
 
         frames = []
-        for i in tqdm.tqdm(range(n_steps), desc="Rendering"):
-            if render_ghost:
-                ghost_qpos = ref_qpos[clip_indices[i], frame_indices[i]]
-                ghost_qvel = ref_qvel[clip_indices[i], frame_indices[i]]
-                mj_data.qpos = np.concatenate((qpos[i], ghost_qpos))
-                mj_data.qvel = np.concatenate((qvel[i], ghost_qvel))
-            else:
-                mj_data.qpos = qpos[i]
-                mj_data.qvel = qvel[i]
+        for qpos in tqdm.tqdm(qpos_list, desc="Rendering"):
+            mj_data.qpos = qpos
             mujoco.mj_forward(mj_model, mj_data)
             renderer.update_scene(mj_data, camera=camera, scene_option=scene_option)
             frames.append(renderer.render())
