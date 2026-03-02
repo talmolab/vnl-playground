@@ -2235,45 +2235,154 @@ def main(cfg: DictConfig):
         metrics["system/rss_mb"] = proc.memory_info().rss / (1024**2)
         wandb.log(metrics)
 
-    # ---- Dispatch based on architecture ----
+    # ---- Dispatch based on architecture (with optional curriculum) ----
     arch_name = cfg.network_config.arch_name
 
-    if arch_name == "mlp":
-        logging.info("Architecture: MLP (Brax PPO)")
-        _train_mlp_highlvl(
-            cfg, env, eval_env, decoder_policy_fn, mimic_cfg,
-            checkpoint_path, cfg_dict, progress_fn=wandb_progress,
+    def _dispatch_train(cfg_phase, env_phase, eval_env_phase, checkpoint_path_phase,
+                        cfg_dict_phase, progress_fn_phase):
+        """Dispatch to the appropriate architecture-specific training function."""
+        if arch_name == "mlp":
+            return _train_mlp_highlvl(
+                cfg_phase, env_phase, eval_env_phase, decoder_policy_fn, mimic_cfg,
+                checkpoint_path_phase, cfg_dict_phase, progress_fn=progress_fn_phase,
+            )
+        elif arch_name == "vision_task_obs":
+            return _train_vision_task_obs_highlvl(
+                cfg_phase, env_phase, eval_env_phase, decoder_policy_fn, mimic_cfg,
+                checkpoint_path_phase, cfg_dict_phase, progress_fn=progress_fn_phase,
+            )
+        elif arch_name == "shared_vision_task_obs":
+            return _train_shared_vision_task_obs_highlvl(
+                cfg_phase, env_phase, eval_env_phase, decoder_policy_fn, mimic_cfg,
+                checkpoint_path_phase, cfg_dict_phase, progress_fn=progress_fn_phase,
+            )
+        elif arch_name == "recurrent_vision_task_obs":
+            return _train_recurrent_vision_task_obs_highlvl(
+                cfg_phase, env_phase, eval_env_phase, decoder_policy_fn, mimic_cfg,
+                checkpoint_path_phase, cfg_dict_phase, progress_fn=progress_fn_phase,
+            )
+        elif arch_name == "binocular_shared_vision_task_obs":
+            return _train_binocular_shared_vision_task_obs_highlvl(
+                cfg_phase, env_phase, eval_env_phase, decoder_policy_fn, mimic_cfg,
+                checkpoint_path_phase, cfg_dict_phase, progress_fn=progress_fn_phase,
+            )
+        else:
+            raise ValueError(
+                f"Unknown arch_name: {arch_name}. "
+                "Must be 'mlp', 'vision_task_obs', 'shared_vision_task_obs', "
+                "'recurrent_vision_task_obs', or 'binocular_shared_vision_task_obs'."
+            )
+
+    # ---- Check for auto-curriculum mode ----
+    has_curriculum = "curriculum" in cfg_dict and "phases" in cfg_dict.get("curriculum", {})
+
+    if has_curriculum:
+        from vnl_playground.tasks.rodent.curriculum import (
+            GraduationMonitor,
+            apply_phase_to_env_config,
+            apply_phase_to_train_config,
+            build_phases_from_config,
+            make_curriculum_progress_fn,
         )
-    elif arch_name == "vision_task_obs":
-        logging.info("Architecture: Vision + TaskObs (ff_ppo with CNN + body signals)")
-        _train_vision_task_obs_highlvl(
-            cfg, env, eval_env, decoder_policy_fn, mimic_cfg,
-            checkpoint_path, cfg_dict, progress_fn=wandb_progress,
+
+        curriculum_phases = build_phases_from_config(cfg_dict["curriculum"])
+        logging.info(
+            f"AUTO-CURRICULUM: {len(curriculum_phases)} phases detected. "
+            f"Phases: {[p.name for p in curriculum_phases]}"
         )
-    elif arch_name == "shared_vision_task_obs":
-        logging.info("Architecture: Shared-CNN Vision + TaskObs (ff_ppo, shared CNN)")
-        _train_shared_vision_task_obs_highlvl(
-            cfg, env, eval_env, decoder_policy_fn, mimic_cfg,
-            checkpoint_path, cfg_dict, progress_fn=wandb_progress,
-        )
-    elif arch_name == "recurrent_vision_task_obs":
-        logging.info("Architecture: Recurrent CNN+GRU Vision + TaskObs (recurrent PPO)")
-        _train_recurrent_vision_task_obs_highlvl(
-            cfg, env, eval_env, decoder_policy_fn, mimic_cfg,
-            checkpoint_path, cfg_dict, progress_fn=wandb_progress,
-        )
-    elif arch_name == "binocular_shared_vision_task_obs":
-        logging.info("Architecture: Binocular Shared-CNN Vision + TaskObs")
-        _train_binocular_shared_vision_task_obs_highlvl(
-            cfg, env, eval_env, decoder_policy_fn, mimic_cfg,
-            checkpoint_path, cfg_dict, progress_fn=wandb_progress,
-        )
+
+        base_env_args = dict(env_args)
+
+        for phase_idx, phase in enumerate(curriculum_phases):
+            logging.info(
+                f"\n{'='*60}\n"
+                f"CURRICULUM PHASE {phase_idx + 1}/{len(curriculum_phases)}: {phase.name}\n"
+                f"  Gap distances: {phase.gap_distances}\n"
+                f"  Hold duration: {phase.hold_duration}\n"
+                f"  Episode length: {phase.episode_length}\n"
+                f"  Learning rate: {phase.learning_rate}\n"
+                f"  Num timesteps: {phase.num_timesteps:,}\n"
+                f"  Graduation threshold: {phase.graduation_threshold}\n"
+                f"{'='*60}"
+            )
+
+            # Build phase-specific env_args
+            phase_env_args = apply_phase_to_env_config(base_env_args, phase)
+            # Pass vision config
+            for vision_key in ("vision_width", "vision_height", "grayscale"):
+                if vision_key in cfg.env_config:
+                    phase_env_args[vision_key] = cfg.env_config[vision_key]
+            # Enforce ctrl_dt from mimic
+            if hasattr(mimic_cfg, "env_config") and hasattr(mimic_cfg.env_config, "ctrl_dt"):
+                phase_env_args["ctrl_dt"] = float(mimic_cfg.env_config.ctrl_dt)
+
+            # Reload environments with phase-specific config
+            phase_env = tasks.load(
+                env_name, flatten_obs=False,
+                config_overrides=phase_env_args if phase_env_args else None,
+            )
+            phase_eval_env = tasks.load(
+                env_name, flatten_obs=False,
+                config_overrides=phase_env_args if phase_env_args else None,
+            )
+
+            # Build phase-specific train config
+            phase_train_config = apply_phase_to_train_config(
+                OmegaConf.to_container(cfg.train_setup.train_config, resolve=True),
+                phase,
+            )
+
+            # Create phase-specific OmegaConf config
+            phase_cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+            phase_cfg.train_setup.train_config = OmegaConf.create(phase_train_config)
+            phase_cfg.env_config.env_args = OmegaConf.create(phase_env_args)
+
+            # Set checkpoint_to_restore for phases after the first
+            if phase_idx > 0:
+                phase_cfg.train_setup.checkpoint_to_restore = str(checkpoint_path)
+                logging.info(
+                    f"Phase {phase_idx + 1}: loading checkpoint from {checkpoint_path}"
+                )
+
+            phase_cfg_dict = OmegaConf.to_container(phase_cfg, resolve=True)
+
+            # Phase checkpoint subdirectory
+            phase_ckpt_path = checkpoint_path / f"phase_{phase_idx + 1}"
+            phase_ckpt_path.mkdir(parents=True, exist_ok=True)
+
+            # Setup graduation monitor
+            monitor = GraduationMonitor(
+                threshold=phase.graduation_threshold,
+                patience=phase.graduation_patience,
+            )
+            phase_progress_fn = make_curriculum_progress_fn(
+                monitor, wandb_progress, phase_idx + 1, phase.name,
+            )
+
+            # Run training for this phase
+            logging.info(f"Architecture: {arch_name}")
+            _dispatch_train(
+                phase_cfg, phase_env, phase_eval_env,
+                phase_ckpt_path, phase_cfg_dict, phase_progress_fn,
+            )
+
+            graduated = monitor.should_graduate
+            final_sr = monitor.latest_success_rate
+            logging.info(
+                f"Phase {phase_idx + 1} complete. "
+                f"Graduated: {graduated}, Final success rate: {final_sr:.3f}"
+            )
+
+            # Clean up phase environments
+            del phase_env, phase_eval_env
+            gc.collect()
+
+        logging.info("AUTO-CURRICULUM: All phases complete.")
+
     else:
-        raise ValueError(
-            f"Unknown arch_name: {arch_name}. "
-            "Must be 'mlp', 'vision_task_obs', 'shared_vision_task_obs', "
-            "'recurrent_vision_task_obs', or 'binocular_shared_vision_task_obs'."
-        )
+        # Standard single-phase training
+        logging.info(f"Architecture: {arch_name}")
+        _dispatch_train(cfg, env, eval_env, checkpoint_path, cfg_dict, wandb_progress)
 
     logging.info("Training complete.")
     wandb.finish()
