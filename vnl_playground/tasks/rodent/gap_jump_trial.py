@@ -33,6 +33,13 @@ PHASE_HOLD = 0
 PHASE_DECISION = 1
 PHASE_JUMP = 2
 
+# Trial outcome codes
+OUTCOME_ONGOING = 0
+OUTCOME_SUCCESS = 1
+OUTCOME_FAILURE = 2
+OUTCOME_ABORT = 3
+OUTCOME_TIMEOUT = 4
+
 
 def default_config() -> config_dict.ConfigDict:
     """Returns the default configuration for the GapJumpTrial environment."""
@@ -68,21 +75,42 @@ def default_config() -> config_dict.ConfigDict:
         # Reward terms
         reward_terms={
             "hold_stillness": {"weight": 0.3},
-            "forward_displacement": {"weight": 1.0},
-            "approach_velocity": {"weight": 0.5},
-            "jump_success": {"weight": 10.0},
-            "landing_bonus": {"weight": 5.0},
-            "decision_alive": {"weight": 0.05},
-            "abort_penalty": {"weight": -1.0},
-            "fall_penalty": {"weight": -5.0},
+            "jump_success": {"weight": 100.0},
+            "landing_bonus": {"weight": 50.0},
+            "fall_penalty": {"weight": -10.0},
+            "abort_penalty": {"weight": -20.0},
+            "time_penalty": {"weight": -0.01},
         },
         # Termination criteria
         termination_criteria={
-            "fallen": {"min_torso_z": -0.15},
+            "fallen": {"min_torso_z": -0.1},
+            "trial_success": {},
+            "abort_dismount": {},
             "trial_timeout": {"max_steps": 500},
             "nan_termination": {},
         },
     )
+
+
+def dense_config() -> config_dict.ConfigDict:
+    """Returns the legacy dense-reward configuration (pre-eLife redesign)."""
+    cfg = default_config()
+    cfg.reward_terms = {
+        "hold_stillness": {"weight": 0.3},
+        "forward_displacement": {"weight": 1.0},
+        "approach_velocity": {"weight": 0.5},
+        "jump_success": {"weight": 10.0},
+        "landing_bonus": {"weight": 5.0},
+        "decision_alive": {"weight": 0.05},
+        "abort_penalty": {"weight": -1.0},
+        "fall_penalty": {"weight": -5.0},
+    }
+    cfg.termination_criteria = {
+        "fallen": {"min_torso_z": -0.15},
+        "trial_timeout": {"max_steps": 500},
+        "nan_termination": {},
+    }
+    return cfg
 
 
 class GapJumpTrial(rodent_base.RodentEnv):
@@ -194,9 +222,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
         min_gap = min(cfg.gap_distances)
         # Place landing body at the position corresponding to the maximum gap
         landing_x = (
-            cfg.takeoff_platform_length / 2
-            + max_gap
-            + cfg.landing_platform_depth / 2
+            cfg.takeoff_platform_length / 2 + max_gap + cfg.landing_platform_depth / 2
         )
 
         landing_body = self._spec.worldbody.add_body(
@@ -241,13 +267,13 @@ class GapJumpTrial(rodent_base.RodentEnv):
     # qpos[7:] / qvel[6:], so we override them here.
 
     def _get_joint_angles(self, data: mjx.Data) -> jp.ndarray:
-        return data.qpos[self._rodent_qpos_start:]
+        return data.qpos[self._rodent_qpos_start :]
 
     def _get_joint_ang_vels(self, data: mjx.Data) -> jp.ndarray:
-        return data.qvel[self._rodent_qvel_start:]
+        return data.qvel[self._rodent_qvel_start :]
 
     def _get_actuator_ctrl(self, data: mjx.Data) -> jp.ndarray:
-        return data.qfrc_actuator[self._rodent_root_dof:]
+        return data.qfrc_actuator[self._rodent_root_dof :]
 
     # ------------------------------------------------------------------
     # Core environment interface
@@ -281,6 +307,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
             "gap_distance": gap_distance,
             "jump_initiated": jp.array(False),
             "trial_success": jp.array(False),
+            "trial_outcome": jp.array(OUTCOME_ONGOING, dtype=jp.int32),
         }
 
         data = mjx.make_data(
@@ -350,8 +377,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
 
         # Phase transition: DECISION -> JUMP (torso passes take-off trailing edge)
         new_phase = jp.where(
-            (new_phase == PHASE_DECISION)
-            & (torso_x > self._takeoff_trailing_edge_x),
+            (new_phase == PHASE_DECISION) & (torso_x > self._takeoff_trailing_edge_x),
             PHASE_JUMP,
             new_phase,
         )
@@ -364,16 +390,42 @@ class GapJumpTrial(rodent_base.RodentEnv):
         # Detect landing success: torso past landing leading edge and not fallen
         landing_leading_x = self._takeoff_trailing_edge_x + info["gap_distance"]
         landed = (
-            (torso_x > landing_leading_x)
-            & (torso_z > -0.1)
-            & info["jump_initiated"]
+            (torso_x > landing_leading_x) & (torso_z > -0.1) & info["jump_initiated"]
         )
         info["trial_success"] = jp.where(landed, True, info["trial_success"])
+
+        # --- Trial outcome tracking ---
+        is_ongoing = info["trial_outcome"] == OUTCOME_ONGOING
+        info["trial_outcome"] = jp.where(
+            is_ongoing & landed, OUTCOME_SUCCESS, info["trial_outcome"]
+        )
+        torso_fallen = torso_z < -0.1
+        info["trial_outcome"] = jp.where(
+            is_ongoing & torso_fallen & ~landed, OUTCOME_FAILURE, info["trial_outcome"]
+        )
+        behind_platform = torso_x < -self._config.takeoff_platform_length / 2.0
+        past_hold = new_phase >= PHASE_DECISION
+        info["trial_outcome"] = jp.where(
+            is_ongoing & behind_platform & past_hold,
+            OUTCOME_ABORT,
+            info["trial_outcome"],
+        )
 
         obs = self._get_obs(data, info)
         done = self._is_done(data, info, state.metrics)
         reward = self._get_reward(data, info, state.metrics)
         reward = jp.nan_to_num(reward)
+
+        # --- Outcome metrics ---
+        metrics = state.metrics
+        metrics["trial/outcome"] = info["trial_outcome"].astype(float)
+        metrics["trial/success"] = (info["trial_outcome"] == OUTCOME_SUCCESS).astype(
+            float
+        )
+        metrics["trial/failure"] = (info["trial_outcome"] == OUTCOME_FAILURE).astype(
+            float
+        )
+        metrics["trial/abort"] = (info["trial_outcome"] == OUTCOME_ABORT).astype(float)
 
         state = state.replace(
             data=data,
@@ -384,9 +436,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
         )
         return state
 
-    def _get_obs(
-        self, data: mjx.Data, info: dict[str, Any]
-    ) -> collections.OrderedDict:
+    def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> collections.OrderedDict:
         """Get observations with body-state signals and phase indicator as task_obs.
 
         ``task_obs`` contains body-state signals (prev_action, kinematic
@@ -411,13 +461,15 @@ class GapJumpTrial(rodent_base.RodentEnv):
         touch_sensors = self._get_touch_sensors(data)
         origin = self._get_origin(data)
 
-        task_obs = jp.concatenate([
-            info["prev_action"],
-            kinematic_sensors,
-            touch_sensors,
-            origin,
-            phase_indicator,
-        ])
+        task_obs = jp.concatenate(
+            [
+                info["prev_action"],
+                kinematic_sensors,
+                touch_sensors,
+                origin,
+                phase_indicator,
+            ]
+        )
 
         proprioception = self._get_proprioception(data, info, flatten=False)
 
@@ -449,7 +501,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
         near-zero velocity yields a reward close to ``weight``.
         """
         torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
-        velocity_magnitude = jp.sqrt(jp.sum(torso.subtree_linvel ** 2))
+        velocity_magnitude = jp.sqrt(jp.sum(torso.subtree_linvel**2))
         stillness = jp.exp(-10.0 * velocity_magnitude)
         is_hold = (info["trial_phase"] == PHASE_HOLD).astype(jp.float32)
         reward_val = weight * stillness * is_hold
@@ -480,9 +532,9 @@ class GapJumpTrial(rodent_base.RodentEnv):
         should be negative to act as a penalty.
         """
         torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
-        behind = (
-            torso.xpos[0] < -self._config.takeoff_platform_length / 2.0
-        ).astype(jp.float32)
+        behind = (torso.xpos[0] < -self._config.takeoff_platform_length / 2.0).astype(
+            jp.float32
+        )
         reward_val = weight * behind  # weight is negative
         metrics["rewards/abort_penalty"] = reward_val
         return reward_val
@@ -537,7 +589,9 @@ class GapJumpTrial(rodent_base.RodentEnv):
         max_gap = self._max_gap
         # Scale: min_gap -> 1.0x, max_gap -> 2.0x
         difficulty_scale = 1.0 + (gap_dist / max_gap)
-        reward_val = weight * difficulty_scale * info["trial_success"].astype(jp.float32)
+        reward_val = (
+            weight * difficulty_scale * info["trial_success"].astype(jp.float32)
+        )
         metrics["rewards/landing_bonus"] = reward_val
         return reward_val
 
@@ -555,6 +609,14 @@ class GapJumpTrial(rodent_base.RodentEnv):
         metrics["rewards/fall_penalty"] = reward_val
         return reward_val
 
+    @_registry.reward("time_penalty")
+    def _time_penalty_reward(self, data, info, metrics, weight):
+        """Small per-step penalty during DECISION phase."""
+        is_decision = (info["trial_phase"] == PHASE_DECISION).astype(jp.float32)
+        reward_val = weight * is_decision
+        metrics["rewards/time_penalty"] = reward_val
+        return reward_val
+
     # ------------------------------------------------------------------
     # Termination criteria
     # ------------------------------------------------------------------
@@ -569,6 +631,19 @@ class GapJumpTrial(rodent_base.RodentEnv):
     def _trial_timeout(self, data, info, max_steps=500):
         """Terminate if step count exceeds maximum."""
         return info["step_count"] >= max_steps
+
+    @_registry.termination("trial_success")
+    def _trial_success_termination(self, data, info):
+        """Terminate immediately when the rodent successfully lands."""
+        return info.get("trial_success", jp.array(False))
+
+    @_registry.termination("abort_dismount")
+    def _abort_dismount_termination(self, data, info):
+        """Terminate when the rodent walks backward off the take-off platform."""
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        behind = torso.xpos[0] < -self._config.takeoff_platform_length / 2.0
+        past_hold = info["trial_phase"] >= PHASE_DECISION
+        return behind & past_hold
 
     @_registry.termination("nan_termination")
     def _nan_termination(self, data, info):
@@ -587,9 +662,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
     @property
     def proprioceptive_obs_size(self) -> int:
         obs_size = self.non_flattened_observation_size
-        return jp.sum(
-            flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0]
-        )
+        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
 
     @property
     def observation_size(self) -> mjx_env.ObservationSize:

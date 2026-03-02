@@ -73,6 +73,22 @@ def default_config() -> config_dict.ConfigDict:
     return cfg
 
 
+def dense_config() -> config_dict.ConfigDict:
+    """Returns the legacy dense-reward vision configuration."""
+    cfg = gap_jump_trial.dense_config()
+    cfg.mujoco_impl = "warp"
+    cfg.vision = True
+    cfg.vision_width = 64
+    cfg.vision_height = 64
+    cfg.grayscale = True
+    cfg.vision_camera_name = "egocentric-rodent"
+    cfg.render_depth = False
+    cfg.use_textures = False
+    cfg.use_shadows = False
+    cfg.vision_mode = "binocular"
+    return cfg
+
+
 class GapJumpTrialVision(gap_jump_trial.GapJumpTrial):
     """GapJumpTrial with egocentric vision observations.
 
@@ -139,13 +155,15 @@ class GapJumpTrialVision(gap_jump_trial.GapJumpTrial):
         touch_sensors = self._get_touch_sensors(data)
         origin = self._get_origin(data)
 
-        task_obs = jp.concatenate([
-            info["prev_action"],
-            kinematic_sensors,
-            touch_sensors,
-            origin,
-            phase_indicator,
-        ])
+        task_obs = jp.concatenate(
+            [
+                info["prev_action"],
+                kinematic_sensors,
+                touch_sensors,
+                origin,
+                phase_indicator,
+            ]
+        )
 
         proprioception = self._get_proprioception(data, info, flatten=False)
 
@@ -176,6 +194,4 @@ class GapJumpTrialVision(gap_jump_trial.GapJumpTrial):
     def proprioceptive_obs_size(self) -> int:
         """Flat size of the proprioceptive observation component."""
         obs_size = self.non_flattened_observation_size
-        return jp.sum(
-            flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0]
-        )
+        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
