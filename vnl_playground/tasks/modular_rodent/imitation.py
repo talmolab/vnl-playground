@@ -45,11 +45,12 @@ def default_config() -> config_dict.ConfigDict:
         qvel_init="zeros",
         keep_clips_idx=None,
         # Termination
-        max_target_distance=0.1,  # meters, from Julia's max_target_distance
-        min_torso_z=0.03,         # meters, from Julia's min_torso_z
-        # Reward scales (defaults match Julia's hardcoded values)
+        max_target_distance=0.05  # meters
+        min_torso_z=0.03,         # meters
+        # Reward scales
         reward_terms={
-            "limb_pos_exp_scale": 0.025, # sigma for reward_shape(a, b) = exp(-(norm(a-b)/scale)^2)
+            "limb_pos_exp_scale": 0.015, # sigma for distance-based errors (meters)
+            "joint_exp_scale": 0.1,      # sigma for angle-based errors (radians)
             "root_pos_scale": 0.05,      # sigma for root position reward (meters)
             "root_pos_weight": 5.0,      # weight for root position reward
             "root_ang_scale": 0.5,       # sigma for root angle reward (radians)
@@ -246,7 +247,8 @@ class ModularImitation(modular_base.ModularRodentEnv):
         """
         prop = self._get_modular_proprioception(data)
         target = self._interpolated_target(data, info, time_ahead=0.0)
-        scale = self._config.reward_terms.limb_pos_exp_scale
+        pos_scale = self._config.reward_terms.limb_pos_exp_scale
+        joint_scale = self._config.reward_terms.joint_exp_scale
 
         root_cur = self.root_pos(data)
         root_quat_cur = self.root_xquat(data)
@@ -264,7 +266,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "wrist_joint": _reward_shape(
                     prop["hand_L"]["wrist_angle"],
                     target["hand_L"]["wrist_angle"],
-                    scale,
+                    joint_scale,
                 ),
                 "orientation": jp.dot(
                     prop["hand_L"]["xaxis"], target["hand_L"]["xaxis"]
@@ -272,24 +274,24 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "hand_pos": _reward_shape(
                     prop["hand_L"]["egocentric_hand_pos"],
                     target["hand_L"]["pos"],
-                    scale,
+                    pos_scale,
                 ),
             },
             "arm_L": {
                 "elbow_joint": _reward_shape(
                     prop["arm_L"]["elbow_angle"],
                     target["arm_L"]["elbow_angle"],
-                    scale,
+                    joint_scale,
                 ),
                 "elbow_height": _reward_shape(
                     prop["arm_L"]["elbow_height"],
                     target["arm_L"]["elbow_height"],
-                    scale,
+                    pos_scale,
                 ),
                 "shoulder_height": _reward_shape(
                     prop["arm_L"]["shoulder_height"],
                     target["arm_L"]["shoulder_height"],
-                    scale,
+                    pos_scale,
                 ),
             },
             "hand_R": {
@@ -297,7 +299,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "wrist_joint": _reward_shape(
                     prop["hand_R"]["wrist_angle"],
                     target["hand_R"]["wrist_angle"],
-                    scale,
+                    joint_scale,
                 ),
                 "orientation": jp.dot(
                     prop["hand_R"]["xaxis"], target["hand_R"]["xaxis"]
@@ -305,24 +307,24 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "hand_pos": _reward_shape(
                     prop["hand_R"]["egocentric_hand_pos"],
                     target["hand_R"]["pos"],
-                    scale,
+                    pos_scale,
                 ),
             },
             "arm_R": {
                 "elbow_joint": _reward_shape(
                     prop["arm_R"]["elbow_angle"],
                     target["arm_R"]["elbow_angle"],
-                    scale,
+                    joint_scale,
                 ),
                 "elbow_height": _reward_shape(
                     prop["arm_R"]["elbow_height"],
                     target["arm_R"]["elbow_height"],
-                    scale,
+                    pos_scale,
                 ),
                 "shoulder_height": _reward_shape(
                     prop["arm_R"]["shoulder_height"],
                     target["arm_R"]["shoulder_height"],
-                    scale,
+                    pos_scale,
                 ),
             },
             "foot_L": {
@@ -330,7 +332,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "ankle_joint": _reward_shape(
                     prop["foot_L"]["ankle_angle"],
                     target["foot_L"]["ankle_angle"],
-                    scale,
+                    joint_scale,
                 ),
                 "orientation": jp.dot(
                     prop["foot_L"]["xaxis"], target["foot_L"]["xaxis"]
@@ -338,19 +340,19 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "foot_pos": _reward_shape(
                     prop["foot_L"]["egocentric_foot_pos"],
                     target["foot_L"]["pos"],
-                    scale,
+                    pos_scale,
                 ),
             },
             "leg_L": {
                 "knee_joint": _reward_shape(
                     prop["leg_L"]["knee_angle"],
                     target["leg_L"]["knee_angle"],
-                    scale,
+                    joint_scale,
                 ),
                 "knee_pos": _reward_shape(
                     prop["leg_L"]["egocentric_knee_pos"],
                     target["leg_L"]["knee_pos"],
-                    scale,
+                    pos_scale,
                 ),
                 #"orientation": jp.dot(
                 #    prop["foot_L"]["xaxis"], target["foot_L"]["xaxis"]
@@ -358,7 +360,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "hip_height": _reward_shape(
                     prop["leg_L"]["hip_height"],
                     target["leg_L"]["hip_height"],
-                    scale,
+                    pos_scale,
                 ),
             },
             "foot_R": {
@@ -366,7 +368,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "ankle_joint": _reward_shape(
                     prop["foot_R"]["ankle_angle"],
                     target["foot_R"]["ankle_angle"],
-                    scale,
+                    joint_scale,
                 ),
                 "orientation": jp.dot(
                     prop["foot_R"]["xaxis"], target["foot_R"]["xaxis"]
@@ -374,19 +376,19 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "foot_pos": _reward_shape(
                     prop["foot_R"]["egocentric_foot_pos"],
                     target["foot_R"]["pos"],
-                    scale,
+                    pos_scale,
                 ),
             },
             "leg_R": {
                 "knee_joint": _reward_shape(
                     prop["leg_R"]["knee_angle"],
                     target["leg_R"]["knee_angle"],
-                    scale,
+                    joint_scale,
                 ),
                 "knee_pos": _reward_shape(
                     prop["leg_R"]["egocentric_knee_pos"],
                     target["leg_R"]["knee_pos"],
-                    scale,
+                    pos_scale,
                 ),
                 #"orientation": jp.dot(
                 #    prop["foot_R"]["xaxis"], target["foot_R"]["xaxis"]
@@ -394,7 +396,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "hip_height": _reward_shape(
                     prop["leg_R"]["hip_height"],
                     target["leg_R"]["hip_height"],
-                    scale,
+                    pos_scale,
                 ),
             },
             "torso": {
@@ -404,22 +406,22 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "height_above_ground": _reward_shape(
                     prop["torso"]["height_above_ground"],
                     target["torso"]["height_above_ground"],
-                    scale,
+                    pos_scale,
                 ),
                 "lumbar_bend": _reward_shape(
                     prop["torso"]["lumbar_bend"],
                     target["torso"]["lumbar_bend"],
-                    scale,
+                    joint_scale,
                 ),
                 "lumbar_twist": _reward_shape(
                     prop["torso"]["lumbar_twist"],
                     target["torso"]["lumbar_twist"],
-                    scale,
+                    joint_scale,
                 ),
                 "lumbar_extend": _reward_shape(
                     prop["torso"]["lumbar_extend"],
                     target["torso"]["lumbar_extend"],
-                    scale,
+                    joint_scale,
                 ),
             },
             "head": {
@@ -432,12 +434,12 @@ class ModularImitation(modular_base.ModularRodentEnv):
                 "head_pos": _reward_shape(
                     prop["head"]["egocentric_pos"],
                     target["head"]["egocentric_pos"],
-                    scale,
+                    pos_scale,
                 ),
                 "mandible": _reward_shape(
                     prop["head"]["mandible"],
                     target["head"]["mandible"],
-                    scale,
+                    joint_scale,
                 ),
             },
             "root": {
