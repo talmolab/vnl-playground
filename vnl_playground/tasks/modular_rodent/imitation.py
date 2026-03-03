@@ -190,7 +190,7 @@ class ModularImitation(modular_base.ModularRodentEnv):
         terminated = self._is_done(data, info, state.metrics)
         done = jp.logical_or(terminated, info["truncated"])
         reward = self._get_reward(data, info, state.metrics)
-        reward = jp.nan_to_num(reward)
+        reward = jax.tree.map(jp.nan_to_num, reward)
         self._add_extra_metrics(data, info, state.metrics)
 
         state = state.replace(
@@ -454,13 +454,11 @@ class ModularImitation(modular_base.ModularRodentEnv):
             },
         }
 
-        total_reward = 0.0
-        for module, module_rewards in rewards.items():
-            module_sum = sum(module_rewards.values())
+        per_module_rewards = {k: sum(v.values()) for k, v in rewards.items()}
+        for module, module_sum in per_module_rewards.items():
             metrics[f"rewards/{module}"] = module_sum
-            total_reward = total_reward + module_sum
 
-        return total_reward
+        return per_module_rewards
 
     def _add_extra_metrics(self, data: mjx.Data, info: Mapping[str, Any], metrics: dict) -> None:
         '''Add a selection of extra metrics useful for tuning reward terms.'''
