@@ -49,10 +49,11 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 env_cfg = default_config()
 env_cfg.walker_xml_path = JANELIA_MOUSE_XML_PATH
 
-# Janelia model bodies: clavicle, scapula, humerus, ulna, wrist_body
+# Janelia model bodies: clavicle, scapula, humerus, ulna, wrist
 # (no separate 'radius' or 'elbow' bodies)
-env_cfg.tracked_bodies = ["scapula", "humerus", "ulna", "wrist_body"]
-env_cfg.end_effector = "wrist_body"
+env_cfg.tracked_bodies = ["scapula", "humerus", "ulna", "wrist"]
+env_cfg.end_effector = "wrist"
+env_cfg.recompute_kinematics = False  # IK data already from same model
 
 
 # ── PPO hyper-parameters ────────────────────────────────────────────────────
@@ -70,13 +71,13 @@ ppo_params = config_dict.create(
     reward_scaling=1.0,
     normalize_observations=True,
     unroll_length=20,
-    episode_length=100,
+    episode_length=50,
     max_grad_norm=1.0,
     network_factory=config_dict.create(
         policy_hidden_layer_sizes=(512, 512, 512),
         value_hidden_layer_sizes=(512, 512, 512),
     ),
-    eval_every=1_000_000,
+    eval_every=100_000_000,
 )
 
 pprint(ppo_params)
@@ -245,7 +246,18 @@ if __name__ == "__main__":
     render_mj_model = build_render_model(eval_env)
     render_mj_data = mujoco.MjData(render_mj_model)
     renderer = mujoco.Renderer(render_mj_model, height=512, width=512)
-    camera_name = "janelia_cam"
+
+    # Compute centroid for camera lookat from initial pose
+    render_mj_data.qpos[:render_mj_model.nq // 2] = np.array(start_state.data.qpos)
+    mujoco.mj_forward(render_mj_model, render_mj_data)
+    centroid = render_mj_data.xpos[1:render_mj_model.nbody // 2 + 1].mean(axis=0)
+
+    render_cam = mujoco.MjvCamera()
+    render_cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+    render_cam.lookat[:] = centroid
+    render_cam.distance = 0.055
+    render_cam.azimuth = 165
+    render_cam.elevation = -25
 
     ppo_network = network_factory(
         start_state.obs.shape[-1],
@@ -273,7 +285,7 @@ if __name__ == "__main__":
 
         # ── Render video ────────────────────────────────────────────────
         video_path = f"{ckpt_path}/{current_step}.mp4"
-        with imageio.get_writer(video_path, fps=int(1.0 / eval_env.dt)) as video:
+        with imageio.get_writer(video_path, fps=30) as video:
             for s in rollout:
                 frame_idx = eval_env.env._get_cur_frame(s.data, s.info)
                 clip_idx = s.info["reference_clip"]
@@ -287,7 +299,7 @@ if __name__ == "__main__":
                     [np.array(s.data.qvel), np.array(ref.qvel)]
                 )
                 mujoco.mj_forward(render_mj_model, render_mj_data)
-                renderer.update_scene(render_mj_data, camera=camera_name)
+                renderer.update_scene(render_mj_data, camera=render_cam)
                 video.append_data(renderer.render())
 
         if USE_WANDB:
