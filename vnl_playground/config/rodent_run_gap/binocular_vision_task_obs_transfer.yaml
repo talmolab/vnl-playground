@@ -39,7 +39,7 @@ env_config:
     solver: "newton"
     mujoco_impl: "warp"
     # -- Solver memory --
-    naconmax: 19456       # 19 * 1024
+    naconmax: 19456       # 19 * 2048
     njmax: 400
     iterations: 5
     ls_iterations: 5
@@ -48,13 +48,13 @@ env_config:
     torque_actuators: true
     rescale_factor: 0.9
     # -- Corridor geometry --
-    corridor_length: 4.0
+    corridor_length: 5.0
     corridor_width: 2.0
     platform_length_range: [0.3, 0.6]
     gap_length_range: [0.03, 0.12]
     n_platforms: 20
     # -- Environment --
-    spawn_x: 0.5
+    spawn_x: 0.3
     randomize_gaps: true
     aesthetic: "natural"
     # -- Episode --
@@ -64,7 +64,7 @@ env_config:
     reward_terms:
       forward_velocity:
         weight: 1.0
-        target_speed: 0.75
+        target_speed: 0.8
       # termination_penalty:
       #   weight: 10.0
       gap_crossing_bonus:
@@ -88,7 +88,7 @@ network_config:
 
 transfer:
   mimic_run_id: "260212_123718_492372"
-  mimic_checkpoint_dir: /home/talmolab/Desktop/SalkResearch/track-mjx/model_checkpoints
+  mimic_checkpoint_dir: /root/vast/scott-yang/data
   highlvl_obs_key: task_obs
   decoder_obs_key: proprioception
 
@@ -109,7 +109,7 @@ train_setup:
     unroll_length: 10
     reward_scaling: 1.0
     normalize_observations: true
-    seed: 1
+    seed: 2
     latent_kl_weight: 0.0
     latent_ar1_weight: 0.0
     use_kl_schedule: false
