@@ -325,6 +325,18 @@ class HighLevelWrapper(wrapper.Wrapper):
             sizes[self._value_obs_key] = self._value_obs_size
         return sizes
 
+    @property
+    def unwrapped(self) -> mjx_env.MjxEnv:
+        return self
+
+    @property
+    def _mjx_model(self):
+        return self.env._mjx_model
+
+    @_mjx_model.setter
+    def _mjx_model(self, value):
+        self.env._mjx_model = value
+
 
 def _default_reset_hidden_on_done(hidden: Any, done: jax.Array) -> Any:
     """Zero hidden state elements where ``done`` is true.
