@@ -32,10 +32,40 @@ set -euo pipefail
 
 MAX_RETRIES="${MAX_RETRIES:-50}"
 SLEEP_BETWEEN="${SLEEP_BETWEEN_RETRIES:-10}"
-MODEL_PATH="highlvl_checkpoints"  # Must match cfg.logging_config.model_path
 
 # Collect all arguments to forward to the training script
 EXTRA_ARGS=("$@")
+
+# --- Auto-detect MODEL_PATH from config YAML ---
+# Extract --config-name value from args (or use the Hydra default) to locate
+# the YAML file, then read logging_config.model_path.  Falls back to
+# "highlvl_checkpoints" if the config cannot be found or parsed.
+# Can always be overridden with MODEL_PATH env var.
+if [[ -z "${MODEL_PATH:-}" ]]; then
+    _CONFIG_DIR="$(cd "$(dirname "$0")" && pwd)/config"
+    _CONFIG_NAME=""
+    _next_is_config=""
+    for _arg in "${EXTRA_ARGS[@]}"; do
+        case "$_arg" in
+            --config-name=*) _CONFIG_NAME="${_arg#--config-name=}" ;;
+            --config-name)   _next_is_config=1 ;;
+            *)
+                if [[ "${_next_is_config}" == "1" ]]; then
+                    _CONFIG_NAME="$_arg"
+                    _next_is_config=""
+                fi
+                ;;
+        esac
+    done
+    # Hydra default when no --config-name is provided
+    _CONFIG_NAME="${_CONFIG_NAME:-rodent_run_gap/vision_task_obs_transfer}"
+
+    _CONFIG_FILE="${_CONFIG_DIR}/${_CONFIG_NAME}.yaml"
+    if [[ -f "$_CONFIG_FILE" ]]; then
+        MODEL_PATH=$(grep -Po '^\s*model_path:\s*\K\S+' "$_CONFIG_FILE" | head -1) || true
+    fi
+    MODEL_PATH="${MODEL_PATH:-highlvl_checkpoints}"
+fi
 
 # Derive a job tag for unique state/log files when running multiple jobs in the same dir.
 # Priority: explicit JOB_TAG env var > CUDA_VISIBLE_DEVICES > "default"
@@ -53,6 +83,7 @@ STATE_FILE=".autoresume_state_${_TAG}"
 
 echo "=== Auto-Resume Training Wrapper ==="
 echo "Job tag: ${_TAG}"
+echo "Model path: ${MODEL_PATH}"
 echo "State file: ${STATE_FILE}"
 echo "Max retries: ${MAX_RETRIES}"
 echo "Extra args: ${EXTRA_ARGS[*]}"
@@ -160,6 +191,11 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
             RESUME_RUN_ID="$DETECTED_ID"
             echo "$RESUME_RUN_ID" > "$STATE_FILE"
             echo "Captured run_id=${RESUME_RUN_ID} for resume (from training log)"
+        elif [[ -n "$DETECTED_ID" ]]; then
+            echo "WARNING: run_id=${DETECTED_ID} found in log but checkpoint dir missing (OOM before first save?)."
+            echo "Starting fresh on next attempt."
+            RESUME_RUN_ID=""
+            rm -f "$STATE_FILE"
         else
             echo "ERROR: Could not detect run_id from ${ATTEMPT_LOG}"
             echo "Cannot resume. Exiting."
