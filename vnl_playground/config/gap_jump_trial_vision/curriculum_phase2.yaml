@@ -16,12 +16,15 @@ env_config:
   vision_height: 32
   grayscale: true
   vision_camera_name: "egocentric-rodent"
+  use_textures: true
+  use_shadows: true
   env_args:
     gap_distances: [0.02, 0.03, 0.04, 0.05, 0.06]
     hold_duration: 25
     max_decision_steps: 250
     episode_length: 400
     torque_actuators: true
+    use_mesh_platforms: true
     reward_terms:
       hold_stillness:
         weight: 0.3

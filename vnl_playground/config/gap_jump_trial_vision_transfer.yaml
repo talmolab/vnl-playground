@@ -19,10 +19,13 @@ env_config:
   vision_height: 32
   grayscale: true
   vision_camera_name: "egocentric-rodent"
+  use_textures: true
+  use_shadows: true
   env_args:
     gap_distances: [0.06, 0.08, 0.10, 0.12, 0.14]
     hold_duration: 0           # Start without HOLD phase (curriculum stage 1-2)
     torque_actuators: true
+    use_mesh_platforms: true
 
 network_config:
   arch_name: shared_vision_task_obs

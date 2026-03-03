@@ -22,8 +22,8 @@ env_config:
   grayscale: true
   vision_camera_name: "egocentric-rodent"
   render_depth: false
-  use_textures: false
-  use_shadows: false
+  use_textures: true
+  use_shadows: true
   env_args:
     # -- Simulation --
     # NOTE: ctrl_dt is overridden at runtime by train_highlvl.py to match the
@@ -51,6 +51,7 @@ env_config:
     spawn_x: 0.5
     randomize_gaps: true
     aesthetic: "default"
+    use_mesh_platforms: true
     # -- Episode --
     episode_length: 2000
     action_repeat: 1

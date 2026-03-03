@@ -1,6 +1,6 @@
 <mujoco>
   <visual>
-    <headlight diffuse=".5 .5 .5" specular="1 1 1" />
+    <headlight ambient=".4 .4 .4" diffuse=".8 .8 .8" specular=".1 .1 .1" />
     <global offwidth="2048" offheight="1536" />
     <quality shadowsize="8192" />
     <map znear="0.00025" zfar="4.0" fogstart="0.05" fogend="1.5" />

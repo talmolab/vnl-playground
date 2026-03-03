@@ -28,6 +28,7 @@ from mujoco_playground._src import mjx_env
 
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
+from vnl_playground.tasks.rodent.utils.box_to_mesh import box_to_mesh_asset
 from vnl_playground.tasks.task_registry import TaskRegistry
 
 _registry = TaskRegistry()
@@ -65,6 +66,7 @@ def default_config() -> config_dict.ConfigDict:
         spawn_x=0.5,
         randomize_gaps=True,
         aesthetic="default",
+        use_mesh_platforms=False,
         reward_terms={
             "forward_velocity": {"weight": 1.0, "target_speed": 0.3},
             "termination_penalty": {"weight": 10.0},
@@ -127,17 +129,24 @@ class RunGap(rodent_base.RodentEnv):
             quat=init_quat,
         )
 
-        # Lighting
-        if self._config.aesthetic == "outdoor_natural":
-            self._spec.worldbody.add_light(
-                pos=[2, 2, 8],
-                dir=[-0.2, -0.2, -1],
-                diffuse=[0.7, 0.7, 0.7],
-                specular=[0.3, 0.3, 0.3],
-                castshadow=1,
-            )
-        else:
-            self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
+        # Lighting — uses directional light for consistent illumination
+        # in both CPU and warp renderers (warp ignores light_diffuse/specular
+        # and has no distance attenuation for directional lights)
+        self._spec.worldbody.add_light(
+            name="key_light",
+            pos=[2, 1, 8],
+            dir=[-0.2, -0.1, -1],
+            type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
+            diffuse=[0.7, 0.7, 0.7],
+            specular=[0.3, 0.3, 0.3],
+            castshadow=1,
+        )
+
+        if self._config.aesthetic != "outdoor_natural":
+            # outdoor_natural already sets headlight in _apply_outdoor_natural_aesthetic
+            self._spec.visual.headlight.ambient = [0.4, 0.4, 0.4]
+            self._spec.visual.headlight.diffuse = [0.8, 0.8, 0.8]
+            self._spec.visual.headlight.specular = [0.1, 0.1, 0.1]
         self.compile()
 
         # Stale location termination config (read at init to avoid tracing issues)
@@ -157,9 +166,7 @@ class RunGap(rodent_base.RodentEnv):
                 self._platform_slide_qpos_idxs.append(
                     self._mj_model.jnt_qposadr[jnt_id]
                 )
-            self._platform_slide_qpos_idxs = jp.array(
-                self._platform_slide_qpos_idxs
-            )
+            self._platform_slide_qpos_idxs = jp.array(self._platform_slide_qpos_idxs)
 
         # Store platform body IDs for reading xpos in observations
         self._platform_body_ids = []
@@ -182,14 +189,20 @@ class RunGap(rodent_base.RodentEnv):
                 self._mj_model, mujoco.mjtObj.mjOBJ_JOINT, "root"
             )
             # Motor joints start right after the 7-element free joint
-            self._rodent_qpos_start = (
-                self._mj_model.jnt_qposadr[root_jnt_id] + 7
-            )
-            self._rodent_qvel_start = (
-                self._mj_model.jnt_dofadr[root_jnt_id] + 6
-            )
+            self._rodent_qpos_start = self._mj_model.jnt_qposadr[root_jnt_id] + 7
+            self._rodent_qvel_start = self._mj_model.jnt_dofadr[root_jnt_id] + 6
             # Root joint DOF address (for qfrc_actuator slicing)
             self._rodent_root_dof = self._mj_model.jnt_dofadr[root_jnt_id]
+
+    def _add_mesh_for_box(self, name: str, half_extents: tuple) -> str:
+        """Register a mesh asset equivalent to a box and return its name."""
+        verts, faces, texcoords = box_to_mesh_asset(half_extents)
+        mesh = self._spec.add_mesh()
+        mesh.name = name
+        mesh.uservert = verts.flatten()
+        mesh.userface = faces.flatten()
+        mesh.usertexcoord = texcoords.flatten()
+        return name
 
     def _apply_outdoor_natural_aesthetic(self) -> None:
         """Apply outdoor natural aesthetic: grass platforms, blue sky, better lighting."""
@@ -261,14 +274,28 @@ class RunGap(rodent_base.RodentEnv):
             name="platform_start",
             pos=[x_cursor, 0.0, -half_thickness],
         )
-        body.add_geom(
-            name="platform_start_geom",
-            type=mujoco.mjtGeom.mjGEOM_BOX,
-            size=[start_length / 2.0, half_width, half_thickness],
-            material=self._platform_material,
-            contype=1,
-            conaffinity=1,
-        )
+        if self._config.get("use_mesh_platforms", False):
+            mesh_name = self._add_mesh_for_box(
+                "platform_start_mesh",
+                (start_length / 2.0, half_width, half_thickness),
+            )
+            body.add_geom(
+                name="platform_start_geom",
+                type=mujoco.mjtGeom.mjGEOM_MESH,
+                meshname=mesh_name,
+                material=self._platform_material,
+                contype=1,
+                conaffinity=1,
+            )
+        else:
+            body.add_geom(
+                name="platform_start_geom",
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=[start_length / 2.0, half_width, half_thickness],
+                material=self._platform_material,
+                contype=1,
+                conaffinity=1,
+            )
         self._start_platform_half_length = start_length / 2.0
         x_cursor = start_length / 2.0  # trailing edge of start platform
 
@@ -304,14 +331,28 @@ class RunGap(rodent_base.RodentEnv):
                     damping=1e8,
                     stiffness=0,
                 )
-                plat_body.add_geom(
-                    name=f"platform_{i}_geom",
-                    type=mujoco.mjtGeom.mjGEOM_BOX,
-                    size=[max_plat / 2.0, half_width, half_thickness],
-                    material=self._platform_material,
-                    contype=1,
-                    conaffinity=1,
-                )
+                if self._config.get("use_mesh_platforms", False):
+                    mesh_name = self._add_mesh_for_box(
+                        f"platform_{i}_mesh",
+                        (max_plat / 2.0, half_width, half_thickness),
+                    )
+                    plat_body.add_geom(
+                        name=f"platform_{i}_geom",
+                        type=mujoco.mjtGeom.mjGEOM_MESH,
+                        meshname=mesh_name,
+                        material=self._platform_material,
+                        contype=1,
+                        conaffinity=1,
+                    )
+                else:
+                    plat_body.add_geom(
+                        name=f"platform_{i}_geom",
+                        type=mujoco.mjtGeom.mjGEOM_BOX,
+                        size=[max_plat / 2.0, half_width, half_thickness],
+                        material=self._platform_material,
+                        contype=1,
+                        conaffinity=1,
+                    )
                 x_cursor = ref_center_x + max_plat / 2.0
 
             self._reference_positions = jp.array(self._reference_positions)
@@ -332,17 +373,29 @@ class RunGap(rodent_base.RodentEnv):
                     name=f"platform_{i}",
                     pos=[plat_center_x, 0.0, -half_thickness],
                 )
-                plat_body.add_geom(
-                    name=f"platform_{i}_geom",
-                    type=mujoco.mjtGeom.mjGEOM_BOX,
-                    size=[plat_length / 2.0, half_width, half_thickness],
-                    material=self._platform_material,
-                    contype=1,
-                    conaffinity=1,
-                )
-                self._platform_positions.append(
-                    (x_cursor, x_cursor + plat_length)
-                )
+                if self._config.get("use_mesh_platforms", False):
+                    mesh_name = self._add_mesh_for_box(
+                        f"platform_{i}_mesh",
+                        (plat_length / 2.0, half_width, half_thickness),
+                    )
+                    plat_body.add_geom(
+                        name=f"platform_{i}_geom",
+                        type=mujoco.mjtGeom.mjGEOM_MESH,
+                        meshname=mesh_name,
+                        material=self._platform_material,
+                        contype=1,
+                        conaffinity=1,
+                    )
+                else:
+                    plat_body.add_geom(
+                        name=f"platform_{i}_geom",
+                        type=mujoco.mjtGeom.mjGEOM_BOX,
+                        size=[plat_length / 2.0, half_width, half_thickness],
+                        material=self._platform_material,
+                        contype=1,
+                        conaffinity=1,
+                    )
+                self._platform_positions.append((x_cursor, x_cursor + plat_length))
                 x_cursor += plat_length
 
             # Precompute static gap arrays for legacy mode
@@ -407,6 +460,7 @@ class RunGap(rodent_base.RodentEnv):
 
             # Compute where each platform center should actually be
             start_trailing = self._start_platform_half_length
+
             # Build actual center positions by scanning forward
             def _scan_positions(x_cursor, gap_len):
                 center = x_cursor + gap_len + max_plat / 2.0
@@ -500,17 +554,17 @@ class RunGap(rodent_base.RodentEnv):
 
     def _get_joint_angles(self, data: mjx.Data) -> jp.ndarray:
         if self._config.randomize_gaps:
-            return data.qpos[self._rodent_qpos_start:]
+            return data.qpos[self._rodent_qpos_start :]
         return super()._get_joint_angles(data)
 
     def _get_joint_ang_vels(self, data: mjx.Data) -> jp.ndarray:
         if self._config.randomize_gaps:
-            return data.qvel[self._rodent_qvel_start:]
+            return data.qvel[self._rodent_qvel_start :]
         return super()._get_joint_ang_vels(data)
 
     def _get_actuator_ctrl(self, data: mjx.Data) -> jp.ndarray:
         if self._config.randomize_gaps:
-            return data.qfrc_actuator[self._rodent_root_dof:]
+            return data.qfrc_actuator[self._rodent_root_dof :]
         return super()._get_actuator_ctrl(data)
 
     def _get_gap_features(self, data: mjx.Data) -> jp.ndarray:
@@ -690,7 +744,9 @@ class RunGap(rodent_base.RodentEnv):
     # ---- Reward functions ----
 
     @_registry.reward("forward_velocity")
-    def _forward_velocity_reward(self, data, info, metrics, weight, target_speed=0.3) -> float:
+    def _forward_velocity_reward(
+        self, data, info, metrics, weight, target_speed=0.3
+    ) -> float:
         """Reward for forward velocity along the corridor (+x direction).
 
         Linear reward proportional to x-velocity, clamped to [0, 1].

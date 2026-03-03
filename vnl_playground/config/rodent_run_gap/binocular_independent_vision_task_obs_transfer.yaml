@@ -31,8 +31,8 @@ env_config:
   left_camera_name: "eye_left-rodent"
   right_camera_name: "eye_right-rodent"
   render_depth: false
-  use_textures: false
-  use_shadows: false
+  use_textures: true
+  use_shadows: true
   env_args:
     # -- Simulation --
     # NOTE: ctrl_dt is overridden at runtime by train_highlvl.py to match the
@@ -59,7 +59,8 @@ env_config:
     # -- Environment --
     spawn_x: 0.5
     randomize_gaps: true
-    aesthetic: "default"
+    aesthetic: "natural"
+    use_mesh_platforms: true
     # -- Episode --
     episode_length: 2000
     action_repeat: 1
@@ -69,9 +70,9 @@ env_config:
         weight: 1.0
         target_speed: 1
       termination_penalty:
-        weight: 10.0
+        weight: 0
       gap_crossing_bonus:
-        weight: 2.0
+        weight: 1.0
     # -- Termination --
     termination_criteria:
       fallen:
