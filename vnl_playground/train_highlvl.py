@@ -60,7 +60,7 @@ from track_mjx.agent.ff_ppo import ppo as ff_ppo_train
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 
 from vnl_playground import tasks
-from vnl_playground.tasks.wrappers import HighLevelWrapper
+from vnl_playground.tasks.wrappers import HighLevelWrapper, PriorHighLevelWrapper
 
 
 def _add_batch_dim_for_warp(data):
@@ -71,12 +71,14 @@ def _add_batch_dim_for_warp(data):
     add a dimension to *every* leaf, violating the Warp type contract and
     causing an AssertionError in ``_expand_dim_from_path``.
     """
+
     def _maybe_expand(path, x):
-        parts = [p.name for p in path if hasattr(p, 'name') and p.name != '_impl']
-        attr = '__'.join(parts)
+        parts = [p.name for p in path if hasattr(p, "name") and p.name != "_impl"]
+        attr = "__".join(parts)
         if attr in DATA_NON_VMAP:
             return x
         return x[None, ...]
+
     return jax.tree.map_with_path(_maybe_expand, data)
 
 
@@ -142,15 +144,19 @@ def _log_gpu_memory(label: str):
         import subprocess
 
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used,memory.free",
-             "--format=csv,nounits,noheader", "--id=0"],
-            capture_output=True, text=True, timeout=5,
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.used,memory.free",
+                "--format=csv,nounits,noheader",
+                "--id=0",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             used, free = result.stdout.strip().split(", ")
-            logging.info(
-                f"[GPU-MEM] {label}: CUDA used={used}MB free={free}MB"
-            )
+            logging.info(f"[GPU-MEM] {label}: CUDA used={used}MB free={free}MB")
     except Exception:
         pass
 
@@ -305,12 +311,14 @@ def render_video(
 
         # Binocular: render right eye and place side-by-side with left
         if right_vision_renderer is not None:
+
             @jax.jit
             def _render_all_right(stacked_data):
                 def body(carry, data_slice):
                     batched = _add_batch_dim_for_warp(data_slice)
                     img = right_vision_renderer.render(batched)
                     return carry, img[0]
+
                 _, all_imgs = jax.lax.scan(body, None, stacked_data)
                 return all_imgs
 
@@ -320,7 +328,9 @@ def render_video(
             # Side-by-side: concatenate left and right along width (axis=2)
             # Add 2px gap between eyes
             gap = np.ones_like(ego_frames_np[:, :, :2, :])  # (T, H, 2, C) white gap
-            ego_frames_np = np.concatenate([ego_frames_np, gap, right_frames_np], axis=2)
+            ego_frames_np = np.concatenate(
+                [ego_frames_np, gap, right_frames_np], axis=2
+            )
             del right_frames_np, gap
 
         del all_data
@@ -387,7 +397,17 @@ def render_video(
 # ---------------------------------------------------------------------------
 
 
-def _train_mlp_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpoint_path, cfg_dict, progress_fn):
+def _train_mlp_highlvl(
+    cfg,
+    env,
+    eval_env,
+    decoder_policy_fn,
+    mimic_cfg,
+    checkpoint_path,
+    cfg_dict,
+    progress_fn,
+    prior_fn=None,
+):
     """Train high-level MLP policy using standard Brax PPO.
 
     The HighLevelWrapper with pass_vision=False produces flat observations
@@ -397,22 +417,46 @@ def _train_mlp_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpo
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
-    env = HighLevelWrapper(
-        env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=False,
-    )
-    eval_env = HighLevelWrapper(
-        eval_env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=False,
-    )
+    if prior_fn is not None:
+        env = PriorHighLevelWrapper(
+            env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=False,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+        eval_env = PriorHighLevelWrapper(
+            eval_env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=False,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+    else:
+        env = HighLevelWrapper(
+            env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=False,
+        )
+        eval_env = HighLevelWrapper(
+            eval_env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=False,
+        )
 
     # Brax PPO expects flat array obs and int observation_size.
     # HighLevelWrapper MLP mode returns dict {"state": flat, "privileged_state": flat}.
@@ -436,8 +480,12 @@ def _train_mlp_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpo
         OmegaConf.to_container(cfg.train_setup.train_config, resolve=True)
     )
     # Remove ff_ppo-specific keys that Brax PPO does not accept
-    for key in ["latent_kl_weight", "latent_ar1_weight", "use_kl_schedule",
-                "grad_clip_threshold"]:
+    for key in [
+        "latent_kl_weight",
+        "latent_ar1_weight",
+        "use_kl_schedule",
+        "grad_clip_threshold",
+    ]:
         ppo_params.pop(key, None)
 
     # Network factory: standard MLP
@@ -511,7 +559,9 @@ def _train_mlp_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpo
 
     episode_length = cfg.train_setup.train_config.episode_length
 
-    def mlp_policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):
+    def mlp_policy_params_fn(
+        current_step, make_policy, params, jit_logging_inference_fn
+    ):
         """Callback for Brax PPO: render video and save checkpoint."""
         del make_policy  # Unused; we use our own jit_logging_inference_fn
 
@@ -520,8 +570,12 @@ def _train_mlp_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpo
         # Run an evaluation rollout
         eval_rng = jax.random.PRNGKey(current_step)
         rollout, termination_events = _run_eval_rollout(
-            jit_reset, jit_step, jit_logging_inference_fn,
-            params, episode_length, eval_rng,
+            jit_reset,
+            jit_step,
+            jit_logging_inference_fn,
+            params,
+            episode_length,
+            eval_rng,
         )
 
         # Log per-step reward metrics
@@ -610,7 +664,17 @@ def _train_mlp_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpo
 # ---------------------------------------------------------------------------
 
 
-def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpoint_path, cfg_dict, progress_fn):
+def _train_vision_task_obs_highlvl(
+    cfg,
+    env,
+    eval_env,
+    decoder_policy_fn,
+    mimic_cfg,
+    checkpoint_path,
+    cfg_dict,
+    progress_fn,
+    prior_fn=None,
+):
     """Train high-level vision+task_obs policy using ff_ppo with CNN encoder.
 
     The HighLevelWrapper passes both vision and task_obs (body signals),
@@ -621,24 +685,50 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
-    env = HighLevelWrapper(
-        env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=True,
-        pass_task_obs=True,
-    )
-    eval_env = HighLevelWrapper(
-        eval_env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=True,
-        pass_task_obs=True,
-    )
+    if prior_fn is not None:
+        env = PriorHighLevelWrapper(
+            env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+        eval_env = PriorHighLevelWrapper(
+            eval_env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+    else:
+        env = HighLevelWrapper(
+            env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+        )
+        eval_env = HighLevelWrapper(
+            eval_env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+        )
 
     logging.info(f"Vision+TaskObs HighLevelWrapper: action_size={env.action_size}")
     _log_memory("after Vision+TaskObs HighLevelWrapper")
@@ -670,7 +760,9 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
         decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_hidden_layer_sizes),
         value_hidden_layer_sizes=tuple(cfg.network_config.value_hidden_layer_sizes),
         vision_channels=tuple(cfg.network_config.vision_channels),
-        fusion_hidden_layer_sizes=tuple(cfg.network_config.get("fusion_hidden_layer_sizes", [256])),
+        fusion_hidden_layer_sizes=tuple(
+            cfg.network_config.get("fusion_hidden_layer_sizes", [256])
+        ),
     )
 
     # Create orbax CheckpointManager for ff_ppo
@@ -679,9 +771,7 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
         step_prefix="PPONetwork",
         create=True,
     )
-    ckpt_mgr = ocp.CheckpointManager(
-        str(checkpoint_path), options=ckpt_mgr_options
-    )
+    ckpt_mgr = ocp.CheckpointManager(str(checkpoint_path), options=ckpt_mgr_options)
 
     # Eval rendering setup
     mj_model = eval_env.mj_model
@@ -725,17 +815,13 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
         state = _eval_base_reset(rng)
         data_b = _add_batch_dim_for_warp(state.data)
         vision = _video_vision_renderer.render(data_b)[0]
-        return state.replace(
-            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
-        )
+        return state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
 
     def _eval_step_with_vision(state, action):
         state = _eval_base_step(state, action)
         data_b = _add_batch_dim_for_warp(state.data)
         vision = _video_vision_renderer.render(data_b)[0]
-        return state.replace(
-            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
-        )
+        return state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
 
     jit_reset = jax.jit(_eval_reset_with_vision)
     jit_step = jax.jit(_eval_step_with_vision)
@@ -752,7 +838,9 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
             "vision_feature_size": cfg.network_config.get("vision_feature_size", 128),
             "decoder_layer_sizes": list(cfg.network_config.decoder_hidden_layer_sizes),
             "critic_layer_sizes": list(cfg.network_config.value_hidden_layer_sizes),
-            "fusion_hidden_layer_sizes": list(cfg.network_config.get("fusion_hidden_layer_sizes", [256])),
+            "fusion_hidden_layer_sizes": list(
+                cfg.network_config.get("fusion_hidden_layer_sizes", [256])
+            ),
         }
     )
 
@@ -777,8 +865,12 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
 
         # Run an evaluation rollout
         rollout, termination_events = _run_eval_rollout(
-            jit_reset, jit_step, jit_logging_inference_fn,
-            params, episode_length, policy_params_fn_key,
+            jit_reset,
+            jit_step,
+            jit_logging_inference_fn,
+            params,
+            episode_length,
+            policy_params_fn_key,
         )
 
         # Vision sensitivity diagnostic: compare actions with real vs blank vision
@@ -790,7 +882,9 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
         }
         _, sensitivity_rng = jax.random.split(policy_params_fn_key)
         act_real, _ = jit_logging_inference_fn(params, obs_with_vision, sensitivity_rng)
-        act_blank, _ = jit_logging_inference_fn(params, obs_blank_vision, sensitivity_rng)
+        act_blank, _ = jit_logging_inference_fn(
+            params, obs_blank_vision, sensitivity_rng
+        )
         vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
         wandb.log({"eval/vision_sensitivity": vision_sensitivity}, commit=False)
 
@@ -832,7 +926,9 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
         except mujoco.FatalError as e:
             logging.warning(f"Video rendering failed: {e}")
 
-        _log_memory(f"vision_task_obs_policy_params_fn before cleanup step={current_step}")
+        _log_memory(
+            f"vision_task_obs_policy_params_fn before cleanup step={current_step}"
+        )
 
         del rollout
         gc.collect()
@@ -922,7 +1018,17 @@ def _train_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_
 # ---------------------------------------------------------------------------
 
 
-def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpoint_path, cfg_dict, progress_fn):
+def _train_shared_vision_task_obs_highlvl(
+    cfg,
+    env,
+    eval_env,
+    decoder_policy_fn,
+    mimic_cfg,
+    checkpoint_path,
+    cfg_dict,
+    progress_fn,
+    prior_fn=None,
+):
     """Train high-level vision+task_obs policy with a SHARED CNN.
 
     Mirrors the vnl-ray architecture: a single VisionEncoder is shared
@@ -936,26 +1042,54 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
-    env = HighLevelWrapper(
-        env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=True,
-        pass_task_obs=True,
-    )
-    eval_env = HighLevelWrapper(
-        eval_env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=True,
-        pass_task_obs=True,
-    )
+    if prior_fn is not None:
+        env = PriorHighLevelWrapper(
+            env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+        eval_env = PriorHighLevelWrapper(
+            eval_env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+    else:
+        env = HighLevelWrapper(
+            env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+        )
+        eval_env = HighLevelWrapper(
+            eval_env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+        )
 
-    logging.info(f"Shared-CNN Vision+TaskObs HighLevelWrapper: action_size={env.action_size}")
+    logging.info(
+        f"Shared-CNN Vision+TaskObs HighLevelWrapper: action_size={env.action_size}"
+    )
     _log_memory("after Shared-CNN HighLevelWrapper")
 
     # Set Warp's CUDA memory pool release threshold to 512 MB.
@@ -986,16 +1120,22 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
     )
 
     # Network factory: shared-CNN vision + task_obs
-    ppo_network, shared_module = ff_ppo_networks.make_shared_vision_task_obs_highlvl_ppo_networks(
-        obs_sizes=env.observation_size,
-        action_size=env.action_size,
-        vision_shape=tuple(vision_shape),
-        vision_latent_size=cfg.network_config.vision_latent_size,
-        vision_feature_size=cfg.network_config.get("vision_feature_size", 32),
-        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_hidden_layer_sizes),
-        value_hidden_layer_sizes=tuple(cfg.network_config.value_hidden_layer_sizes),
-        vision_channels=tuple(cfg.network_config.vision_channels),
-        fusion_hidden_layer_sizes=tuple(cfg.network_config.get("fusion_hidden_layer_sizes", [256])),
+    ppo_network, shared_module = (
+        ff_ppo_networks.make_shared_vision_task_obs_highlvl_ppo_networks(
+            obs_sizes=env.observation_size,
+            action_size=env.action_size,
+            vision_shape=tuple(vision_shape),
+            vision_latent_size=cfg.network_config.vision_latent_size,
+            vision_feature_size=cfg.network_config.get("vision_feature_size", 32),
+            decoder_hidden_layer_sizes=tuple(
+                cfg.network_config.decoder_hidden_layer_sizes
+            ),
+            value_hidden_layer_sizes=tuple(cfg.network_config.value_hidden_layer_sizes),
+            vision_channels=tuple(cfg.network_config.vision_channels),
+            fusion_hidden_layer_sizes=tuple(
+                cfg.network_config.get("fusion_hidden_layer_sizes", [256])
+            ),
+        )
     )
 
     # Create the shared loss function (pre-baked with shared_module)
@@ -1044,9 +1184,7 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         step_prefix="PPONetwork",
         create=True,
     )
-    ckpt_mgr = ocp.CheckpointManager(
-        str(checkpoint_path), options=ckpt_mgr_options
-    )
+    ckpt_mgr = ocp.CheckpointManager(str(checkpoint_path), options=ckpt_mgr_options)
 
     # Eval rendering setup
     mj_model = eval_env.mj_model
@@ -1089,17 +1227,13 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         state = _eval_base_reset(rng)
         data_b = _add_batch_dim_for_warp(state.data)
         vision = _video_vision_renderer.render(data_b)[0]
-        return state.replace(
-            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
-        )
+        return state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
 
     def _eval_step_with_vision(state, action):
         state = _eval_base_step(state, action)
         data_b = _add_batch_dim_for_warp(state.data)
         vision = _video_vision_renderer.render(data_b)[0]
-        return state.replace(
-            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
-        )
+        return state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
 
     jit_reset = jax.jit(_eval_reset_with_vision)
     jit_step = jax.jit(_eval_step_with_vision)
@@ -1116,7 +1250,9 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
             "vision_feature_size": cfg.network_config.get("vision_feature_size", 32),
             "decoder_layer_sizes": list(cfg.network_config.decoder_hidden_layer_sizes),
             "critic_layer_sizes": list(cfg.network_config.value_hidden_layer_sizes),
-            "fusion_hidden_layer_sizes": list(cfg.network_config.get("fusion_hidden_layer_sizes", [256])),
+            "fusion_hidden_layer_sizes": list(
+                cfg.network_config.get("fusion_hidden_layer_sizes", [256])
+            ),
         }
     )
 
@@ -1144,8 +1280,12 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
 
         # Run an evaluation rollout
         rollout, termination_events = _run_eval_rollout(
-            jit_reset, jit_step, jit_logging_inference_fn,
-            params, episode_length, policy_params_fn_key,
+            jit_reset,
+            jit_step,
+            jit_logging_inference_fn,
+            params,
+            episode_length,
+            policy_params_fn_key,
         )
 
         # Vision sensitivity diagnostic
@@ -1157,7 +1297,9 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         }
         _, sensitivity_rng = jax.random.split(policy_params_fn_key)
         act_real, _ = jit_logging_inference_fn(params, obs_with_vision, sensitivity_rng)
-        act_blank, _ = jit_logging_inference_fn(params, obs_blank_vision, sensitivity_rng)
+        act_blank, _ = jit_logging_inference_fn(
+            params, obs_blank_vision, sensitivity_rng
+        )
         vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
         wandb.log({"eval/vision_sensitivity": vision_sensitivity}, commit=False)
 
@@ -1199,7 +1341,9 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
         except mujoco.FatalError as e:
             logging.warning(f"Video rendering failed: {e}")
 
-        _log_memory(f"shared_vision_policy_params_fn before cleanup step={current_step}")
+        _log_memory(
+            f"shared_vision_policy_params_fn before cleanup step={current_step}"
+        )
         _log_gpu_memory(f"before cleanup step={current_step}")
 
         del rollout
@@ -1296,7 +1440,17 @@ def _train_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn,
 # ---------------------------------------------------------------------------
 
 
-def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpoint_path, cfg_dict, progress_fn):
+def _train_binocular_shared_vision_task_obs_highlvl(
+    cfg,
+    env,
+    eval_env,
+    decoder_policy_fn,
+    mimic_cfg,
+    checkpoint_path,
+    cfg_dict,
+    progress_fn,
+    prior_fn=None,
+):
     """Train high-level vision+task_obs policy with a SHARED binocular CNN.
 
     Mirrors ``_train_shared_vision_task_obs_highlvl`` but uses binocular
@@ -1312,26 +1466,54 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
-    env = HighLevelWrapper(
-        env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=True,
-        pass_task_obs=True,
-    )
-    eval_env = HighLevelWrapper(
-        eval_env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=True,
-        pass_task_obs=True,
-    )
+    if prior_fn is not None:
+        env = PriorHighLevelWrapper(
+            env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+        eval_env = PriorHighLevelWrapper(
+            eval_env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+    else:
+        env = HighLevelWrapper(
+            env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+        )
+        eval_env = HighLevelWrapper(
+            eval_env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+        )
 
-    logging.info(f"Binocular Shared-CNN Vision+TaskObs HighLevelWrapper: action_size={env.action_size}")
+    logging.info(
+        f"Binocular Shared-CNN Vision+TaskObs HighLevelWrapper: action_size={env.action_size}"
+    )
     _log_memory("after Binocular Shared-CNN HighLevelWrapper")
 
     # Set Warp's CUDA memory pool release threshold to 512 MB.
@@ -1345,7 +1527,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
 
     # Read binocular_mode from config to determine shared_weights
     binocular_mode = cfg.network_config.get("binocular_mode", "shared")
-    shared_weights = (binocular_mode == "shared")
+    shared_weights = binocular_mode == "shared"
     mono_channels = 1 if cfg.env_config.get("grayscale", True) else 3
     logging.info(f"Binocular mode: {binocular_mode} (shared_weights={shared_weights})")
 
@@ -1368,18 +1550,24 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
     )
 
     # Network factory: binocular shared-CNN vision + task_obs
-    ppo_network, shared_module = ff_ppo_networks.make_binocular_shared_vision_task_obs_highlvl_ppo_networks(
-        obs_sizes=env.observation_size,
-        action_size=env.action_size,
-        vision_shape=tuple(vision_shape),
-        mono_channels=mono_channels,
-        shared_weights=shared_weights,
-        vision_latent_size=cfg.network_config.vision_latent_size,
-        vision_feature_size=cfg.network_config.get("vision_feature_size", 32),
-        decoder_hidden_layer_sizes=tuple(cfg.network_config.decoder_hidden_layer_sizes),
-        value_hidden_layer_sizes=tuple(cfg.network_config.value_hidden_layer_sizes),
-        vision_channels=tuple(cfg.network_config.vision_channels),
-        fusion_hidden_layer_sizes=tuple(cfg.network_config.get("fusion_hidden_layer_sizes", [256])),
+    ppo_network, shared_module = (
+        ff_ppo_networks.make_binocular_shared_vision_task_obs_highlvl_ppo_networks(
+            obs_sizes=env.observation_size,
+            action_size=env.action_size,
+            vision_shape=tuple(vision_shape),
+            mono_channels=mono_channels,
+            shared_weights=shared_weights,
+            vision_latent_size=cfg.network_config.vision_latent_size,
+            vision_feature_size=cfg.network_config.get("vision_feature_size", 32),
+            decoder_hidden_layer_sizes=tuple(
+                cfg.network_config.decoder_hidden_layer_sizes
+            ),
+            value_hidden_layer_sizes=tuple(cfg.network_config.value_hidden_layer_sizes),
+            vision_channels=tuple(cfg.network_config.vision_channels),
+            fusion_hidden_layer_sizes=tuple(
+                cfg.network_config.get("fusion_hidden_layer_sizes", [256])
+            ),
+        )
     )
 
     # Create the shared loss function (pre-baked with shared_module)
@@ -1428,9 +1616,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
         step_prefix="PPONetwork",
         create=True,
     )
-    ckpt_mgr = ocp.CheckpointManager(
-        str(checkpoint_path), options=ckpt_mgr_options
-    )
+    ckpt_mgr = ocp.CheckpointManager(str(checkpoint_path), options=ckpt_mgr_options)
 
     # Eval rendering setup
     mj_model = eval_env.mj_model
@@ -1496,9 +1682,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
         left = _video_left_renderer.render(data_b)[0]
         right = _video_right_renderer.render(data_b)[0]
         vision = jp.concatenate([left, right], axis=-1)
-        return state.replace(
-            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
-        )
+        return state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
 
     def _eval_step_with_vision(state, action):
         state = _eval_base_step(state, action)
@@ -1506,9 +1690,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
         left = _video_left_renderer.render(data_b)[0]
         right = _video_right_renderer.render(data_b)[0]
         vision = jp.concatenate([left, right], axis=-1)
-        return state.replace(
-            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
-        )
+        return state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
 
     jit_reset = jax.jit(_eval_reset_with_vision)
     jit_step = jax.jit(_eval_step_with_vision)
@@ -1526,7 +1708,9 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
             "vision_feature_size": cfg.network_config.get("vision_feature_size", 32),
             "decoder_layer_sizes": list(cfg.network_config.decoder_hidden_layer_sizes),
             "critic_layer_sizes": list(cfg.network_config.value_hidden_layer_sizes),
-            "fusion_hidden_layer_sizes": list(cfg.network_config.get("fusion_hidden_layer_sizes", [256])),
+            "fusion_hidden_layer_sizes": list(
+                cfg.network_config.get("fusion_hidden_layer_sizes", [256])
+            ),
         }
     )
 
@@ -1554,8 +1738,12 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
 
         # Run an evaluation rollout
         rollout, termination_events = _run_eval_rollout(
-            jit_reset, jit_step, jit_logging_inference_fn,
-            params, episode_length, policy_params_fn_key,
+            jit_reset,
+            jit_step,
+            jit_logging_inference_fn,
+            params,
+            episode_length,
+            policy_params_fn_key,
         )
 
         # Vision sensitivity diagnostic
@@ -1567,7 +1755,9 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
         }
         _, sensitivity_rng = jax.random.split(policy_params_fn_key)
         act_real, _ = jit_logging_inference_fn(params, obs_with_vision, sensitivity_rng)
-        act_blank, _ = jit_logging_inference_fn(params, obs_blank_vision, sensitivity_rng)
+        act_blank, _ = jit_logging_inference_fn(
+            params, obs_blank_vision, sensitivity_rng
+        )
         vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
         wandb.log({"eval/vision_sensitivity": vision_sensitivity}, commit=False)
 
@@ -1610,7 +1800,9 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
         except mujoco.FatalError as e:
             logging.warning(f"Video rendering failed: {e}")
 
-        _log_memory(f"binocular_vision_policy_params_fn before cleanup step={current_step}")
+        _log_memory(
+            f"binocular_vision_policy_params_fn before cleanup step={current_step}"
+        )
         _log_gpu_memory(f"before cleanup step={current_step}")
 
         del rollout
@@ -1624,7 +1816,9 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
         # and eventually exhausts GPU memory during long training runs.
         wp.synchronize()
 
-        _log_memory(f"binocular_vision_policy_params_fn after cleanup step={current_step}")
+        _log_memory(
+            f"binocular_vision_policy_params_fn after cleanup step={current_step}"
+        )
         _log_gpu_memory(f"after cleanup step={current_step}")
 
     # Checkpoint to restore (if any)
@@ -1687,7 +1881,9 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
         custom_loss_fn=custom_loss_fn,
     )
 
-    logging.info("Starting binocular shared-CNN vision+task_obs high-level PPO training...")
+    logging.info(
+        "Starting binocular shared-CNN vision+task_obs high-level PPO training..."
+    )
     make_policy, params, metrics = train_fn(
         environment=env,
         eval_env=eval_env,
@@ -1701,8 +1897,13 @@ def _train_binocular_shared_vision_task_obs_highlvl(cfg, env, eval_env, decoder_
 
 
 def _run_eval_rollout_recurrent(
-    jit_reset, jit_step, inference_fn, params,
-    episode_length, rng, init_hidden_fn,
+    jit_reset,
+    jit_step,
+    inference_fn,
+    params,
+    episode_length,
+    rng,
+    init_hidden_fn,
 ):
     """Run eval rollout with hidden state management for recurrent policies.
 
@@ -1748,7 +1949,17 @@ def _run_eval_rollout_recurrent(
     return rollout, termination_events
 
 
-def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_fn, mimic_cfg, checkpoint_path, cfg_dict, progress_fn):
+def _train_recurrent_vision_task_obs_highlvl(
+    cfg,
+    env,
+    eval_env,
+    decoder_policy_fn,
+    mimic_cfg,
+    checkpoint_path,
+    cfg_dict,
+    progress_fn,
+    prior_fn=None,
+):
     """Train high-level vision+task_obs policy with recurrent CNN+GRU backbone.
 
     Uses a shared ``RecurrentSharedVisionModule`` (CNN encoder + GRU + policy/value
@@ -1773,26 +1984,54 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
-    env = HighLevelWrapper(
-        env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=True,
-        pass_task_obs=True,
-    )
-    eval_env = HighLevelWrapper(
-        eval_env,
-        decoder_policy_fn,
-        latent_size,
-        highlvl_obs_key=highlvl_obs_key,
-        decoder_obs_key=decoder_obs_key,
-        pass_vision=True,
-        pass_task_obs=True,
-    )
+    if prior_fn is not None:
+        env = PriorHighLevelWrapper(
+            env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+        eval_env = PriorHighLevelWrapper(
+            eval_env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+    else:
+        env = HighLevelWrapper(
+            env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+        )
+        eval_env = HighLevelWrapper(
+            eval_env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+        )
 
-    logging.info(f"Recurrent Vision+TaskObs HighLevelWrapper: action_size={env.action_size}")
+    logging.info(
+        f"Recurrent Vision+TaskObs HighLevelWrapper: action_size={env.action_size}"
+    )
     _log_memory("after Recurrent Vision+TaskObs HighLevelWrapper")
 
     # Set Warp's CUDA memory pool release threshold to 512 MB.
@@ -1833,7 +2072,9 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
         cnn_channels=tuple(cfg.network_config.vision_channels),
         gru_hidden_size=cfg.network_config.get("gru_hidden_size", 256),
         policy_hidden_sizes=tuple(cfg.network_config.get("policy_head_sizes", [256])),
-        value_hidden_sizes=tuple(cfg.network_config.get("value_head_sizes", [256, 128])),
+        value_hidden_sizes=tuple(
+            cfg.network_config.get("value_head_sizes", [256, 128])
+        ),
     )
 
     # Custom loss function for the recurrent shared vision network
@@ -1865,9 +2106,7 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
         step_prefix="PPONetwork",
         create=True,
     )
-    ckpt_mgr = ocp.CheckpointManager(
-        str(checkpoint_path), options=ckpt_mgr_options
-    )
+    ckpt_mgr = ocp.CheckpointManager(str(checkpoint_path), options=ckpt_mgr_options)
 
     # Eval rendering setup
     mj_model = eval_env.mj_model
@@ -1910,17 +2149,13 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
         state = _eval_base_reset(rng)
         data_b = _add_batch_dim_for_warp(state.data)
         vision = _video_vision_renderer.render(data_b)[0]
-        return state.replace(
-            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
-        )
+        return state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
 
     def _eval_step_with_vision(state, action):
         state = _eval_base_step(state, action)
         data_b = _add_batch_dim_for_warp(state.data)
         vision = _video_vision_renderer.render(data_b)[0]
-        return state.replace(
-            obs=VisionRenderWrapper._inject_vision(state.obs, vision)
-        )
+        return state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
 
     jit_reset = jax.jit(_eval_reset_with_vision)
     jit_step = jax.jit(_eval_step_with_vision)
@@ -1935,8 +2170,12 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
             "arch_name": "recurrent_vision_task_obs",
             "vision_feature_size": cfg.network_config.get("vision_feature_size", 32),
             "gru_hidden_size": cfg.network_config.get("gru_hidden_size", 256),
-            "policy_head_sizes": list(cfg.network_config.get("policy_head_sizes", [256])),
-            "value_head_sizes": list(cfg.network_config.get("value_head_sizes", [256, 128])),
+            "policy_head_sizes": list(
+                cfg.network_config.get("policy_head_sizes", [256])
+            ),
+            "value_head_sizes": list(
+                cfg.network_config.get("value_head_sizes", [256, 128])
+            ),
         }
     )
 
@@ -1945,7 +2184,9 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
     episode_length = cfg.train_setup.train_config.episode_length
 
     # Create jit_logging_inference_fn from the recurrent network
-    make_logging_policy = recurrent_ppo_networks.make_logging_inference_fn(recurrent_ppo_network)
+    make_logging_policy = recurrent_ppo_networks.make_logging_inference_fn(
+        recurrent_ppo_network
+    )
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
     # Hidden state initializer for eval rollouts
@@ -1967,8 +2208,12 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
 
         # Run a recurrent evaluation rollout
         rollout, termination_events = _run_eval_rollout_recurrent(
-            jit_reset, jit_step, jit_logging_inference_fn,
-            params, episode_length, policy_params_fn_key,
+            jit_reset,
+            jit_step,
+            jit_logging_inference_fn,
+            params,
+            episode_length,
+            policy_params_fn_key,
             init_hidden_fn,
         )
 
@@ -1983,8 +2228,12 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
         hidden_for_check = init_hidden_fn(1)
         hidden_for_check = jax.tree.map(lambda x: x[0], hidden_for_check)
         _, sensitivity_rng = jax.random.split(policy_params_fn_key)
-        act_real, _, _ = jit_logging_inference_fn(params, obs_with_vision, hidden_for_check, sensitivity_rng)
-        act_blank, _, _ = jit_logging_inference_fn(params, obs_blank_vision, hidden_for_check, sensitivity_rng)
+        act_real, _, _ = jit_logging_inference_fn(
+            params, obs_with_vision, hidden_for_check, sensitivity_rng
+        )
+        act_blank, _, _ = jit_logging_inference_fn(
+            params, obs_blank_vision, hidden_for_check, sensitivity_rng
+        )
         vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
         wandb.log({"eval/vision_sensitivity": vision_sensitivity}, commit=False)
 
@@ -2026,7 +2275,9 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
         except mujoco.FatalError as e:
             logging.warning(f"Video rendering failed: {e}")
 
-        _log_memory(f"recurrent_vision_policy_params_fn before cleanup step={current_step}")
+        _log_memory(
+            f"recurrent_vision_policy_params_fn before cleanup step={current_step}"
+        )
         _log_gpu_memory(f"before cleanup step={current_step}")
 
         del rollout
@@ -2038,7 +2289,9 @@ def _train_recurrent_vision_task_obs_highlvl(cfg, env, eval_env, decoder_policy_
         # Force Warp's CUDA memory pool to release deferred-free allocations.
         wp.synchronize()
 
-        _log_memory(f"recurrent_vision_policy_params_fn after cleanup step={current_step}")
+        _log_memory(
+            f"recurrent_vision_policy_params_fn after cleanup step={current_step}"
+        )
         _log_gpu_memory(f"after cleanup step={current_step}")
 
     # Checkpoint to restore (if any)
@@ -2138,9 +2391,7 @@ def main(cfg: DictConfig):
     if resume_run_id:
         run_id = str(resume_run_id)
         checkpoint_path = Path(
-            hydra.utils.to_absolute_path(
-                f"./{cfg.logging_config.model_path}/{run_id}"
-            )
+            hydra.utils.to_absolute_path(f"./{cfg.logging_config.model_path}/{run_id}")
         )
         if not checkpoint_path.exists():
             raise FileNotFoundError(
@@ -2150,9 +2401,7 @@ def main(cfg: DictConfig):
     else:
         run_id = datetime.now().strftime("%y%m%d_%H%M%S")
         checkpoint_path = Path(
-            hydra.utils.to_absolute_path(
-                f"./{cfg.logging_config.model_path}/{run_id}"
-            )
+            hydra.utils.to_absolute_path(f"./{cfg.logging_config.model_path}/{run_id}")
         )
         checkpoint_path.mkdir(parents=True, exist_ok=True)
         logging.info(f"NEW run_id: {run_id}")
@@ -2164,26 +2413,67 @@ def main(cfg: DictConfig):
 
     logging.info(f"Checkpoint path: {checkpoint_path}")
 
-    # ---- Load frozen decoder from Phase 1 checkpoint ----
-    mimic_ckpt_path = hydra.utils.to_absolute_path(
-        f"{cfg.transfer.mimic_checkpoint_dir}/{cfg.transfer.mimic_run_id}"
-    )
-    logging.info(f"Loading frozen decoder from: {mimic_ckpt_path}")
+    # ---- Determine transfer mode ----
+    transfer_mode = cfg.transfer.get("mode", "decoder_only")
+    logging.info(f"Transfer mode: {transfer_mode}")
 
-    mimic_cfg = OmegaConf.create(
-        checkpointing.load_config_from_checkpoint(mimic_ckpt_path)
-    )
-    decoder_policy_fn = ff_ppo_networks.make_decoder_policy_fn(mimic_ckpt_path)
-    logging.info(
-        f"Decoder loaded. intention_size={mimic_cfg.network_config.intention_size}"
-    )
-    _log_memory("after decoder load")
+    if transfer_mode == "prior_decoder":
+        # ---- Load frozen prior + decoder from SCAMPER prior checkpoint ----
+        from vnl_playground.tasks.prior_utils import (
+            load_prior_checkpoint,
+            make_decoder_inference_fn as make_prior_decoder_fn,
+            make_prior_inference_fn,
+        )
+
+        prior_ckpt_path = hydra.utils.to_absolute_path(
+            cfg.transfer.prior_checkpoint_path
+        )
+        prior_ckpt_step = cfg.transfer.get("prior_checkpoint_step", None)
+        logging.info(f"Loading prior checkpoint from: {prior_ckpt_path}")
+
+        (
+            encoder_params,
+            prior_params,
+            decoder_params,
+            normalizer_params,
+            prior_cfg,
+        ) = load_prior_checkpoint(prior_ckpt_path, prior_ckpt_step)
+
+        latent_size = prior_cfg["network_config"]["intention_size"]
+        logging.info(f"Prior checkpoint: intention_size={latent_size}")
+
+        # Create frozen inference functions
+        prior_fn = make_prior_inference_fn(prior_params, normalizer_params, prior_cfg)
+        decoder_policy_fn = make_prior_decoder_fn(
+            decoder_params, normalizer_params, prior_cfg
+        )
+
+        # Build a mimic_cfg-like object for dispatch functions
+        # NOTE: ctrl_dt enforcement from the prior checkpoint happens below
+        # via the shared mimic_cfg.env_config.ctrl_dt path, after env_args is created.
+        mimic_cfg = OmegaConf.create(prior_cfg)
+        _log_memory("after prior checkpoint load")
+
+    else:
+        prior_fn = None
+        # ---- Load frozen decoder from Phase 1 checkpoint ----
+        mimic_ckpt_path = hydra.utils.to_absolute_path(
+            f"{cfg.transfer.mimic_checkpoint_dir}/{cfg.transfer.mimic_run_id}"
+        )
+        logging.info(f"Loading frozen decoder from: {mimic_ckpt_path}")
+
+        mimic_cfg = OmegaConf.create(
+            checkpointing.load_config_from_checkpoint(mimic_ckpt_path)
+        )
+        decoder_policy_fn = ff_ppo_networks.make_decoder_policy_fn(mimic_ckpt_path)
+        logging.info(
+            f"Decoder loaded. intention_size={mimic_cfg.network_config.intention_size}"
+        )
+        _log_memory("after decoder load")
 
     # ---- Load environment ----
     env_name = cfg.env_config.env_name
-    env_args = OmegaConf.to_container(
-        cfg.env_config.get("env_args", {}), resolve=True
-    )
+    env_args = OmegaConf.to_container(cfg.env_config.get("env_args", {}), resolve=True)
     if not env_args:
         env_args = {}
 
@@ -2226,8 +2516,7 @@ def main(cfg: DictConfig):
     def wandb_progress(num_steps, metrics):
         # Convert JAX Arrays to Python floats to prevent wandb holding JAX references
         metrics = {
-            k: float(v) if hasattr(v, "dtype") else v
-            for k, v in metrics.items()
+            k: float(v) if hasattr(v, "dtype") else v for k, v in metrics.items()
         }
         metrics["num_steps_thousands"] = num_steps
         proc = psutil.Process()
@@ -2238,33 +2527,74 @@ def main(cfg: DictConfig):
     # ---- Dispatch based on architecture (with optional curriculum) ----
     arch_name = cfg.network_config.arch_name
 
-    def _dispatch_train(cfg_phase, env_phase, eval_env_phase, checkpoint_path_phase,
-                        cfg_dict_phase, progress_fn_phase):
+    def _dispatch_train(
+        cfg_phase,
+        env_phase,
+        eval_env_phase,
+        checkpoint_path_phase,
+        cfg_dict_phase,
+        progress_fn_phase,
+    ):
         """Dispatch to the appropriate architecture-specific training function."""
         if arch_name == "mlp":
             return _train_mlp_highlvl(
-                cfg_phase, env_phase, eval_env_phase, decoder_policy_fn, mimic_cfg,
-                checkpoint_path_phase, cfg_dict_phase, progress_fn=progress_fn_phase,
+                cfg_phase,
+                env_phase,
+                eval_env_phase,
+                decoder_policy_fn,
+                mimic_cfg,
+                checkpoint_path_phase,
+                cfg_dict_phase,
+                progress_fn=progress_fn_phase,
+                prior_fn=prior_fn,
             )
         elif arch_name == "vision_task_obs":
             return _train_vision_task_obs_highlvl(
-                cfg_phase, env_phase, eval_env_phase, decoder_policy_fn, mimic_cfg,
-                checkpoint_path_phase, cfg_dict_phase, progress_fn=progress_fn_phase,
+                cfg_phase,
+                env_phase,
+                eval_env_phase,
+                decoder_policy_fn,
+                mimic_cfg,
+                checkpoint_path_phase,
+                cfg_dict_phase,
+                progress_fn=progress_fn_phase,
+                prior_fn=prior_fn,
             )
         elif arch_name == "shared_vision_task_obs":
             return _train_shared_vision_task_obs_highlvl(
-                cfg_phase, env_phase, eval_env_phase, decoder_policy_fn, mimic_cfg,
-                checkpoint_path_phase, cfg_dict_phase, progress_fn=progress_fn_phase,
+                cfg_phase,
+                env_phase,
+                eval_env_phase,
+                decoder_policy_fn,
+                mimic_cfg,
+                checkpoint_path_phase,
+                cfg_dict_phase,
+                progress_fn=progress_fn_phase,
+                prior_fn=prior_fn,
             )
         elif arch_name == "recurrent_vision_task_obs":
             return _train_recurrent_vision_task_obs_highlvl(
-                cfg_phase, env_phase, eval_env_phase, decoder_policy_fn, mimic_cfg,
-                checkpoint_path_phase, cfg_dict_phase, progress_fn=progress_fn_phase,
+                cfg_phase,
+                env_phase,
+                eval_env_phase,
+                decoder_policy_fn,
+                mimic_cfg,
+                checkpoint_path_phase,
+                cfg_dict_phase,
+                progress_fn=progress_fn_phase,
+                prior_fn=prior_fn,
             )
         elif arch_name == "binocular_shared_vision_task_obs":
             return _train_binocular_shared_vision_task_obs_highlvl(
-                cfg_phase, env_phase, eval_env_phase, decoder_policy_fn, mimic_cfg,
-                checkpoint_path_phase, cfg_dict_phase, progress_fn=progress_fn_phase,
+                cfg_phase,
+                env_phase,
+                eval_env_phase,
+                decoder_policy_fn,
+                mimic_cfg,
+                checkpoint_path_phase,
+                cfg_dict_phase,
+                progress_fn=progress_fn_phase,
+                prior_fn=prior_fn,
             )
         else:
             raise ValueError(
@@ -2274,7 +2604,9 @@ def main(cfg: DictConfig):
             )
 
     # ---- Check for auto-curriculum mode ----
-    has_curriculum = "curriculum" in cfg_dict and "phases" in cfg_dict.get("curriculum", {})
+    has_curriculum = "curriculum" in cfg_dict and "phases" in cfg_dict.get(
+        "curriculum", {}
+    )
 
     if has_curriculum:
         from vnl_playground.tasks.rodent.curriculum import (
@@ -2313,16 +2645,20 @@ def main(cfg: DictConfig):
                 if vision_key in cfg.env_config:
                     phase_env_args[vision_key] = cfg.env_config[vision_key]
             # Enforce ctrl_dt from mimic
-            if hasattr(mimic_cfg, "env_config") and hasattr(mimic_cfg.env_config, "ctrl_dt"):
+            if hasattr(mimic_cfg, "env_config") and hasattr(
+                mimic_cfg.env_config, "ctrl_dt"
+            ):
                 phase_env_args["ctrl_dt"] = float(mimic_cfg.env_config.ctrl_dt)
 
             # Reload environments with phase-specific config
             phase_env = tasks.load(
-                env_name, flatten_obs=False,
+                env_name,
+                flatten_obs=False,
                 config_overrides=phase_env_args if phase_env_args else None,
             )
             phase_eval_env = tasks.load(
-                env_name, flatten_obs=False,
+                env_name,
+                flatten_obs=False,
                 config_overrides=phase_env_args if phase_env_args else None,
             )
 
@@ -2356,14 +2692,21 @@ def main(cfg: DictConfig):
                 patience=phase.graduation_patience,
             )
             phase_progress_fn = make_curriculum_progress_fn(
-                monitor, wandb_progress, phase_idx + 1, phase.name,
+                monitor,
+                wandb_progress,
+                phase_idx + 1,
+                phase.name,
             )
 
             # Run training for this phase
             logging.info(f"Architecture: {arch_name}")
             _dispatch_train(
-                phase_cfg, phase_env, phase_eval_env,
-                phase_ckpt_path, phase_cfg_dict, phase_progress_fn,
+                phase_cfg,
+                phase_env,
+                phase_eval_env,
+                phase_ckpt_path,
+                phase_cfg_dict,
+                phase_progress_fn,
             )
 
             graduated = monitor.should_graduate
