@@ -24,6 +24,7 @@ from mujoco_playground._src import mjx_env
 
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
+from vnl_playground.tasks.rodent.utils.box_to_mesh import box_to_mesh_asset
 from vnl_playground.tasks.task_registry import TaskRegistry
 
 _registry = TaskRegistry()
@@ -64,6 +65,7 @@ def default_config() -> config_dict.ConfigDict:
         landing_platform_depth=0.3,
         landing_platform_max_width=0.3,
         landing_height_offset=0.02,
+        use_mesh_platforms=False,
         # Trial parameters
         gap_distances=(0.06, 0.08, 0.10, 0.12, 0.14),
         hold_duration=50,
@@ -153,7 +155,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
             pos=[init_x, 0.0, 0.0],
             quat=(1, 0, 0, 0),
         )
-        self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
+        # Lighting is defined in gap_jump_arena.xml (key_light + headlight)
         self.compile()
 
         # The landing_slide joint prepends extra elements to qpos/qvel.
@@ -188,6 +190,16 @@ class GapJumpTrial(rodent_base.RodentEnv):
         # Take-off platform trailing edge x position
         self._takeoff_trailing_edge_x = self._config.takeoff_platform_length / 2.0
 
+    def _add_mesh_for_box(self, name: str, half_extents: tuple) -> str:
+        """Register a mesh asset equivalent to a box and return its name."""
+        verts, faces, texcoords = box_to_mesh_asset(half_extents)
+        mesh = self._spec.add_mesh()
+        mesh.name = name
+        mesh.uservert = verts.flatten()
+        mesh.userface = faces.flatten()
+        mesh.usertexcoord = texcoords.flatten()
+        return name
+
     def _build_arena(self) -> None:
         """Build take-off and landing platforms in the arena spec.
 
@@ -198,24 +210,37 @@ class GapJumpTrial(rodent_base.RodentEnv):
         """
         cfg = self._config
         half_thickness = cfg.takeoff_platform_thickness / 2.0
+        use_mesh = cfg.get("use_mesh_platforms", False)
 
         # --- Take-off platform (static body) ---
         takeoff_body = self._spec.worldbody.add_body(
             name="takeoff_platform",
             pos=[0.0, 0.0, -half_thickness],
         )
-        takeoff_body.add_geom(
-            name="takeoff_platform_geom",
-            type=mujoco.mjtGeom.mjGEOM_BOX,
-            size=[
-                cfg.takeoff_platform_length / 2,
-                cfg.takeoff_platform_width / 2,
-                half_thickness,
-            ],
-            material="platform_mat",
-            contype=1,
-            conaffinity=1,
+        takeoff_half = (
+            cfg.takeoff_platform_length / 2,
+            cfg.takeoff_platform_width / 2,
+            half_thickness,
         )
+        if use_mesh:
+            mesh_name = self._add_mesh_for_box("takeoff_mesh", takeoff_half)
+            takeoff_body.add_geom(
+                name="takeoff_platform_geom",
+                type=mujoco.mjtGeom.mjGEOM_MESH,
+                meshname=mesh_name,
+                material="platform_mat",
+                contype=1,
+                conaffinity=1,
+            )
+        else:
+            takeoff_body.add_geom(
+                name="takeoff_platform_geom",
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=list(takeoff_half),
+                material="platform_mat",
+                contype=1,
+                conaffinity=1,
+            )
 
         # --- Landing platform with slide joint ---
         max_gap = max(cfg.gap_distances)
@@ -236,20 +261,32 @@ class GapJumpTrial(rodent_base.RodentEnv):
             axis=[1, 0, 0],
             range=[-(max_gap - min_gap), 0],
             damping=1e8,
-            stiffness=1e8,
+            stiffness=0,
         )
-        landing_body.add_geom(
-            name="landing_platform_geom",
-            type=mujoco.mjtGeom.mjGEOM_BOX,
-            size=[
-                cfg.landing_platform_depth / 2,
-                cfg.landing_platform_max_width / 2,
-                half_thickness,
-            ],
-            material="platform_mat",
-            contype=1,
-            conaffinity=1,
+        landing_half = (
+            cfg.landing_platform_depth / 2,
+            cfg.landing_platform_max_width / 2,
+            half_thickness,
         )
+        if use_mesh:
+            mesh_name = self._add_mesh_for_box("landing_mesh", landing_half)
+            landing_body.add_geom(
+                name="landing_platform_geom",
+                type=mujoco.mjtGeom.mjGEOM_MESH,
+                meshname=mesh_name,
+                material="platform_mat",
+                contype=1,
+                conaffinity=1,
+            )
+        else:
+            landing_body.add_geom(
+                name="landing_platform_geom",
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                size=list(landing_half),
+                material="platform_mat",
+                contype=1,
+                conaffinity=1,
+            )
         # Black edge strip on leading edge (visual only, no collision)
         landing_body.add_geom(
             name="landing_edge_strip",
@@ -582,6 +619,31 @@ class GapJumpTrial(rodent_base.RodentEnv):
         is_active = (info["trial_phase"] >= PHASE_DECISION).astype(jp.float32)
         reward_val = weight * vel_reward * is_active
         metrics["rewards/approach_velocity"] = reward_val
+        return reward_val
+
+    @_registry.reward("edge_proximity")
+    def _edge_proximity_reward(self, data, info, metrics, weight):
+        """Dense reward for approaching the gap edge during DECISION phase.
+
+        Provides a smooth, increasing signal as the torso gets closer to
+        the takeoff trailing edge. Uses a quadratic ramp that saturates
+        at the edge, giving the agent a strong gradient toward the gap.
+        Active only during DECISION phase (not JUMP, to avoid rewarding
+        overshoot before the agent commits).
+        """
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        torso_x = torso.xpos[0]
+
+        # Distance from spawn (0) to edge, normalized to [0, 1]
+        edge_x = self._takeoff_trailing_edge_x
+        progress = jp.clip(torso_x / edge_x, 0.0, 1.0)
+
+        # Quadratic ramp: gentle at start, steep near edge
+        proximity = progress**2
+
+        is_decision = (info["trial_phase"] == PHASE_DECISION).astype(jp.float32)
+        reward_val = weight * proximity * is_decision
+        metrics["rewards/edge_proximity"] = reward_val
         return reward_val
 
     @_registry.reward("landing_bonus")

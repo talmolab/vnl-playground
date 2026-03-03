@@ -10,8 +10,7 @@
 # Phase 3: Distance Estimation (gap 6-14cm, 50-step HOLD, pure sparse)
 #
 # Usage:
-#   python -m vnl_playground.train_highlvl \
-#     --config-name=gap_jump_trial_vision/curriculum_auto
+#   python -m vnl_playground.train_highlvl --config-name=gap_jump_trial_vision/curriculum_auto
 
 curriculum:
   graduation_threshold: 0.8
@@ -25,6 +24,13 @@ curriculum:
       learning_rate: 3e-4
       unroll_length: 10
       num_timesteps: 100_000_000
+      extra_reward_terms:
+        forward_displacement:
+          weight: 1.0
+        approach_velocity:
+          weight: 0.5
+        edge_proximity:
+          weight: 0.3
     - name: "Phase 2: Small Leaps"
       gap_distances: [0.02, 0.03, 0.04, 0.05, 0.06]
       hold_duration: 25
@@ -35,6 +41,8 @@ curriculum:
       num_timesteps: 200_000_000
       extra_reward_terms:
         approach_velocity:
+          weight: 0.1
+        edge_proximity:
           weight: 0.1
     - name: "Phase 3: Distance Estimation"
       gap_distances: [0.06, 0.08, 0.10, 0.12, 0.14]
@@ -54,6 +62,8 @@ env_config:
   vision_height: 32
   grayscale: true
   vision_camera_name: "egocentric-rodent"
+  use_textures: true
+  use_shadows: true
   env_args:
     # Base args — overridden per phase by CurriculumTrainer
     gap_distances: [0.000, 0.005, 0.010, 0.015, 0.020]
@@ -61,6 +71,7 @@ env_config:
     max_decision_steps: 200
     episode_length: 300
     torque_actuators: true
+    use_mesh_platforms: true
     reward_terms:
       hold_stillness:
         weight: 0.3
@@ -74,6 +85,8 @@ env_config:
         weight: -20.0
       time_penalty:
         weight: -0.01
+      decision_alive:
+        weight: 0.05
     termination_criteria:
       fallen:
         min_torso_z: -0.1
@@ -125,7 +138,7 @@ train_setup:
 logging_config:
   project_name: vnl-playground
   group_name: gap-jump-curriculum-auto
-  model_path: highlvl_checkpoints
+  model_path: checkpoints_gap_jump_curriculum_auto
   notes: "Auto-curriculum: 3-phase gap-jump with automatic graduation"
   exp_name: gap_jump_curriculum_auto
 

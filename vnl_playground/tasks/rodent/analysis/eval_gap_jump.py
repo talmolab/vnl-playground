@@ -214,9 +214,7 @@ def load_policy(
     mimic_cfg = OmegaConf.create(
         checkpointing.load_config_from_checkpoint(mimic_checkpoint_path)
     )
-    decoder_policy_fn = ff_ppo_networks.make_decoder_policy_fn(
-        mimic_checkpoint_path
-    )
+    decoder_policy_fn = ff_ppo_networks.make_decoder_policy_fn(mimic_checkpoint_path)
 
     # RunGapVision environment config
     env_cfg = run_gap_vision.default_config()
@@ -235,9 +233,7 @@ def load_policy(
         key=lambda d: int(d.name),
     )
     if not step_dirs:
-        raise FileNotFoundError(
-            f"No checkpoint step directories found in {ckpt_path}"
-        )
+        raise FileNotFoundError(f"No checkpoint step directories found in {ckpt_path}")
     latest_step_dir = step_dirs[-1]
     print(f"Loading high-level policy from: {latest_step_dir}")
 
@@ -362,9 +358,7 @@ def make_eval_inference_fn(
             logits, key_sample
         )
         log_prob = parametric_action_distribution.log_prob(logits, raw_actions)
-        postprocessed_actions = parametric_action_distribution.postprocess(
-            raw_actions
-        )
+        postprocessed_actions = parametric_action_distribution.postprocess(raw_actions)
         return jp.array(postprocessed_actions), {
             "log_prob": log_prob,
             "raw_action": raw_actions,
@@ -417,67 +411,149 @@ def run_eval_rollout(
 
 
 PHASE_NAMES = {0: "HOLD", 1: "DECISION", 2: "JUMP"}
+PHASE_COLORS = {
+    0: (100, 149, 237),
+    1: (255, 165, 0),
+    2: (50, 205, 50),
+}  # blue, orange, green
+OUTCOME_NAMES = {0: "ONGOING", 1: "SUCCESS", 2: "FAILURE", 3: "ABORT", 4: "TIMEOUT"}
+OUTCOME_COLORS = {
+    0: (200, 200, 200),
+    1: (50, 205, 50),
+    2: (255, 60, 60),
+    3: (255, 165, 0),
+    4: (180, 180, 180),
+}
 
 
 def _overlay_trial_info(
-    frame: np.ndarray, state: mjx_env.State, step_idx: int
+    frame: np.ndarray,
+    state: mjx_env.State,
+    step_idx: int,
+    cumulative_reward: float = 0.0,
 ) -> np.ndarray:
-    """Draw trial state info as text overlay on the top-left of a rendered frame.
+    """Draw rich trial state overlay on a rendered frame.
+
+    Shows trial phase with color indicator, gap distance, per-step and
+    cumulative reward, individual reward term breakdown, and trial outcome.
 
     Args:
         frame: (H, W, 3) uint8 numpy array.
-        state: Environment state containing info dict with trial_phase,
-            gap_distance, trial_success.
+        state: Environment state with info dict and metrics.
         step_idx: Current step index in the episode.
+        cumulative_reward: Running total of rewards up to this step.
 
     Returns:
-        Frame with text overlay drawn on it.
+        Frame with overlay drawn on it.
     """
     img = Image.fromarray(frame)
 
-    # Try to use a monospace font; fall back to default
     try:
         font = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 14
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 13
+        )
+        font_bold = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 13
+        )
+        font_small = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 11
         )
     except (IOError, OSError):
         font = ImageFont.load_default()
+        font_bold = font
+        font_small = font
 
     info = state.info
+    metrics = state.metrics if hasattr(state, "metrics") else {}
+
     phase_code = int(info.get("trial_phase", 0))
-    phase_name = PHASE_NAMES.get(phase_code, f"UNKNOWN({phase_code})")
+    phase_name = PHASE_NAMES.get(phase_code, f"?({phase_code})")
+    phase_color = PHASE_COLORS.get(phase_code, (200, 200, 200))
     gap_dist = float(info.get("gap_distance", 0.0))
     reward = float(state.reward)
-    success = bool(info.get("trial_success", False))
+    outcome_code = int(info.get("trial_outcome", 0))
+    outcome_name = OUTCOME_NAMES.get(outcome_code, f"?({outcome_code})")
+    outcome_color = OUTCOME_COLORS.get(outcome_code, (200, 200, 200))
     done = float(state.done) > 0.5
 
-    lines = [
-        f"Step: {step_idx}",
-        f"Phase: {phase_name}",
-        f"Gap: {gap_dist * 100:.1f} cm",
-        f"Reward: {reward:.3f}",
-        f"Success: {success}",
-    ]
+    # Build lines for the overlay
+    lines = []
+    colors = []
+
+    # Header: step and phase with color
+    lines.append(f"Step {step_idx:4d}  |  {phase_name}")
+    colors.append(phase_color)
+
+    # Gap distance
+    lines.append(f"Gap: {gap_dist * 100:.1f} cm")
+    colors.append((255, 255, 255))
+
+    # Rewards
+    lines.append(f"Reward:  {reward:+.3f}")
+    colors.append(
+        (255, 255, 100)
+        if reward > 0
+        else (255, 100, 100) if reward < 0 else (200, 200, 200)
+    )
+
+    lines.append(f"Cumul:   {cumulative_reward:+.2f}")
+    colors.append((255, 255, 255))
+
+    # Separator
+    lines.append("\u2500" * 24)
+    colors.append((120, 120, 120))
+
+    # Per-term reward breakdown from metrics
+    reward_terms = sorted(
+        [(k, float(v)) for k, v in metrics.items() if k.startswith("rewards/")],
+        key=lambda x: -abs(x[1]),
+    )
+    for term_key, term_val in reward_terms:
+        term_name = term_key.replace("rewards/", "")
+        if abs(term_val) > 1e-6:
+            lines.append(f"  {term_name[:16]:<16s} {term_val:+.3f}")
+            colors.append((180, 220, 255) if term_val > 0 else (255, 180, 180))
+
+    # Separator
+    lines.append("\u2500" * 24)
+    colors.append((120, 120, 120))
+
+    # Outcome
+    lines.append(f"Outcome: {outcome_name}")
+    colors.append(outcome_color)
+
     if done:
-        lines.append("DONE")
+        lines.append(">>> DONE <<<")
+        colors.append((255, 80, 80))
 
     # Draw semi-transparent background box
-    line_height = 18
+    line_height = 16
     padding = 6
-    box_width = 180
+    box_width = 220
     box_height = len(lines) * line_height + 2 * padding
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
     overlay_draw.rectangle(
         [4, 4, 4 + box_width, 4 + box_height],
-        fill=(0, 0, 0, 160),
+        fill=(0, 0, 0, 180),
     )
+
+    # Phase indicator bar at top of box
+    bar_height = 3
+    overlay_draw.rectangle(
+        [4, 4, 4 + box_width, 4 + bar_height],
+        fill=phase_color + (255,),
+    )
+
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    y = padding + 4
-    for line in lines:
-        draw.text((padding + 4, y), line, fill=(255, 255, 255), font=font)
+    y = padding + 4 + bar_height
+    for i, (line, color) in enumerate(zip(lines, colors)):
+        use_font = (
+            font_bold if i == 0 else (font_small if line.startswith("  ") else font)
+        )
+        draw.text((padding + 4, y), line, fill=color, font=use_font)
         y += line_height
 
     return np.array(img)
@@ -521,15 +597,18 @@ def render_trial_video(
         else:
             break
 
-    frames = base_env.render(
-        rollout, height=height, width=width, camera=camera
-    )
+    frames = base_env.render(rollout, height=height, width=width, camera=camera)
 
-    # Apply trial state overlay to each frame
-    overlaid_frames = [
-        _overlay_trial_info(frame, state, step_idx=i)
-        for i, (frame, state) in enumerate(zip(frames, rollout))
-    ]
+    # Track cumulative reward across the episode
+    cumulative_reward = 0.0
+    overlaid_frames = []
+    for i, (frame, state) in enumerate(zip(frames, rollout)):
+        cumulative_reward += float(state.reward)
+        overlaid_frames.append(
+            _overlay_trial_info(
+                frame, state, step_idx=i, cumulative_reward=cumulative_reward
+            )
+        )
 
     fps = int(1.0 / env.dt)
     imageio.mimsave(output_path, overlaid_frames, fps=fps)
@@ -586,9 +665,7 @@ def render_comparison_video(
     for i, cond_name in enumerate(conditions):
         rng = jax.random.PRNGKey(seed + i)
         rollout = run_eval_rollout(env, policy_fn, rng, episode_length)
-        frames = base_env.render(
-            rollout, height=height, width=width, camera=camera
-        )
+        frames = base_env.render(rollout, height=height, width=width, camera=camera)
         condition_frames.append(frames)
         condition_rollouts.append(rollout)
         min_length = min(min_length, len(frames))
@@ -605,14 +682,21 @@ def render_comparison_video(
         label_font = ImageFont.load_default()
 
     # Tile frames horizontally with condition labels and trial info overlay
+    cumulative_rewards = [0.0] * len(conditions)
     combined_frames = []
     for frame_idx in range(min_length):
         panels = []
         for c in range(len(conditions)):
             frame = condition_frames[c][frame_idx]
             state = condition_rollouts[c][frame_idx]
-            # Apply trial info overlay
-            frame = _overlay_trial_info(frame, state, step_idx=frame_idx)
+            cumulative_rewards[c] += float(state.reward)
+            # Apply trial info overlay with cumulative reward
+            frame = _overlay_trial_info(
+                frame,
+                state,
+                step_idx=frame_idx,
+                cumulative_reward=cumulative_rewards[c],
+            )
             # Add condition label at bottom-left
             img = Image.fromarray(frame)
             draw = ImageDraw.Draw(img)
@@ -649,6 +733,7 @@ def generate_figures(report: dict, output_dir: str) -> list[str]:
         List of saved file paths.
     """
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -678,21 +763,15 @@ def generate_figures(report: dict, output_dir: str) -> list[str]:
 
     # 3. RNN trajectories (colored by gap distance)
     if "rnn_confidence" in report and "error" not in report["rnn_confidence"]:
-        fig = plot_rnn_trajectories(
-            report["rnn_confidence"], color_by="gap_distance"
-        )
-        png_path = os.path.join(
-            output_dir, "rnn_trajectories_by_distance.png"
-        )
+        fig = plot_rnn_trajectories(report["rnn_confidence"], color_by="gap_distance")
+        png_path = os.path.join(output_dir, "rnn_trajectories_by_distance.png")
         fig.savefig(png_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         saved_files.append(png_path)
         print(f"  Saved: rnn_trajectories_by_distance.png")
 
         # 4. RNN trajectories (colored by time)
-        fig = plot_rnn_trajectories(
-            report["rnn_confidence"], color_by="time"
-        )
+        fig = plot_rnn_trajectories(report["rnn_confidence"], color_by="time")
         png_path = os.path.join(output_dir, "rnn_trajectories_by_time.png")
         fig.savefig(png_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
@@ -726,9 +805,7 @@ def _plot_summary_panel(report: dict) -> "matplotlib.figure.Figure":
     import matplotlib.pyplot as plt
 
     n_panels = 2
-    if "rnn_confidence" in report and "error" not in report.get(
-        "rnn_confidence", {}
-    ):
+    if "rnn_confidence" in report and "error" not in report.get("rnn_confidence", {}):
         n_panels = 3
 
     fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4))
@@ -830,9 +907,7 @@ def _plot_summary_panel(report: dict) -> "matplotlib.figure.Figure":
     return fig
 
 
-def save_summary_json(
-    report: dict, output_dir: str, args: argparse.Namespace
-) -> str:
+def save_summary_json(report: dict, output_dir: str, args: argparse.Namespace) -> str:
     """Save a JSON-serializable summary of the analysis report.
 
     Extracts scalar statistics from the full report (which may contain
@@ -897,9 +972,7 @@ def save_summary_json(
         }
 
     # Latent intention summary
-    if "latent_intentions" in report and "error" not in report[
-        "latent_intentions"
-    ]:
+    if "latent_intentions" in report and "error" not in report["latent_intentions"]:
         lat = report["latent_intentions"]
         summary["latent_intentions"] = {
             "distance_prediction_r2": float(lat["distance_prediction_r2"]),
@@ -927,9 +1000,7 @@ def main():
     args = parse_args()
 
     # Setup output directory with timestamp
-    output_dir = Path(args.output_dir) / datetime.now().strftime(
-        "%Y%m%d-%H%M%S"
-    )
+    output_dir = Path(args.output_dir) / datetime.now().strftime("%Y%m%d-%H%M%S")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save eval config
@@ -965,9 +1036,7 @@ def main():
     print(f"  Control dt: {env.dt}s")
 
     # Create inference function
-    policy_fn = make_eval_inference_fn(
-        ppo_network, highlvl_params, deterministic=True
-    )
+    policy_fn = make_eval_inference_fn(ppo_network, highlvl_params, deterministic=True)
 
     # ----------------------------------------------------------------
     # 3. Build experiment configs
@@ -1022,8 +1091,7 @@ def main():
         for dist, rate in success_rates.items():
             dt = mean_dt.get(dist, 0.0)
             print(
-                f"    gap={dist*100:.0f}cm: "
-                f"success={rate:.1%}, mean_dt={dt:.3f}s"
+                f"    gap={dist*100:.0f}cm: " f"success={rate:.1%}, mean_dt={dt:.3f}s"
             )
 
     # ----------------------------------------------------------------
