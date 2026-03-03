@@ -31,13 +31,14 @@ def default_config() -> config_dict.ConfigDict:
     cfg = base_default_config()
     # Reference data settings
     cfg.reference_data_path = str(consts.MOUSE_REFERENCE_DATA_PATH)
-    cfg.mocap_hz = 50  # Frame rate of reference data
-    cfg.clip_length = 100  # Frames per clip
+    cfg.mocap_hz = 200  # Frame rate of reference data
+    cfg.clip_length = 50  # Frames per clip
     cfg.clip_set = "all"  # Which clips to use
-    cfg.reference_length = 5  # Frames of future reference to include in observation
+    cfg.reference_length = 1  # Frames of future reference to include in observation
     cfg.start_frame_range = [0, 1]  # Always start at frame 0
     cfg.qvel_init = "zeros"  # How to initialize velocities: "zeros", "reference"
     cfg.keep_clips_idx = None  # Indices of clips to keep (None = all)
+    cfg.recompute_kinematics = False  # Recompute xpos/xquat from sim model
 
     # Walker-specific settings (can be overridden via config)
     cfg.tracked_bodies = ["scapula", "humerus", "ulna", "radius", "wrist_body"]
@@ -100,8 +101,9 @@ class MouseImitation(MouseBaseEnv):
             )
 
         # Recompute xpos/xquat using simulation model for consistency
-        # (reference data may have been generated with a different model)
-        self.reference_clips.recompute_kinematics(self._mj_model)
+        # (skip if reference data was generated with the same model, e.g. re-STACed data)
+        if self._config.recompute_kinematics:
+            self.reference_clips.recompute_kinematics(self._mj_model)
 
         # Setup clip set
         max_n_clips = self.reference_clips.qpos.shape[0]
@@ -365,7 +367,7 @@ class MouseImitation(MouseBaseEnv):
         # Wrist position targets (in world frame since base is fixed)
         wrist_pos = data.xpos[self._wrist_body_id]
         wrist_targets = jax.vmap(lambda ref_pos: ref_pos - wrist_pos)(
-            reference.body_xpos("wrist_body")
+            reference.body_xpos(self._config.end_effector)
         )
 
         return collections.OrderedDict(
@@ -431,7 +433,7 @@ class MouseImitation(MouseBaseEnv):
         """
         target = self._get_current_target(data, info)
         wrist_pos = data.xpos[self._wrist_body_id]
-        target_wrist = target.body_xpos("wrist_body")
+        target_wrist = target.body_xpos(self._config.end_effector)
         distance = jp.linalg.norm(wrist_pos - target_wrist)
         metrics["wrist_pos_error"] = distance
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
