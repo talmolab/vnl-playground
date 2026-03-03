@@ -11,13 +11,17 @@ os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
+import collections
 import functools
 import logging
+from typing import Any, Mapping
 
 import hydra
 import jax
 import orbax.checkpoint as ocp
 import wandb
+from mujoco import mjx
+from mujoco_playground import wrapper
 from mujoco_playground import wrapper as playground_wrappers
 from omegaconf import DictConfig, OmegaConf
 from vnl_playground.tasks.reference_clips import ReferenceClips
@@ -30,6 +34,32 @@ from scamper.agent.mlp_prior import prior_networks
 from scamper.agent.mlp_prior import prior_train
 from scamper.agent.mlp_prior.rollout_logging import prior_training_rollout_logging_fn
 from scamper.config import utils
+
+
+class _ScamperObsAdapter(wrapper.Wrapper):
+    """Adapt vnl-playground obs format to SCAMPER's expected format.
+
+    vnl-playground (new): {state: {task_obs, proprioception}, privileged_state: ...}
+    SCAMPER expects:      {imitation_target, proprioception}
+    """
+
+    def _adapt_obs(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
+        obs = state.obs
+        if "state" in obs and "task_obs" in obs["state"]:
+            obs = collections.OrderedDict(
+                imitation_target=obs["state"]["task_obs"],
+                proprioception=obs["state"]["proprioception"],
+            )
+            return state.replace(obs=obs)
+        return state
+
+    def reset(self, rng: jax.Array, **kwargs: Any) -> wrapper.mjx_env.State:
+        return self._adapt_obs(self.env.reset(rng, **kwargs))
+
+    def step(
+        self, state: wrapper.mjx_env.State, action: jax.Array
+    ) -> wrapper.mjx_env.State:
+        return self._adapt_obs(self.env.step(state, action))
 
 
 def _setup_environment() -> None:
@@ -97,9 +127,13 @@ def main(cfg: DictConfig):
     if hasattr(env_cfg_ml, "nconmax"):
         env_cfg_ml.naconmax = env_cfg_ml.nconmax * cfg.train_setup.train_config.num_envs
 
-    # Create environments
-    env = imitation.Imitation(config=env_cfg_ml, clips=train_clips)
-    test_env = imitation.Imitation(config=env_cfg_ml, clips=test_clips)
+    # Create environments and adapt obs format for SCAMPER compatibility.
+    # vnl-playground's Imitation env produces {state: {task_obs, proprioception}},
+    # but SCAMPER expects {imitation_target, proprioception}.
+    env = _ScamperObsAdapter(imitation.Imitation(config=env_cfg_ml, clips=train_clips))
+    test_env = _ScamperObsAdapter(
+        imitation.Imitation(config=env_cfg_ml, clips=test_clips)
+    )
 
     logging.info(f"Environment config: {cfg.env_config}")
 
@@ -249,7 +283,9 @@ def main(cfg: DictConfig):
     # Use train_clips to ensure same clips as prior rollout evaluator
     rollout_cfg = env_cfg_ml.copy_and_resolve_references()
     rollout_cfg.start_frame_range = [0, 0]
-    rollout_env = imitation.Imitation(config=rollout_cfg, clips=train_clips)
+    rollout_env = _ScamperObsAdapter(
+        imitation.Imitation(config=rollout_cfg, clips=train_clips)
+    )
 
     # Define the jit reset/step functions for logging
     jit_reset = jax.jit(rollout_env.reset)
