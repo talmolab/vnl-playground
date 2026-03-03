@@ -185,5 +185,7 @@ highlvl_checkpoints/
 outputs/
 *.mp4
 *.png
+!vnl_playground/tasks/rodent/xmls/assets/*.png
 vnl_playground/_version.py
 sprout/
+checkpoints_gap_jump_curriculum_auto/
