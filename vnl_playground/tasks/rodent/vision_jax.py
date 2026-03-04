@@ -165,7 +165,7 @@ class JaxVisionRenderer:
         # Create the render context via the official MJX API.
         # This internally creates warp Model/Data for initialization,
         # handles memory management, and returns a JAX-compatible context.
-        self._ctx = mjx.create_render_context(
+        rc = mjx.create_render_context(
             mjm=mj_model,
             nworld=nworld,
             cam_res=(width, height),
@@ -176,6 +176,14 @@ class JaxVisionRenderer:
             enabled_geom_groups=enabled_geom_groups,
             cam_active=cam_active,
         )
+        # MJX now requires RenderContextPytree for refit_bvh/render.
+        # Keep a reference to the original RenderContext so its __del__
+        # doesn't remove warp buffers from the global registry.
+        if hasattr(rc, "pytree"):
+            self._rc_owner = rc
+            self._ctx = rc.pytree()
+        else:
+            self._ctx = rc
 
         logger.info(
             f"JaxVisionRenderer initialized: {nworld} worlds, "
