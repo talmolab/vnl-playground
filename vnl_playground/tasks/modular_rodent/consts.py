@@ -47,6 +47,24 @@ BODY_NAMES = {
     "hand_R": "hand_R",
 }
 
+# Ordered actuator names per action module, matching null_action() output dimensions.
+# head is 5 elements: [cervical_extend, cervical_bend, cervical_twist, atlas, mandible]
+# (cervical maps to ctrl[3:6], atlas+mandible to ctrl[20:22] — non-contiguous in XML order)
+MODULE_ACTUATOR_NAMES: dict[str, list[str]] = {
+    "torso":  ["lumbar_extend", "lumbar_bend", "lumbar_twist"],
+    "head":   ["cervical_extend", "cervical_bend", "cervical_twist", "atlas", "mandible"],
+    "leg_L":  ["hip_L_supinate", "hip_L_abduct", "hip_L_extend", "knee_L"],
+    "foot_L": ["ankle_L", "toe_L"],
+    "leg_R":  ["hip_R_supinate", "hip_R_abduct", "hip_R_extend", "knee_R"],
+    "foot_R": ["ankle_R", "toe_R"],
+    "arm_L":  ["scapula_L_supinate", "scapula_L_abduct", "scapula_L_extend",
+               "shoulder_L", "shoulder_sup_L", "elbow_L"],
+    "hand_L": ["wrist_L", "finger_L"],
+    "arm_R":  ["scapula_R_supinate", "scapula_R_abduct", "scapula_R_extend",
+               "shoulder_R", "shoulder_sup_R", "elbow_R"],
+    "hand_R": ["wrist_R", "finger_R"],
+}
+
 # Site names in the compiled model
 SITE_NAMES = {
     "shoulder_L": "shoulder_L",

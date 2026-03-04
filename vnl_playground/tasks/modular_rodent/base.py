@@ -73,6 +73,10 @@ class ModularRodentEnv(mjx_env.MjxEnv):
             # self._spec.njmax = self._config.njmax
             # self._spec.nconmax = self._config.naconmax
             self._mj_model = self._spec.compile()
+            self._ctrl_indices = {
+                module: [self._mj_model.actuator(name).id for name in names]
+                for module, names in consts.MODULE_ACTUATOR_NAMES.items()
+            }
             self._mj_model.opt.timestep = self._config.sim_dt
             self._mj_model.vis.global_.offwidth = 3840
             self._mj_model.vis.global_.offheight = 2160
@@ -455,36 +459,11 @@ class ModularRodentEnv(mjx_env.MjxEnv):
         }
 
     def _action_to_ctrl(self, action: dict[str, jp.ndarray]) -> jp.ndarray:
-        """Map action dict to the 38-element ctrl array.
-
-        Actuator ordering in rodent_modular_walker.xml:
-          [0:3]   torso:  lumbar_extend, lumbar_bend, lumbar_twist
-          [3:6]   head:   cervical_extend, cervical_bend, cervical_twist
-          [6:8]   tail:   caudal_extend, caudal_bend  (uncontrolled, set to 0)
-          [8:12]  leg_L:  hip_L_supinate, hip_L_abduct, hip_L_extend, knee_L
-          [12:14] foot_L: ankle_L, toe_L
-          [14:18] leg_R:  hip_R_supinate, hip_R_abduct, hip_R_extend, knee_R
-          [18:20] foot_R: ankle_R, toe_R
-          [20:22] head:   atlas, mandible           (head[3:5])
-          [22:28] arm_L:  scapula_L x3, shoulder_L, shoulder_sup_L, elbow_L
-          [28:30] hand_L: wrist_L, finger_L
-          [30:36] arm_R:  scapula_R x3, shoulder_R, shoulder_sup_R, elbow_R
-          [36:38] hand_R: wrist_R, finger_R
-        """
-        return jp.concatenate([
-            action["torso"],        # [0:3]
-            action["head"][:3],     # [3:6] cervical
-            jp.zeros(2),            # [6:8] tail (uncontrolled)
-            action["leg_L"],        # [8:12]
-            action["foot_L"],       # [12:14]
-            action["leg_R"],        # [14:18]
-            action["foot_R"],       # [18:20]
-            action["head"][3:],     # [20:22] atlas + mandible
-            action["arm_L"],        # [22:28]
-            action["hand_L"],       # [28:30]
-            action["arm_R"],        # [30:36]
-            action["hand_R"],       # [36:38]
-        ])
+        """Map action dict to the ctrl array using name-resolved actuator indices."""
+        ctrl = jp.zeros(self._mj_model.nu)
+        for module, indices in self._ctrl_indices.items():
+            ctrl = ctrl.at[indices].set(action[module])
+        return ctrl
 
     # -------------------------------------------------------------------------
     # Properties
