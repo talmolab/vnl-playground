@@ -69,13 +69,15 @@ fi
 
 # Derive a job tag for unique state/log files when running multiple jobs in the same dir.
 # Priority: explicit JOB_TAG env var > CUDA_VISIBLE_DEVICES > "default"
+# Hostname is always prepended to avoid conflicts on shared NAS mounts.
+_HOST="$(hostname -s 2>/dev/null || echo local)"
 if [[ -n "${JOB_TAG:-}" ]]; then
-    _TAG="$JOB_TAG"
+    _TAG="${_HOST}_${JOB_TAG}"
 elif [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
     # Replace commas with dashes so "0,1" becomes "0-1" (safe for filenames)
-    _TAG="gpu${CUDA_VISIBLE_DEVICES//,/-}"
+    _TAG="${_HOST}_gpu${CUDA_VISIBLE_DEVICES//,/-}"
 else
-    _TAG="default"
+    _TAG="${_HOST}_default"
 fi
 
 # State file to persist run_id across restarts (unique per job tag)

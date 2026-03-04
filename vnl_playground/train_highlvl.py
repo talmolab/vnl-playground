@@ -2456,20 +2456,56 @@ def main(cfg: DictConfig):
 
     else:
         prior_fn = None
-        # ---- Load frozen decoder from Phase 1 checkpoint ----
-        mimic_ckpt_path = hydra.utils.to_absolute_path(
-            f"{cfg.transfer.mimic_checkpoint_dir}/{cfg.transfer.mimic_run_id}"
-        )
-        logging.info(f"Loading frozen decoder from: {mimic_ckpt_path}")
 
-        mimic_cfg = OmegaConf.create(
-            checkpointing.load_config_from_checkpoint(mimic_ckpt_path)
-        )
-        decoder_policy_fn = ff_ppo_networks.make_decoder_policy_fn(mimic_ckpt_path)
-        logging.info(
-            f"Decoder loaded. intention_size={mimic_cfg.network_config.intention_size}"
-        )
-        _log_memory("after decoder load")
+        if cfg.transfer.get("prior_checkpoint_path", None) is not None:
+            # ---- Load frozen decoder from SCAMPER prior checkpoint (decoder_only) ----
+            from vnl_playground.tasks.prior_utils import (
+                load_prior_checkpoint,
+                make_decoder_inference_fn as make_scamper_decoder_fn,
+            )
+
+            prior_ckpt_path = hydra.utils.to_absolute_path(
+                cfg.transfer.prior_checkpoint_path
+            )
+            prior_ckpt_step = cfg.transfer.get("prior_checkpoint_step", None)
+            logging.info(
+                f"Loading frozen decoder from SCAMPER prior checkpoint: "
+                f"{prior_ckpt_path}"
+            )
+
+            (
+                _encoder_params,
+                _prior_params,
+                decoder_params,
+                normalizer_params,
+                prior_cfg,
+            ) = load_prior_checkpoint(prior_ckpt_path, prior_ckpt_step)
+
+            latent_size = prior_cfg["network_config"]["intention_size"]
+            logging.info(f"SCAMPER decoder loaded. intention_size={latent_size}")
+
+            decoder_policy_fn = make_scamper_decoder_fn(
+                decoder_params, normalizer_params, prior_cfg
+            )
+            mimic_cfg = OmegaConf.create(prior_cfg)
+            _log_memory("after SCAMPER decoder load")
+
+        else:
+            # ---- Load frozen decoder from Phase 1 (track-mjx) checkpoint ----
+            mimic_ckpt_path = hydra.utils.to_absolute_path(
+                f"{cfg.transfer.mimic_checkpoint_dir}/{cfg.transfer.mimic_run_id}"
+            )
+            logging.info(f"Loading frozen decoder from: {mimic_ckpt_path}")
+
+            mimic_cfg = OmegaConf.create(
+                checkpointing.load_config_from_checkpoint(mimic_ckpt_path)
+            )
+            decoder_policy_fn = ff_ppo_networks.make_decoder_policy_fn(mimic_ckpt_path)
+            logging.info(
+                f"Decoder loaded. intention_size="
+                f"{mimic_cfg.network_config.intention_size}"
+            )
+            _log_memory("after decoder load")
 
     # ---- Load environment ----
     env_name = cfg.env_config.env_name
