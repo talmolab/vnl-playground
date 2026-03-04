@@ -532,7 +532,9 @@ class RunGap(rodent_base.RodentEnv):
             gap_ends = self._static_gap_ends
         new_gaps_crossed = jp.sum(current_x > gap_ends).astype(jp.int32)
         info["just_crossed_gap"] = new_gaps_crossed > info["gaps_crossed"]
-        info["gaps_crossed"] = new_gaps_crossed
+        # Keep high-water mark so the agent cannot re-collect a bonus by
+        # rocking backward across a gap boundary and then forward again.
+        info["gaps_crossed"] = jp.maximum(new_gaps_crossed, info["gaps_crossed"])
 
         done = self._is_done(data, info, state.metrics)
         reward = self._get_reward(data, info, state.metrics)
