@@ -2726,6 +2726,7 @@ def main(cfg: DictConfig):
             monitor = GraduationMonitor(
                 threshold=phase.graduation_threshold,
                 patience=phase.graduation_patience,
+                checkpoint_dir=str(phase_ckpt_path),
             )
             phase_progress_fn = make_curriculum_progress_fn(
                 monitor,

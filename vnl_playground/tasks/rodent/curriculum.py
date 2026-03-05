@@ -24,6 +24,7 @@ Or from the CLI::
 import logging
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -54,18 +55,35 @@ class GraduationMonitor:
 
     Thread-safe: ``progress_fn`` may be called from a Brax training thread
     while the main thread polls ``should_graduate``.
+
+    Force graduation: create a file named ``FORCE_GRADUATE`` in the checkpoint
+    directory to immediately graduate from the current phase.
     """
 
-    def __init__(self, threshold: float, patience: int):
+    def __init__(self, threshold: float, patience: int, checkpoint_dir: str | None = None):
         self.threshold = threshold
         self.patience = patience
         self._consecutive_above = 0
         self._graduated = False
         self._lock = threading.Lock()
         self._latest_success_rate = 0.0
+        self._checkpoint_dir = checkpoint_dir
 
     def update(self, metrics: dict[str, Any]) -> None:
         """Called inside progress_fn with eval metrics."""
+        # Check for force-graduation sentinel file
+        if self._checkpoint_dir:
+            sentinel = Path(self._checkpoint_dir).parent / "FORCE_GRADUATE"
+            if sentinel.exists():
+                with self._lock:
+                    self._graduated = True
+                logging.info("CURRICULUM: Force-graduation triggered by sentinel file.")
+                try:
+                    sentinel.unlink()
+                except OSError:
+                    pass
+                return
+
         success_rate = None
         for key in ("eval/episode_trial/success", "eval/episode_episode_trial/success"):
             if key in metrics:
