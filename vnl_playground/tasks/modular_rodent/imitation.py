@@ -710,6 +710,25 @@ def _cosine_dist(a: jp.ndarray, b: jp.ndarray) -> jp.ndarray:
     return jp.dot(a, b) / (jp.linalg.norm(a) * jp.linalg.norm(b))
 
 
+def _sub_quat(q_target: jp.ndarray, q_current: jp.ndarray) -> jp.ndarray:
+    """Relative rotation from q_current to q_target as a 3D angular velocity.
+
+    Matches Julia's subQuat(qa=q_target, qb=q_current):
+        q_diff = conj(q_current) * q_target
+        return quat2Vel(q_diff, dt=1)
+
+    Both quaternions use MuJoCo convention [w, x, y, z].
+    The result is a 3-vector: axis * angle (radians), dt=1.
+    """
+    q_diff = brax.math.quat_mul(brax.math.quat_inv(q_current), q_target)
+    w, xyz = q_diff[0], q_diff[1:]
+    sin_a_2 = jp.linalg.norm(xyz)
+    axis = xyz / (sin_a_2 + 1e-10)
+    speed = 2.0 * jp.arctan2(sin_a_2, w)
+    speed = jp.where(speed > jp.pi, speed - 2.0 * jp.pi, speed)
+    return axis * speed
+
+
 def _with_egocentric_root(
     target: dict,
     yaw_mat: jp.ndarray,
@@ -722,7 +741,7 @@ def _with_egocentric_root(
     coordinates relative to the agent's current pose.
     """
     egocentric_pos = yaw_mat @ (target["root"]["pos"] - root_cur)
-    egocentric_rot = brax.math.relative_quat(target["root"]["rot"], root_quat_cur)
+    egocentric_rot = _sub_quat(target["root"]["rot"], root_quat_cur)
     return {
         **target,
         "root": {"pos": egocentric_pos, "rot": egocentric_rot},

@@ -104,7 +104,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
         xmat = data.xmat[self._mj_model.body("torso").id].reshape(3, 3)
         yaw = jp.arctan2(xmat[1, 0], xmat[0, 0])
         c, s = jp.cos(yaw), jp.sin(yaw)
-        return jp.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+        return jp.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])
 
     def body_relpos(self, data: mjx.Data, body_name: str) -> jp.ndarray:
         """Position of a body in the yaw-aligned torso frame.
@@ -266,9 +266,9 @@ class ModularRodentEnv(mjx_env.MjxEnv):
                     self.site_z(data, "hip_L"), axis=0
                 ),
                 "hip_accelerometer": (
-                    get_sensor_data(m, data, "leg_L/hip_accelerometer") * 0.1
+                    get_sensor_data(m, data, "leg_L/hip_accelerometer")
                 ),
-                "hip_gyro": get_sensor_data(m, data, "leg_L/hip_gyro") * 0.1,
+                "hip_gyro": get_sensor_data(m, data, "leg_L/hip_gyro"),
             },
             "foot_R": {
                 "sole_contact": get_sensor_data(m, data, "foot_R/sole_contact"),
@@ -462,7 +462,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
         """Map action dict to the ctrl array using name-resolved actuator indices."""
         ctrl = jp.zeros(self._mj_model.nu)
         for module, indices in self._ctrl_indices.items():
-            ctrl = ctrl.at[indices].set(action[module])
+            ctrl = ctrl.at[jp.array(indices)].set(action[module])
         return ctrl
 
     # -------------------------------------------------------------------------
