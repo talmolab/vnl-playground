@@ -646,6 +646,36 @@ class GapJumpTrial(rodent_base.RodentEnv):
         metrics["rewards/edge_proximity"] = reward_val
         return reward_val
 
+    @_registry.reward("target_proximity")
+    def _target_proximity_reward(self, data, info, metrics, weight):
+        """Dense reward based on inverse distance to landing platform center.
+
+        Provides a continuous gradient toward the landing target. Uses an
+        exponential kernel so the reward increases sharply as the rodent
+        approaches the target, giving a strong signal near the landing zone.
+
+        Active during DECISION and JUMP phases.
+        """
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        torso_x = torso.xpos[0]
+
+        # Target is the center of the landing platform
+        landing_leading_x = self._takeoff_trailing_edge_x + info["gap_distance"]
+        target_x = landing_leading_x + self._config.landing_platform_depth / 2.0
+
+        # Distance to target, clamped to avoid negative rewards
+        dist = jp.abs(target_x - torso_x)
+
+        # Exponential proximity: 1.0 at target, decays with distance
+        # length_scale controls how quickly reward drops off
+        length_scale = 0.3  # ~0.3m characteristic distance
+        proximity = jp.exp(-dist / length_scale)
+
+        is_active = (info["trial_phase"] >= PHASE_DECISION).astype(jp.float32)
+        reward_val = weight * proximity * is_active
+        metrics["rewards/target_proximity"] = reward_val
+        return reward_val
+
     @_registry.reward("landing_bonus")
     def _landing_bonus_reward(self, data, info, metrics, weight):
         """Bonus reward for landing that scales with gap distance.
