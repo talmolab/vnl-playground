@@ -51,7 +51,7 @@ curriculum:
       max_decision_steps: 300
       learning_rate: 5e-5
       unroll_length: 50
-      num_timesteps: 500_000_000
+      num_timesteps: 1_000_000_000
 
 env_config:
   env_name: RodentGapJumpTrialVision
@@ -72,6 +72,12 @@ env_config:
     episode_length: 300
     torque_actuators: true
     use_mesh_platforms: true
+    # Bigger platforms for easier learning
+    takeoff_platform_length: 0.5
+    takeoff_platform_width: 0.4
+    landing_platform_depth: 0.5
+    landing_platform_max_width: 0.4
+    landing_height_offset: 0.0
     reward_terms:
       hold_stillness:
         weight: 0.3
@@ -106,8 +112,8 @@ network_config:
   fusion_hidden_layer_sizes: [256]
 
 transfer:
-  mimic_run_id: "260212_123718_492372"
-  mimic_checkpoint_dir: /home/talmolab/Desktop/SalkResearch/track-mjx/model_checkpoints
+  mimic_run_id: "phase1"
+  mimic_checkpoint_dir: /home/scott/SalkResearch/data
   highlvl_obs_key: task_obs
   decoder_obs_key: proprioception
 
@@ -116,7 +122,7 @@ train_setup:
   train_config:
     episode_length: 300
     num_envs: 1024
-    num_timesteps: 100_000_000
+    num_timesteps: 1_000_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4
