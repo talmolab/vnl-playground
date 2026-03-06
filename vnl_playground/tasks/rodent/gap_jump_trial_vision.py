@@ -79,6 +79,10 @@ def default_config() -> config_dict.ConfigDict:
     cfg.use_textures = False
     cfg.use_shadows = False
     cfg.vision_mode = "binocular"  # "binocular", "monocular_left", "monocular_right"
+    # Binocular parameters (disabled by default = monocular mode)
+    cfg.binocular = False
+    cfg.left_camera_name = "eye_left-rodent"
+    cfg.right_camera_name = "eye_right-rodent"
     return cfg
 
 
