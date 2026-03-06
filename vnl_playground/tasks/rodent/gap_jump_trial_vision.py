@@ -164,6 +164,12 @@ class GapJumpTrialVision(gap_jump_trial.GapJumpTrial):
         touch_sensors = self._get_touch_sensors(data)
         origin = self._get_origin(data)
 
+        # Egocentric vector to target position
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        target_pos = info.get("target_position", jp.zeros(3))
+        rel_target_world = target_pos - torso.xpos
+        ego_target = jp.dot(rel_target_world, torso.xmat)
+
         task_obs = jp.concatenate(
             [
                 info["prev_action"],
@@ -171,6 +177,7 @@ class GapJumpTrialVision(gap_jump_trial.GapJumpTrial):
                 touch_sensors,
                 origin,
                 phase_indicator,
+                ego_target,
             ]
         )
 

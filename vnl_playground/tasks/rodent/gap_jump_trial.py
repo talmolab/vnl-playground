@@ -10,6 +10,7 @@ Trial phases:
 """
 
 import collections
+import pathlib
 from typing import Any, Dict, Optional, Union
 
 import jax
@@ -71,6 +72,16 @@ def default_config() -> config_dict.ConfigDict:
         hold_duration=50,
         max_decision_steps=300,
         spawn_x=0.0,
+        # --- Target / waypoint system ---
+        target_position_mode="landing_center",  # "landing_center", "landing_round_trip", "fixed", "waypoints"
+        fixed_target_position=(0.5, 0.0, 0.0),
+        target_waypoints=(),
+        max_waypoints=4,
+        target_reach_threshold=0.05,
+        auto_advance_waypoint=True,
+        loop_waypoints=False,
+        # Aesthetic
+        aesthetic="default",  # "default" or "outdoor_natural"
         # Episode limits
         episode_length=500,
         action_repeat=1,
@@ -144,6 +155,13 @@ class GapJumpTrial(rodent_base.RodentEnv):
         super().__init__(config, config_overrides)
         self._rng = rng
 
+        # Default platform material (from gap_jump_arena.xml)
+        self._platform_material = "platform_mat"
+
+        # Apply aesthetic textures before building arena
+        if self._config.get("aesthetic", "default") == "outdoor_natural":
+            self._apply_outdoor_natural_aesthetic()
+
         # Build take-off and landing platforms
         self._build_arena()
 
@@ -186,6 +204,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
         # Precompute gap distance array as JAX array
         self._gap_distances_array = jp.array(self._config.gap_distances)
         self._max_gap = float(max(self._config.gap_distances))
+        self._max_waypoints = self._config.get("max_waypoints", 4)
 
         # Take-off platform trailing edge x position
         self._takeoff_trailing_edge_x = self._config.takeoff_platform_length / 2.0
@@ -199,6 +218,47 @@ class GapJumpTrial(rodent_base.RodentEnv):
         mesh.userface = faces.flatten()
         mesh.usertexcoord = texcoords.flatten()
         return name
+
+    def _apply_outdoor_natural_aesthetic(self) -> None:
+        """Apply outdoor natural aesthetic: grass platforms, blue sky, better lighting."""
+        assets_dir = pathlib.Path(__file__).parent / "xmls" / "assets"
+        self._spec.compiler.texturedir = str(assets_dir)
+
+        # --- Skybox ---
+        for tex in list(self._spec.textures):
+            if tex.type == mujoco.mjtTexture.mjTEXTURE_SKYBOX:
+                tex.delete()
+
+        self._spec.add_texture(
+            name="outdoor_skybox",
+            type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
+            file="OutdoorSkybox2048.png",
+            gridsize=[3, 4],
+            gridlayout=".U..LFRB.D..",
+        )
+
+        # --- Ground/Platform texture ---
+        self._spec.add_texture(
+            name="grass_texture",
+            type=mujoco.mjtTexture.mjTEXTURE_2D,
+            file="OutdoorGrassFloorD.png",
+        )
+
+        grass_mat = self._spec.add_material(name="grass_mat")
+        grass_mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "grass_texture"
+        grass_mat.texuniform = True
+
+        self._platform_material = "grass_mat"
+
+        # --- Headlight for outdoor scene ---
+        self._spec.visual.headlight.ambient = [0.4, 0.4, 0.4]
+        self._spec.visual.headlight.diffuse = [0.8, 0.8, 0.8]
+        self._spec.visual.headlight.specular = [0.1, 0.1, 0.1]
+
+        # Disable dark fog
+        self._spec.visual.map.fogstart = 10.0
+        self._spec.visual.map.fogend = 20.0
+        self._spec.visual.rgba.fog = [0.0, 0.0, 0.0, 0.0]
 
     def _build_arena(self) -> None:
         """Build take-off and landing platforms in the arena spec.
@@ -228,7 +288,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
                 name="takeoff_platform_geom",
                 type=mujoco.mjtGeom.mjGEOM_MESH,
                 meshname=mesh_name,
-                material="platform_mat",
+                material=self._platform_material,
                 contype=1,
                 conaffinity=1,
             )
@@ -237,7 +297,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
                 name="takeoff_platform_geom",
                 type=mujoco.mjtGeom.mjGEOM_BOX,
                 size=list(takeoff_half),
-                material="platform_mat",
+                material=self._platform_material,
                 contype=1,
                 conaffinity=1,
             )
@@ -274,7 +334,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
                 name="landing_platform_geom",
                 type=mujoco.mjtGeom.mjGEOM_MESH,
                 meshname=mesh_name,
-                material="platform_mat",
+                material=self._platform_material,
                 contype=1,
                 conaffinity=1,
             )
@@ -283,7 +343,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
                 name="landing_platform_geom",
                 type=mujoco.mjtGeom.mjGEOM_BOX,
                 size=list(landing_half),
-                material="platform_mat",
+                material=self._platform_material,
                 contype=1,
                 conaffinity=1,
             )
@@ -335,6 +395,43 @@ class GapJumpTrial(rodent_base.RodentEnv):
         # Compute slide joint offset: 0 -> max gap, negative -> smaller gap
         slide_offset = -(self._max_gap - gap_distance)
 
+        # --- Build target waypoints based on mode ---
+        waypoints = jp.zeros((self._max_waypoints, 3))
+        landing_leading_x = self._takeoff_trailing_edge_x + gap_distance
+        landing_center_x = landing_leading_x + self._config.landing_platform_depth / 2.0
+        landing_center_z = self._config.landing_height_offset
+
+        if self._config.target_position_mode == "landing_center":
+            waypoints = waypoints.at[0].set(
+                jp.array([landing_center_x, 0.0, landing_center_z])
+            )
+            num_waypoints = jp.array(1, dtype=jp.int32)
+
+        elif self._config.target_position_mode == "landing_round_trip":
+            waypoints = waypoints.at[0].set(
+                jp.array([landing_center_x, 0.0, landing_center_z])
+            )
+            waypoints = waypoints.at[1].set(
+                jp.array([self._config.spawn_x, 0.0, 0.0])
+            )
+            num_waypoints = jp.array(2, dtype=jp.int32)
+
+        elif self._config.target_position_mode == "fixed":
+            waypoints = waypoints.at[0].set(
+                jp.array(self._config.fixed_target_position)
+            )
+            num_waypoints = jp.array(1, dtype=jp.int32)
+
+        elif self._config.target_position_mode == "waypoints":
+            cfg_wps = self._config.target_waypoints
+            n = min(len(cfg_wps), self._max_waypoints)
+            for i in range(n):
+                waypoints = waypoints.at[i].set(jp.array(cfg_wps[i]))
+            num_waypoints = jp.array(n, dtype=jp.int32)
+
+        else:
+            num_waypoints = jp.array(1, dtype=jp.int32)
+
         info = {
             "prev_action": self.null_action(),
             "action": self.null_action(),
@@ -345,6 +442,12 @@ class GapJumpTrial(rodent_base.RodentEnv):
             "jump_initiated": jp.array(False),
             "trial_success": jp.array(False),
             "trial_outcome": jp.array(OUTCOME_ONGOING, dtype=jp.int32),
+            # Waypoint / target system
+            "target_waypoints": waypoints,
+            "num_waypoints": num_waypoints,
+            "current_waypoint_idx": jp.array(0, dtype=jp.int32),
+            "target_position": waypoints[0],
+            "target_reached": jp.array(False),
         }
 
         data = mjx.make_data(
@@ -459,6 +562,36 @@ class GapJumpTrial(rodent_base.RodentEnv):
         reward = self._get_reward(data, info, state.metrics)
         reward = jp.nan_to_num(reward)
 
+        # --- Waypoint advancement (after reward) ---
+        if self._config.get("auto_advance_waypoint", True):
+            dist_to_target = jp.linalg.norm(torso.xpos - info["target_position"])
+            at_target = dist_to_target < self._config.get(
+                "target_reach_threshold", 0.05
+            )
+
+            if self._config.get("loop_waypoints", False):
+                should_advance = at_target
+                new_idx = jp.where(
+                    should_advance,
+                    (info["current_waypoint_idx"] + 1) % info["num_waypoints"],
+                    info["current_waypoint_idx"],
+                )
+                info["target_reached"] = jp.array(False)
+            else:
+                can_advance = info["current_waypoint_idx"] < (
+                    info["num_waypoints"] - 1
+                )
+                should_advance = at_target & can_advance
+                new_idx = jp.where(
+                    should_advance,
+                    info["current_waypoint_idx"] + 1,
+                    info["current_waypoint_idx"],
+                )
+                info["target_reached"] = at_target & ~can_advance
+
+            info["current_waypoint_idx"] = new_idx
+            info["target_position"] = info["target_waypoints"][new_idx]
+
         # --- Outcome metrics ---
         metrics = state.metrics
         metrics["trial/outcome"] = info["trial_outcome"].astype(float)
@@ -504,6 +637,12 @@ class GapJumpTrial(rodent_base.RodentEnv):
         touch_sensors = self._get_touch_sensors(data)
         origin = self._get_origin(data)
 
+        # Egocentric vector to target position
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        target_pos = info.get("target_position", jp.zeros(3))
+        rel_target_world = target_pos - torso.xpos
+        ego_target = jp.dot(rel_target_world, torso.xmat)
+
         task_obs = jp.concatenate(
             [
                 info["prev_action"],
@@ -511,6 +650,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
                 touch_sensors,
                 origin,
                 phase_indicator,
+                ego_target,
             ]
         )
 
@@ -525,6 +665,7 @@ class GapJumpTrial(rodent_base.RodentEnv):
             task_obs=task_obs,
             proprioception=proprioception,
             gap_distance=jp.array(info.get("gap_distance", 0.0)).reshape(1),
+            target_position=info.get("target_position", jp.zeros(3)),
         )
 
         return collections.OrderedDict(
@@ -676,6 +817,25 @@ class GapJumpTrial(rodent_base.RodentEnv):
         metrics["rewards/target_proximity"] = reward_val
         return reward_val
 
+    @_registry.reward("go_to_target")
+    def _go_to_target_reward(self, data, info, metrics, weight):
+        """Dense reward for moving toward the active target position.
+
+        Active during DECISION and JUMP phases (gated by trial phase).
+        """
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        target_pos = info.get("target_position", jp.zeros(3))
+        dist = jp.linalg.norm(torso.xpos - target_pos)
+
+        length_scale = 0.3
+        proximity = jp.exp(-dist / length_scale)
+
+        is_active = (info["trial_phase"] >= PHASE_DECISION).astype(jp.float32)
+        reward_val = weight * proximity * is_active
+        metrics["rewards/go_to_target"] = reward_val
+        metrics["rewards/target_distance"] = dist
+        return reward_val
+
     @_registry.reward("landing_bonus")
     def _landing_bonus_reward(self, data, info, metrics, weight):
         """Bonus reward for landing that scales with gap distance.
@@ -748,6 +908,11 @@ class GapJumpTrial(rodent_base.RodentEnv):
         """Terminate on NaN values in simulation data."""
         flattened_vals, _ = flatten_util.ravel_pytree(data)
         return jp.sum(jp.isnan(flattened_vals)) > 0
+
+    @_registry.termination("reached_target")
+    def _reached_target_termination(self, data, info):
+        """Terminate when all waypoints are completed."""
+        return info.get("target_reached", jp.array(False))
 
     # ------------------------------------------------------------------
     # Utility methods
