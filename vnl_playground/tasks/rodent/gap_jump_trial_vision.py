@@ -134,8 +134,9 @@ class GapJumpTrialVision(gap_jump_trial.GapJumpTrial):
 
     @property
     def vision_shape(self):
-        """Shape of the vision observation: (H, W, C) where C=1 if grayscale else 3."""
-        channels = 1 if self._grayscale else 3
+        """Shape of the vision observation: (H, W, C) or (H, W, 2*C) for binocular."""
+        mono_channels = 1 if self._grayscale else 3
+        channels = 2 * mono_channels if self._config.get("binocular", False) else mono_channels
         return (self._vision_height, self._vision_width, channels)
 
     @property
