@@ -2522,7 +2522,7 @@ def main(cfg: DictConfig):
 
     # Pass vision config to env so its reported vision_shape matches the
     # VisionRenderWrapper dimensions used for actual rendering.
-    for vision_key in ("vision_width", "vision_height", "grayscale"):
+    for vision_key in ("vision_width", "vision_height", "grayscale", "binocular"):
         if vision_key in cfg.env_config:
             env_args[vision_key] = cfg.env_config[vision_key]
 
