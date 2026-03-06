@@ -31,6 +31,9 @@ def default_config() -> config_dict.ConfigDict:
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
+        tolerance=1e-6,
+        cone="pyramidal",
+        impratio=1.0,
         mujoco_impl="warp",
     )
 
@@ -82,10 +85,16 @@ class ModularRodentEnv(mjx_env.MjxEnv):
             self._mj_model.vis.global_.offheight = 2160
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
+            self._mj_model.opt.tolerance = self._config.tolerance
+            self._mj_model.opt.impratio = self._config.impratio
             self._mj_model.opt.solver = {
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
+            self._mj_model.opt.cone = {
+                "pyramidal": mujoco.mjtCone.mjCONE_PYRAMIDAL,
+                "elliptic": mujoco.mjtCone.mjCONE_ELLIPTIC,
+            }[self._config.cone.lower()]
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self._config.mujoco_impl
             )
