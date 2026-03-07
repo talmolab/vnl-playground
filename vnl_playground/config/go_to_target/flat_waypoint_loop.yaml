@@ -1,0 +1,92 @@
+# @package _global_
+# No-vision flat arena, 4-waypoint rectangle loop.
+# Tests direction changes and re-orientation.
+#
+# Waypoint layout (top-down):
+#     wp1 (0.6, 0.2) ---- wp2 (0.6, -0.2)
+#         |                       |
+#     wp0 (0.0, 0.2) ---- wp3 (0.0, -0.2)
+#              (spawn at origin)
+#
+# Usage:
+#   python -m vnl_playground.train_highlvl \
+#       --config-name=go_to_target/flat_waypoint_loop
+
+env_config:
+  env_name: RodentGoToTarget
+  task_name: go_to_target
+  walker_name: rodent
+  render_camera_name: close_profile
+  env_args:
+    episode_length: 600
+    naconmax: 20480
+    torque_actuators: true
+    target_position_mode: waypoints
+    target_waypoints:
+      - [0.0, 0.2, 0.0]
+      - [0.6, 0.2, 0.0]
+      - [0.6, -0.2, 0.0]
+      - [0.0, -0.2, 0.0]
+    max_waypoints: 4
+    target_reach_threshold: 0.05
+    auto_advance_waypoint: true
+    loop_waypoints: true
+    reward_terms:
+      go_to_target:
+        weight: 1.0
+        length_scale: 1.0
+      directional_speed:
+        weight: 1.0
+        target_speed: 0.5
+    termination_criteria:
+      fallen:
+        min_torso_z: -0.1
+      timeout:
+        max_steps: 600
+      nan_termination: {}
+
+network_config:
+  arch_name: mlp
+  policy_hidden_layer_sizes: [512, 512]
+  value_hidden_layer_sizes: [512, 512]
+
+transfer:
+  mimic_run_id: "phase1"
+  mimic_checkpoint_dir: /home/scott/SalkResearch/data
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+train_setup:
+  eval_every: 5_000_000
+  train_config:
+    episode_length: 600
+    num_envs: 1024
+    num_timesteps: 100_000_000
+    batch_size: 1024
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 3e-4
+    clipping_epsilon: 0.2
+    discounting: 0.97
+    entropy_cost: 1e-3
+    action_repeat: 1
+    unroll_length: 10
+    reward_scaling: 1.0
+    normalize_observations: true
+    seed: 0
+    num_eval_envs: 128
+    deterministic_eval: false
+    grad_clip_threshold: 20.0
+    vf_loss_coefficient: 0.5
+
+logging_config:
+  project_name: vnl-playground
+  group_name: flat-go-to-target-validation
+  model_path: checkpoints_flat_waypoint_loop
+  notes: "No-vision, flat arena, 4-waypoint loop, proximity + speed"
+  exp_name: flat_waypoint_loop
+
+render_config:
+  render_fps: 50
+  render_height: 480
+  render_width: 640

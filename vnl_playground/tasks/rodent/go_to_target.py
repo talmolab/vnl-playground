@@ -39,7 +39,7 @@ def default_config() -> config_dict.ConfigDict:
         sim_dt=0.002,
         solver="newton",
         mujoco_impl="warp",
-        naconmax=19 * 1024,
+        naconmax=20 * 1024,
         njmax=400,
         iterations=5,
         ls_iterations=5,
@@ -346,21 +346,40 @@ class GoToTarget(rodent_base.RodentEnv):
     # ------------------------------------------------------------------
 
     @_registry.reward("go_to_target")
-    def _go_to_target_reward(self, data, info, metrics, weight):
-        """Dense reward for moving toward the active target position.
+    def _go_to_target_reward(self, data, info, metrics, weight,
+                              length_scale=1.0):
+        """Dense proximity reward for being near the target.
 
-        Always active (no phase gating). Exponential proximity kernel.
+        Exponential kernel with configurable length_scale.
+        Default 1.0m gives useful gradient over typical target distances.
         """
         torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
         target_pos = info.get("target_position", jp.zeros(3))
         dist = jp.linalg.norm(torso.xpos - target_pos)
 
-        length_scale = 0.3
         proximity = jp.exp(-dist / length_scale)
 
         reward_val = weight * proximity
         metrics["rewards/go_to_target"] = reward_val
         metrics["rewards/target_distance"] = dist
+        return reward_val
+
+    @_registry.reward("directional_speed")
+    def _directional_speed_reward(self, data, info, metrics, weight,
+                                   target_speed=0.5):
+        """Reward for velocity toward the target.
+
+        Uses subtree_linvel (same as RunGap's forward_velocity).
+        """
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        target_pos = info.get("target_position", jp.zeros(3))
+        delta = target_pos - torso.xpos
+        direction = delta / (jp.linalg.norm(delta) + 1e-6)
+        vel = torso.subtree_linvel
+        speed_toward_target = jp.dot(vel, direction)
+        reward_val = weight * jp.clip(speed_toward_target / target_speed, 0.0, 1.0)
+        metrics["rewards/directional_speed"] = reward_val
+        metrics["rewards/speed_toward_target"] = speed_toward_target
         return reward_val
 
     # ------------------------------------------------------------------
