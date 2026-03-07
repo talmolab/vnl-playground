@@ -22,13 +22,15 @@ classifiers = [
 dependencies = [
     "brax==0.14.0",
     "wandb",
-    "mujoco",
+    # MuJoCo >=3.5.1 required for RenderContext.pytree() API used by vision rendering.
+    # Current dev build: 3.5.1.dev878091736 (built from source).
+    "mujoco>=3.5.1",
     "dm_control",
-    "mujoco-mjx[warp]>=3.4.0",
-    "warp-lang>=1.11.0",
+    "mujoco-mjx[warp]>=3.5.1",
+    "warp-lang>=1.13.0",
     "mediapy",
-    "jax>=0.7.2",
-    "flax",
+    "jax>=0.8.2",
+    "flax>=0.10.2",
     "imageio[ffmpeg]",
     "hydra-core",
     "h5py",
@@ -51,8 +53,8 @@ readme = {file = ["README.md"], content-type="text/markdown"}
 version_file = "vnl_playground/_version.py"
 
 [project.optional-dependencies]
-cuda12 = ["jax[cuda12]>=0.7.2 ; sys_platform == 'linux'"]
-cuda13 = ["jax[cuda13]>=0.7.2 ; sys_platform == 'linux'"]
+cuda12 = ["jax[cuda12]>=0.8.2 ; sys_platform == 'linux'"]
+cuda13 = ["jax[cuda13]>=0.8.2 ; sys_platform == 'linux'"]
 dev = [
     "black[jupyter]>=26.1.0",
 ]
@@ -60,7 +62,7 @@ dev = [
 with-cuda = [
     "vnl-playground[dev]",
     "flax[all]",
-    "jax[cuda12]>=0.7.2",
+    "jax[cuda12]>=0.8.2",
 ]
 
 [project.urls]
