@@ -12,6 +12,7 @@ from vnl_playground.tasks.rodent import imitation as rodent_imitation
 from vnl_playground.tasks.rodent import rearing as rodent_rearing
 from vnl_playground.tasks.rodent import bowl_escape as rodent_bowl_escape
 from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_velocity
+from vnl_playground.tasks.rodent import arena_forage as rodent_arena_forage
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
 
 # Unified wrappers and reference clips
@@ -24,6 +25,7 @@ _envs = {
     "RodentRearing": rodent_rearing.Rearing,
     "RodentBowlEscape": rodent_bowl_escape.BowlEscape,
     "RodentMaintainVelocity": rodent_maintain_velocity.MaintainVelocity,
+    "RodentArenaForage": rodent_arena_forage.ArenaForage,
     "FruitflyImitation": fruitfly_imitation.Imitation,
 }
 
@@ -32,6 +34,7 @@ _cfgs = {
     "RodentRearing": rodent_rearing.default_config,
     "RodentBowlEscape": rodent_bowl_escape.default_config,
     "RodentMaintainVelocity": rodent_maintain_velocity.default_config,
+    "RodentArenaForage": rodent_arena_forage.default_config,
     "FruitflyImitation": fruitfly_imitation.default_config,
 }
 
