@@ -2,10 +2,14 @@
 # run_with_autoresume.sh — Auto-resume training on kill/crash/OOM.
 #
 # Usage:
-#   ./vnl_playground/run_with_autoresume.sh [--config-name CONFIG] [HYDRA_OVERRIDES...]
+#   ./vnl_playground/run_with_autoresume.sh [--fresh] [--config-name CONFIG] [HYDRA_OVERRIDES...]
+#
+# Options:
+#   --fresh    Remove existing auto-resume state and start a fresh training run.
 #
 # Examples:
 #   ./vnl_playground/run_with_autoresume.sh --config-name=rodent_run_gap/vision_task_obs_transfer
+#   ./vnl_playground/run_with_autoresume.sh --fresh --config-name=rodent_run_gap/vision_task_obs_transfer
 #   ./vnl_playground/run_with_autoresume.sh --config-name=rodent_run_gap/vision_task_obs_transfer \
 #       train_setup.train_config.num_envs=512
 #
@@ -33,8 +37,16 @@ set -euo pipefail
 MAX_RETRIES="${MAX_RETRIES:-50}"
 SLEEP_BETWEEN="${SLEEP_BETWEEN_RETRIES:-10}"
 
-# Collect all arguments to forward to the training script
-EXTRA_ARGS=("$@")
+# Parse --fresh flag and collect remaining arguments for the training script
+FRESH=0
+EXTRA_ARGS=()
+for _arg in "$@"; do
+    if [[ "$_arg" == "--fresh" ]]; then
+        FRESH=1
+    else
+        EXTRA_ARGS+=("$_arg")
+    fi
+done
 
 # --- Auto-detect MODEL_PATH from config YAML ---
 # Extract --config-name value from args (or use the Hydra default) to locate
@@ -90,6 +102,12 @@ echo "State file: ${STATE_FILE}"
 echo "Max retries: ${MAX_RETRIES}"
 echo "Extra args: ${EXTRA_ARGS[*]}"
 echo ""
+
+# ---- Handle --fresh: remove existing state ----
+if [[ "$FRESH" -eq 1 && -f "$STATE_FILE" ]]; then
+    echo "--fresh requested. Removing state file: ${STATE_FILE}"
+    rm -f "$STATE_FILE"
+fi
 
 # ---- Check for existing state from a previous wrapper run ----
 RESUME_RUN_ID=""
