@@ -401,6 +401,13 @@ class BowlEscape(rodent_base.RodentEnv):
         # make stricter by adding a small threshold
         return z <= height_z + 0.03
 
+    @_named_termination_criterion("escaped")
+    def _escaped(self, data, info) -> bool:
+        """Terminate when the torso has moved past the bowl edge (L-inf distance)."""
+        del info
+        torso_pos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
+        return jp.max(jp.abs(torso_pos[:2])) >= float(self._config.bowl_hsize)
+
     @_named_termination_criterion("nan_termination")
     def _nan_termination(self, data, info) -> bool:
         del info
