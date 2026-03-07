@@ -28,16 +28,33 @@ Usage::
 
 import collections
 import logging
+import os
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import mujoco
 from mujoco import mjx
+import warp as wp
 
 from mujoco_playground._src import mjx_env
 
 logger = logging.getLogger(__name__)
+
+
+def _get_warp_cuda_devices() -> list[str]:
+    """Return warp device strings for all visible CUDA GPUs.
+
+    Respects ``CUDA_VISIBLE_DEVICES`` so that single-GPU runs
+    (e.g. ``CUDA_VISIBLE_DEVICES=0``) only register one device.
+    """
+    cuda_vis = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cuda_vis is not None:
+        # CUDA_VISIBLE_DEVICES remaps ordinals: "2,3" → runtime sees cuda:0, cuda:1
+        n = len([x.strip() for x in cuda_vis.split(",") if x.strip()])
+    else:
+        n = wp.get_cuda_device_count()
+    return [f"cuda:{i}" for i in range(n)]
 
 
 # ---------------------------------------------------------------------------
@@ -158,12 +175,14 @@ class JaxVisionRenderer:
         else:
             ncam_active = mj_model.ncam
 
-        # Create the render context via the official MJX API.
-        # This internally creates warp Model/Data for initialization,
-        # handles memory management, and returns a JAX-compatible context.
+        # Create the render context on ALL visible CUDA devices so that
+        # pmap'd training can call refit_bvh / render from any device.
+        devices = _get_warp_cuda_devices()
+        logger.info(f"Creating render context on devices: {devices}")
         rc = mjx.create_render_context(
             mjm=mj_model,
             nworld=nworld,
+            devices=devices,
             cam_res=(width, height),
             render_rgb=[True] * ncam_active,
             render_depth=[render_depth] * ncam_active,
