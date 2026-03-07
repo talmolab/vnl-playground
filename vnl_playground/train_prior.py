@@ -249,6 +249,7 @@ def main(cfg: DictConfig):
             else None
         ),
         grad_clip_norm=prior_cfg.get("grad_clip_norm", 10.0),
+        freeze_normalizer=prior_cfg.get("freeze_normalizer", True),
         prior_hidden_layer_sizes=tuple(cfg.network_config.prior_layer_sizes),
         ckpt_mgr=ckpt_mgr,
         checkpoint_to_restore=cfg.train_setup.checkpoint_to_restore,

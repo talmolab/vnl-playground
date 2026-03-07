@@ -41,7 +41,7 @@ env_config:
   # Timing Configuration
   # -----------------------------------------------------------------------------
   sim_dt: 0.002
-  ctrl_dt: 0.02
+  ctrl_dt: 0.01
   mocap_hz: 50
 
   # -----------------------------------------------------------------------------
@@ -150,6 +150,7 @@ network_config:
 prior_config:
   kl_weight: 1.0                      # Weight for KL divergence loss
   grad_clip_norm: 10.0                # Gradient clipping norm
+  freeze_normalizer: true             # Freeze normalizer to match frozen teacher stats
 
   # ---------------------------------------------------------------------------
   # KL Loss Weight Schedule

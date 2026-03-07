@@ -460,6 +460,13 @@ class PriorHighLevelWrapper(wrapper.Wrapper):
         state.info["prior_logvar"] = jp.zeros(self._latent_size)
         state.info["final_latent"] = jp.zeros(self._latent_size)
         state.info["rng"] = rng
+        # Initialize prior diagnostic metrics so step() doesn't change pytree structure
+        metrics = dict(state.metrics) if state.metrics else {}
+        metrics["prior/mean_norm"] = jp.float32(0.0)
+        metrics["prior/logvar_mean"] = jp.float32(0.0)
+        metrics["prior/residual_norm"] = jp.float32(0.0)
+        metrics["prior/final_latent_norm"] = jp.float32(0.0)
+        state = state.replace(metrics=metrics)
         return self._process_state(state)
 
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:

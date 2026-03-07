@@ -91,8 +91,8 @@ network_config:
   fusion_hidden_layer_sizes: [256, 256, 256]
 
 transfer:
-  mode: decoder_only
-  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/data/golden_prior
+  mode: prior_decoder
+  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/vnl-playground/prior_checkpoints/260305_235527_022768
   prior_checkpoint_step: null
   highlvl_obs_key: task_obs
   decoder_obs_key: proprioception
