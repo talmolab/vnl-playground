@@ -225,6 +225,31 @@ def _run_eval_rollout(jit_reset, jit_step, inference_fn, params, episode_length,
     return rollout, termination_events
 
 
+def _draw_hud(
+    frame, lines, x=10, y_start=20, line_height=22, font_scale=0.5, thickness=1
+):
+    """Draw multiple lines of HUD text with black shadow for readability.
+
+    Each entry in ``lines`` is ``(text, color_bgr)``.
+    """
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    for i, (text, color) in enumerate(lines):
+        y = y_start + i * line_height
+        cv2.putText(
+            frame,
+            text,
+            (x + 1, y + 1),
+            font,
+            font_scale,
+            (0, 0, 0),
+            thickness + 1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame, text, (x, y), font, font_scale, color, thickness, cv2.LINE_AA
+        )
+
+
 def render_video(
     rollout,
     mj_model,
@@ -236,6 +261,8 @@ def render_video(
     right_vision_renderer=None,
     termination_events=None,
     termination_fade_seconds=1.0,
+    hud_config=None,
+    reward_config=None,
 ):
     """Render a rollout to an MP4 video file with tracking camera.
 
@@ -258,7 +285,15 @@ def render_video(
     termination points receive a text overlay showing the termination
     reason followed by a logistic fade-out effect lasting
     ``termination_fade_seconds``.
+
+    If ``hud_config`` is provided (a dict from ``render_config.hud``),
+    a heads-up display is drawn in the bottom-left corner with per-frame
+    metrics (speed, reward breakdown, cumulative reward, gap crossing
+    indicator, torso height, heading, etc.).  ``reward_config`` supplies
+    the reward term parameters (e.g. target_speed) for display.
     """
+    import math
+
     camera = mujoco.MjvCamera()
     camera.type = mujoco.mjtCamera.mjCAMERA_TRACKING
 
@@ -284,6 +319,26 @@ def render_video(
     camera.lookat[:] = [0, 0, 0.3]
 
     scene_option = mujoco.MjvOption()
+
+    # -- HUD setup -------------------------------------------------------------
+    hud_enabled = False
+    if hud_config is not None and hud_config.get("enabled", True):
+        hud_enabled = True
+
+    _torso_id = None
+    if hud_enabled:
+        for name in track_body_names:
+            try:
+                _torso_id = mj_model.body(name).id
+                break
+            except Exception:
+                continue
+
+    target_speed = None
+    if reward_config is not None:
+        fv = reward_config.get("forward_velocity", {})
+        if isinstance(fv, dict):
+            target_speed = fv.get("target_speed", None)
 
     # -- Batch ego GPU pre-rendering ------------------------------------------
     ego_overlay_np = None
@@ -346,6 +401,30 @@ def render_video(
         termination_dict = {}
         if termination_events:
             termination_dict = {idx: reason for idx, reason in termination_events}
+        termination_frame_set = set(termination_dict.keys())
+
+        # HUD accumulators
+        cumulative_reward = 0.0
+        gap_crossed_persistent = False
+        gap_flash_secs = (
+            hud_config.get("gap_flash_duration", 1.5) if hud_config else 1.5
+        )
+        GAP_FLASH_DURATION = int(fps * gap_flash_secs)
+        gap_crossed_display_frames = 0
+        episode_step = 0
+
+        # HUD toggle helpers
+        def _hud_on(key):
+            return hud_enabled and hud_config.get(key, True)
+
+        # BGR color constants
+        WHITE = (255, 255, 255)
+        YELLOW = (0, 255, 255)
+        CYAN = (255, 255, 0)
+        GREEN = (0, 255, 0)
+        BRIGHT_GREEN = (0, 255, 128)
+        GRAY = (180, 180, 180)
+        RED = (0, 0, 255)
 
         for i, state in enumerate(rollout):
             mj_data.qpos = np.array(state.data.qpos)
@@ -363,6 +442,130 @@ def render_video(
                 if y1 + pad < frame.shape[0] and x1 + pad < frame.shape[1]:
                     frame[y0 - pad : y1 + pad, x0 - pad : x1 + pad] = 255
                     frame[y0:y1, x0:x1] = ego_scaled
+
+            # -- HUD overlay --------------------------------------------------
+            if hud_enabled:
+                # Reset accumulators on episode boundary
+                if i > 0 and (i - 1) in termination_frame_set:
+                    cumulative_reward = 0.0
+                    gap_crossed_persistent = False
+                    gap_crossed_display_frames = 0
+                    episode_step = 0
+
+                # Extract kinematics from mj_data (already forwarded)
+                forward_vel = None
+                torso_z = None
+                heading_deg = None
+                lateral_y = None
+                if _torso_id is not None:
+                    forward_vel = float(mj_data.subtree_linvel[_torso_id, 0])
+                    torso_z = float(mj_data.xpos[_torso_id, 2])
+                    lateral_y = float(mj_data.xpos[_torso_id, 1])
+                    hx = float(mj_data.xmat[_torso_id].reshape(3, 3)[0, 0])
+                    hy = float(mj_data.xmat[_torso_id].reshape(3, 3)[0, 1])
+                    heading_deg = math.degrees(math.atan2(hy, hx))
+
+                # Read reward components from state.metrics
+                fwd_reward = float(state.metrics.get("rewards/forward_velocity", 0.0))
+                gap_bonus = float(state.metrics.get("rewards/gap_crossing_bonus", 0.0))
+                step_reward = float(state.reward)
+                cumulative_reward += step_reward
+                episode_step += 1
+
+                # Gap crossing persistence
+                if gap_bonus > 0:
+                    gap_crossed_persistent = True
+                    gap_crossed_display_frames = GAP_FLASH_DURATION
+
+                # Action magnitude
+                action_rms = None
+                if hasattr(state, "info") and "action" in state.info:
+                    act = np.asarray(state.info["action"])
+                    action_rms = float(np.sqrt(np.mean(act**2)))
+
+                # Distance to next gap (from obs gap features if available)
+                dist_to_gap = None
+                if hasattr(state, "obs"):
+                    obs = state.obs
+                    # Navigate OrderedDict: state -> imitation_target
+                    if isinstance(obs, dict) and "state" in obs:
+                        inner = obs["state"]
+                        if isinstance(inner, dict) and "imitation_target" in inner:
+                            gap_feats = np.asarray(inner["imitation_target"])
+                            if gap_feats.shape[-1] >= 1:
+                                dist_to_gap = float(gap_feats[0])
+
+                # Build HUD lines
+                hud_lines = []
+
+                if _hud_on("show_speed") and forward_vel is not None:
+                    speed_text = f"Speed: {forward_vel:.2f} m/s"
+                    if target_speed is not None:
+                        speed_text += f" / {target_speed:.1f} target"
+                        pct = (
+                            min(forward_vel / target_speed, 1.0)
+                            if target_speed > 0
+                            else 0
+                        )
+                        speed_color = (
+                            GREEN if pct > 0.8 else YELLOW if pct > 0.4 else WHITE
+                        )
+                    else:
+                        speed_color = WHITE
+                    hud_lines.append((speed_text, speed_color))
+
+                if _hud_on("show_reward_breakdown"):
+                    parts = f"vel={fwd_reward:.3f}"
+                    if "rewards/gap_crossing_bonus" in state.metrics:
+                        parts += f", gap={gap_bonus:.1f}"
+                    term_pen = float(
+                        state.metrics.get("rewards/termination_penalty", 0.0)
+                    )
+                    if term_pen != 0:
+                        parts += f", term={term_pen:.1f}"
+                    hud_lines.append((f"Reward: {step_reward:.3f}  ({parts})", CYAN))
+
+                if _hud_on("show_cumulative_reward"):
+                    hud_lines.append((f"Cumulative: {cumulative_reward:.1f}", YELLOW))
+
+                if _hud_on("show_gap_crossing"):
+                    if gap_crossed_display_frames > 0:
+                        hud_lines.append(("GAP CROSSED!", BRIGHT_GREEN))
+                        gap_crossed_display_frames -= 1
+                    elif gap_crossed_persistent:
+                        gaps_count = int(state.info.get("gaps_crossed", 0))
+                        hud_lines.append((f"Gaps crossed: {gaps_count}", GREEN))
+
+                if _hud_on("show_distance_to_gap") and dist_to_gap is not None:
+                    gap_color = (
+                        RED
+                        if dist_to_gap < 0.1
+                        else YELLOW if dist_to_gap < 0.3 else GRAY
+                    )
+                    hud_lines.append((f"Dist to gap: {dist_to_gap:.3f} m", gap_color))
+
+                if _hud_on("show_lateral_deviation") and lateral_y is not None:
+                    lat_color = YELLOW if abs(lateral_y) > 0.3 else GRAY
+                    hud_lines.append((f"Lateral: {lateral_y:.3f} m", lat_color))
+
+                if _hud_on("show_height") and torso_z is not None:
+                    h_color = RED if torso_z < 0.04 else GRAY
+                    hud_lines.append((f"Height: {torso_z:.3f} m", h_color))
+
+                if _hud_on("show_heading") and heading_deg is not None:
+                    hd_color = YELLOW if abs(heading_deg) > 15 else GRAY
+                    hud_lines.append((f"Heading: {heading_deg:.1f} deg", hd_color))
+
+                if _hud_on("show_action_magnitude") and action_rms is not None:
+                    hud_lines.append((f"Action RMS: {action_rms:.3f}", GRAY))
+
+                if _hud_on("show_step_counter"):
+                    hud_lines.append((f"Step: {episode_step}", GRAY))
+
+                # Draw HUD in bottom-left (avoids ego overlay in upper-left)
+                if hud_lines:
+                    hud_y_start = frame.shape[0] - len(hud_lines) * 22 - 10
+                    _draw_hud(frame, hud_lines, x=10, y_start=hud_y_start)
 
             # Check if this frame is a termination event
             if termination_dict and i in termination_dict:
@@ -607,6 +810,21 @@ def _train_mlp_highlvl(
                 video_path,
                 fps=cfg.render_config.render_fps,
                 termination_events=termination_events,
+                hud_config=(
+                    OmegaConf.to_container(
+                        cfg.render_config.get("hud", {}), resolve=True
+                    )
+                    if cfg.render_config.get("hud")
+                    else None
+                ),
+                reward_config=(
+                    OmegaConf.to_container(
+                        cfg.env_config.env_args.get("reward_terms", {}), resolve=True
+                    )
+                    if cfg.env_config.get("env_args")
+                    and cfg.env_config.env_args.get("reward_terms")
+                    else None
+                ),
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
@@ -918,6 +1136,21 @@ def _train_vision_task_obs_highlvl(
                 fps=cfg.render_config.render_fps,
                 vision_renderer=_video_vision_renderer,
                 termination_events=termination_events,
+                hud_config=(
+                    OmegaConf.to_container(
+                        cfg.render_config.get("hud", {}), resolve=True
+                    )
+                    if cfg.render_config.get("hud")
+                    else None
+                ),
+                reward_config=(
+                    OmegaConf.to_container(
+                        cfg.env_config.env_args.get("reward_terms", {}), resolve=True
+                    )
+                    if cfg.env_config.get("env_args")
+                    and cfg.env_config.env_args.get("reward_terms")
+                    else None
+                ),
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
@@ -1333,6 +1566,21 @@ def _train_shared_vision_task_obs_highlvl(
                 fps=cfg.render_config.render_fps,
                 vision_renderer=_video_vision_renderer,
                 termination_events=termination_events,
+                hud_config=(
+                    OmegaConf.to_container(
+                        cfg.render_config.get("hud", {}), resolve=True
+                    )
+                    if cfg.render_config.get("hud")
+                    else None
+                ),
+                reward_config=(
+                    OmegaConf.to_container(
+                        cfg.env_config.env_args.get("reward_terms", {}), resolve=True
+                    )
+                    if cfg.env_config.get("env_args")
+                    and cfg.env_config.env_args.get("reward_terms")
+                    else None
+                ),
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
@@ -1792,6 +2040,21 @@ def _train_binocular_shared_vision_task_obs_highlvl(
                 vision_renderer=_video_left_renderer,
                 right_vision_renderer=_video_right_renderer,
                 termination_events=termination_events,
+                hud_config=(
+                    OmegaConf.to_container(
+                        cfg.render_config.get("hud", {}), resolve=True
+                    )
+                    if cfg.render_config.get("hud")
+                    else None
+                ),
+                reward_config=(
+                    OmegaConf.to_container(
+                        cfg.env_config.env_args.get("reward_terms", {}), resolve=True
+                    )
+                    if cfg.env_config.get("env_args")
+                    and cfg.env_config.env_args.get("reward_terms")
+                    else None
+                ),
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
@@ -2267,6 +2530,21 @@ def _train_recurrent_vision_task_obs_highlvl(
                 fps=cfg.render_config.render_fps,
                 vision_renderer=_video_vision_renderer,
                 termination_events=termination_events,
+                hud_config=(
+                    OmegaConf.to_container(
+                        cfg.render_config.get("hud", {}), resolve=True
+                    )
+                    if cfg.render_config.get("hud")
+                    else None
+                ),
+                reward_config=(
+                    OmegaConf.to_container(
+                        cfg.env_config.env_args.get("reward_terms", {}), resolve=True
+                    )
+                    if cfg.env_config.get("env_args")
+                    and cfg.env_config.env_args.get("reward_terms")
+                    else None
+                ),
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
@@ -2668,7 +2946,9 @@ def main(cfg: DictConfig):
             try:
                 saved_phase = int(phase_state_file.read_text().strip())
                 start_phase_idx = saved_phase
-                logging.info(f"CURRICULUM RESUME: Skipping to phase {start_phase_idx + 1}")
+                logging.info(
+                    f"CURRICULUM RESUME: Skipping to phase {start_phase_idx + 1}"
+                )
             except ValueError:
                 pass
 

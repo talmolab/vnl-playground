@@ -191,3 +191,6 @@ sprout/
 checkpoints_*/
 .autoresume_state_*
 nohup_*.log
+prior_checkpoints/
+tests/
+
