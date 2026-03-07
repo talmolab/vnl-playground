@@ -79,6 +79,10 @@ def default_config() -> config_dict.ConfigDict:
     cfg.use_textures = False
     cfg.use_shadows = False
     cfg.vision_mode = "binocular"  # "binocular", "monocular_left", "monocular_right"
+    # Binocular parameters (disabled by default = monocular mode)
+    cfg.binocular = False
+    cfg.left_camera_name = "eye_left-rodent"
+    cfg.right_camera_name = "eye_right-rodent"
     return cfg
 
 
@@ -134,8 +138,9 @@ class GapJumpTrialVision(gap_jump_trial.GapJumpTrial):
 
     @property
     def vision_shape(self):
-        """Shape of the vision observation: (H, W, C) where C=1 if grayscale else 3."""
-        channels = 1 if self._grayscale else 3
+        """Shape of the vision observation: (H, W, C) or (H, W, 2*C) for binocular."""
+        mono_channels = 1 if self._grayscale else 3
+        channels = 2 * mono_channels if self._config.get("binocular", False) else mono_channels
         return (self._vision_height, self._vision_width, channels)
 
     @property
@@ -164,6 +169,12 @@ class GapJumpTrialVision(gap_jump_trial.GapJumpTrial):
         touch_sensors = self._get_touch_sensors(data)
         origin = self._get_origin(data)
 
+        # Egocentric vector to target position
+        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        target_pos = info.get("target_position", jp.zeros(3))
+        rel_target_world = target_pos - torso.xpos
+        ego_target = jp.dot(rel_target_world, torso.xmat)
+
         task_obs = jp.concatenate(
             [
                 info["prev_action"],
@@ -171,6 +182,7 @@ class GapJumpTrialVision(gap_jump_trial.GapJumpTrial):
                 touch_sensors,
                 origin,
                 phase_indicator,
+                ego_target,
             ]
         )
 

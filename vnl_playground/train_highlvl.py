@@ -2522,7 +2522,7 @@ def main(cfg: DictConfig):
 
     # Pass vision config to env so its reported vision_shape matches the
     # VisionRenderWrapper dimensions used for actual rendering.
-    for vision_key in ("vision_width", "vision_height", "grayscale"):
+    for vision_key in ("vision_width", "vision_height", "grayscale", "binocular"):
         if vision_key in cfg.env_config:
             env_args[vision_key] = cfg.env_config[vision_key]
 
@@ -2661,7 +2661,22 @@ def main(cfg: DictConfig):
 
         base_env_args = dict(env_args)
 
+        # Check for previously completed phases (resume support)
+        phase_state_file = checkpoint_path / "curriculum_phase.txt"
+        start_phase_idx = 0
+        if phase_state_file.exists():
+            try:
+                saved_phase = int(phase_state_file.read_text().strip())
+                start_phase_idx = saved_phase
+                logging.info(f"CURRICULUM RESUME: Skipping to phase {start_phase_idx + 1}")
+            except ValueError:
+                pass
+
         for phase_idx, phase in enumerate(curriculum_phases):
+            if phase_idx < start_phase_idx:
+                logging.info(f"Skipping completed phase {phase_idx + 1}: {phase.name}")
+                continue
+
             logging.info(
                 f"\n{'='*60}\n"
                 f"CURRICULUM PHASE {phase_idx + 1}/{len(curriculum_phases)}: {phase.name}\n"
@@ -2726,6 +2741,7 @@ def main(cfg: DictConfig):
             monitor = GraduationMonitor(
                 threshold=phase.graduation_threshold,
                 patience=phase.graduation_patience,
+                checkpoint_dir=str(phase_ckpt_path),
             )
             phase_progress_fn = make_curriculum_progress_fn(
                 monitor,
@@ -2751,6 +2767,10 @@ def main(cfg: DictConfig):
                 f"Phase {phase_idx + 1} complete. "
                 f"Graduated: {graduated}, Final success rate: {final_sr:.3f}"
             )
+
+            # Save curriculum progress for resume
+            phase_state_file.write_text(str(phase_idx + 1))
+            logging.info(f"Saved curriculum state: completed phase {phase_idx + 1}")
 
             # Clean up phase environments
             del phase_env, phase_eval_env

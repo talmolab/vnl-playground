@@ -206,12 +206,15 @@ for attempt in $(seq 1 "$MAX_RETRIES"); do
     fi
 
     # Check if there are actually checkpoints to resume from
-    CKPT_FILES=( "${MODEL_PATH}/${RESUME_RUN_ID}"/PPONetwork_* )
-    if [[ -e "${CKPT_FILES[0]}" ]]; then
-        CKPT_COUNT=${#CKPT_FILES[@]}
-    else
-        CKPT_COUNT=0
-    fi
+    # Support both flat layout (PPONetwork_* directly under run_id) and
+    # curriculum layout (PPONetwork_* under run_id/phase_*/):
+    CKPT_FILES=( "${MODEL_PATH}/${RESUME_RUN_ID}"/PPONetwork_* "${MODEL_PATH}/${RESUME_RUN_ID}"/*/PPONetwork_* )
+    CKPT_COUNT=0
+    for _f in "${CKPT_FILES[@]}"; do
+        if [[ -e "$_f" ]]; then
+            CKPT_COUNT=$(( CKPT_COUNT + 1 ))
+        fi
+    done
     if [[ "$CKPT_COUNT" -eq 0 ]]; then
         echo "WARNING: No PPONetwork checkpoints found. Starting fresh on next attempt."
         RESUME_RUN_ID=""

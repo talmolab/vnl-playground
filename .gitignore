@@ -188,4 +188,6 @@ outputs/
 !vnl_playground/tasks/rodent/xmls/assets/*.png
 vnl_playground/_version.py
 sprout/
-checkpoints_gap_jump_curriculum_auto/
+checkpoints_*/
+.autoresume_state_*
+nohup_*.log

@@ -18,6 +18,8 @@ from vnl_playground.tasks.rodent import run_gap as rodent_run_gap
 from vnl_playground.tasks.rodent import run_gap_vision as rodent_run_gap_vision
 from vnl_playground.tasks.rodent import gap_jump_trial as rodent_gap_jump_trial
 from vnl_playground.tasks.rodent import gap_jump_trial_vision as rodent_gap_jump_trial_vision
+from vnl_playground.tasks.rodent import go_to_target as rodent_go_to_target
+from vnl_playground.tasks.rodent import go_to_target_vision as rodent_go_to_target_vision
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
 from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_velocity
 from vnl_playground.tasks.stick import imitation as stick_imitation
@@ -41,6 +43,8 @@ _envs = {
     "RodentRunGapBinocularVision": rodent_run_gap_vision.RunGapVision,
     "RodentGapJumpTrial": rodent_gap_jump_trial.GapJumpTrial,
     "RodentGapJumpTrialVision": rodent_gap_jump_trial_vision.GapJumpTrialVision,
+    "RodentGoToTarget": rodent_go_to_target.GoToTarget,
+    "RodentGoToTargetVision": rodent_go_to_target_vision.GoToTargetVision,
     "FruitflyImitation": fruitfly_imitation.Imitation,
     "StickMaintainVelocity": stick_maintain_velocity.MaintainVelocity,
     "StickImitation": stick_imitation.Imitation,
@@ -68,6 +72,8 @@ _cfgs = {
     "RodentRunGapBinocularVision": _binocular_default_config,
     "RodentGapJumpTrial": rodent_gap_jump_trial.default_config,
     "RodentGapJumpTrialVision": rodent_gap_jump_trial_vision.default_config,
+    "RodentGoToTarget": rodent_go_to_target.default_config,
+    "RodentGoToTargetVision": rodent_go_to_target_vision.default_config,
     "FruitflyImitation": fruitfly_imitation.default_config,
     "StickMaintainVelocity": stick_maintain_velocity.default_config,
     "StickImitation": stick_imitation.default_config,

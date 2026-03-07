@@ -1,0 +1,112 @@
+# @package _global_
+# Dense single-phase validation for gap jump trial.
+#
+# Purpose: Verify that the rodent can learn to run forward and reach
+# the landing platform with dense reward shaping (no curriculum).
+# Start with small gaps (2-6cm) and generous rewards.
+#
+# Usage:
+#   python -m vnl_playground.train_highlvl \
+#       --config-name=gap_jump_trial_vision/dense_validation
+
+env_config:
+  env_name: RodentGapJumpTrialVision
+  task_name: gap_jump_trial_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  use_textures: true
+  use_shadows: true
+  env_args:
+    gap_distances: [0.02, 0.03, 0.04, 0.05, 0.06]
+    hold_duration: 0
+    max_decision_steps: 300
+    episode_length: 400
+    torque_actuators: true
+    takeoff_platform_length: 0.5
+    takeoff_platform_width: 0.4
+    landing_platform_depth: 0.5
+    landing_platform_max_width: 0.4
+    landing_height_offset: 0.0
+    use_mesh_platforms: true
+    reward_terms:
+      forward_displacement:
+        weight: 2.0
+      approach_velocity:
+        weight: 1.0
+      target_proximity:
+        weight: 3.0
+      jump_success:
+        weight: 50.0
+      landing_bonus:
+        weight: 25.0
+      fall_penalty:
+        weight: -5.0
+      abort_penalty:
+        weight: -10.0
+      time_penalty:
+        weight: -0.01
+      decision_alive:
+        weight: 0.05
+    termination_criteria:
+      fallen:
+        min_torso_z: -0.1
+      trial_success: {}
+      abort_dismount: {}
+      trial_timeout:
+        max_steps: 400
+      nan_termination: {}
+
+network_config:
+  arch_name: shared_vision_task_obs
+  vision_latent_size: 16
+  vision_feature_size: 32
+  decoder_hidden_layer_sizes: [512, 512]
+  value_hidden_layer_sizes: [512, 512]
+  vision_channels: [4, 8, 16, 32]
+  fusion_hidden_layer_sizes: [256]
+
+transfer:
+  mimic_run_id: "phase1"
+  mimic_checkpoint_dir: /home/scott/SalkResearch/data
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+train_setup:
+  eval_every: 5_000_000
+  train_config:
+    episode_length: 400
+    num_envs: 1024
+    num_timesteps: 200_000_000
+    batch_size: 1024
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 3e-4
+    clipping_epsilon: 0.2
+    discounting: 0.97
+    entropy_cost: 1e-3
+    action_repeat: 1
+    unroll_length: 10
+    reward_scaling: 1.0
+    normalize_observations: true
+    seed: 0
+    num_eval_envs: 128
+    deterministic_eval: false
+    grad_clip_threshold: 20.0
+    vf_loss_coefficient: 0.5
+    vision_lr_multiplier: 3.0
+
+logging_config:
+  project_name: vnl-playground
+  group_name: gap-jump-dense-validation
+  model_path: checkpoints_gap_jump_dense_validation
+  notes: "Dense reward validation: forward_displacement + target_proximity + velocity"
+  exp_name: gap_jump_dense_validation
+
+render_config:
+  render_fps: 50
+  render_height: 480
+  render_width: 640

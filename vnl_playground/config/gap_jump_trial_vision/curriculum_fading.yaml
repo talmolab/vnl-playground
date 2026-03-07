@@ -1,0 +1,162 @@
+# @package _global_
+# Reward-Fading Curriculum: 3-phase gap-jump training.
+#
+# Phase 1: "Run to Target" — dense rewards dominate (velocity + proximity + displacement)
+#          Small gaps (0-3cm), no hold. Learn to locomote toward landing platform.
+#
+# Phase 2: "Jump and Land" — mixed rewards (reduced shaping + moderate sparse)
+#          Medium gaps (3-8cm), short hold. Learn to jump with residual shaping.
+#
+# Phase 3: "Pure Trial" — sparse rewards only (jump_success + landing_bonus)
+#          Full gaps (6-14cm), long hold. Distance estimation from vision.
+#
+# Usage:
+#   python -m vnl_playground.train_highlvl \
+#       --config-name=gap_jump_trial_vision/curriculum_fading
+
+curriculum:
+  graduation_threshold: 0.6
+  graduation_patience: 3
+  phases:
+    - name: "Phase 1: Run to Target"
+      gap_distances: [0.000, 0.005, 0.010, 0.020, 0.030]
+      hold_duration: 0
+      episode_length: 300
+      max_decision_steps: 250
+      learning_rate: 3e-4
+      unroll_length: 10
+      num_timesteps: 100_000_000
+      graduation_threshold: 0.6
+      extra_reward_terms:
+        forward_displacement:
+          weight: 2.0
+        approach_velocity:
+          weight: 1.0
+        target_proximity:
+          weight: 3.0
+        edge_proximity:
+          weight: 0.5
+        decision_alive:
+          weight: 0.05
+
+    - name: "Phase 2: Jump and Land"
+      gap_distances: [0.03, 0.04, 0.05, 0.06, 0.08]
+      hold_duration: 15
+      episode_length: 400
+      max_decision_steps: 300
+      learning_rate: 1e-4
+      unroll_length: 20
+      num_timesteps: 200_000_000
+      graduation_threshold: 0.5
+      extra_reward_terms:
+        forward_displacement:
+          weight: 0.5
+        approach_velocity:
+          weight: 0.3
+        target_proximity:
+          weight: 1.0
+
+    - name: "Phase 3: Pure Trial"
+      gap_distances: [0.06, 0.08, 0.10, 0.12, 0.14]
+      hold_duration: 50
+      episode_length: 500
+      max_decision_steps: 300
+      learning_rate: 5e-5
+      unroll_length: 50
+      num_timesteps: 1_000_000_000
+
+env_config:
+  env_name: RodentGapJumpTrialVision
+  task_name: gap_jump_trial_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  use_textures: true
+  use_shadows: true
+  env_args:
+    gap_distances: [0.000, 0.005, 0.010, 0.020, 0.030]
+    hold_duration: 0
+    max_decision_steps: 250
+    episode_length: 300
+    torque_actuators: true
+    takeoff_platform_length: 0.5
+    takeoff_platform_width: 0.4
+    landing_platform_depth: 0.5
+    landing_platform_max_width: 0.4
+    landing_height_offset: 0.0
+    use_mesh_platforms: true
+    reward_terms:
+      hold_stillness:
+        weight: 0.3
+      jump_success:
+        weight: 50.0
+      landing_bonus:
+        weight: 25.0
+      fall_penalty:
+        weight: -5.0
+      abort_penalty:
+        weight: -10.0
+      time_penalty:
+        weight: -0.01
+    termination_criteria:
+      fallen:
+        min_torso_z: -0.1
+      trial_success: {}
+      abort_dismount: {}
+      trial_timeout:
+        max_steps: 300
+      nan_termination: {}
+
+network_config:
+  arch_name: shared_vision_task_obs
+  vision_latent_size: 16
+  vision_feature_size: 32
+  decoder_hidden_layer_sizes: [512, 512]
+  value_hidden_layer_sizes: [512, 512]
+  vision_channels: [4, 8, 16, 32]
+  fusion_hidden_layer_sizes: [256]
+
+transfer:
+  mimic_run_id: "phase1"
+  mimic_checkpoint_dir: /home/scott/SalkResearch/data
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+train_setup:
+  eval_every: 5_000_000
+  train_config:
+    episode_length: 300
+    num_envs: 1024
+    num_timesteps: 1_000_000_000
+    batch_size: 1024
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 3e-4
+    clipping_epsilon: 0.2
+    discounting: 0.97
+    entropy_cost: 1e-3
+    action_repeat: 1
+    unroll_length: 10
+    reward_scaling: 1.0
+    normalize_observations: true
+    seed: 0
+    num_eval_envs: 128
+    deterministic_eval: false
+    grad_clip_threshold: 20.0
+    vf_loss_coefficient: 0.5
+    vision_lr_multiplier: 3.0
+
+logging_config:
+  project_name: vnl-playground
+  group_name: gap-jump-curriculum-fading
+  model_path: checkpoints_gap_jump_curriculum_fading
+  notes: "Reward-fading curriculum: dense->mixed->sparse across 3 phases"
+  exp_name: gap_jump_curriculum_fading
+
+render_config:
+  render_fps: 50
+  render_height: 480
+  render_width: 640
