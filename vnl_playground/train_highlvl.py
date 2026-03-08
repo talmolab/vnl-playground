@@ -2787,6 +2787,621 @@ def _train_recurrent_vision_task_obs_highlvl(
     return make_policy, params, metrics
 
 
+# ---------------------------------------------------------------------------
+# Recurrent Binocular Vision + TaskObs mode: recurrent PPO with shared
+# binocular CNN+GRU backbone
+# ---------------------------------------------------------------------------
+
+
+def _train_recurrent_binocular_vision_task_obs_highlvl(
+    cfg,
+    env,
+    eval_env,
+    decoder_policy_fn,
+    mimic_cfg,
+    checkpoint_path,
+    cfg_dict,
+    progress_fn,
+    prior_fn=None,
+):
+    """Train high-level vision+task_obs policy with recurrent binocular CNN+GRU.
+
+    Combines the recurrent PPO infrastructure from
+    ``_train_recurrent_vision_task_obs_highlvl`` with the binocular (stereo)
+    rendering and multi-condition evaluation from
+    ``_train_binocular_shared_vision_task_obs_highlvl``.
+
+    Uses a ``RecurrentBinocularSharedVisionModule`` (binocular CNN encoder +
+    GRU + policy/value heads) trained via the recurrent PPO pipeline.  The CNN
+    and GRU weights are shared between the policy and value heads.
+    """
+    from track_mjx.agent.recurrent_ppo.recurrent_binocular_vision_networks import (
+        make_recurrent_binocular_vision_highlvl_ppo_networks,
+    )
+    from track_mjx.agent.recurrent_ppo.recurrent_vision_losses import (
+        compute_recurrent_shared_vision_ppo_loss,
+    )
+    from track_mjx.agent.recurrent_ppo import ppo as recurrent_ppo_train
+    from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
+
+    latent_size = mimic_cfg.network_config.intention_size
+    highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
+    decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
+
+    if prior_fn is not None:
+        env = PriorHighLevelWrapper(
+            env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+        eval_env = PriorHighLevelWrapper(
+            eval_env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+    else:
+        env = HighLevelWrapper(
+            env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+        )
+        eval_env = HighLevelWrapper(
+            eval_env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+        )
+
+    logging.info(
+        f"Recurrent Binocular Vision+TaskObs HighLevelWrapper: action_size={env.action_size}"
+    )
+    _log_memory("after Recurrent Binocular Vision+TaskObs HighLevelWrapper")
+
+    # Set Warp's CUDA memory pool release threshold to 512 MB.
+    try:
+        cuda_device = wp.get_device("cuda:0")
+        wp.set_mempool_release_threshold(cuda_device, 512 * 1024 * 1024)
+        logging.info("[MEM] Set Warp mempool release threshold to 512 MB")
+    except Exception as e:
+        logging.warning(f"Could not set Warp mempool release threshold: {e}")
+
+    # Read binocular_mode from config to determine shared_weights
+    binocular_mode = cfg.network_config.get("binocular_mode", "shared")
+    shared_weights = binocular_mode == "shared"
+    mono_channels = 1 if cfg.env_config.get("grayscale", True) else 3
+    logging.info(f"Binocular mode: {binocular_mode} (shared_weights={shared_weights})")
+
+    # Detect vision shape from environment
+    unwrapped = env.env if hasattr(env, "env") else env
+    vision_shape = (
+        unwrapped.vision_shape
+        if hasattr(unwrapped, "vision_shape")
+        else (
+            cfg.env_config.get("vision_height", 32),
+            cfg.env_config.get("vision_width", 32),
+            2 * mono_channels,
+        )
+    )
+    logging.info(f"Vision shape: {vision_shape}")
+
+    # PPO training params
+    ppo_params = dict(
+        OmegaConf.to_container(cfg.train_setup.train_config, resolve=True)
+    )
+
+    # Pop vision_lr_multiplier from ppo_params (passed separately to train)
+    vision_lr_multiplier = ppo_params.pop("vision_lr_multiplier", 1.0)
+
+    # Network creation: shared binocular CNN+GRU vision module
+    recurrent_ppo_network, shared_module = (
+        make_recurrent_binocular_vision_highlvl_ppo_networks(
+            obs_sizes=env.observation_size,
+            action_size=env.action_size,
+            vision_shape=tuple(vision_shape),
+            cnn_feature_size=cfg.network_config.get("vision_feature_size", 32),
+            cnn_channels=tuple(cfg.network_config.vision_channels),
+            gru_hidden_size=cfg.network_config.get("gru_hidden_size", 256),
+            mono_channels=mono_channels,
+            shared_weights=shared_weights,
+            policy_hidden_sizes=tuple(
+                cfg.network_config.get("policy_head_sizes", [256])
+            ),
+            value_hidden_sizes=tuple(
+                cfg.network_config.get("value_head_sizes", [256, 128])
+            ),
+        )
+    )
+
+    # Custom loss function for the recurrent shared vision network
+    custom_loss_fn = functools.partial(
+        compute_recurrent_shared_vision_ppo_loss,
+        recurrent_ppo_network=recurrent_ppo_network,
+        shared_module=shared_module,
+        entropy_cost=ppo_params.get("entropy_cost", 1e-3),
+        discounting=ppo_params.get("discounting", 0.97),
+        reward_scaling=ppo_params.get("reward_scaling", 1.0),
+        gae_lambda=ppo_params.get("gae_lambda", 0.95),
+        clipping_epsilon=ppo_params.get("clipping_epsilon", 0.2),
+        normalize_advantage=ppo_params.get("normalize_advantage", True),
+        vf_coefficient=ppo_params.get("vf_loss_coefficient", 0.5),
+    )
+
+    # Wrap network_factory to return the pre-built recurrent_ppo_network
+    def network_factory(obs_sizes, action_size):
+        return recurrent_ppo_network
+
+    # Compute num_evals
+    eval_every = cfg.train_setup.get("eval_every", 10_000_000)
+    num_evals = max(1, int(ppo_params["num_timesteps"] / eval_every))
+
+    # Create orbax CheckpointManager
+    ckpt_mgr_options = ocp.CheckpointManagerOptions(
+        save_interval_steps=1,
+        max_to_keep=50,
+        step_prefix="PPONetwork",
+        create=True,
+    )
+    ckpt_mgr = ocp.CheckpointManager(str(checkpoint_path), options=ckpt_mgr_options)
+
+    # Eval rendering setup
+    mj_model = eval_env.mj_model
+    mj_data = mujoco.MjData(mj_model)
+    renderer_obj = mujoco.Renderer(
+        mj_model,
+        height=cfg.render_config.render_height,
+        width=cfg.render_config.render_width,
+    )
+    # Create two warp vision renderers (nworld=1) for binocular eval overlay
+    from vnl_playground.tasks.rodent.vision_jax import (
+        BinocularVisionRenderWrapper,
+        JaxVisionRenderer,
+        VisionRenderWrapper,
+    )
+
+    _unwrapped = env.env if hasattr(env, "env") else env
+    while hasattr(_unwrapped, "env"):
+        _unwrapped = _unwrapped.env
+
+    vision_width = cfg.env_config.get("vision_width", 32)
+    vision_height = cfg.env_config.get("vision_height", 32)
+    grayscale = cfg.env_config.get("grayscale", True)
+    left_camera = cfg.env_config.get("left_camera_name", "eye_left-rodent")
+    right_camera = cfg.env_config.get("right_camera_name", "eye_right-rodent")
+    render_depth = cfg.env_config.get("render_depth", False)
+    use_textures = cfg.env_config.get("use_textures", False)
+    use_shadows = cfg.env_config.get("use_shadows", False)
+    eye_dropout_rate = cfg.env_config.get("eye_dropout_rate", 0.0)
+    eval_eye_mode = cfg.env_config.get("eval_eye_mode", "binocular")
+
+    _video_left_renderer = JaxVisionRenderer(
+        mj_model=_unwrapped.mj_model,
+        mjx_model=_unwrapped.mjx_model,
+        nworld=1,
+        width=vision_width,
+        height=vision_height,
+        grayscale=grayscale,
+        camera_name=left_camera,
+        render_depth=render_depth,
+        use_textures=use_textures,
+        use_shadows=use_shadows,
+    )
+    _video_right_renderer = JaxVisionRenderer(
+        mj_model=_unwrapped.mj_model,
+        mjx_model=_unwrapped.mjx_model,
+        nworld=1,
+        width=vision_width,
+        height=vision_height,
+        grayscale=grayscale,
+        camera_name=right_camera,
+        render_depth=render_depth,
+        use_textures=use_textures,
+        use_shadows=use_shadows,
+    )
+    logging.info("Created binocular warp vision renderers (nworld=1) for video overlay")
+
+    # Eval callback closures with binocular vision rendering
+    _eval_base_reset = eval_env.reset
+    _eval_base_step = eval_env.step
+
+    def _mask_vision_in_obs(obs, eye_mode):
+        """Apply a deterministic eye mask to the vision key in an obs dict.
+
+        Used for multi-condition evaluation: run the same rollout with
+        binocular, left-only, or right-only vision to compare performance.
+
+        Args:
+            obs: Observation dict with a top-level "vision" key of shape
+                (H, W, 2*C). Channel layout: [left..., right...].
+            eye_mode: "binocular" (no mask), "left_only" (zero right
+                channels), or "right_only" (zero left channels).
+
+        Returns:
+            New obs dict with masked vision. Unchanged if binocular.
+        """
+        if eye_mode == "binocular":
+            return obs
+        vision = obs["vision"]
+        c = vision.shape[-1] // 2
+        if eye_mode == "left_only":
+            vision = vision.at[..., c:].set(0.0)
+        else:  # right_only
+            vision = vision.at[..., :c].set(0.0)
+        return type(obs)([(k, vision if k == "vision" else v) for k, v in obs.items()])
+
+    def _make_masked_eval_fns(eye_mode):
+        """Create JIT-compiled eval reset/step that mask one eye.
+
+        Each eye_mode gets its own JIT trace (separate compiled function).
+        This is intentional -- the mask structure differs per mode.
+        """
+
+        def _masked_reset(rng):
+            state = _eval_reset_with_vision(rng)
+            return state.replace(obs=_mask_vision_in_obs(state.obs, eye_mode))
+
+        def _masked_step(state, action):
+            state = _eval_step_with_vision(state, action)
+            return state.replace(obs=_mask_vision_in_obs(state.obs, eye_mode))
+
+        return jax.jit(_masked_reset), jax.jit(_masked_step)
+
+    def _eval_reset_with_vision(rng):
+        state = _eval_base_reset(rng)
+        data_b = _add_batch_dim_for_warp(state.data)
+        left = _video_left_renderer.render(data_b)[0]
+        right = _video_right_renderer.render(data_b)[0]
+        vision = jp.concatenate([left, right], axis=-1)
+        return state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
+
+    def _eval_step_with_vision(state, action):
+        state = _eval_base_step(state, action)
+        data_b = _add_batch_dim_for_warp(state.data)
+        left = _video_left_renderer.render(data_b)[0]
+        right = _video_right_renderer.render(data_b)[0]
+        vision = jp.concatenate([left, right], axis=-1)
+        return state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
+
+    jit_reset = jax.jit(_eval_reset_with_vision)
+    jit_step = jax.jit(_eval_step_with_vision)
+
+    # Masked eval functions for multi-condition evaluation
+    # Each mode gets its own JIT-compiled reset/step
+    _masked_eval_fns = {
+        "left_only": _make_masked_eval_fns("left_only"),
+        "right_only": _make_masked_eval_fns("right_only"),
+    }
+
+    # Ensure render_config has render_interval
+    if "render_interval" not in cfg_dict.get("render_config", {}):
+        cfg_dict.setdefault("render_config", {})["render_interval"] = 1
+
+    # Update config_dict
+    cfg_dict["network_config"].update(
+        {
+            "arch_name": "recurrent_binocular_vision_task_obs",
+            "binocular_mode": binocular_mode,
+            "vision_feature_size": cfg.network_config.get("vision_feature_size", 32),
+            "gru_hidden_size": cfg.network_config.get("gru_hidden_size", 256),
+            "policy_head_sizes": list(
+                cfg.network_config.get("policy_head_sizes", [256])
+            ),
+            "value_head_sizes": list(
+                cfg.network_config.get("value_head_sizes", [256, 128])
+            ),
+        }
+    )
+
+    _render_video_fn = render_video
+
+    episode_length = cfg.train_setup.train_config.episode_length
+
+    # Create jit_logging_inference_fn from the recurrent network
+    make_logging_policy = recurrent_ppo_networks.make_logging_inference_fn(
+        recurrent_ppo_network
+    )
+    jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
+
+    # Hidden state initializer for eval rollouts
+    init_hidden_fn = recurrent_ppo_network.policy_network.init_hidden
+
+    def _compute_rollout_metrics(rollout):
+        """Compute aggregate metrics from a single eval rollout.
+
+        Args:
+            rollout: List of brax State objects from _run_eval_rollout.
+
+        Returns:
+            Dict of scalar metrics: cumulative_reward, mean_reward_per_step,
+            num_episodes, mean_episode_length, total_gap_crossings.
+        """
+        total_reward = 0.0
+        episode_rewards = []
+        episode_lengths = []
+        current_ep_reward = 0.0
+        current_ep_length = 0
+        total_gap_crossings = 0
+
+        for state in rollout[1:]:  # skip initial reset state
+            r = float(state.reward)
+            total_reward += r
+            current_ep_reward += r
+            current_ep_length += 1
+
+            # Count gap crossings from reward metric
+            gap_bonus = float(state.metrics.get("rewards/gap_crossing_bonus", 0.0))
+            if gap_bonus > 0:
+                total_gap_crossings += 1
+
+            if float(state.done) > 0.5:
+                episode_rewards.append(current_ep_reward)
+                episode_lengths.append(current_ep_length)
+                current_ep_reward = 0.0
+                current_ep_length = 0
+
+        # Include the last (possibly incomplete) episode
+        if current_ep_length > 0:
+            episode_rewards.append(current_ep_reward)
+            episode_lengths.append(current_ep_length)
+
+        n_episodes = len(episode_rewards)
+        return {
+            "cumulative_reward": total_reward,
+            "mean_reward_per_step": total_reward / max(len(rollout) - 1, 1),
+            "num_episodes": n_episodes,
+            "mean_episode_reward": (
+                sum(episode_rewards) / n_episodes if n_episodes > 0 else 0.0
+            ),
+            "mean_episode_length": (
+                sum(episode_lengths) / n_episodes if n_episodes > 0 else 0.0
+            ),
+            "total_gap_crossings": total_gap_crossings,
+        }
+
+    def recurrent_binocular_vision_policy_params_fn(
+        current_step,
+        jit_logging_inference_fn,
+        params,
+        policy_params_fn_key,
+        render_video,
+        ppo_network,
+    ):
+        """Callback for recurrent binocular PPO: multi-condition eval.
+
+        Runs 3 eval rollouts (binocular, left-only, right-only) on the same
+        corridor using recurrent rollouts with hidden state management.
+        Renders 3 videos and logs per-condition metrics to wandb.
+        """
+        if not render_video:
+            return
+
+        _log_memory(
+            f"recurrent_binocular_vision_policy_params_fn entry step={current_step}"
+        )
+
+        eye_modes = ["binocular", "left_only", "right_only"]
+
+        for eye_mode in eye_modes:
+            # Select eval functions for this eye mode
+            if eye_mode == "binocular":
+                _jit_reset, _jit_step = jit_reset, jit_step
+            else:
+                _jit_reset, _jit_step = _masked_eval_fns[eye_mode]
+
+            # Use same RNG so all conditions start with the same corridor
+            rollout, termination_events = _run_eval_rollout_recurrent(
+                _jit_reset,
+                _jit_step,
+                jit_logging_inference_fn,
+                params,
+                episode_length,
+                policy_params_fn_key,
+                init_hidden_fn,
+            )
+
+            # -- Per-condition metrics --
+            metrics = _compute_rollout_metrics(rollout)
+            for metric_name, value in metrics.items():
+                wandb.log({f"eval/{eye_mode}/{metric_name}": value}, commit=False)
+
+            # Vision sensitivity diagnostic (action delta: real vs blank vision)
+            mid = len(rollout) // 2
+            obs_with_vision = rollout[mid].obs
+            obs_blank_vision = type(obs_with_vision)(
+                [
+                    (k, jp.zeros_like(v) if k == "vision" else v)
+                    for k, v in obs_with_vision.items()
+                ]
+            )
+            # For recurrent sensitivity check, use zero hidden state
+            hidden_for_check = init_hidden_fn(1)
+            hidden_for_check = jax.tree.map(lambda x: x[0], hidden_for_check)
+            _, sensitivity_rng = jax.random.split(policy_params_fn_key)
+            act_real, _, _ = jit_logging_inference_fn(
+                params, obs_with_vision, hidden_for_check, sensitivity_rng
+            )
+            act_blank, _, _ = jit_logging_inference_fn(
+                params, obs_blank_vision, hidden_for_check, sensitivity_rng
+            )
+            vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
+            wandb.log(
+                {f"eval/{eye_mode}/vision_sensitivity": vision_sensitivity},
+                commit=False,
+            )
+
+            # Per-step reward line plots (only for binocular to avoid clutter)
+            if eye_mode == "binocular":
+                for metric_name in [
+                    k for k in rollout[0].metrics.keys() if k.startswith("rewards/")
+                ]:
+                    values = [float(s.metrics[metric_name]) for s in rollout]
+                    table = wandb.Table(
+                        data=[[i, v] for i, v in enumerate(values)],
+                        columns=["frame", metric_name],
+                    )
+                    wandb.log(
+                        {
+                            f"eval/rollout_{metric_name}": wandb.plot.line(
+                                table,
+                                "frame",
+                                metric_name,
+                                title=metric_name,
+                            )
+                        },
+                        commit=False,
+                    )
+
+            # Render video for this condition
+            video_path = str(checkpoint_path / f"{current_step}_{eye_mode}.mp4")
+            try:
+                _render_video_fn(
+                    rollout,
+                    mj_model,
+                    mj_data,
+                    renderer_obj,
+                    video_path,
+                    fps=cfg.render_config.render_fps,
+                    vision_renderer=_video_left_renderer,
+                    right_vision_renderer=_video_right_renderer,
+                    termination_events=termination_events,
+                    hud_config=(
+                        OmegaConf.to_container(
+                            cfg.render_config.get("hud", {}), resolve=True
+                        )
+                        if cfg.render_config.get("hud")
+                        else None
+                    ),
+                    reward_config=(
+                        OmegaConf.to_container(
+                            cfg.env_config.env_args.get("reward_terms", {}),
+                            resolve=True,
+                        )
+                        if cfg.env_config.get("env_args")
+                        and cfg.env_config.env_args.get("reward_terms")
+                        else None
+                    ),
+                )
+                wandb.log(
+                    {f"videos/{eye_mode}": wandb.Video(video_path, format="mp4")},
+                    commit=False,
+                )
+            except mujoco.FatalError as e:
+                logging.warning(f"Video rendering failed for {eye_mode}: {e}")
+
+            # Cleanup between conditions to limit GPU memory
+            del rollout, obs_with_vision, obs_blank_vision
+            del act_real, act_blank
+            gc.collect()
+
+        _log_memory(
+            f"recurrent_binocular_vision_policy_params_fn before final cleanup "
+            f"step={current_step}"
+        )
+        _log_gpu_memory(f"before final cleanup step={current_step}")
+
+        jax.clear_caches()
+        wp.synchronize()
+
+        _log_memory(
+            f"recurrent_binocular_vision_policy_params_fn after cleanup "
+            f"step={current_step}"
+        )
+        _log_gpu_memory(f"after cleanup step={current_step}")
+
+    # Checkpoint to restore (if any)
+    checkpoint_to_restore = cfg.train_setup.get("checkpoint_to_restore", None)
+    if checkpoint_to_restore is None and cfg.train_setup.get("resume_run_id", None):
+        checkpoint_to_restore = str(checkpoint_path)
+        logging.info(f"Auto-setting checkpoint_to_restore={checkpoint_to_restore}")
+
+    # Vision rendering wrapper for training environments (binocular)
+    unwrapped_env = env.env if hasattr(env, "env") else env
+    _raw_env = unwrapped_env
+    while hasattr(_raw_env, "env"):
+        _raw_env = _raw_env.env
+
+    def wrap_with_vision(
+        environment,
+        episode_length: int = 1000,
+        action_repeat: int = 1,
+        randomization_fn=None,
+    ):
+        """Wrap env for brax training, then add binocular vision rendering."""
+        brax_env = mp_wrapper.wrap_for_brax_training(
+            environment,
+            episode_length=episode_length,
+            action_repeat=action_repeat,
+            randomization_fn=randomization_fn,
+            full_reset=False,
+        )
+        return BinocularVisionRenderWrapper(
+            brax_env,
+            mj_model=_raw_env.mj_model,
+            mjx_model=_raw_env.mjx_model,
+            width=vision_width,
+            height=vision_height,
+            grayscale=grayscale,
+            left_camera_name=left_camera,
+            right_camera_name=right_camera,
+            render_depth=render_depth,
+            use_textures=use_textures,
+            use_shadows=use_shadows,
+            eye_dropout_rate=eye_dropout_rate,
+            eval_eye_mode=eval_eye_mode,
+        )
+
+    logging.info(
+        f"Recurrent Binocular Vision+TaskObs rendering: {vision_width}x{vision_height}, "
+        f"grayscale={grayscale}, left_camera={left_camera}, right_camera={right_camera}, "
+        f"eye_dropout_rate={eye_dropout_rate}, eval_eye_mode={eval_eye_mode}"
+    )
+
+    # Build and run recurrent PPO train with custom shared loss
+    train_fn = functools.partial(
+        recurrent_ppo_train.train,
+        **ppo_params,
+        num_evals=num_evals,
+        ckpt_mgr=ckpt_mgr,
+        config_dict=cfg_dict,
+        checkpoint_to_restore=checkpoint_to_restore,
+        network_factory=network_factory,
+        progress_fn=progress_fn,
+        policy_params_fn=recurrent_binocular_vision_policy_params_fn,
+        wrap_for_training=wrap_with_vision,
+        custom_loss_fn=custom_loss_fn,
+        vision_lr_multiplier=vision_lr_multiplier,
+    )
+
+    logging.info(
+        "Starting recurrent binocular vision+task_obs high-level PPO training..."
+    )
+    make_policy, params, metrics = train_fn(
+        environment=env,
+        eval_env=eval_env,
+    )
+    return make_policy, params, metrics
+
+
 @hydra.main(
     version_base=None,
     config_path="config",
@@ -3049,11 +3664,24 @@ def main(cfg: DictConfig):
                 progress_fn=progress_fn_phase,
                 prior_fn=prior_fn,
             )
+        elif arch_name == "recurrent_binocular_vision_task_obs":
+            return _train_recurrent_binocular_vision_task_obs_highlvl(
+                cfg_phase,
+                env_phase,
+                eval_env_phase,
+                decoder_policy_fn,
+                mimic_cfg,
+                checkpoint_path_phase,
+                cfg_dict_phase,
+                progress_fn=progress_fn_phase,
+                prior_fn=prior_fn,
+            )
         else:
             raise ValueError(
                 f"Unknown arch_name: {arch_name}. "
                 "Must be 'mlp', 'vision_task_obs', 'shared_vision_task_obs', "
-                "'recurrent_vision_task_obs', or 'binocular_shared_vision_task_obs'."
+                "'recurrent_vision_task_obs', 'binocular_shared_vision_task_obs', "
+                "or 'recurrent_binocular_vision_task_obs'."
             )
 
     # ---- Check for auto-curriculum mode ----
