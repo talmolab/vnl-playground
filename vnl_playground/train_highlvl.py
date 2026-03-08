@@ -82,6 +82,28 @@ def _add_batch_dim_for_warp(data):
     return jax.tree.map_with_path(_maybe_expand, data)
 
 
+@functools.lru_cache(maxsize=4)
+def _make_render_all_fn(renderer_id, renderer):
+    """Return a cached JIT-compiled scan-render function for a given renderer.
+
+    ``renderer_id`` = ``id(renderer)`` serves as a hashable cache key so that
+    the same renderer always reuses its compiled XLA/Warp kernel instead of
+    leaking a new one on every call.
+    """
+
+    @jax.jit
+    def _render_all(stacked_data):
+        def body(carry, data_slice):
+            batched = _add_batch_dim_for_warp(data_slice)
+            img = renderer.render(batched)
+            return carry, img[0]
+
+        _, all_imgs = jax.lax.scan(body, None, stacked_data)
+        return all_imgs
+
+    return _render_all
+
+
 class _FlatObsAdapter:
     """Adapts HighLevelWrapper's dict observations to flat arrays for Brax PPO.
 
@@ -348,18 +370,7 @@ def render_video(
             lambda *xs: jax.numpy.stack(xs), *[s.data for s in rollout]
         )
 
-        @jax.jit
-        def _render_all_ego(stacked_data):
-            """Render egocentric views for all timesteps in one call."""
-
-            def body(carry, data_slice):
-                batched = _add_batch_dim_for_warp(data_slice)
-                img = vision_renderer.render(batched)
-                return carry, img[0]  # (H, W, C)
-
-            _, all_imgs = jax.lax.scan(body, None, stacked_data)
-            return all_imgs  # (T, H, W, C)
-
+        _render_all_ego = _make_render_all_fn(id(vision_renderer), vision_renderer)
         ego_imgs_jax = _render_all_ego(all_data)
         ego_frames_np = np.array(ego_imgs_jax)  # single transfer to host
         del ego_imgs_jax
@@ -367,16 +378,7 @@ def render_video(
         # Binocular: render right eye and place side-by-side with left
         if right_vision_renderer is not None:
 
-            @jax.jit
-            def _render_all_right(stacked_data):
-                def body(carry, data_slice):
-                    batched = _add_batch_dim_for_warp(data_slice)
-                    img = right_vision_renderer.render(batched)
-                    return carry, img[0]
-
-                _, all_imgs = jax.lax.scan(body, None, stacked_data)
-                return all_imgs
-
+            _render_all_right = _make_render_all_fn(id(right_vision_renderer), right_vision_renderer)
             right_imgs_jax = _render_all_right(all_data)
             right_frames_np = np.array(right_imgs_jax)
             del right_imgs_jax
@@ -2197,6 +2199,8 @@ def _train_binocular_shared_vision_task_obs_highlvl(
                 )
             except mujoco.FatalError as e:
                 logging.warning(f"Video rendering failed for {eye_mode}: {e}")
+                jax.clear_caches()
+                wp.synchronize()
 
             # Cleanup between conditions to limit GPU memory
             del rollout, obs_with_vision, obs_blank_vision
