@@ -50,9 +50,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _unpack_rgb(
-    rgb_packed: jnp.ndarray, height: int, width: int
-) -> jnp.ndarray:
+def _unpack_rgb(rgb_packed: jnp.ndarray, height: int, width: int) -> jnp.ndarray:
     """Unpack uint32 packed ABGR to float32 RGB array.
 
     Args:
@@ -71,9 +69,7 @@ def _unpack_rgb(
     return rgb.reshape(nworld, height, width, 3)
 
 
-def _unpack_grayscale(
-    rgb_packed: jnp.ndarray, height: int, width: int
-) -> jnp.ndarray:
+def _unpack_grayscale(rgb_packed: jnp.ndarray, height: int, width: int) -> jnp.ndarray:
     """Unpack uint32 packed ABGR to float32 grayscale array.
 
     Uses the standard luminance formula: 0.299*R + 0.587*G + 0.114*B.
@@ -411,12 +407,16 @@ class BinocularVisionRenderWrapper:
         use_shadows=False,
         left_camera_name="eye_left-rodent",
         right_camera_name="eye_right-rodent",
+        eye_dropout_rate=0.0,
+        eval_eye_mode="binocular",
     ):
         self.env = env
         self._mj_model = mj_model
         self._mjx_model = mjx_model
         self._left_camera_name = left_camera_name
         self._right_camera_name = right_camera_name
+        self._eye_dropout_rate = eye_dropout_rate
+        self._eval_eye_mode = eval_eye_mode
         self._renderer_kwargs = dict(
             width=width,
             height=height,
@@ -428,12 +428,18 @@ class BinocularVisionRenderWrapper:
 
         if nworld is not None:
             self._left_renderer = JaxVisionRenderer(
-                mj_model=mj_model, mjx_model=mjx_model, nworld=nworld,
-                camera_name=left_camera_name, **self._renderer_kwargs,
+                mj_model=mj_model,
+                mjx_model=mjx_model,
+                nworld=nworld,
+                camera_name=left_camera_name,
+                **self._renderer_kwargs,
             )
             self._right_renderer = JaxVisionRenderer(
-                mj_model=mj_model, mjx_model=mjx_model, nworld=nworld,
-                camera_name=right_camera_name, **self._renderer_kwargs,
+                mj_model=mj_model,
+                mjx_model=mjx_model,
+                nworld=nworld,
+                camera_name=right_camera_name,
+                **self._renderer_kwargs,
             )
         else:
             self._left_renderer = None
@@ -442,13 +448,17 @@ class BinocularVisionRenderWrapper:
     def _ensure_renderers(self, nworld):
         if self._left_renderer is None:
             self._left_renderer = JaxVisionRenderer(
-                mj_model=self._mj_model, mjx_model=self._mjx_model,
-                nworld=nworld, camera_name=self._left_camera_name,
+                mj_model=self._mj_model,
+                mjx_model=self._mjx_model,
+                nworld=nworld,
+                camera_name=self._left_camera_name,
                 **self._renderer_kwargs,
             )
             self._right_renderer = JaxVisionRenderer(
-                mj_model=self._mj_model, mjx_model=self._mjx_model,
-                nworld=nworld, camera_name=self._right_camera_name,
+                mj_model=self._mj_model,
+                mjx_model=self._mjx_model,
+                nworld=nworld,
+                camera_name=self._right_camera_name,
                 **self._renderer_kwargs,
             )
 
@@ -466,19 +476,125 @@ class BinocularVisionRenderWrapper:
         return self._right_renderer
 
     def _render_binocular(self, data):
-        left = self._left_renderer.render(data)   # (nworld, H, W, C)
+        left = self._left_renderer.render(data)  # (nworld, H, W, C)
         right = self._right_renderer.render(data)  # (nworld, H, W, C)
         return jnp.concatenate([left, right], axis=-1)  # (nworld, H, W, 2C)
+
+    def _apply_eye_mask(self, vision, rng):
+        """Stochastically zero out one eye's channels for monocular dropout.
+
+        With probability ``eye_dropout_rate``, one eye is randomly selected
+        and its channels are zeroed. Each eye has equal probability (50/50)
+        of being the one masked.
+
+        Args:
+            vision: (nworld, H, W, 2*C) rendered binocular images.
+            rng: JAX PRNG key for sampling.
+
+        Returns:
+            Masked vision with same shape as input.
+        """
+        if self._eye_dropout_rate <= 0.0:
+            return vision
+
+        nworld = vision.shape[0]
+        c = vision.shape[-1] // 2  # channels per eye
+
+        rng1, rng2 = jax.random.split(rng)
+
+        # Per-world: should we apply dropout?
+        do_dropout = (
+            jax.random.uniform(rng1, (nworld, 1, 1, 1)) < self._eye_dropout_rate
+        )
+
+        # Per-world: which eye to zero? True -> zero left, False -> zero right
+        zero_left = jax.random.uniform(rng2, (nworld, 1, 1, 1)) < 0.5
+
+        # Build per-channel masks
+        left_mask = jnp.where(do_dropout & zero_left, 0.0, 1.0)
+        right_mask = jnp.where(do_dropout & ~zero_left, 0.0, 1.0)
+
+        mask = jnp.concatenate(
+            [
+                jnp.broadcast_to(left_mask, (*vision.shape[:-1], c)),
+                jnp.broadcast_to(right_mask, (*vision.shape[:-1], c)),
+            ],
+            axis=-1,
+        )
+        return vision * mask
+
+    def _apply_eval_eye_mask(self, vision):
+        """Deterministically mask one eye for evaluation.
+
+        Used at eval time to test monocular performance fairly (since the
+        network was trained with stochastic eye dropout).
+
+        Args:
+            vision: (nworld, H, W, 2*C) rendered binocular images.
+
+        Returns:
+            Masked vision. Unchanged if mode is "binocular".
+        """
+        if self._eval_eye_mode == "binocular":
+            return vision
+
+        c = vision.shape[-1] // 2
+        if self._eval_eye_mode == "left_only":
+            # Zero right eye channels
+            mask = jnp.concatenate(
+                [
+                    jnp.ones((*vision.shape[:-1], c)),
+                    jnp.zeros((*vision.shape[:-1], c)),
+                ],
+                axis=-1,
+            )
+        elif self._eval_eye_mode == "right_only":
+            # Zero left eye channels
+            mask = jnp.concatenate(
+                [
+                    jnp.zeros((*vision.shape[:-1], c)),
+                    jnp.ones((*vision.shape[:-1], c)),
+                ],
+                axis=-1,
+            )
+        else:
+            raise ValueError(
+                f"Unknown eval_eye_mode: {self._eval_eye_mode!r}. "
+                f"Expected 'binocular', 'left_only', or 'right_only'."
+            )
+        return vision * mask
 
     def reset(self, rng):
         state = self.env.reset(rng)
         self._ensure_renderers(rng.shape[0])
         vision = self._render_binocular(state.data)
+
+        # Stochastic eye dropout (training) or deterministic masking (eval)
+        if self._eye_dropout_rate > 0.0:
+            mask_rng, _ = jax.random.split(rng[0])
+            vision = self._apply_eye_mask(vision, mask_rng)
+            # Store per-world RNG keys (must be batched for AutoResetWrapper)
+            state.info["eye_mask_rng"] = jax.vmap(jax.random.split)(rng)[:, 0]
+        else:
+            vision = self._apply_eval_eye_mask(vision)
+
         state = state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
         return state
 
     def step(self, state, action):
         state = self.env.step(state, action)
         vision = self._render_binocular(state.data)
+
+        # Stochastic eye dropout (training) or deterministic masking (eval)
+        if self._eye_dropout_rate > 0.0:
+            # Use world 0's key for batch masking, advance all worlds' keys
+            mask_rng = state.info["eye_mask_rng"][0]
+            vision = self._apply_eye_mask(vision, mask_rng)
+            state.info["eye_mask_rng"] = jax.vmap(lambda k: jax.random.split(k)[0])(
+                state.info["eye_mask_rng"]
+            )
+        else:
+            vision = self._apply_eval_eye_mask(vision)
+
         state = state.replace(obs=VisionRenderWrapper._inject_vision(state.obs, vision))
         return state

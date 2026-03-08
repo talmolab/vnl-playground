@@ -1,23 +1,22 @@
 # @package _global_
-# Binocular Vision + SCAMPER Golden Prior Transfer Training (Shared Siamese CNN)
+# Binocular Vision + Stochastic Eye Dropout + SCAMPER Transfer Training
 # Uses ff_ppo with BinocularVisionEncoder (shared-weight Siamese CNN)
 #
-# Loads a SCAMPER golden prior decoder from a checkpoint directory.
-# Two transfer modes are supported:
-#   - decoder_only   : freeze the entire prior decoder; train only the high-level policy
-#   - prior_decoder  : fine-tune the prior decoder alongside the high-level policy
+# Same as binocular_vision_scamper_transfer but with stochastic eye dropout
+# (eye_dropout_rate=0.4) so the network learns to use monocular cues.
+# This enables fair monocular vs binocular evaluation at test time
+# (analogous to Parker et al. single-eye occlusion in mice).
 #
-# The high-level policy receives stereo egocentric vision (left + right eye)
-# AND body-state signals. A shared-weight Siamese CNN processes each eye
-# independently with the same weights, then concatenated features are fused
-# with task_obs to produce latent intentions for the frozen/fine-tuned decoder.
+# During training:
+#   P(both eyes) = 0.6, P(left only) = 0.2, P(right only) = 0.2
 #
-# binocular_mode: "shared" = Option C (Siamese, biologically plausible)
-# binocular_mode: "independent" = Option B (separate CNNs, experimental control)
+# During eval:
+#   3 rollouts per eval: binocular, left-only, right-only
+#   3 videos + per-condition metrics logged to wandb
 #
 # Usage:
 #   cd vnl-playground
-#   python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/binocular_vision_scamper_transfer
+#   python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/binocular_stochastic_vision_scamper_transfer
 
 env_config:
   env_name: RodentRunGapBinocularVision
@@ -36,7 +35,7 @@ env_config:
   # This trains the network to use monocular cues, enabling fair
   # monocular vs binocular evaluation (analogous to Parker et al. occlusion).
   # Set to 0.0 to disable (pure binocular training).
-  eye_dropout_rate: 0.0
+  eye_dropout_rate: 0.4
   eval_eye_mode: "binocular"  # "binocular", "left_only", or "right_only"
   render_depth: false
   use_textures: true
@@ -132,10 +131,10 @@ train_setup:
 
 logging_config:
   project_name: vnl-playground
-  group_name: run-gap-binocular-scamper-transfer
+  group_name: run-gap-binocular-stochastic-scamper-transfer
   model_path: highlvl_checkpoints
-  notes: "Binocular vision transfer with SCAMPER golden prior decoder"
-  exp_name: prior_vel_0.8
+  notes: "Binocular vision transfer with stochastic eye dropout (rate=0.4) for fair monocular comparison"
+  exp_name: prior_vel_0.8_stochastic_eye
 
 render_config:
   render_fps: 50
@@ -153,4 +152,4 @@ render_config:
     show_distance_to_gap: true
     show_lateral_deviation: true
     show_action_magnitude: true
-    gap_flash_duration: 1.5  # seconds of bright green "GAP CROSSED!" text
+    gap_flash_duration: 1.5

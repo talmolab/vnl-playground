@@ -1893,6 +1893,8 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     render_depth = cfg.env_config.get("render_depth", False)
     use_textures = cfg.env_config.get("use_textures", False)
     use_shadows = cfg.env_config.get("use_shadows", False)
+    eye_dropout_rate = cfg.env_config.get("eye_dropout_rate", 0.0)
+    eval_eye_mode = cfg.env_config.get("eval_eye_mode", "binocular")
 
     _video_left_renderer = JaxVisionRenderer(
         mj_model=_unwrapped.mj_model,
@@ -1924,6 +1926,48 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     _eval_base_reset = eval_env.reset
     _eval_base_step = eval_env.step
 
+    def _mask_vision_in_obs(obs, eye_mode):
+        """Apply a deterministic eye mask to the vision key in an obs dict.
+
+        Used for multi-condition evaluation: run the same rollout with
+        binocular, left-only, or right-only vision to compare performance.
+
+        Args:
+            obs: Observation dict with a top-level "vision" key of shape
+                (H, W, 2*C). Channel layout: [left..., right...].
+            eye_mode: "binocular" (no mask), "left_only" (zero right
+                channels), or "right_only" (zero left channels).
+
+        Returns:
+            New obs dict with masked vision. Unchanged if binocular.
+        """
+        if eye_mode == "binocular":
+            return obs
+        vision = obs["vision"]
+        c = vision.shape[-1] // 2
+        if eye_mode == "left_only":
+            vision = vision.at[..., c:].set(0.0)
+        else:  # right_only
+            vision = vision.at[..., :c].set(0.0)
+        return type(obs)([(k, vision if k == "vision" else v) for k, v in obs.items()])
+
+    def _make_masked_eval_fns(eye_mode):
+        """Create JIT-compiled eval reset/step that mask one eye.
+
+        Each eye_mode gets its own JIT trace (separate compiled function).
+        This is intentional — the mask structure differs per mode.
+        """
+
+        def _masked_reset(rng):
+            state = _eval_reset_with_vision(rng)
+            return state.replace(obs=_mask_vision_in_obs(state.obs, eye_mode))
+
+        def _masked_step(state, action):
+            state = _eval_step_with_vision(state, action)
+            return state.replace(obs=_mask_vision_in_obs(state.obs, eye_mode))
+
+        return jax.jit(_masked_reset), jax.jit(_masked_step)
+
     def _eval_reset_with_vision(rng):
         state = _eval_base_reset(rng)
         data_b = _add_batch_dim_for_warp(state.data)
@@ -1942,6 +1986,13 @@ def _train_binocular_shared_vision_task_obs_highlvl(
 
     jit_reset = jax.jit(_eval_reset_with_vision)
     jit_step = jax.jit(_eval_step_with_vision)
+
+    # Masked eval functions for multi-condition evaluation
+    # Each mode gets its own JIT-compiled reset/step
+    _masked_eval_fns = {
+        "left_only": _make_masked_eval_fns("left_only"),
+        "right_only": _make_masked_eval_fns("right_only"),
+    }
 
     # Ensure render_config has render_interval
     if "render_interval" not in cfg_dict.get("render_config", {}):
@@ -1970,6 +2021,59 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     make_logging_policy = ff_ppo_networks.make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
+    def _compute_rollout_metrics(rollout):
+        """Compute aggregate metrics from a single eval rollout.
+
+        Args:
+            rollout: List of brax State objects from _run_eval_rollout.
+
+        Returns:
+            Dict of scalar metrics: cumulative_reward, mean_reward_per_step,
+            num_episodes, mean_episode_length, total_gap_crossings.
+        """
+        total_reward = 0.0
+        episode_rewards = []
+        episode_lengths = []
+        current_ep_reward = 0.0
+        current_ep_length = 0
+        total_gap_crossings = 0
+
+        for state in rollout[1:]:  # skip initial reset state
+            r = float(state.reward)
+            total_reward += r
+            current_ep_reward += r
+            current_ep_length += 1
+
+            # Count gap crossings from reward metric
+            gap_bonus = float(state.metrics.get("rewards/gap_crossing_bonus", 0.0))
+            if gap_bonus > 0:
+                total_gap_crossings += 1
+
+            if float(state.done) > 0.5:
+                episode_rewards.append(current_ep_reward)
+                episode_lengths.append(current_ep_length)
+                current_ep_reward = 0.0
+                current_ep_length = 0
+
+        # Include the last (possibly incomplete) episode
+        if current_ep_length > 0:
+            episode_rewards.append(current_ep_reward)
+            episode_lengths.append(current_ep_length)
+
+        n_episodes = len(episode_rewards)
+        return {
+            "cumulative_reward": total_reward,
+            "mean_reward_per_step": total_reward / max(len(rollout) - 1, 1),
+            "num_episodes": n_episodes,
+            "mean_episode_reward": (
+                sum(episode_rewards) / n_episodes if n_episodes > 0 else 0.0
+            ),
+            "mean_episode_length": (
+                sum(episode_lengths) / n_episodes if n_episodes > 0 else 0.0
+            ),
+            "total_gap_crossings": total_gap_crossings,
+        }
+
     def binocular_vision_policy_params_fn(
         current_step,
         jit_logging_inference_fn,
@@ -1978,105 +2082,133 @@ def _train_binocular_shared_vision_task_obs_highlvl(
         render_video,
         ppo_network,
     ):
-        """Callback for binocular shared-CNN ff_ppo: render video with egocentric overlay."""
+        """Callback for binocular shared-CNN ff_ppo: multi-condition eval.
+
+        Runs 3 eval rollouts (binocular, left-only, right-only) on the same
+        corridor to compare performance fairly. Renders 3 videos and logs
+        per-condition metrics to wandb.
+        """
         if not render_video:
             return
 
         _log_memory(f"binocular_vision_policy_params_fn entry step={current_step}")
 
-        # Run an evaluation rollout
-        rollout, termination_events = _run_eval_rollout(
-            jit_reset,
-            jit_step,
-            jit_logging_inference_fn,
-            params,
-            episode_length,
-            policy_params_fn_key,
-        )
+        eye_modes = ["binocular", "left_only", "right_only"]
 
-        # Vision sensitivity diagnostic
-        mid = len(rollout) // 2
-        obs_with_vision = rollout[mid].obs
-        obs_blank_vision = {
-            k: (jp.zeros_like(v) if k == "vision" else v)
-            for k, v in obs_with_vision.items()
-        }
-        _, sensitivity_rng = jax.random.split(policy_params_fn_key)
-        act_real, _ = jit_logging_inference_fn(params, obs_with_vision, sensitivity_rng)
-        act_blank, _ = jit_logging_inference_fn(
-            params, obs_blank_vision, sensitivity_rng
-        )
-        vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
-        wandb.log({"eval/vision_sensitivity": vision_sensitivity}, commit=False)
+        for eye_mode in eye_modes:
+            # Select eval functions for this eye mode
+            if eye_mode == "binocular":
+                _jit_reset, _jit_step = jit_reset, jit_step
+            else:
+                _jit_reset, _jit_step = _masked_eval_fns[eye_mode]
 
-        # Log per-step reward metrics
-        for metric_name in [
-            k for k in rollout[0].metrics.keys() if k.startswith("rewards/")
-        ]:
-            values = [float(s.metrics[metric_name]) for s in rollout]
-            table = wandb.Table(
-                data=[[i, v] for i, v in enumerate(values)],
-                columns=["frame", metric_name],
+            # Use same RNG so all conditions start with the same corridor
+            rollout, termination_events = _run_eval_rollout(
+                _jit_reset,
+                _jit_step,
+                jit_logging_inference_fn,
+                params,
+                episode_length,
+                policy_params_fn_key,
             )
+
+            # -- Per-condition metrics --
+            metrics = _compute_rollout_metrics(rollout)
+            for metric_name, value in metrics.items():
+                wandb.log({f"eval/{eye_mode}/{metric_name}": value}, commit=False)
+
+            # Vision sensitivity diagnostic (action delta: real vs blank vision)
+            mid = len(rollout) // 2
+            obs_with_vision = rollout[mid].obs
+            obs_blank_vision = type(obs_with_vision)(
+                [
+                    (k, jp.zeros_like(v) if k == "vision" else v)
+                    for k, v in obs_with_vision.items()
+                ]
+            )
+            _, sensitivity_rng = jax.random.split(policy_params_fn_key)
+            act_real, _ = jit_logging_inference_fn(
+                params, obs_with_vision, sensitivity_rng
+            )
+            act_blank, _ = jit_logging_inference_fn(
+                params, obs_blank_vision, sensitivity_rng
+            )
+            vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
             wandb.log(
-                {
-                    f"eval/rollout_{metric_name}": wandb.plot.line(
-                        table, "frame", metric_name, title=metric_name
-                    )
-                },
+                {f"eval/{eye_mode}/vision_sensitivity": vision_sensitivity},
                 commit=False,
             )
 
-        # Render video with binocular (side-by-side left+right) ego overlay
-        video_path = str(checkpoint_path / f"{current_step}.mp4")
-        try:
-            _render_video_fn(
-                rollout,
-                mj_model,
-                mj_data,
-                renderer_obj,
-                video_path,
-                fps=cfg.render_config.render_fps,
-                vision_renderer=_video_left_renderer,
-                right_vision_renderer=_video_right_renderer,
-                termination_events=termination_events,
-                hud_config=(
-                    OmegaConf.to_container(
-                        cfg.render_config.get("hud", {}), resolve=True
+            # Per-step reward line plots (only for binocular to avoid clutter)
+            if eye_mode == "binocular":
+                for metric_name in [
+                    k for k in rollout[0].metrics.keys() if k.startswith("rewards/")
+                ]:
+                    values = [float(s.metrics[metric_name]) for s in rollout]
+                    table = wandb.Table(
+                        data=[[i, v] for i, v in enumerate(values)],
+                        columns=["frame", metric_name],
                     )
-                    if cfg.render_config.get("hud")
-                    else None
-                ),
-                reward_config=(
-                    OmegaConf.to_container(
-                        cfg.env_config.env_args.get("reward_terms", {}), resolve=True
+                    wandb.log(
+                        {
+                            f"eval/rollout_{metric_name}": wandb.plot.line(
+                                table,
+                                "frame",
+                                metric_name,
+                                title=metric_name,
+                            )
+                        },
+                        commit=False,
                     )
-                    if cfg.env_config.get("env_args")
-                    and cfg.env_config.env_args.get("reward_terms")
-                    else None
-                ),
-            )
-            wandb.log(
-                {"videos/rollout": wandb.Video(video_path, format="mp4")},
-                commit=False,
-            )
-        except mujoco.FatalError as e:
-            logging.warning(f"Video rendering failed: {e}")
+
+            # Render video for this condition
+            video_path = str(checkpoint_path / f"{current_step}_{eye_mode}.mp4")
+            try:
+                _render_video_fn(
+                    rollout,
+                    mj_model,
+                    mj_data,
+                    renderer_obj,
+                    video_path,
+                    fps=cfg.render_config.render_fps,
+                    vision_renderer=_video_left_renderer,
+                    right_vision_renderer=_video_right_renderer,
+                    termination_events=termination_events,
+                    hud_config=(
+                        OmegaConf.to_container(
+                            cfg.render_config.get("hud", {}), resolve=True
+                        )
+                        if cfg.render_config.get("hud")
+                        else None
+                    ),
+                    reward_config=(
+                        OmegaConf.to_container(
+                            cfg.env_config.env_args.get("reward_terms", {}),
+                            resolve=True,
+                        )
+                        if cfg.env_config.get("env_args")
+                        and cfg.env_config.env_args.get("reward_terms")
+                        else None
+                    ),
+                )
+                wandb.log(
+                    {f"videos/{eye_mode}": wandb.Video(video_path, format="mp4")},
+                    commit=False,
+                )
+            except mujoco.FatalError as e:
+                logging.warning(f"Video rendering failed for {eye_mode}: {e}")
+
+            # Cleanup between conditions to limit GPU memory
+            del rollout, obs_with_vision, obs_blank_vision
+            del act_real, act_blank
+            gc.collect()
 
         _log_memory(
-            f"binocular_vision_policy_params_fn before cleanup step={current_step}"
+            f"binocular_vision_policy_params_fn before final cleanup step={current_step}"
         )
-        _log_gpu_memory(f"before cleanup step={current_step}")
+        _log_gpu_memory(f"before final cleanup step={current_step}")
 
-        del rollout
-        del obs_with_vision, obs_blank_vision
-        del act_real, act_blank
-        gc.collect()
         jax.clear_caches()
-
-        # Force Warp's CUDA memory pool to release deferred-free allocations.
-        # Without this, cudaFreeAsync'd memory stays in Warp's pool indefinitely
-        # and eventually exhausts GPU memory during long training runs.
         wp.synchronize()
 
         _log_memory(
@@ -2122,11 +2254,14 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             render_depth=render_depth,
             use_textures=use_textures,
             use_shadows=use_shadows,
+            eye_dropout_rate=eye_dropout_rate,
+            eval_eye_mode=eval_eye_mode,
         )
 
     logging.info(
         f"Binocular Shared-CNN Vision+TaskObs rendering: {vision_width}x{vision_height}, "
-        f"grayscale={grayscale}, left_camera={left_camera}, right_camera={right_camera}"
+        f"grayscale={grayscale}, left_camera={left_camera}, right_camera={right_camera}, "
+        f"eye_dropout_rate={eye_dropout_rate}, eval_eye_mode={eval_eye_mode}"
     )
 
     # Build and run ff_ppo train with custom shared loss
