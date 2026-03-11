@@ -101,20 +101,70 @@ class ModularImitation_v2(modular_base.ModularRodentEnv):
                 f" or a behavior name. Got {self._config.clip_set}."
             )
 
-        # Map each jointpos sensor → its qpos address in the reference qpos array.
-        # Using the sensor's objid so we never have to guess joint names.
         m = self._mj_model
-        _target_sensors = [
-            "hand_L/wrist_angle", "hand_L/finger_angle", "arm_L/elbow_angle",
-            "hand_R/wrist_angle", "hand_R/finger_angle", "arm_R/elbow_angle",
-            "foot_L/toe_angle", "foot_L/ankle_angle", "leg_L/knee_angle",
-            "foot_R/toe_angle", "foot_R/ankle_angle", "leg_R/knee_angle",
-            "torso/lumbar_bend", "torso/lumbar_twist", "torso/lumbar_extend",
-            "head/mandible",
+
+        # Body IDs for manual axis/position computations (replaces sensor reads for
+        # framexaxis, framezaxis, framepos sensors — avoids MJX sensor bugs).
+        self._body_ids = {
+            name: m.body(name).id
+            for name in ["torso", "pelvis", "skull", "hand_L", "hand_R",
+                         "finger_L", "finger_R", "foot_L", "foot_R",
+                         "toe_L", "toe_R", "lower_arm_L", "lower_arm_R",
+                         "lower_leg_L", "lower_leg_R"]
+        }
+
+        # Site IDs for knee positions.
+        # MJX has a bug: framepos with objtype="site" ignores refbody and returns
+        # world-frame position. We fix this by computing manually from site_xpos.
+        self._site_ids = {
+            name: m.site(name).id
+            for name in ["knee_L", "knee_R"]
+        }
+
+        # Knee site local positions (in upper_leg_L/R frame) for reference target.
+        # Used to reconstruct reference knee site world position from body_xpos + xquat.
+        self._knee_L_local = jp.array(m.site("knee_L").pos)
+        self._knee_R_local = jp.array(m.site("knee_R").pos)
+
+        # jointpos sensors → qpos address (used for proprioception and reference target values).
+        # Only include true jointpos sensors (not tendonpos).
+        # Symmetric: L and R entries are listed in parallel.
+        _jointpos_sensors = [
+            "hand_L/wrist_angle",    "hand_R/wrist_angle",
+            "hand_L/finger_angle",   "hand_R/finger_angle",
+            "arm_L/elbow_angle",     "arm_R/elbow_angle",
+            "arm_L/shoulder_sup",    "arm_R/shoulder_sup",
+            "arm_L/shoulder",        "arm_R/shoulder",
+            "arm_L/scapula_extend",  "arm_R/scapula_extend",
+            "arm_L/scapula_abduct",  "arm_R/scapula_abduct",
+            "arm_L/scapula_supinate","arm_R/scapula_supinate",
+            "foot_L/knee_angle",     "foot_R/knee_angle",
+            "foot_L/ankle_angle",    "foot_R/ankle_angle",
+            "foot_L/toe_angle",      "foot_R/toe_angle",
+            "leg_L/hip_supinate",    "leg_R/hip_supinate",
+            "leg_L/hip_abduct",      "leg_R/hip_abduct",
+            "leg_L/hip_extend",      "leg_R/hip_extend",
+            "leg_L/knee_angle",      "leg_R/knee_angle",
+            "leg_L/ankle_angle",     "leg_R/ankle_angle",
+            "head/atlas", "head/atlant_extend", "head/mandible",
+            "head/cervical_extend", "head/cervical_bend", "head/cervical_twist",
         ]
         self._sensor_qpos_addr = {
             name: int(m.jnt_qposadr[m.sensor_objid[m.sensor(name).id]])
-            for name in _target_sensors
+            for name in _jointpos_sensors
+        }
+
+        # Lumbar sensors are tendonpos (NOT jointpos) — linear weighted sums of vertebra joints.
+        # Precompute (qpos_addr, coefficient) pairs for computing target tendon lengths from qpos.
+        _lumbar_joints = {
+            "lumbar_extend": [("vertebra_1_extend", 0.604983465832), ("vertebra_4_extend", 0.395016534168)],
+            "lumbar_bend":   [("vertebra_2_bend",   0.658212326553), ("vertebra_5_bend",   0.341787673447)],
+            "lumbar_twist":  [("vertebra_3_twist",  0.570669983621), ("vertebra_6_twist",  0.429330016379)],
+        }
+        self._tendon_qpos = {
+            tendon: [(int(m.jnt_qposadr[m.joint(jname).id]), coef)
+                     for jname, coef in joints]
+            for tendon, joints in _lumbar_joints.items()
         }
 
     def reset(
@@ -195,133 +245,161 @@ class ModularImitation_v2(modular_base.ModularRodentEnv):
     ) -> dict[str, dict[str, jp.ndarray]]:
         """Hierarchical proprioception dict organized by body module.
         Simplified compared to base.
+
+        Position and axis quantities are computed directly from data.xpos/xmat/site_xpos
+        to avoid MJX sensor bugs (e.g. framepos+objtype=site ignores refbody).
+        Contact, accelerometer, gyro, and linvel sensors are kept as sensor reads.
         """
         m = self._mj_model
         yaw_mat = self.torso_yawmat(data)
+
+        # Precompute torso rotation inverse for sensors with refbody=torso.
+        # data.xmat[id].reshape(3,3): column k = body's k-th axis in world frame.
+        # .T gives world→body transform (framexaxis/framezaxis/framepos with refbody=torso).
+        bid = self._body_ids
+        sid = self._site_ids
+        torso_id = bid["torso"]
+        torso_rotmat_inv = data.xmat[torso_id].reshape(3, 3).T
+
+        def body_xaxis_torso(body_id: int) -> jp.ndarray:
+            """Body x-axis in torso body frame. Matches framexaxis with refbody=torso."""
+            return torso_rotmat_inv @ data.xmat[body_id].reshape(3, 3)[:, 0]
+
+        def body_zaxis_torso(body_id: int) -> jp.ndarray:
+            """Body z-axis in torso body frame. Matches framezaxis with refbody=torso."""
+            return torso_rotmat_inv @ data.xmat[body_id].reshape(3, 3)[:, 2]
+
+        def body_zaxis_world(body_id: int) -> jp.ndarray:
+            """Body z-axis in world frame. Matches framezaxis with no refbody."""
+            return data.xmat[body_id].reshape(3, 3)[:, 2]
+
+        def body_pos_torso(body_id: int) -> jp.ndarray:
+            """Body origin in torso body frame. Matches framepos objtype=xbody."""
+            return torso_rotmat_inv @ (data.xpos[body_id] - data.xpos[torso_id])
+
+        def site_pos_torso(site_id: int) -> jp.ndarray:
+            """Site position in torso body frame. Fixes framepos objtype=site MJX bug."""
+            return torso_rotmat_inv @ (data.site_xpos[site_id] - data.xpos[torso_id])
+
+        def joint(sensor_name: str) -> jp.ndarray:
+            """Joint angle from qpos, shape (1,) matching jointpos sensor output."""
+            addr = self._sensor_qpos_addr[sensor_name]
+            return data.qpos[addr:addr + 1]
+
+        def lumbar_tendon(tendon_name: str) -> jp.ndarray:
+            """Tendon length as weighted sum of vertebra joint qpos values."""
+            return jp.array([sum(coef * data.qpos[addr]
+                                 for addr, coef in self._tendon_qpos[tendon_name])])
 
         return {
             "hand_L": {
                 "palm_contact": get_sensor_data(m, data, "hand_L/palm_contact"),
                 "egocentric_hand_pos": self.body_relpos(data, "hand_L"),
-                "wrist_angle": get_sensor_data(m, data, "hand_L/wrist_angle"),
-                "finger_angle": get_sensor_data(m, data, "hand_L/finger_angle"),
-                "xaxis": get_sensor_data(m, data, "hand_L/xaxis"),
-                "finger_zz": get_sensor_data(m, data, "hand_L/finger_global_zaxis")[2:3],
+                "wrist_angle": joint("hand_L/wrist_angle"),
+                "finger_angle": joint("hand_L/finger_angle"),
+                "xaxis": body_xaxis_torso(bid["hand_L"]),
+                "finger_zz": body_zaxis_world(bid["finger_L"])[2:3],
             },
             "arm_L": {
-                "egocentric_elbow_pos": get_sensor_data(m, data, "arm_L/egocentric_elbow_pos"),
-                "elbow_angle": get_sensor_data(m, data, "arm_L/elbow_angle"),
-                "shoulder_sup": get_sensor_data(m, data, "arm_L/shoulder_sup"),
-                "shoulder": get_sensor_data(m, data, "arm_L/shoulder"),
-                "scapula_extend": get_sensor_data(m, data, "arm_L/scapula_extend"),
-                "scapula_abduct": get_sensor_data(m, data, "arm_L/scapula_abduct"),
-                "scapula_supinate": get_sensor_data(m, data, "arm_L/scapula_supinate"),
-                "elbow_height": jp.expand_dims(
-                    self.site_z(data, "elbow_L"), axis=0
-                ),
-                "shoulder_height": jp.expand_dims(
-                    self.site_z(data, "shoulder_L"), axis=0
-                ),
+                "egocentric_elbow_pos": body_pos_torso(bid["lower_arm_L"]),
+                "elbow_angle": joint("arm_L/elbow_angle"),
+                "shoulder_sup": joint("arm_L/shoulder_sup"),
+                "shoulder": joint("arm_L/shoulder"),
+                "scapula_extend": joint("arm_L/scapula_extend"),
+                "scapula_abduct": joint("arm_L/scapula_abduct"),
+                "scapula_supinate": joint("arm_L/scapula_supinate"),
+                "elbow_height": jp.expand_dims(self.site_z(data, "elbow_L"), axis=0),
+                "shoulder_height": jp.expand_dims(self.site_z(data, "shoulder_L"), axis=0),
                 "hand_linvel": yaw_mat @ get_sensor_data(m, data, "arm_L/hand_linvel"),
             },
             "hand_R": {
                 "palm_contact": get_sensor_data(m, data, "hand_R/palm_contact"),
                 "egocentric_hand_pos": self.body_relpos(data, "hand_R"),
-                "wrist_angle": get_sensor_data(m, data, "hand_R/wrist_angle"),
-                "finger_angle": get_sensor_data(m, data, "hand_R/finger_angle"),
-                "xaxis": get_sensor_data(m, data, "hand_R/xaxis"),
-                "finger_zz": get_sensor_data(m, data, "hand_R/finger_global_zaxis")[2:3],
+                "wrist_angle": joint("hand_R/wrist_angle"),
+                "finger_angle": joint("hand_R/finger_angle"),
+                "xaxis": body_xaxis_torso(bid["hand_R"]),
+                "finger_zz": body_zaxis_world(bid["finger_R"])[2:3],
             },
             "arm_R": {
-                "egocentric_elbow_pos": get_sensor_data(m, data, "arm_R/egocentric_elbow_pos"),
-                "elbow_angle": get_sensor_data(m, data, "arm_R/elbow_angle"),
-                "shoulder_sup": get_sensor_data(m, data, "arm_R/shoulder_sup"),
-                "shoulder": get_sensor_data(m, data, "arm_R/shoulder"),
-                "scapula_extend": get_sensor_data(m, data, "arm_R/scapula_extend"),
-                "scapula_abduct": get_sensor_data(m, data, "arm_R/scapula_abduct"),
-                "scapula_supinate": get_sensor_data(m, data, "arm_R/scapula_supinate"),
-                "elbow_height": jp.expand_dims(
-                    self.site_z(data, "elbow_R"), axis=0
-                ),
-                "shoulder_height": jp.expand_dims(
-                    self.site_z(data, "shoulder_R"), axis=0
-                ),
+                "egocentric_elbow_pos": body_pos_torso(bid["lower_arm_R"]),
+                "elbow_angle": joint("arm_R/elbow_angle"),
+                "shoulder_sup": joint("arm_R/shoulder_sup"),
+                "shoulder": joint("arm_R/shoulder"),
+                "scapula_extend": joint("arm_R/scapula_extend"),
+                "scapula_abduct": joint("arm_R/scapula_abduct"),
+                "scapula_supinate": joint("arm_R/scapula_supinate"),
+                "elbow_height": jp.expand_dims(self.site_z(data, "elbow_R"), axis=0),
+                "shoulder_height": jp.expand_dims(self.site_z(data, "shoulder_R"), axis=0),
                 "hand_linvel": yaw_mat @ get_sensor_data(m, data, "arm_R/hand_linvel"),
             },
             "foot_L": {
                 "sole_contact": get_sensor_data(m, data, "foot_L/sole_contact"),
                 "heel_contact": get_sensor_data(m, data, "foot_L/heel_contact"),
                 "egocentric_foot_pos": self.body_relpos(data, "foot_L"),
-                "knee_angle": get_sensor_data(m, data, "foot_L/knee_angle"),
-                "ankle_angle": get_sensor_data(m, data, "foot_L/ankle_angle"),
-                "toe_angle": get_sensor_data(m, data, "foot_L/toe_angle"),
-                "xaxis": get_sensor_data(m, data, "foot_L/xaxis"),
-                "toe_zz": get_sensor_data(m, data, "foot_L/toe_global_zaxis")[2:3],
+                "knee_angle": joint("foot_L/knee_angle"),
+                "ankle_angle": joint("foot_L/ankle_angle"),
+                "toe_angle": joint("foot_L/toe_angle"),
+                "xaxis": body_xaxis_torso(bid["foot_L"]),
+                "toe_zz": body_zaxis_world(bid["toe_L"])[2:3],
             },
             "leg_L": {
-                "egocentric_knee_pos": get_sensor_data(m, data, "leg_L/egocentric_knee_pos"),
-                "hip_supinate": get_sensor_data(m, data, "leg_L/hip_supinate"),
-                "hip_abduct": get_sensor_data(m, data, "leg_L/hip_abduct"),
-                "hip_extend": get_sensor_data(m, data, "leg_L/hip_extend"),
-                "knee_angle": get_sensor_data(m, data, "leg_L/knee_angle"),
-                "pelvis_zaxis": yaw_mat @ get_sensor_data(m, data, "pelvis/zaxis"),
-                "hip_height": jp.expand_dims(
-                    self.site_z(data, "hip_L"), axis=0
-                ),
-                "hip_accelerometer": (
-                    get_sensor_data(m, data, "leg_L/hip_accelerometer")
-                ),
-                "hip_gyro": get_sensor_data(m, data, "leg_L/hip_gyro"),
+                "egocentric_knee_pos": site_pos_torso(sid["knee_L"]),
+                "hip_supinate": joint("leg_L/hip_supinate"),
+                "hip_abduct": joint("leg_L/hip_abduct"),
+                "hip_extend": joint("leg_L/hip_extend"),
+                "knee_angle": joint("leg_L/knee_angle"),
+                "ankle_angle": joint("leg_L/ankle_angle"),
+                "pelvis_zaxis": yaw_mat @ body_zaxis_world(bid["pelvis"]),
+                "hip_height": jp.expand_dims(self.site_z(data, "hip_L"), axis=0),
+                #"hip_accelerometer": get_sensor_data(m, data, "leg_L/hip_accelerometer"),
+                #"hip_gyro": get_sensor_data(m, data, "leg_L/hip_gyro"),
             },
             "foot_R": {
                 "sole_contact": get_sensor_data(m, data, "foot_R/sole_contact"),
                 "heel_contact": get_sensor_data(m, data, "foot_R/heel_contact"),
                 "egocentric_foot_pos": self.body_relpos(data, "foot_R"),
-                "knee_angle": get_sensor_data(m, data, "foot_R/knee_angle"),
-                "ankle_angle": get_sensor_data(m, data, "foot_R/ankle_angle"),
-                "toe_angle": get_sensor_data(m, data, "foot_R/toe_angle"),
-                "toe_zz": get_sensor_data(m, data, "foot_R/toe_global_zaxis")[2:3],
+                "knee_angle": joint("foot_R/knee_angle"),
+                "ankle_angle": joint("foot_R/ankle_angle"),
+                "toe_angle": joint("foot_R/toe_angle"),
+                "xaxis": body_xaxis_torso(bid["foot_R"]),
+                "toe_zz": body_zaxis_world(bid["toe_R"])[2:3],
             },
             "leg_R": {
-                "egocentric_knee_pos": (
-                    get_sensor_data(m, data, "leg_R/egocentric_knee_pos")
-                ),
-                "hip_supinate": get_sensor_data(m, data, "leg_R/hip_supinate"),
-                "hip_abduct": get_sensor_data(m, data, "leg_R/hip_abduct"),
-                "hip_extend": get_sensor_data(m, data, "leg_R/hip_extend"),
-                "knee_angle": get_sensor_data(m, data, "leg_R/knee_angle"),
-                "ankle_angle": get_sensor_data(m, data, "leg_R/ankle_angle"),
-                "pelvis_zaxis": yaw_mat @ get_sensor_data(m, data, "pelvis/zaxis"),
-                "hip_height": jp.expand_dims(
-                    self.site_z(data, "hip_R"), axis=0
-                ),
-                "hip_accelerometer": get_sensor_data(m, data, "leg_R/hip_accelerometer"),
-                "hip_gyro": get_sensor_data(m, data, "leg_R/hip_gyro"),
+                "egocentric_knee_pos": site_pos_torso(sid["knee_R"]),
+                "hip_supinate": joint("leg_R/hip_supinate"),
+                "hip_abduct": joint("leg_R/hip_abduct"),
+                "hip_extend": joint("leg_R/hip_extend"),
+                "knee_angle": joint("leg_R/knee_angle"),
+                "ankle_angle": joint("leg_R/ankle_angle"),
+                "pelvis_zaxis": yaw_mat @ body_zaxis_world(bid["pelvis"]),
+                "hip_height": jp.expand_dims(self.site_z(data, "hip_R"), axis=0),
+                #"hip_accelerometer": get_sensor_data(m, data, "leg_R/hip_accelerometer"),
+                #"hip_gyro": get_sensor_data(m, data, "leg_R/hip_gyro"),
             },
             "torso": {
                 "accelerometer": get_sensor_data(m, data, "torso/accelerometer"),
                 "gyro": get_sensor_data(m, data, "torso/gyro"),
-                "zaxis": yaw_mat @ get_sensor_data(m, data, "torso/zaxis"),
-                "lumbar_extend": get_sensor_data(m, data, "torso/lumbar_extend"),
-                "lumbar_bend": get_sensor_data(m, data, "torso/lumbar_bend"),
-                "lumbar_twist": get_sensor_data(m, data, "torso/lumbar_twist"),
+                "zaxis": yaw_mat @ body_zaxis_world(torso_id),
+                "lumbar_extend": lumbar_tendon("lumbar_extend"),
+                "lumbar_bend": lumbar_tendon("lumbar_bend"),
+                "lumbar_twist": lumbar_tendon("lumbar_twist"),
                 "linvel": get_sensor_data(m, data, "torso/linvel"),
                 "height_above_ground": jp.expand_dims(
                     self.body_relpos(data, "torso")[2], axis=0
                 ),
-                "pelvis_zaxis": yaw_mat @ get_sensor_data(m, data, "pelvis/zaxis"),
+                "pelvis_zaxis": yaw_mat @ body_zaxis_world(bid["pelvis"]),
             },
             "head": {
                 "accelerometer": get_sensor_data(m, data, "head/accelerometer"),
                 "egocentric_pos": self.body_relpos(data, "skull"),
-                "xaxis": get_sensor_data(m, data, "head/xaxis"),
-                "zaxis": get_sensor_data(m, data, "head/zaxis"),
-                "atlas": get_sensor_data(m, data, "head/atlas"),
-                "atlant_extend": get_sensor_data(m, data, "head/atlant_extend"),
-                "mandible": get_sensor_data(m, data, "head/mandible"),
-                "cervical_extend": get_sensor_data(m, data, "head/cervical_extend"),
-                "cervical_bend": get_sensor_data(m, data, "head/cervical_bend"),
-                "cervical_twist": get_sensor_data(m, data, "head/cervical_twist"),
+                "xaxis": body_xaxis_torso(bid["skull"]),
+                "zaxis": body_zaxis_torso(bid["skull"]),
+                "atlas": joint("head/atlas"),
+                "atlant_extend": joint("head/atlant_extend"),
+                "mandible": joint("head/mandible"),
+                "cervical_extend": joint("head/cervical_extend"),
+                "cervical_bend": joint("head/cervical_bend"),
+                "cervical_twist": joint("head/cervical_twist"),
                 "linvel": get_sensor_data(m, data, "head/linvel"),
             },
         }
@@ -637,67 +715,113 @@ class ModularImitation_v2(modular_base.ModularRodentEnv):
 
         ref_qpos = interp(self.reference_clips.qpos)
 
-        # --- transform to current agent's yaw-aligned torso frame ---
+        # --- transform to current agent's torso frame ---
         yaw_mat = self.torso_yawmat(data)
         ref_torso_xpos = body_xpos("torso")
         ref_torso_xy = jp.array([ref_torso_xpos[0], ref_torso_xpos[1], 0.0])
+
+        # Full inverse rotation of agent's torso: world → torso body frame.
+        # Used for sensors with refbody=torso (framexaxis/zaxis/pos with refname="torso").
+        torso_id = self._mj_model.body("torso").id
+        torso_rotmat_inv = data.xmat[torso_id].reshape(3, 3).T
 
         def to_local(world_pos: jp.ndarray) -> jp.ndarray:
             """World-frame position → current agent's yaw-aligned frame (z preserved)."""
             return yaw_mat @ (world_pos - ref_torso_xy)
 
-        def xaxis(name: str) -> jp.ndarray:
-            """Body x-axis in current agent's frame, from xquat [w, x, y, z]."""
+        def _world_xaxis(name: str) -> jp.ndarray:
+            """Body x-axis in world frame, from xquat [w, x, y, z]."""
             q = body_xquat(name)
             w, x, y, z = q[0], q[1], q[2], q[3]
-            return yaw_mat @ jp.array([1 - 2*(y*y + z*z), 2*(x*y + w*z), 2*(x*z - w*y)])
+            return jp.array([1 - 2*(y*y + z*z), 2*(x*y + w*z), 2*(x*z - w*y)])
 
-        def zaxis(name: str) -> jp.ndarray:
-            """Body z-axis in current agent's frame, from xquat [w, x, y, z]."""
+        def _world_zaxis(name: str) -> jp.ndarray:
+            """Body z-axis in world frame, from xquat [w, x, y, z]."""
             q = body_xquat(name)
             w, x, y, z = q[0], q[1], q[2], q[3]
-            return yaw_mat @ jp.array([2*(x*z + w*y), 2*(y*z - w*x), 1 - 2*(x*x + y*y)])
+            return jp.array([2*(x*z + w*y), 2*(y*z - w*x), 1 - 2*(x*x + y*y)])
+
+        def xaxis_yaw(name: str) -> jp.ndarray:
+            """Body x-axis in yaw-aligned frame. Matches framexaxis with no refbody."""
+            return yaw_mat @ _world_xaxis(name)
+
+        def zaxis_yaw(name: str) -> jp.ndarray:
+            """Body z-axis in yaw-aligned frame. Matches framezaxis with no refbody."""
+            return yaw_mat @ _world_zaxis(name)
+
+        def xaxis_torso(name: str) -> jp.ndarray:
+            """Body x-axis in torso body frame. Matches framexaxis with refbody=torso."""
+            return torso_rotmat_inv @ _world_xaxis(name)
+
+        def zaxis_torso(name: str) -> jp.ndarray:
+            """Body z-axis in torso body frame. Matches framezaxis with refbody=torso."""
+            return torso_rotmat_inv @ _world_zaxis(name)
 
         def joint(sensor_name: str) -> jp.ndarray:
             """Single joint angle from ref_qpos, shape (1,) matching sensor output."""
             addr = self._sensor_qpos_addr[sensor_name]
             return ref_qpos[addr:addr + 1]
 
+        def tendon(tendon_name: str) -> jp.ndarray:
+            """Tendon length from ref_qpos as weighted sum of vertebra joints.
+            Matches tendonpos sensor output for fixed tendons (lumbar_*)."""
+            return jp.array([sum(coef * ref_qpos[addr]
+                                 for addr, coef in self._tendon_qpos[tendon_name])])
+
         def height(body_name: str) -> jp.ndarray:
             """Absolute z-height of a body origin, shape (1,) (frame-invariant)."""
             return body_xpos(body_name)[2:3]
+
+        def ref_site_xpos(site_local: jp.ndarray, parent_body: str) -> jp.ndarray:
+            """Reference world position of a site from parent body xpos + xquat.
+
+            Reconstructs the site world position from HDF5 body data, matching
+            what data.site_xpos would give if the model is at the reference pose.
+            """
+            q = body_xquat(parent_body)  # [w, x, y, z] MuJoCo convention
+            w, x, y, z = q[0], q[1], q[2], q[3]
+            R = jp.array([
+                [1 - 2*(y*y + z*z), 2*(x*y - w*z), 2*(x*z + w*y)],
+                [2*(x*y + w*z), 1 - 2*(x*x + z*z), 2*(y*z - w*x)],
+                [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x*x + y*y)],
+            ])
+            return body_xpos(parent_body) + R @ site_local
 
         return {
             "hand_L": {
                 "pos":          to_local(body_xpos("hand_L")),
                 "wrist_angle":  joint("hand_L/wrist_angle"),
                 "finger_angle": joint("hand_L/finger_angle"),
-                "xaxis":        xaxis("hand_L"),
+                "xaxis":        xaxis_torso("hand_L"),        # sensor: refbody=torso
             },
             "arm_L": {
                 "elbow_angle":     joint("arm_L/elbow_angle"),
                 "elbow_height":    height("lower_arm_L"),   # body origin ≈ elbow joint
                 "shoulder_height": height("upper_arm_L"),   # body origin ≈ shoulder joint
+                "elbow_pos_torso": torso_rotmat_inv @ (body_xpos("lower_arm_L") - ref_torso_xpos),
             },
             "hand_R": {
                 "pos":          to_local(body_xpos("hand_R")),
                 "wrist_angle":  joint("hand_R/wrist_angle"),
                 "finger_angle": joint("hand_R/finger_angle"),
-                "xaxis":        xaxis("hand_R"),
+                "xaxis":        xaxis_torso("hand_R"),        # sensor: refbody=torso
             },
             "arm_R": {
                 "elbow_angle":     joint("arm_R/elbow_angle"),
                 "elbow_height":    height("lower_arm_R"),
                 "shoulder_height": height("upper_arm_R"),
+                "elbow_pos_torso": torso_rotmat_inv @ (body_xpos("lower_arm_R") - ref_torso_xpos),
             },
             "foot_L": {
                 "pos":         to_local(body_xpos("foot_L")),
                 "toe_angle":   joint("foot_L/toe_angle"),
                 "ankle_angle": joint("foot_L/ankle_angle"),
-                "xaxis":       xaxis("foot_L"),
+                "xaxis":       xaxis_torso("foot_L"),         # sensor: refbody=torso
             },
             "leg_L": {
-                "knee_pos":   to_local(body_xpos("lower_leg_L")),  # body origin = knee
+                # Reconstruct reference knee site position from upper_leg_L body + rotation.
+                # Avoids HDF5 body mismatch; matches site_pos_torso(knee_L) in proprioception.
+                "knee_pos":   torso_rotmat_inv @ (ref_site_xpos(self._knee_L_local, "upper_leg_L") - ref_torso_xpos),
                 "knee_angle": joint("leg_L/knee_angle"),
                 "hip_height": height("upper_leg_L"),               # body origin = hip
             },
@@ -705,24 +829,25 @@ class ModularImitation_v2(modular_base.ModularRodentEnv):
                 "pos":         to_local(body_xpos("foot_R")),
                 "toe_angle":   joint("foot_R/toe_angle"),
                 "ankle_angle": joint("foot_R/ankle_angle"),
-                "xaxis":       xaxis("foot_R"),
+                "xaxis":       xaxis_torso("foot_R"),         # sensor: refbody=torso
             },
             "leg_R": {
-                "knee_pos":   to_local(body_xpos("lower_leg_R")),
+                # Reconstruct reference knee site position from upper_leg_R body + rotation.
+                "knee_pos":   torso_rotmat_inv @ (ref_site_xpos(self._knee_R_local, "upper_leg_R") - ref_torso_xpos),
                 "knee_angle": joint("leg_R/knee_angle"),
                 "hip_height": height("upper_leg_R"),
             },
             "torso": {
-                "zaxis":               zaxis("torso"),
-                "pelvis_zaxis":        zaxis("pelvis"),
-                "lumbar_bend":         joint("torso/lumbar_bend"),
-                "lumbar_twist":        joint("torso/lumbar_twist"),
-                "lumbar_extend":       joint("torso/lumbar_extend"),
+                "zaxis":               zaxis_yaw("torso"),   # sensor: no refbody → world → yaw
+                "pelvis_zaxis":        zaxis_yaw("pelvis"),  # sensor: no refbody → world → yaw
+                "lumbar_bend":         tendon("lumbar_bend"),    # tendonpos sensor
+                "lumbar_twist":        tendon("lumbar_twist"),
+                "lumbar_extend":       tendon("lumbar_extend"),
                 "height_above_ground": height("torso"),
             },
             "head": {
-                "xaxis":          xaxis("skull"),
-                "zaxis":          zaxis("skull"),
+                "xaxis":          xaxis_torso("skull"),       # sensor: refbody=torso
+                "zaxis":          zaxis_torso("skull"),       # sensor: refbody=torso
                 "egocentric_pos": to_local(body_xpos("skull")),
                 "mandible":       joint("head/mandible"),
             },
