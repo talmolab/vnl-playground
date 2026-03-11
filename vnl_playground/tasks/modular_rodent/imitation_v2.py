@@ -52,7 +52,8 @@ def default_config() -> config_dict.ConfigDict:
         # Reward scales
         reward_terms={
             "limb_pos_exp_scale": 0.015, # sigma for distance-based errors (meters)
-            "joint_exp_scale": 0.1,      # sigma for angle-based errors (radians)
+            "joint_exp_scale": 0.2,      # sigma for angle-based errors (radians)
+            "tendon_exp_scale": 0.5,     # sigma for angle-based errors for tendons (radians)
             "root_pos_scale": 0.05,      # sigma for root position reward (meters)
             "root_pos_weight": 5.0,      # weight for root position reward
             "root_ang_scale": 0.5,       # sigma for root angle reward (radians)
@@ -431,6 +432,7 @@ class ModularImitation_v2(modular_base.ModularRodentEnv):
         target = cur
         pos_scale = self._config.reward_terms.limb_pos_exp_scale
         joint_scale = self._config.reward_terms.joint_exp_scale
+        tendon_scale = self._config.reward_terms.tendon_exp_scale
 
         # target["root"]["pos"] and ["rot"] are already egocentric (from _build_target)
         root_dist = jp.linalg.norm(target["root"]["pos"])
@@ -510,9 +512,9 @@ class ModularImitation_v2(modular_base.ModularRodentEnv):
                     target["foot_L"]["ankle_angle"],
                     joint_scale,
                 ),
-                #"orientation": jp.dot(
-                #    prop["foot_L"]["xaxis"], target["foot_L"]["xaxis"]
-                #),
+                "orientation": jp.dot(
+                    prop["foot_L"]["xaxis"], target["foot_L"]["xaxis"]
+                ),
                 "foot_pos": _reward_shape(
                     prop["foot_L"]["egocentric_foot_pos"],
                     target["foot_L"]["pos"],
@@ -546,9 +548,9 @@ class ModularImitation_v2(modular_base.ModularRodentEnv):
                     target["foot_R"]["ankle_angle"],
                     joint_scale,
                 ),
-                #"orientation": jp.dot(
-                #    prop["foot_R"]["xaxis"], target["foot_R"]["xaxis"]
-                #),
+                "orientation": jp.dot(
+                    prop["foot_R"]["xaxis"], target["foot_R"]["xaxis"]
+                ),
                 "foot_pos": _reward_shape(
                     prop["foot_R"]["egocentric_foot_pos"],
                     target["foot_R"]["pos"],
@@ -587,17 +589,17 @@ class ModularImitation_v2(modular_base.ModularRodentEnv):
                 "lumbar_bend": _reward_shape(
                     prop["torso"]["lumbar_bend"],
                     target["torso"]["lumbar_bend"],
-                    joint_scale,
+                    tendon_scale,
                 ),
                 "lumbar_twist": _reward_shape(
                     prop["torso"]["lumbar_twist"],
                     target["torso"]["lumbar_twist"],
-                    joint_scale,
+                    tendon_scale,
                 ),
                 "lumbar_extend": _reward_shape(
                     prop["torso"]["lumbar_extend"],
                     target["torso"]["lumbar_extend"],
-                    joint_scale,
+                    tendon_scale,    
                 ),
             },
             "head": {
