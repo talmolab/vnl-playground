@@ -201,7 +201,7 @@ class ModularImitation_v3(modular_base.ModularRodentEnv):
         torso_xpos = data.bind(self.mjx_model, self._spec.body("torso")).xpos
 
         def joint(name: str) -> jp.ndarray:
-            return data.bind(self.mjx_model, self._spec.joint(name)).qpos
+            return jp.expand_dims(data.bind(self.mjx_model, self._spec.joint(name)).qpos, 0)
         def body_world_pos(name: str) -> jp.array:
             return data.bind(self.mjx_model, self._spec.body(name)).xpos
         def body_pos(name: str) -> jp.array:
@@ -215,7 +215,7 @@ class ModularImitation_v3(modular_base.ModularRodentEnv):
         def zaxis(name: str) -> jp.ndarray:
             return torso_xmat.T @ world_zaxis(name)
         def height(body_name: str) -> jp.ndarray:
-            return body_world_pos(body_name)[2]
+            return body_world_pos(body_name)[2:3]
 
         return {
             "hand_L": {
@@ -234,8 +234,8 @@ class ModularImitation_v3(modular_base.ModularRodentEnv):
                 "scapula_extend": joint("scapula_L_extend"),
                 "scapula_abduct": joint("scapula_L_abduct"),
                 "scapula_supinate": joint("scapula_L_supinate"),
-                "elbow_height": body_world_pos("lower_arm_L")[2],
-                "shoulder_height": body_world_pos("upper_arm_L")[2],
+                "elbow_height": body_world_pos("lower_arm_L")[2:3],
+                "shoulder_height": body_world_pos("upper_arm_L")[2:3],
                 "hand_linvel": torso_xmat.T @ get_sensor_data(m, data, "arm_L/hand_linvel"), #TODO: Check if this is correct
             },
             "hand_R": {
@@ -254,8 +254,8 @@ class ModularImitation_v3(modular_base.ModularRodentEnv):
                 "scapula_extend": joint("scapula_R_extend"),
                 "scapula_abduct": joint("scapula_R_abduct"),
                 "scapula_supinate": joint("scapula_R_supinate"),
-                "elbow_height": body_world_pos("lower_arm_R")[2],
-                "shoulder_height": body_world_pos("upper_arm_R")[2],
+                "elbow_height": body_world_pos("lower_arm_R")[2:3],
+                "shoulder_height": body_world_pos("upper_arm_R")[2:3],
                 "hand_linvel": torso_xmat.T @ get_sensor_data(m, data, "arm_R/hand_linvel"), #TODO: Check if this is correct
             },
             "foot_L": {
@@ -631,7 +631,7 @@ class ModularImitation_v3(modular_base.ModularRodentEnv):
 
         def joint_ref(name: str) -> jp.ndarray:
             adr = self.reference_clips._qpos_names[name]
-            return interp(self.reference_clips.qpos[:, :, adr])
+            return interp(self.reference_clips.qpos[:, :, adr:adr+1])
 
         # --- transform to current agent's torso frame ---
         torso_xpos = data.bind(self.mjx_model, self._spec.body("torso")).xpos
@@ -661,7 +661,7 @@ class ModularImitation_v3(modular_base.ModularRodentEnv):
 
         def height(body_name: str) -> jp.ndarray:
             """Absolute z-height of a body origin, shape (1,) (frame-invariant)."""
-            return body_ref_xpos(body_name)[2]
+            return body_ref_xpos(body_name)[2:3]
 
         return {
             "hand_L": {
@@ -894,29 +894,4 @@ class ModularImitation_v3(modular_base.ModularRodentEnv):
 def _reward_shape(a: jp.ndarray, b: jp.ndarray, scale: float) -> jp.ndarray:
     """exp(-(norm(a-b)/scale)^2) — matches Julia's reward_shape."""
     return jp.exp(-(jp.linalg.norm(a - b) / scale) ** 2)
-
-
-def _cosine_dist(a: jp.ndarray, b: jp.ndarray) -> jp.ndarray:
-    """Cosine similarity — matches Julia's cosine_dist."""
-    return jp.dot(a, b) / (jp.linalg.norm(a) * jp.linalg.norm(b))
-
-
-def _sub_quat(q_target: jp.ndarray, q_current: jp.ndarray) -> jp.ndarray:
-    """Relative rotation from q_current to q_target as a 3D angular velocity.
-
-    Matches Julia's subQuat(qa=q_target, qb=q_current):
-        q_diff = conj(q_current) * q_target
-        return quat2Vel(q_diff, dt=1)
-
-    Both quaternions use MuJoCo convention [w, x, y, z].
-    The result is a 3-vector: axis * angle (radians), dt=1.
-    """
-    q_diff = brax.math.quat_mul(brax.math.quat_inv(q_current), q_target)
-    w, xyz = q_diff[0], q_diff[1:]
-    sin_a_2 = jp.linalg.norm(xyz)
-    axis = xyz / (sin_a_2 + 1e-10)
-    speed = 2.0 * jp.arctan2(sin_a_2, w)
-    speed = jp.where(speed > jp.pi, speed - 2.0 * jp.pi, speed)
-    return axis * speed
-
 
