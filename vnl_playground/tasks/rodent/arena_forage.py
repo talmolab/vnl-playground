@@ -46,8 +46,10 @@ def default_config() -> config_dict.ConfigDict:
         treat_sphere_radius=0.03,
         treat_height=0.03,
         spawn_radius=1.0,
+        min_spawn_radius=0.3,
         scent_sigma=0.5,
         reward_per_treat=1.0,
+        discounting=0.99,
         episode_length=2000,
         action_repeat=1,
         reward_terms={
@@ -131,12 +133,27 @@ class ArenaForage(rodent_base.RodentEnv):
         spawn_radius = self._config.spawn_radius
         treat_height = self._config.treat_height
 
-        # Sample treat positions uniformly in disk
-        angle_rng, radius_rng = jax.random.split(treat_rng)
-        angles = jax.random.uniform(angle_rng, (num_treats,), minval=0, maxval=2 * jp.pi)
-        radii = spawn_radius * jp.sqrt(
-            jax.random.uniform(radius_rng, (num_treats,), minval=0, maxval=1)
+        # Jittered grid sampling: angular sectors + radial bands for even spread
+        angle_rng, radius_rng, perm_rng = jax.random.split(treat_rng, 3)
+        min_spawn_radius = self._config.min_spawn_radius
+
+        # Angular: one treat per sector with random jitter
+        sector_width = 2 * jp.pi / num_treats
+        base_angles = jp.linspace(0, 2 * jp.pi, num_treats, endpoint=False)
+        angle_jitter = jax.random.uniform(
+            angle_rng, (num_treats,), minval=0, maxval=sector_width
         )
+        angles = base_angles + angle_jitter
+
+        # Radial: stratified annular bands, shuffled so radius/angle uncorrelated
+        band_edges = jp.linspace(min_spawn_radius, spawn_radius, num_treats + 1)
+        band_lo = band_edges[:-1]
+        band_hi = band_edges[1:]
+        band_order = jax.random.permutation(perm_rng, num_treats)
+        band_lo = band_lo[band_order]
+        band_hi = band_hi[band_order]
+        u = jax.random.uniform(radius_rng, (num_treats,))
+        radii = jp.sqrt(band_lo**2 + u * (band_hi**2 - band_lo**2))
         treat_positions = jp.stack(
             [
                 radii * jp.cos(angles),
@@ -161,6 +178,9 @@ class ArenaForage(rodent_base.RodentEnv):
             njmax=self._config.njmax,
         )
         data = mjx.forward(self.mjx_model, data)
+
+        # Initialize prev_scent for potential-based shaping
+        info["prev_scent"] = self._compute_scent(data, info)
 
         metrics = {}
         obs = self._get_obs(data, info)
@@ -211,8 +231,9 @@ class ArenaForage(rodent_base.RodentEnv):
         touch_sensors = self._get_touch_sensors(data)
         origin = self._get_origin(data)
 
-        # Compute scent signal
+        # Compute scent signal and gradient
         total_scent = self._compute_scent(data, info)
+        scent_gradient = self._compute_scent_gradient(data, info)
 
         task_obs = jp.concatenate(
             [
@@ -221,6 +242,7 @@ class ArenaForage(rodent_base.RodentEnv):
                 touch_sensors,
                 origin,
                 total_scent.reshape(1),
+                scent_gradient,
             ]
         )
 
@@ -248,6 +270,36 @@ class ArenaForage(rodent_base.RodentEnv):
         active_mask = jp.logical_not(treat_collected).astype(float)
         total_scent = jp.sum(scent_per_treat * active_mask)
         return total_scent
+
+    def _compute_scent_gradient(self, data: mjx.Data, info: dict) -> jax.Array:
+        """Compute egocentric scent gradient at skull position (3D vector).
+
+        The gradient of the sum-of-Gaussians scent field points toward
+        uncollected treats, weighted by proximity. Returned in the torso
+        body frame so the signal is orientation-invariant.
+        """
+        skull_pos = self._get_skull_pos(data)
+        treat_positions = info["treat_positions"]
+        treat_collected = info["treat_collected"]
+        sigma = self._config.scent_sigma
+
+        # diff[i] = treat_i - skull  (points toward treat i)
+        diff = treat_positions - skull_pos  # (num_treats, 3)
+        dists = jp.linalg.norm(diff, axis=-1)  # (num_treats,)
+        scent_per_treat = jp.exp(-dists**2 / (2 * sigma**2))  # (num_treats,)
+        active_mask = jp.logical_not(treat_collected).astype(float)
+
+        # ∇S = Σ_i active_i * exp(-d_i²/2σ²) * (x_i - x) / σ²
+        weights = scent_per_treat * active_mask / (sigma**2)  # (num_treats,)
+        grad_world = jp.sum(weights[:, None] * diff, axis=0)  # (3,)
+
+        # Transform to egocentric (torso) frame
+        torso_body = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        )
+        torso_frame = torso_body.xmat
+        grad_ego = jp.dot(grad_world, torso_frame)
+        return grad_ego
 
     def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
         any_terminated = False
@@ -303,7 +355,7 @@ class ArenaForage(rodent_base.RodentEnv):
         render_scent: bool = True,
         scent_grid_extent: float = 5.0,
         scent_grid_resolution: int = 40,
-        scent_threshold: float = 0.01,
+        scent_threshold: float = 0,
     ) -> Sequence[np.ndarray]:
         """Renders a trajectory with treat spheres and optional scent tiles.
 
@@ -423,6 +475,27 @@ def _treat_collection_reward(env, data, info, metrics, weight) -> float:
     weighted_reward = reward_value * weight
     metrics["rewards/treat_collection"] = weighted_reward
     metrics["mean_collected_treats"] = jp.sum(newly_collected.astype(float))
+    return weighted_reward
+
+
+@_named_reward("scent_proximity")
+def _scent_proximity_reward(env, data, info, metrics, weight) -> float:
+    """Potential-based shaping reward for movement toward uncollected treats.
+
+    Uses the change in scent between consecutive steps rather than the
+    absolute scent value.  This rewards *approaching* treats without
+    rewarding hovering, and avoids penalising collection (the one-time
+    scent drop is dwarfed by the treat_collection reward).
+
+    Formally: F(s, s') = γ · Φ(s') − Φ(s), with Φ = total_scent.
+    """
+    total_scent = env._compute_scent(data, info)
+    prev_scent = info.get("prev_scent", total_scent)
+    discounting = env._config.get("discounting", 0.99)
+    shaping = discounting * total_scent - prev_scent
+    info["prev_scent"] = total_scent
+    weighted_reward = shaping * weight
+    metrics["rewards/scent_proximity"] = weighted_reward
     return weighted_reward
 
 
