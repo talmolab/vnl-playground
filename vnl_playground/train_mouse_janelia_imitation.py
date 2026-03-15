@@ -6,6 +6,7 @@ with PPO via Brax, tracking reference motion clips.
 Logs rollout videos + metrics to wandb.
 """
 
+import argparse
 import os
 
 xla_flags = os.environ.get("XLA_FLAGS", "")
@@ -45,6 +46,43 @@ jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 
+# ── CLI arguments ────────────────────────────────────────────────────────────
+def parse_args():
+    p = argparse.ArgumentParser(description="Janelia mouse forelimb imitation training")
+
+    # Sweep metadata
+    p.add_argument("--tag", type=str, default=None, help="Sweep run tag (e.g. 'baseline', 'low-damp')")
+    p.add_argument("--run-name", type=str, default=None, help="Full run name (e.g. 'S1-00-baseline')")
+    p.add_argument("--wandb-group", type=str, default=None, help="Wandb group (e.g. 'sweep1-physics')")
+    p.add_argument("--wandb-tags", type=str, nargs="*", default=None, help="Wandb tags list")
+    p.add_argument("--no-wandb", action="store_true", help="Disable wandb logging")
+
+    # Physics overrides
+    p.add_argument("--joint-damping", type=float, default=None, help="Override dof_damping[:] (default: XML value)")
+    p.add_argument("--joint-armature", type=float, default=None, help="Override dof_armature[:] (default: XML value)")
+    p.add_argument("--joint-stiffness", type=float, default=None, help="Override jnt_stiffness[:] (default: XML value)")
+    p.add_argument("--force-scale", type=float, default=None, help="Multiply actuator_gainprm[:, 0] (default: 1.0)")
+
+    # Training / env overrides
+    p.add_argument("--reference-length", type=int, default=None, help="Frames of future reference in observation")
+    p.add_argument("--episode-length", type=int, default=None, help="PPO episode length (env steps)")
+    p.add_argument("--entropy-cost", type=float, default=None, help="PPO entropy cost coefficient")
+    p.add_argument("--learning-rate", type=float, default=None, help="PPO learning rate")
+    p.add_argument("--discounting", type=float, default=None, help="PPO discount factor")
+    p.add_argument("--batch-size", type=int, default=None, help="PPO batch size")
+    p.add_argument("--num-minibatches", type=int, default=None, help="PPO num minibatches")
+    p.add_argument("--num-timesteps", type=int, default=None, help="Total training timesteps")
+
+    # Reward overrides
+    p.add_argument("--control-cost", type=float, default=None, help="Control cost weight")
+    p.add_argument("--control-diff-cost", type=float, default=None, help="Control diff cost weight")
+
+    return p.parse_args()
+
+
+args = parse_args()
+
+
 # ── Environment config ──────────────────────────────────────────────────────
 env_cfg = default_config()
 env_cfg.walker_xml_path = JANELIA_MOUSE_XML_PATH
@@ -55,11 +93,29 @@ env_cfg.tracked_bodies = ["scapula", "humerus", "ulna", "wrist"]
 env_cfg.end_effector = "wrist"
 env_cfg.recompute_kinematics = False  # IK data already from same model
 
+# Apply physics overrides from CLI
+if args.joint_damping is not None:
+    env_cfg.joint_damping = args.joint_damping
+if args.joint_armature is not None:
+    env_cfg.joint_armature = args.joint_armature
+if args.joint_stiffness is not None:
+    env_cfg.joint_stiffness = args.joint_stiffness
+if args.force_scale is not None:
+    env_cfg.force_scale = args.force_scale
+
+# Apply env/reward overrides from CLI
+if args.reference_length is not None:
+    env_cfg.reference_length = args.reference_length
+if args.control_cost is not None:
+    env_cfg.reward_terms["control_cost"]["weight"] = args.control_cost
+if args.control_diff_cost is not None:
+    env_cfg.reward_terms["control_diff_cost"]["weight"] = args.control_diff_cost
+
 
 # ── PPO hyper-parameters ────────────────────────────────────────────────────
 ppo_params = config_dict.create(
     num_envs=4096,
-    num_timesteps=int(1_000_000_000),
+    num_timesteps=int(500_000_000),
     batch_size=1024,
     num_minibatches=16,
     num_updates_per_batch=3,
@@ -80,6 +136,22 @@ ppo_params = config_dict.create(
     eval_every=100_000_000,
 )
 
+# Apply PPO overrides from CLI
+if args.entropy_cost is not None:
+    ppo_params.entropy_cost = args.entropy_cost
+if args.learning_rate is not None:
+    ppo_params.learning_rate = args.learning_rate
+if args.discounting is not None:
+    ppo_params.discounting = args.discounting
+if args.batch_size is not None:
+    ppo_params.batch_size = args.batch_size
+if args.num_minibatches is not None:
+    ppo_params.num_minibatches = args.num_minibatches
+if args.episode_length is not None:
+    ppo_params.episode_length = args.episode_length
+if args.num_timesteps is not None:
+    ppo_params.num_timesteps = args.num_timesteps
+
 pprint(ppo_params)
 
 
@@ -90,10 +162,35 @@ FINETUNE_PATH = None
 
 now = datetime.now()
 timestamp = now.strftime("%Y%m%d-%H%M%S")
-exp_name = f"{env_name}-{timestamp}"
-if SUFFIX is not None:
-    exp_name += f"-{SUFFIX}"
+
+if args.run_name is not None:
+    exp_name = args.run_name
+else:
+    exp_name = f"{env_name}-{timestamp}"
+    if args.tag is not None:
+        exp_name += f"-{args.tag}"
+    elif SUFFIX is not None:
+        exp_name += f"-{SUFFIX}"
+
+# Build a param summary string for the wandb name
+_param_parts = []
+_param_map = [
+    ("damp", args.joint_damping), ("arm", args.joint_armature),
+    ("stiff", args.joint_stiffness), ("fscale", args.force_scale),
+    ("ref", args.reference_length), ("ep", args.episode_length),
+    ("ent", args.entropy_cost), ("lr", args.learning_rate),
+    ("disc", args.discounting), ("bs", args.batch_size),
+    ("mb", args.num_minibatches), ("ctrl", args.control_cost),
+    ("cdiff", args.control_diff_cost),
+]
+for short, val in _param_map:
+    if val is not None:
+        _param_parts.append(f"{short}={val:g}" if isinstance(val, float) else f"{short}={val}")
+param_suffix = "_".join(_param_parts)
+wandb_name = f"{exp_name}_{param_suffix}" if param_suffix else exp_name
+
 print(f"Experiment name: {exp_name}")
+print(f"Wandb name: {wandb_name}")
 
 if FINETUNE_PATH is not None:
     FINETUNE_PATH = epath.Path(FINETUNE_PATH)
@@ -115,15 +212,39 @@ with open(ckpt_path / "config.json", "w") as fp:
 
 
 # ── Wandb ───────────────────────────────────────────────────────────────────
-USE_WANDB = True
+USE_WANDB = not args.no_wandb
 
 if USE_WANDB:
-    wandb.init(
+    wandb_kwargs = dict(
         project="vnl-mjx-rl",
         config=env_cfg,
+        name=wandb_name,
         id=f"janelia-imit-{exp_name}",
     )
+    if args.wandb_group is not None:
+        wandb_kwargs["group"] = args.wandb_group
+    if args.wandb_tags is not None:
+        wandb_kwargs["tags"] = args.wandb_tags
+
+    wandb.init(**wandb_kwargs)
     wandb.config.update({"env_name": env_name})
+    # Log all sweep params for easy filtering
+    sweep_config = {
+        "sweep/tag": args.tag,
+        "sweep/joint_damping": args.joint_damping,
+        "sweep/joint_armature": args.joint_armature,
+        "sweep/joint_stiffness": args.joint_stiffness,
+        "sweep/force_scale": args.force_scale,
+        "sweep/reference_length": args.reference_length,
+        "sweep/episode_length": args.episode_length,
+        "sweep/entropy_cost": args.entropy_cost,
+        "sweep/learning_rate": args.learning_rate,
+        "sweep/discounting": args.discounting,
+        "sweep/batch_size": args.batch_size,
+        "sweep/control_cost": args.control_cost,
+        "sweep/control_diff_cost": args.control_diff_cost,
+    }
+    wandb.config.update({k: v for k, v in sweep_config.items() if v is not None})
 
 
 def wandb_progress(num_steps, metrics):
@@ -245,18 +366,22 @@ if __name__ == "__main__":
 
     render_mj_model = build_render_model(eval_env)
     render_mj_data = mujoco.MjData(render_mj_model)
-    renderer = mujoco.Renderer(render_mj_model, height=512, width=512)
+    renderer = mujoco.Renderer(render_mj_model, height=480, width=854)
 
     # Compute centroid for camera lookat from initial pose
     render_mj_data.qpos[:render_mj_model.nq // 2] = np.array(start_state.data.qpos)
     mujoco.mj_forward(render_mj_model, render_mj_data)
     centroid = render_mj_data.xpos[1:render_mj_model.nbody // 2 + 1].mean(axis=0)
 
+    # Camera-left shift so arm sits on the left side of the frame
+    cam_right = np.array([-np.sin(np.radians(130)), np.cos(np.radians(130)), 0.0])
+    cam_shift = -cam_right * 0.018
+
     render_cam = mujoco.MjvCamera()
     render_cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-    render_cam.lookat[:] = centroid
-    render_cam.distance = 0.055
-    render_cam.azimuth = 165
+    render_cam.lookat[:] = centroid + np.array([-0.008, 0.005, 0.008]) + cam_shift
+    render_cam.distance = 0.05
+    render_cam.azimuth = 130
     render_cam.elevation = -25
 
     ppo_network = network_factory(

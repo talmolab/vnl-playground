@@ -44,8 +44,13 @@ def default_config() -> config_dict.ConfigDict:
         noslip_iterations=0,
         Kp=35.0,
         Kd=0.5,
-        episode_length=150,
+        episode_length=100,
         mujoco_impl="jax",
+        # Physics overrides (None = use XML defaults)
+        joint_damping=None,   # float -> sets mj_model.dof_damping[:]
+        joint_armature=None,  # float -> sets mj_model.dof_armature[:]
+        joint_stiffness=None, # float -> sets mj_model.jnt_stiffness[:]
+        force_scale=None,     # float -> multiplies mj_model.actuator_gainprm[:, 0]
     )
 
 
@@ -202,6 +207,16 @@ class MouseBaseEnv(mjx_env.MjxEnv):
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
             self._mj_model.opt.noslip_iterations = self._config.noslip_iterations
+
+            # Apply physics overrides before mjx.put_model()
+            if self._config.joint_damping is not None:
+                self._mj_model.dof_damping[:] = self._config.joint_damping
+            if self._config.joint_armature is not None:
+                self._mj_model.dof_armature[:] = self._config.joint_armature
+            if self._config.joint_stiffness is not None:
+                self._mj_model.jnt_stiffness[:] = self._config.joint_stiffness
+            if self._config.force_scale is not None:
+                self._mj_model.actuator_gainprm[:, 0] *= self._config.force_scale
 
             # High-res offscreen buffer for nice renders
             self._mj_model.vis.global_.offwidth = 3840
