@@ -61,6 +61,7 @@ from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 
 from vnl_playground import tasks
 from vnl_playground.tasks.wrappers import HighLevelWrapper, PriorHighLevelWrapper
+from vnl_playground.wandb_state import load_wandb_state, save_wandb_state
 
 
 def _add_batch_dim_for_warp(data):
@@ -285,6 +286,7 @@ def render_video(
     termination_fade_seconds=1.0,
     hud_config=None,
     reward_config=None,
+    use_obs_vision=False,
 ):
     """Render a rollout to an MP4 video file with tracking camera.
 
@@ -362,29 +364,51 @@ def render_video(
         if isinstance(fv, dict):
             target_speed = fv.get("target_speed", None)
 
-    # -- Batch ego GPU pre-rendering ------------------------------------------
+    # -- Ego vision overlay ---------------------------------------------------
     ego_overlay_np = None
-    if vision_renderer is not None:
-        # Stack the kinematic arrays needed for rendering from all rollout states
+    # After jax.device_get(), Brax State preserves its pytree structure
+    # (including .obs dict attribute), so hasattr/key checks work on CPU states.
+    if use_obs_vision and hasattr(rollout[0], "obs") and "vision" in rollout[0].obs:
+        # Use vision directly from rollout obs — shows what the policy
+        # actually saw, including any eye ablations (left_only / right_only).
+        # Vision shape per frame: (H, W, 2*C) for binocular grayscale → (H, W, 2)
+        vision_stack = np.stack([np.asarray(s.obs["vision"]) for s in rollout])
+        n_channels = vision_stack.shape[-1]
+        mono_c = n_channels // 2  # e.g., 1 for grayscale binocular
+
+        left_frames = vision_stack[..., :mono_c]   # (T, H, W, C)
+        right_frames = vision_stack[..., mono_c:]   # (T, H, W, C)
+
+        # Side-by-side with 2px white gap (same layout as re-render path)
+        gap = np.ones(
+            (len(rollout), vision_stack.shape[1], 2, mono_c), dtype=np.float32
+        )
+        ego_frames_np = np.concatenate([left_frames, gap, right_frames], axis=2)
+        del vision_stack, left_frames, right_frames, gap
+
+        ego_overlay_np = _prepare_ego_overlay(ego_frames_np)
+        del ego_frames_np
+        gc.collect()
+
+    elif vision_renderer is not None:
+        # Fallback: re-render from physics data (original path)
         all_data = jax.tree.map(
             lambda *xs: jax.numpy.stack(xs), *[s.data for s in rollout]
         )
 
         _render_all_ego = _make_render_all_fn(id(vision_renderer), vision_renderer)
         ego_imgs_jax = _render_all_ego(all_data)
-        ego_frames_np = np.array(ego_imgs_jax)  # single transfer to host
+        ego_frames_np = np.array(ego_imgs_jax)
         del ego_imgs_jax
 
-        # Binocular: render right eye and place side-by-side with left
         if right_vision_renderer is not None:
-
-            _render_all_right = _make_render_all_fn(id(right_vision_renderer), right_vision_renderer)
+            _render_all_right = _make_render_all_fn(
+                id(right_vision_renderer), right_vision_renderer
+            )
             right_imgs_jax = _render_all_right(all_data)
             right_frames_np = np.array(right_imgs_jax)
             del right_imgs_jax
-            # Side-by-side: concatenate left and right along width (axis=2)
-            # Add 2px gap between eyes
-            gap = np.ones_like(ego_frames_np[:, :, :2, :])  # (T, H, 2, C) white gap
+            gap = np.ones_like(ego_frames_np[:, :, :2, :])
             ego_frames_np = np.concatenate(
                 [ego_frames_np, gap, right_frames_np], axis=2
             )
@@ -393,7 +417,6 @@ def render_video(
         del all_data
         gc.collect()
 
-        # Vectorized ego overlay preparation (grayscale→RGB, uint8, 2x scale)
         ego_overlay_np = _prepare_ego_overlay(ego_frames_np)
         del ego_frames_np
         gc.collect()
@@ -970,6 +993,7 @@ def _train_vision_task_obs_highlvl(
     ppo_params = dict(
         OmegaConf.to_container(cfg.train_setup.train_config, resolve=True)
     )
+    ppo_params.pop("eval_naconmax", None)
 
     # Network factory: vision CNN + task_obs fusion + MLP
     network_factory = functools.partial(
@@ -1353,6 +1377,7 @@ def _train_shared_vision_task_obs_highlvl(
     ppo_params = dict(
         OmegaConf.to_container(cfg.train_setup.train_config, resolve=True)
     )
+    ppo_params.pop("eval_naconmax", None)
 
     # Network factory: shared-CNN vision + task_obs
     ppo_network, shared_module = (
@@ -1798,6 +1823,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     ppo_params = dict(
         OmegaConf.to_container(cfg.train_setup.train_config, resolve=True)
     )
+    ppo_params.pop("eval_naconmax", None)
 
     # Network factory: binocular shared-CNN vision + task_obs
     ppo_network, shared_module = (
@@ -2312,6 +2338,10 @@ def _run_eval_rollout_recurrent(
     Similar to ``_run_eval_rollout`` but maintains the GRU hidden state
     across timesteps and resets it on episode termination.
 
+    States are moved to CPU after each step to prevent GPU memory
+    accumulation across the episode (the Python for-loop prevents XLA
+    from reusing output buffers).
+
     Args:
         jit_reset: JIT-compiled environment reset function.
         jit_step: JIT-compiled environment step function.
@@ -2322,7 +2352,7 @@ def _run_eval_rollout_recurrent(
         init_hidden_fn: Callable ``(batch_size) -> hidden`` for zero-init.
 
     Returns:
-        rollout: list of states (may span multiple episodes).
+        rollout: list of states on CPU (may span multiple episodes).
         termination_events: list of ``(frame_index, reason_string)`` tuples.
     """
     _, reset_rng, act_rng = jax.random.split(rng, 3)
@@ -2330,7 +2360,7 @@ def _run_eval_rollout_recurrent(
     # init hidden for batch_size=1, squeeze batch dim
     hidden = init_hidden_fn(1)
     hidden = jax.tree.map(lambda x: x[0], hidden)
-    rollout = [state]
+    rollout = [jax.device_get(state)]
     termination_events = []
 
     for _ in range(episode_length):
@@ -2338,14 +2368,14 @@ def _run_eval_rollout_recurrent(
         action, _, new_hidden = inference_fn(params, state.obs, hidden, act_rng)
         hidden = new_hidden
         state = jit_step(state, action)
-        rollout.append(state)
+        rollout.append(jax.device_get(state))
 
         if float(state.done) > 0.5:
             reason = _get_termination_reason(state)
             termination_events.append((len(rollout) - 1, reason))
             _, reset_rng = jax.random.split(act_rng)
             state = jit_reset(reset_rng)
-            rollout.append(state)
+            rollout.append(jax.device_get(state))
             hidden = jax.tree.map(lambda x: jp.zeros_like(x), hidden)
 
     return rollout, termination_events
@@ -2462,8 +2492,9 @@ def _train_recurrent_vision_task_obs_highlvl(
         OmegaConf.to_container(cfg.train_setup.train_config, resolve=True)
     )
 
-    # Pop vision_lr_multiplier from ppo_params (passed separately to train)
+    # Pop keys consumed elsewhere (not accepted by recurrent_ppo.train)
     vision_lr_multiplier = ppo_params.pop("vision_lr_multiplier", 1.0)
+    ppo_params.pop("eval_naconmax", None)
 
     # Network creation: shared CNN+GRU vision module
     recurrent_ppo_network, shared_module = make_recurrent_vision_highlvl_ppo_networks(
@@ -2878,6 +2909,54 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
     )
     _log_memory("after Recurrent Binocular Vision+TaskObs HighLevelWrapper")
 
+    # -- Lightweight single-world env for video rollout --
+    # The main eval_env inherits naconmax=24576 from training config
+    # (designed for 2048 parallel envs). For single-world video rollout,
+    # this causes Warp to allocate oversized collision buffers (~72 MB EPA).
+    # Create a separate env with naconmax appropriate for 1 world.
+    video_naconmax = cfg.get("eval_video", {}).get("video_naconmax", 512)
+    video_eval_args = dict(
+        OmegaConf.to_container(cfg.env_config.get("env_args", {}), resolve=True)
+    )
+    video_eval_args["naconmax"] = video_naconmax
+    # Match ctrl_dt from mimic config (same as main env)
+    if hasattr(mimic_cfg, "env_config") and hasattr(mimic_cfg.env_config, "ctrl_dt"):
+        video_eval_args["ctrl_dt"] = float(mimic_cfg.env_config.ctrl_dt)
+    # Pass vision config (not in env_args, added programmatically in main())
+    for vision_key in ("vision_width", "vision_height", "grayscale", "binocular"):
+        if vision_key in cfg.env_config:
+            video_eval_args[vision_key] = cfg.env_config[vision_key]
+
+    video_eval_env = tasks.load(
+        cfg.env_config.env_name, flatten_obs=False, config_overrides=video_eval_args
+    )
+    if prior_fn is not None:
+        video_eval_env = PriorHighLevelWrapper(
+            video_eval_env,
+            prior_fn,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+            deterministic_prior=cfg.transfer.get("deterministic_prior", True),
+            noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+        )
+    else:
+        video_eval_env = HighLevelWrapper(
+            video_eval_env,
+            decoder_policy_fn,
+            latent_size,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+            pass_vision=True,
+            pass_task_obs=True,
+        )
+    logging.info(
+        f"Created lightweight video eval env: naconmax={video_naconmax}"
+    )
+
     # Set Warp's CUDA memory pool release threshold to 512 MB.
     try:
         cuda_device = wp.get_device("cuda:0")
@@ -2910,8 +2989,9 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
         OmegaConf.to_container(cfg.train_setup.train_config, resolve=True)
     )
 
-    # Pop vision_lr_multiplier from ppo_params (passed separately to train)
+    # Pop keys consumed elsewhere (not accepted by recurrent_ppo.train)
     vision_lr_multiplier = ppo_params.pop("vision_lr_multiplier", 1.0)
+    ppo_params.pop("eval_naconmax", None)
 
     # Network creation: shared binocular CNN+GRU vision module
     recurrent_ppo_network, shared_module = (
@@ -3021,8 +3101,9 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
     logging.info("Created binocular warp vision renderers (nworld=1) for video overlay")
 
     # Eval callback closures with binocular vision rendering
-    _eval_base_reset = eval_env.reset
-    _eval_base_step = eval_env.step
+    # Use lightweight video_eval_env (small naconmax) for single-world rollout
+    _eval_base_reset = video_eval_env.reset
+    _eval_base_step = video_eval_env.step
 
     def _mask_vision_in_obs(obs, eye_mode):
         """Apply a deterministic eye mask to the vision key in an obs dict.
@@ -3085,12 +3166,19 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
     jit_reset = jax.jit(_eval_reset_with_vision)
     jit_step = jax.jit(_eval_step_with_vision)
 
-    # Masked eval functions for multi-condition evaluation
-    # Each mode gets its own JIT-compiled reset/step
-    _masked_eval_fns = {
-        "left_only": _make_masked_eval_fns("left_only"),
-        "right_only": _make_masked_eval_fns("right_only"),
-    }
+    # Read eval video conditions from config (default: binocular only)
+    # Must be defined before _masked_eval_fns which uses it.
+    eval_eye_conditions = list(
+        cfg.get("eval_video", {}).get("eye_conditions", ["binocular"])
+    )
+    logging.info(f"Eval video eye conditions: {eval_eye_conditions}")
+
+    # Only JIT-compile masked eval fns for conditions that are configured
+    # (each JIT compilation consumes GPU memory for cached executables)
+    _masked_eval_fns = {}
+    for mode in eval_eye_conditions:
+        if mode != "binocular":
+            _masked_eval_fns[mode] = _make_masked_eval_fns(mode)
 
     # Ensure render_config has render_interval
     if "render_interval" not in cfg_dict.get("render_config", {}):
@@ -3199,7 +3287,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
             f"recurrent_binocular_vision_policy_params_fn entry step={current_step}"
         )
 
-        eye_modes = ["binocular", "left_only", "right_only"]
+        eye_modes = eval_eye_conditions
 
         for eye_mode in eye_modes:
             # Select eval functions for this eye mode
@@ -3300,6 +3388,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
                         and cfg.env_config.env_args.get("reward_terms")
                         else None
                     ),
+                    use_obs_vision=True,
                 )
                 wandb.log(
                     {f"videos/{eye_mode}": wandb.Video(video_path, format="mp4")},
@@ -3561,8 +3650,29 @@ def main(cfg: DictConfig):
     env = tasks.load(
         env_name, flatten_obs=False, config_overrides=env_args if env_args else None
     )
+
+    # Determine naconmax for eval env: use explicit config if set, otherwise
+    # auto-scale from training naconmax proportionally to num_eval_envs.
+    eval_env_args = dict(env_args) if env_args else {}
+    num_envs = cfg.train_setup.train_config.get("num_envs", 2048)
+    num_eval_envs = cfg.train_setup.train_config.get("num_eval_envs", 128)
+    configured_eval_naconmax = cfg.train_setup.train_config.get("eval_naconmax", None)
+    if configured_eval_naconmax is not None:
+        eval_env_args["naconmax"] = configured_eval_naconmax
+        logging.info(
+            f"Eval env naconmax: {configured_eval_naconmax} (from config)"
+        )
+    elif "naconmax" in eval_env_args and num_envs > 0:
+        per_world_ncon = eval_env_args["naconmax"] / num_envs
+        eval_naconmax = max(int(per_world_ncon * num_eval_envs), 256)
+        eval_env_args["naconmax"] = eval_naconmax
+        logging.info(
+            f"Eval env naconmax: {eval_naconmax} "
+            f"(scaled from {env_args['naconmax']} for {num_eval_envs} eval envs)"
+        )
+
     eval_env = tasks.load(
-        env_name, flatten_obs=False, config_overrides=env_args if env_args else None
+        env_name, flatten_obs=False, config_overrides=eval_env_args if eval_env_args else None
     )
 
     logging.info(f"Loaded environment: {env_name}")
@@ -3571,14 +3681,32 @@ def main(cfg: DictConfig):
 
     # ---- Initialize wandb ----
     wandb_run_id = f"{cfg.logging_config.exp_name}_{env_name}_{run_id}"
+    wandb_resume = "allow"
+
+    if resume_run_id:
+        # On resume, try to restore the exact wandb_run_id from saved state
+        saved_wandb_state = load_wandb_state(checkpoint_path)
+        if saved_wandb_state:
+            wandb_run_id = saved_wandb_state["wandb_run_id"]
+            wandb_resume = "must"
+            logging.info(f"Resuming wandb run: {wandb_run_id}")
+        else:
+            # Fallback: reconstruct ID (for checkpoints saved before this fix)
+            logging.info(
+                f"No saved wandb state found, using reconstructed ID: {wandb_run_id}"
+            )
+
     wandb.init(
         project=cfg.logging_config.project_name,
         config=cfg_dict,
         notes=cfg.logging_config.get("notes", ""),
         id=wandb_run_id,
-        resume="allow",
+        resume=wandb_resume,
         group=cfg.logging_config.get("group_name", env_name),
     )
+
+    # Save wandb state for future resume
+    save_wandb_state(checkpoint_path, wandb_run_id)
     _log_memory("after wandb init")
 
     def wandb_progress(num_steps, metrics):
