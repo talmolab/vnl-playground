@@ -45,9 +45,9 @@ def default_config() -> config_dict.ConfigDict:
     # Reward terms
     cfg.reward_terms = {
         "joints": {"exp_scale": 0.2, "weight": 5.0},
-        "joints_vel": {"exp_scale": 0.2, "weight": 0.5},
-        "wrist_pos": {"exp_scale": 0.005, "weight": 0.1},  # End effector tracking
-        "bodies_pos": {"exp_scale": 0.01, "weight": 0.1},
+        "joints_vel": {"exp_scale": 0.2, "weight": 0.0},
+        "wrist_pos": {"exp_scale": 0.005, "weight": 0.0},  # End effector tracking
+        "bodies_pos": {"exp_scale": 0.01, "weight": 0.0},
         "control_cost": {"weight": 0.01},
         "control_diff_cost": {"weight": 0.00},
     }
