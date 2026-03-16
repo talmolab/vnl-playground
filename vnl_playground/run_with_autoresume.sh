@@ -29,12 +29,12 @@
 #   3. On crash/kill (exit code != 0), restarts with resume_run_id=<run_id>
 #   4. Loops until training completes successfully (exit code 0) or max retries
 #
-# Set MAX_RETRIES to limit restart attempts (default: 50).
+# Set MAX_RETRIES to limit restart attempts (default: 100).
 # Set SLEEP_BETWEEN_RETRIES to wait between restarts (default: 10 seconds).
 
 set -euo pipefail
 
-MAX_RETRIES="${MAX_RETRIES:-50}"
+MAX_RETRIES="${MAX_RETRIES:-100}"
 SLEEP_BETWEEN="${SLEEP_BETWEEN_RETRIES:-10}"
 
 # Parse --fresh flag and collect remaining arguments for the training script
