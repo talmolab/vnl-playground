@@ -114,6 +114,7 @@ train_setup:
     latent_ar1_weight: 0.0
     use_kl_schedule: false
     num_eval_envs: 128
+    eval_naconmax: 3840
     deterministic_eval: false
     grad_clip_threshold: 20.0
     vf_loss_coefficient: 0.5
