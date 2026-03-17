@@ -123,13 +123,13 @@ class ModularImitation_v4(modular_base.ModularRodentEnv):
             "reference_clip": clip_idx,
         }
         last_valid_frame = self._clip_length() - 2  # -2 for interpolation headroom
-        info["truncated"] = self._get_cur_frame(data, info) > last_valid_frame
+        info["truncated"] = jp.astype(self._get_cur_frame(data, info) > last_valid_frame, float)
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
 
         metrics = {"current_frame": self._get_cur_frame(data, info)}
         obs, reward, done = self._process(data, info, metrics)
-        return mjx_env.State(data, obs, reward, done, metrics, info)
+        return mjx_env.State(data, obs, reward, done.astype(float), metrics, info)
 
     def step(
         self,
@@ -142,7 +142,7 @@ class ModularImitation_v4(modular_base.ModularRodentEnv):
 
         info = state.info
         last_valid_frame = self._clip_length() - 2
-        info["truncated"] = self._get_cur_frame(data, info) > last_valid_frame
+        info["truncated"] = jp.astype(self._get_cur_frame(data, info) > last_valid_frame, float)
         info["prev_action"] = state.info["action"]
         info["action"] = action
 
@@ -151,7 +151,7 @@ class ModularImitation_v4(modular_base.ModularRodentEnv):
         reward = jax.tree.map(jp.nan_to_num, reward)
         done = jp.logical_or(terminated, info["truncated"])
         metrics["current_frame"] = self._get_cur_frame(data, info)
-        return state.replace(data=data, obs=obs, info=info, reward=reward, done=done)
+        return state.replace(data=data, obs=obs, info=info, reward=reward, done=done.astype(float))
 
     def _process(
         self, data: mjx.Data, info: Mapping[str, Any], metrics: dict
@@ -541,11 +541,10 @@ class ModularImitation_v4(modular_base.ModularRodentEnv):
             },
         }
         if self._config.energy_cost != 0.0:
-            for module, jnts in consts.MODULE_ACTUATOR_NAMES.items():
-                module_energy_cost = jp.array(0.0)
-                for joint_name in jnts:
-                    jnt = data.bind(self.mjx_model, self._spec.joint(joint_name))
-                    module_energy_cost += jp.abs(jnt.qvel * jnt.qfrc_actuator)
+            for module, actuator_ids in self._ctrl_indices.items():
+                module_energy_cost = jp.sum(jp.abs(
+                    data.actuator_velocity[actuator_ids] * data.actuator_force[actuator_ids]
+                ))
                 rewards[module]["energy_cost"] = self._config.energy_cost * module_energy_cost
 
         metrics["rewards"] = rewards
