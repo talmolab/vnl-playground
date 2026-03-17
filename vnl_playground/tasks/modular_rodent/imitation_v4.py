@@ -197,7 +197,7 @@ class ModularImitation_v4(modular_base.ModularRodentEnv):
             bdy = data.bind(self.mjx_model, self._spec.body(name))
             pos = torso_xmat.T @ (bdy.xpos - torso_xpos)
             if self._config.include_vel:
-                return jp.concat((pos, torso_xmat.T @ bdy.xvel))
+                return jp.concat((pos, torso_xmat.T @ bdy.cvel[3:6]))
             else:
                 return pos
         def world_xaxis(name: str) -> jp.ndarray:
