@@ -83,3 +83,46 @@ def test_zero_offset_makes_eyes_look_straight_ahead():
 
     np.testing.assert_allclose(left_euler_z, ego_euler_z, atol=1e-6)
     np.testing.assert_allclose(right_euler_z, ego_euler_z, atol=1e-6)
+
+
+def test_config_override_eye_angle_offset():
+    """eye_angle_offset should be overridable via config_overrides (simulates env_args)."""
+    cfg = run_gap_vision.default_config()
+    cfg.binocular = True
+    cfg.mujoco_impl = "warp"
+    env = run_gap_vision.RunGapVision(
+        config=cfg,
+        config_overrides={"eye_angle_offset": 0.5},
+    )
+    assert env._config.eye_angle_offset == 0.5
+
+    suffix = env._suffix
+    for cam in env._spec.cameras:
+        if cam.name == f"eye_left{suffix}":
+            np.testing.assert_allclose(
+                cam.alt.euler[2], -np.pi / 2 + 0.5, atol=1e-6
+            )
+
+
+def test_binocular_default_config_has_eye_angle_offset():
+    """The registered binocular config should include eye_angle_offset."""
+    from vnl_playground.tasks import _cfgs
+    cfg = _cfgs["RodentRunGapBinocularVision"]()
+    assert "eye_angle_offset" in cfg
+    assert cfg.eye_angle_offset == 0.2
+    assert cfg.binocular is True
+
+
+def test_invalid_eye_angle_offset_raises():
+    """Negative or >π/2 offsets should raise ValueError."""
+    cfg = run_gap_vision.default_config()
+    cfg.binocular = True
+    cfg.mujoco_impl = "warp"
+
+    cfg.eye_angle_offset = -0.1
+    with pytest.raises(ValueError, match="eye_angle_offset must be in"):
+        run_gap_vision.RunGapVision(config=cfg)
+
+    cfg.eye_angle_offset = 2.0
+    with pytest.raises(ValueError, match="eye_angle_offset must be in"):
+        run_gap_vision.RunGapVision(config=cfg)
