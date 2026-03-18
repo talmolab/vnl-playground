@@ -16,9 +16,9 @@ from .. import utils
 from . import base as rodent_base
 from . import consts
 from vnl_playground.tasks.reference_clips import ReferenceClips
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
-_registry = TaskRegistry()
+_registry = RewardRegistry()
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -27,7 +27,7 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         mujoco_impl="jax",
         sim_dt=0.002,
-        ctrl_dt=0.02,
+        ctrl_dt=0.01,
         solver="newton",
         iterations=5,
         ls_iterations=5,
@@ -41,6 +41,7 @@ def default_config() -> config_dict.ConfigDict:
         clip_length=250,
         clip_set="all",  # NOTE: Charles added keep_clips_idx which basically is the same as this for indices to reduce memory usage
         reference_length=5,
+        reference_stride=1,
         start_frame_range=[0, 44],
         qvel_init="zeros",
         keep_clips_idx=None,
@@ -168,8 +169,7 @@ class Imitation(rodent_base.RodentEnv):
             "start_frame": start_frame,
             "reference_clip": clip_idx,
         }
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        truncated = self._get_cur_frame(data, info) > last_valid_frame
+        truncated = self._get_cur_frame(data, info) > self._last_valid_frame()
         info["truncated"] = jp.astype(truncated, float)
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
@@ -199,8 +199,7 @@ class Imitation(rodent_base.RodentEnv):
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        truncated = self._get_cur_frame(data, info) > last_valid_frame
+        truncated = self._get_cur_frame(data, info) > self._last_valid_frame()
         info["truncated"] = jp.astype(truncated, float)
         info["prev_action"] = state.info["action"]
         info["action"] = action
@@ -229,10 +228,7 @@ class Imitation(rodent_base.RodentEnv):
             task_obs=self._get_imitation_target(data, info),
             proprioception=self._get_proprioception(data, info, flatten=False),
         )
-        return collections.OrderedDict(
-            state=obs,
-            privileged_state=obs,
-        )
+        return collections.OrderedDict(state=obs)
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         data = mjx.make_data(
@@ -266,6 +262,13 @@ class Imitation(rodent_base.RodentEnv):
     def _clip_length(self):
         return self.reference_clips.qpos.shape[1]
 
+    def _last_valid_frame(self):
+        return (
+            self._clip_length()
+            - (self._config.reference_length - 1) * self._config.reference_stride
+            - 2
+        )
+
     def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
         time_in_frames = data.time * self._config.mocap_hz
         return jp.floor(time_in_frames + info["start_frame"]).astype(int)
@@ -286,6 +289,7 @@ class Imitation(rodent_base.RodentEnv):
             clip=info["reference_clip"],
             start_frame=self._get_cur_frame(data, info) + 1,
             length=self._config.reference_length,
+            stride=self._config.reference_stride,
         )
 
     def _get_imitation_target(
@@ -510,7 +514,7 @@ class Imitation(rodent_base.RodentEnv):
             ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
             ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
             if ghost_rescale != 1.0:
-                ghost_rodent = utils.dm_scale_spec(ghost_rodent, ghost_rescale)
+                ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
             for body in ghost_rodent.worldbody.bodies:
                 utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
             spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
@@ -527,7 +531,7 @@ class Imitation(rodent_base.RodentEnv):
 
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
         if camera is None:
-            camera = -1
+            camera = self._default_render_camera
 
         rendered_frames = []
         for i, state in enumerate(trajectory):
@@ -591,26 +595,6 @@ class Imitation(rodent_base.RodentEnv):
                     faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
                     rendered_frames.append(faded_frame)
         return rendered_frames
-
-    @property
-    def proprioceptive_obs_size(self) -> int:
-        obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
-
-    @property
-    def non_proprioceptive_obs_size(self) -> int:
-        return self.observation_size - self.proprioceptive_obs_size
-
-    @property
-    def observation_size(self) -> mjx_env.ObservationSize:
-        obs = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs)[0])
-
-    @property
-    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        obs = abstract_state.obs
-        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     def verify_reference_data(self, atol: float = 5e-3) -> bool:
         """A set of non-exhaustive sanity checks that the reference data found in

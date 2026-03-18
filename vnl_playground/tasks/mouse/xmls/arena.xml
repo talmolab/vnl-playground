@@ -1,0 +1,29 @@
+<mujoco model="mouse_arena">
+  <compiler angle="degree">
+    <lengthrange mode="muscle" timestep="0"/>
+  </compiler>
+  <option integrator="RK4" timestep="0.001" solver="CG" iterations="6" ls_iterations="6"/>
+
+  <size njmax="1000" nconmax="400"/>
+
+  <visual>
+    <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
+    <global offwidth="2048" offheight="1536"/>
+    <quality shadowsize="8192"/>
+    <scale framelength="0.5" framewidth="0.01"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="0.6 0.8 1" width="256" height="1536"/>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+  </asset>
+
+  <worldbody>
+    <light directional="true"/>
+    <body name="ground" euler="0 0 0">
+      <camera name="my_camera" pos="0.04 .004 0.037" fovy="20" quat="0.6532815 0.2705981 0.2705981 0.6532815"/>
+      <camera name="close-profile" pos="0.04 .004 0.037" fovy="20" quat="0.6532815 0.2705981 0.2705981 0.6532815"/>
+    </body>
+  </worldbody>
+</mujoco>

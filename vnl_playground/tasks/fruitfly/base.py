@@ -14,8 +14,8 @@ from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.fruitfly import consts
-from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -31,9 +31,9 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         sim_dt=0.001,
         ctrl_dt=0.002,
-        solver="cg",
-        iterations=4,
-        ls_iterations=4,
+        solver="newton",
+        iterations=5,
+        ls_iterations=5,
         noslip_iterations=0,
         mujoco_impl="jax",
     )
@@ -42,8 +42,9 @@ def default_config() -> config_dict.ConfigDict:
 class FruitflyEnv(mjx_env.MjxEnv):
     """Base class for fruitfly environments."""
 
-    # Subclasses should set this to their TaskRegistry instance
-    _registry: TaskRegistry = None
+    # Subclasses should set this to their RewardRegistry instance
+    _registry: RewardRegistry = None
+    _default_render_camera: str = "track1"
 
     def __init__(
         self,
@@ -99,7 +100,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
 
         if rescale_factor != 1.0:
             logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
-            fly = dm_scale_spec(fly, rescale_factor)
+            fly = scale_spec(fly, rescale_factor, root_body="thorax")
 
         # Recolor the body if rgba is specified
         if rgba is not None:
@@ -131,46 +132,6 @@ class FruitflyEnv(mjx_env.MjxEnv):
         spawn_frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         spawn_body = spawn_frame.attach_body(fly_spec.body("thorax"), "", suffix=suffix)
 
-    def _scale_fly_spec(self, spec, scale: float):
-        """Scale fly spec (uses thorax as root, not walker).
-
-        The dm_scale_spec utility looks for body("walker") which doesn't exist
-        in the fruitfly XML, so we need a fly-specific version.
-
-        Args:
-            spec: MuJoCo spec to scale.
-            scale: Scale factor to apply.
-
-        Returns:
-            Scaled MuJoCo spec.
-        """
-        scaled_spec = spec.copy()
-
-        def scale_bodies(parent, scale=1.0):
-            body = parent.first_body()
-            while body:
-                if body.pos is not None:
-                    body.pos = body.pos * scale
-                for geom in body.geoms:
-                    geom.fromto = geom.fromto * scale
-                    geom.size = geom.size * scale
-                    if geom.pos is not None:
-                        geom.pos = geom.pos * scale
-                scale_bodies(body, scale)
-                body = parent.next_body(body)
-
-        for actuator in scaled_spec.actuators:
-            actuator.gear = actuator.gear * scale * scale
-
-        for keypoint in scaled_spec.keys:
-            qpos = keypoint.qpos
-            qpos[2] = qpos[2] * scale
-            keypoint.qpos = qpos
-
-        # Use thorax as root (not walker)
-        scale_bodies(scaled_spec.body("thorax"), scale)
-        return scaled_spec
-
     def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and put models to mjx"""
         if not self._compiled or forced:
@@ -190,6 +151,11 @@ class FruitflyEnv(mjx_env.MjxEnv):
                 self._mj_model, impl=self._config.mujoco_impl
             )
             self._compiled = True
+            cam_name = f"{self._default_render_camera}{self._suffix}"
+            cam_names = [
+                self._mj_model.camera(i).name for i in range(self._mj_model.ncam)
+            ]
+            self._default_render_camera = cam_name if cam_name in cam_names else -1
 
     def _get_appendages_pos(
         self, data: mjx.Data, flatten: bool = True
@@ -244,6 +210,11 @@ class FruitflyEnv(mjx_env.MjxEnv):
     def _get_world_zaxis(self, data: mjx.Data) -> jp.ndarray:
         """Get gravity direction in body frame."""
         return self.root_body(data).xmat.flatten()[6:]
+
+    def _get_origin(self, data: mjx.Data) -> jp.ndarray:
+        """Get origin position in the thorax frame."""
+        thorax = data.bind(self.mjx_model, self._spec.body(f"thorax{self._suffix}"))
+        return jp.dot(-thorax.xpos, thorax.xmat)
 
     def _get_proprioception(
         self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True
@@ -317,7 +288,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
         """
         if self._registry is None:
             raise RuntimeError(
-                f"{type(self).__name__} has no TaskRegistry assigned. "
+                f"{type(self).__name__} has no RewardRegistry assigned. "
                 "Subclasses must set `_registry` as a class attribute."
             )
         net_reward = 0.0
@@ -345,7 +316,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
         """
         if self._registry is None:
             raise RuntimeError(
-                f"{type(self).__name__} has no TaskRegistry assigned. "
+                f"{type(self).__name__} has no RewardRegistry assigned. "
                 "Subclasses must set `_registry` as a class attribute."
             )
         any_terminated = False
@@ -362,8 +333,30 @@ class FruitflyEnv(mjx_env.MjxEnv):
         return any_terminated
 
     @property
+    def proprioceptive_obs_size(self) -> int:
+        obs_size = self.non_flattened_observation_size
+        return jp.sum(
+            jax.flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0]
+        )
+
+    @property
+    def non_proprioceptive_obs_size(self) -> int:
+        return self.observation_size - self.proprioceptive_obs_size
+
+    @property
+    def observation_size(self):
+        obs = self.non_flattened_observation_size
+        return jp.sum(jax.flatten_util.ravel_pytree(obs)[0])
+
+    @property
+    def non_flattened_observation_size(self):
+        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+        obs = abstract_state.obs
+        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
+
+    @property
     def action_size(self) -> int:
-        return self._mj_model.nu
+        return self._mjx_model.nu
 
     @property
     def xml_path(self) -> str:

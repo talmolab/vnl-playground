@@ -15,8 +15,8 @@ from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.rodent import consts
-from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -31,7 +31,7 @@ def default_config() -> config_dict.ConfigDict:
         walker_xml_path=consts.RODENT_XML_PATH,
         arena_xml_path=consts.WHITE_ARENA_XML_PATH,
         sim_dt=0.002,
-        ctrl_dt=0.02,
+        ctrl_dt=0.01,
         solver="newton",
         iterations=5,
         ls_iterations=5,
@@ -43,13 +43,9 @@ def default_config() -> config_dict.ConfigDict:
 class RodentEnv(mjx_env.MjxEnv):
     """Base class for rodent environments."""
 
-    # TODO: Move duplicated utility methods (null_action, proprioceptive_obs_size,
-    # non_proprioceptive_obs_size, observation_size, non_flattened_observation_size)
-    # from subclasses (joystick, sparse_imitation, rearing, maintain_velocity) into
-    # this base class.
-
-    # Subclasses should set this to their TaskRegistry instance
-    _registry: TaskRegistry = None
+    # Subclasses should set this to their RewardRegistry instance
+    _registry: RewardRegistry = None
+    _default_render_camera: str = "close_profile"
 
     def __init__(
         self,
@@ -108,7 +104,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
         if rescale_factor != 1.0:
             logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
-            rodent = dm_scale_spec(rodent, rescale_factor)
+            rodent = scale_spec(rodent, rescale_factor)
 
         # Recolor the body if rgba is specified
         if rgba is not None:
@@ -166,12 +162,17 @@ class RodentEnv(mjx_env.MjxEnv):
                 self._mj_model, impl=self._config.mujoco_impl
             )
             self._compiled = True
+            cam_name = f"{self._default_render_camera}{self._suffix}"
+            cam_names = [
+                self._mj_model.camera(i).name for i in range(self._mj_model.ncam)
+            ]
+            self._default_render_camera = cam_name if cam_name in cam_names else -1
 
     def _get_appendages_pos(
         self, data: mjx.Data, flatten: bool = True
     ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
         """Get _egocentric_ position of the appendages."""
-        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         appendages_pos = collections.OrderedDict()
         for apppendage_name in consts.END_EFFECTORS:
             global_xpos = data.bind(
@@ -244,12 +245,14 @@ class RodentEnv(mjx_env.MjxEnv):
     ) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
         """Get kinematic sensors data from the environment."""
         accelerometer = data.bind(
-            self.mjx_model, self._spec.sensor("accelerometer-rodent")
+            self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")
         ).sensordata
         velocimeter = data.bind(
-            self.mjx_model, self._spec.sensor("velocimeter-rodent")
+            self.mjx_model, self._spec.sensor(f"velocimeter{self._suffix}")
         ).sensordata
-        gyro = data.bind(self.mjx_model, self._spec.sensor("gyro-rodent")).sensordata
+        gyro = data.bind(
+            self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")
+        ).sensordata
         sensors = collections.OrderedDict(
             accelerometer=accelerometer,
             velocimeter=velocimeter,
@@ -304,7 +307,7 @@ class RodentEnv(mjx_env.MjxEnv):
         """
         if self._registry is None:
             raise RuntimeError(
-                f"{type(self).__name__} has no TaskRegistry assigned. "
+                f"{type(self).__name__} has no RewardRegistry assigned. "
                 "Subclasses must set `_registry` as a class attribute."
             )
         net_reward = 0.0
@@ -332,7 +335,7 @@ class RodentEnv(mjx_env.MjxEnv):
         """
         if self._registry is None:
             raise RuntimeError(
-                f"{type(self).__name__} has no TaskRegistry assigned. "
+                f"{type(self).__name__} has no RewardRegistry assigned. "
                 "Subclasses must set `_registry` as a class attribute."
             )
         any_terminated = False
@@ -347,6 +350,28 @@ class RodentEnv(mjx_env.MjxEnv):
             metrics["terminations/" + name] = jp.astype(terminated, float)
         metrics["terminations/any"] = jp.astype(any_terminated, float)
         return any_terminated
+
+    @property
+    def proprioceptive_obs_size(self) -> int:
+        obs_size = self.non_flattened_observation_size
+        return jp.sum(
+            jax.flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0]
+        )
+
+    @property
+    def non_proprioceptive_obs_size(self) -> int:
+        return self.observation_size - self.proprioceptive_obs_size
+
+    @property
+    def observation_size(self):
+        obs = self.non_flattened_observation_size
+        return jp.sum(jax.flatten_util.ravel_pytree(obs)[0])
+
+    @property
+    def non_flattened_observation_size(self):
+        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+        obs = abstract_state.obs
+        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     @property
     def action_size(self) -> int:

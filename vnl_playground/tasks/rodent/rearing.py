@@ -19,16 +19,16 @@ from mujoco_playground._src import reward as reward_fns
 
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
-_registry = TaskRegistry()
+_registry = RewardRegistry()
 
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.RODENT_BOX_FEET_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
-        ctrl_dt=0.02,
+        ctrl_dt=0.01,
         sim_dt=0.002,
         solver="newton",
         mujoco_impl="jax",
@@ -43,7 +43,7 @@ def default_config() -> config_dict.ConfigDict:
         target_relative_height=0.05,  # Target skull-torso height difference
         reset_height_threshold=0.01,  # Must return below this to earn another reward
         rearing_hold_duration=1.0,  # Seconds to hold rearing pose for success
-        episode_length=500,  # 10 seconds at ctrl_dt=0.02
+        episode_length=1000,  # 10 seconds at ctrl_dt=0.01
         action_repeat=1,
         # Reward terms: shaping rewards are low, success bonus dominates
         reward_terms={
@@ -69,9 +69,7 @@ class Rearing(rodent_base.RodentEnv):
         self,
         config: config_dict.ConfigDict = default_config(),
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
-        clips: Optional[Any] = None,  # Accepted for loader compatibility, unused
     ) -> None:
-        del clips  # Rearing task does not use reference clips
         super().__init__(config, config_overrides)
 
         # Initialize rodent at origin, standing pose
@@ -225,26 +223,6 @@ class Rearing(rodent_base.RodentEnv):
 
     def null_action(self) -> jp.ndarray:
         return jp.zeros(self.action_size)
-
-    @property
-    def proprioceptive_obs_size(self) -> int:
-        obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
-
-    @property
-    def non_proprioceptive_obs_size(self) -> int:
-        return self.observation_size - self.proprioceptive_obs_size
-
-    @property
-    def observation_size(self) -> mjx_env.ObservationSize:
-        obs = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs)[0])
-
-    @property
-    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        obs = abstract_state.obs
-        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     # --- Reward Functions ---
 

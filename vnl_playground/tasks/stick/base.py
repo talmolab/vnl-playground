@@ -14,7 +14,8 @@ from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.stick import consts
-from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree
+from vnl_playground.tasks.reward_registry import RewardRegistry
+from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -39,6 +40,9 @@ def default_config() -> config_dict.ConfigDict:
 
 class StickBugEnv(mjx_env.MjxEnv):
     """Base class for stick bug environments."""
+
+    _registry: RewardRegistry = None
+    _default_render_camera: str = "close_profile"
 
     def __init__(
         self,
@@ -80,7 +84,7 @@ class StickBugEnv(mjx_env.MjxEnv):
 
         if rescale_factor != 1.0:
             logging.info(f"Rescaling stick bug with scale factor {rescale_factor}")
-            stick = self._scale_stick_spec(stick, rescale_factor)
+            stick = scale_spec(stick, rescale_factor, root_body="reference_base")
 
         if rgba is not None:
             for body in stick.worldbody.bodies:
@@ -118,43 +122,13 @@ class StickBugEnv(mjx_env.MjxEnv):
         """Adds a ghost stick bug model to the environment."""
         stick_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
         if rescale_factor != 1.0:
-            stick_spec = self._scale_stick_spec(stick_spec, rescale_factor)
+            stick_spec = scale_spec(
+                stick_spec, rescale_factor, root_body="reference_base"
+            )
         for body in stick_spec.worldbody.bodies:
             _recolour_tree(body, rgba=ghost_rgba)
         spawn_frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         spawn_frame.attach_body(stick_spec.body("reference_base"), "", suffix=suffix)
-
-    def _scale_stick_spec(self, spec, scale: float):
-        """Scale stick bug spec using reference_base as root.
-
-        The dm_scale_spec utility uses body("walker") which doesn't exist
-        in the stick XML, so we need a stick-specific version.
-        """
-        scaled_spec = spec.copy()
-
-        def scale_bodies(parent, scale=1.0):
-            body = parent.first_body()
-            while body:
-                if body.pos is not None:
-                    body.pos = body.pos * scale
-                for geom in body.geoms:
-                    geom.fromto = geom.fromto * scale
-                    geom.size = geom.size * scale
-                    if geom.pos is not None:
-                        geom.pos = geom.pos * scale
-                scale_bodies(body, scale)
-                body = parent.next_body(body)
-
-        for actuator in scaled_spec.actuators:
-            actuator.gear = actuator.gear * scale * scale
-
-        for keypoint in scaled_spec.keys:
-            qpos = keypoint.qpos
-            qpos[2] = qpos[2] * scale
-            keypoint.qpos = qpos
-
-        scale_bodies(scaled_spec.body("reference_base"), scale)
-        return scaled_spec
 
     def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and puts models to mjx."""
@@ -174,6 +148,11 @@ class StickBugEnv(mjx_env.MjxEnv):
                 self._mj_model, impl=self._config.mujoco_impl
             )
             self._compiled = True
+            cam_name = f"{self._default_render_camera}{self._suffix}"
+            cam_names = [
+                self._mj_model.camera(i).name for i in range(self._mj_model.ncam)
+            ]
+            self._default_render_camera = cam_name if cam_name in cam_names else -1
 
     def _get_appendages_pos(
         self, data: mjx.Data, flatten: bool = True
@@ -296,7 +275,7 @@ class StickBugEnv(mjx_env.MjxEnv):
 
     @property
     def action_size(self) -> int:
-        return self._mj_model.nu
+        return self._mjx_model.nu
 
     @property
     def xml_path(self) -> str:
@@ -317,3 +296,64 @@ class StickBugEnv(mjx_env.MjxEnv):
     @property
     def mjx_model(self) -> mjx.Model:
         return self._mjx_model
+
+    def _get_reward(
+        self, data: mjx.Data, info: Mapping[str, Any], metrics: dict
+    ) -> float:
+        if self._registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no RewardRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
+        net_reward = 0.0
+        for name, kwargs in self._config.reward_terms.items():
+            if name not in self._registry.rewards:
+                raise KeyError(
+                    f"Reward '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self._registry.rewards.keys())}"
+                )
+            net_reward += self._registry.rewards[name](
+                self, data, info, metrics, **kwargs
+            )
+        return net_reward
+
+    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: dict) -> bool:
+        if self._registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no RewardRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
+        any_terminated = False
+        for name, kwargs in self._config.termination_criteria.items():
+            if name not in self._registry.terminations:
+                raise KeyError(
+                    f"Termination '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self._registry.terminations.keys())}"
+                )
+            terminated = self._registry.terminations[name](self, data, info, **kwargs)
+            any_terminated = jp.logical_or(any_terminated, terminated)
+            metrics["terminations/" + name] = jp.astype(terminated, float)
+        metrics["terminations/any"] = jp.astype(any_terminated, float)
+        return any_terminated
+
+    @property
+    def proprioceptive_obs_size(self) -> int:
+        obs_size = self.non_flattened_observation_size
+        return jp.sum(
+            jax.flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0]
+        )
+
+    @property
+    def non_proprioceptive_obs_size(self) -> int:
+        return self.observation_size - self.proprioceptive_obs_size
+
+    @property
+    def observation_size(self):
+        obs = self.non_flattened_observation_size
+        return jp.sum(jax.flatten_util.ravel_pytree(obs)[0])
+
+    @property
+    def non_flattened_observation_size(self):
+        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+        obs = abstract_state.obs
+        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)

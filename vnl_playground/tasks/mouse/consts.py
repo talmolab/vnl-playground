@@ -1,9 +1,14 @@
-"""Defines rodents constants."""
+"""Defines mouse constants (filesystem paths only).
+
+Model-specific constants (body names, joint names, tracked bodies) should be
+specified via YAML config files for flexibility in parameter sweeps.
+See vnl_playground/config/mouse_imitation.yaml for an example.
+"""
 
 from etils import epath
-
-from mujoco_playground._src import mjx_env
 
 MOUSE_PATH = epath.Path(__file__).parent
 
 MOUSE_XML_PATH = MOUSE_PATH / "xmls" / "akira_muscle.xml"
+MOUSE_ARENA_XML_PATH = MOUSE_PATH / "xmls" / "arena.xml"
+MOUSE_REFERENCE_DATA_PATH = MOUSE_PATH / "reference_data"

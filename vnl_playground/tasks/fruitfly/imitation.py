@@ -18,9 +18,9 @@ from .. import utils
 from . import base as fruitfly_base
 from . import consts
 from vnl_playground.tasks.reference_clips import ReferenceClips
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
-_registry = TaskRegistry()
+_registry = RewardRegistry()
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -31,9 +31,9 @@ def default_config() -> config_dict.ConfigDict:
         naconmax=1024 * 10,
         sim_dt=0.0002,  # 5000 Hz physics
         ctrl_dt=0.002,  # 500 Hz control
-        solver="cg",
-        iterations=4,
-        ls_iterations=4,
+        solver="newton",
+        iterations=5,
+        ls_iterations=5,
         noslip_iterations=0,
         torque_actuators=False,  # Keep XML actuators as-is
         rescale_factor=1.0,
@@ -218,10 +218,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
             task_obs=self._get_imitation_target(data, info),
             proprioception=self._get_proprioception(data, info, flatten=False),
         )
-        return collections.OrderedDict(
-            state=obs,
-            privileged_state=obs,
-        )
+        return collections.OrderedDict(state=obs)
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         data = mjx.make_data(
@@ -465,7 +462,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
         ghost_fly = mujoco.MjSpec.from_file(self._walker_xml_path)
         ghost_rescale = self._config.rescale_factor
         if ghost_rescale != 1.0:
-            ghost_fly = self._scale_fly_spec(ghost_fly, ghost_rescale)
+            ghost_fly = utils.scale_spec(ghost_fly, ghost_rescale, root_body="thorax")
         for body in ghost_fly.worldbody.bodies:
             utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
 
@@ -499,7 +496,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
 
         renderer = mujoco.Renderer(mj_model_with_ghost, height=height, width=width)
         if camera is None:
-            camera = -1
+            camera = self._default_render_camera
 
         rendered_frames = []
         for i, state in enumerate(trajectory):
@@ -558,23 +555,3 @@ class Imitation(fruitfly_base.FruitflyEnv):
                         faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
                         rendered_frames.append(faded_frame)
         return rendered_frames
-
-    @property
-    def proprioceptive_obs_size(self) -> int:
-        obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0])
-
-    @property
-    def non_proprioceptive_obs_size(self) -> int:
-        return self.observation_size - self.proprioceptive_obs_size
-
-    @property
-    def observation_size(self) -> mjx_env.ObservationSize:
-        obs = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs)[0])
-
-    @property
-    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        obs = abstract_state.obs
-        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
