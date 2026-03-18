@@ -26,9 +26,9 @@ from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
 from vnl_playground.tasks.rodent.utils.box_to_mesh import box_to_mesh_asset
-from vnl_playground.tasks.task_registry import TaskRegistry
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
-_registry = TaskRegistry()
+_registry = RewardRegistry()
 
 # Trial phase codes (integers for JAX tracing)
 PHASE_HOLD = 0
