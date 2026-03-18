@@ -126,3 +126,13 @@ def test_invalid_eye_angle_offset_raises():
     cfg.eye_angle_offset = 2.0
     with pytest.raises(ValueError, match="eye_angle_offset must be in"):
         run_gap_vision.RunGapVision(config=cfg)
+
+
+@pytest.mark.slow
+def test_smoke_binocular_env_with_custom_overlap():
+    """Env should reset without errors for representative overlap values."""
+    for offset in [0.0, 0.2, 0.698]:
+        env = _make_vision_env(offset)
+        rng = jax.random.PRNGKey(42)
+        state = jax.jit(env.reset)(rng)
+        assert state.obs is not None, f"Failed for offset={offset}"
