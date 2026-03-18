@@ -46,6 +46,7 @@ from typing import Any, Dict, Optional, Union
 
 import jax
 import jax.numpy as jp
+import numpy as np
 from jax import flatten_util
 from ml_collections import config_dict
 
@@ -72,6 +73,10 @@ def default_config() -> config_dict.ConfigDict:
     # Stochastic eye dropout (for binocular training fairness)
     cfg.eye_dropout_rate = 0.0  # probability of masking one eye per step (0=disabled)
     cfg.eval_eye_mode = "binocular"  # eval mode: "binocular", "left_only", "right_only"
+    # Eye camera yaw offset from center (radians). Controls binocular overlap:
+    #   overlap_deg ≈ fovy - 2 * degrees(eye_angle_offset)  [square aspect ratio]
+    # Default 0.2 rad ≈ 11.5° offset → ~57° overlap (matches original XML).
+    cfg.eye_angle_offset = 0.2
     return cfg
 
 
@@ -111,6 +116,53 @@ class RunGapVision(run_gap.RunGap):
         self._vision_width = self._config.vision_width
         self._vision_height = self._config.vision_height
         self._grayscale = self._config.get("grayscale", False)
+
+        # Apply configurable eye camera angles when in binocular mode.
+        # This modifies the spec and triggers a second compile — the first
+        # compile happens in RunGap.__init__() before we get control here.
+        # The double compilation is a one-time startup cost.
+        if self._config.get("binocular", False):
+            offset = self._config.get("eye_angle_offset", 0.2)
+            self._configure_eye_cameras(offset)
+
+    def _configure_eye_cameras(self, eye_angle_offset: float) -> None:
+        """Modify eye camera yaw angles on the spec and recompile.
+
+        Sets the third euler component (Z-rotation / yaw) of each eye camera
+        to ±eye_angle_offset from the forward-facing direction (-π/2).
+
+        The resulting binocular overlap (for square images) is approximately:
+            overlap_deg ≈ fovy - 2 × degrees(eye_angle_offset)
+
+        Args:
+            eye_angle_offset: Yaw offset in radians for each eye from center.
+                0.0 = both eyes look straight ahead (max overlap = fovy).
+                0.2 = default XML value (~57° overlap with fovy=80°).
+                0.698 = ~40° offset (0° overlap).
+
+        Raises:
+            ValueError: If eye_angle_offset is outside [0, π/2].
+        """
+        if eye_angle_offset < 0 or eye_angle_offset > np.pi / 2:
+            raise ValueError(
+                f"eye_angle_offset must be in [0, π/2], got {eye_angle_offset}"
+            )
+
+        suffix = self._suffix
+        base_yaw = -np.pi / 2  # forward-facing yaw
+
+        for cam in self._spec.cameras:
+            if cam.name == f"eye_left{suffix}":
+                euler = cam.alt.euler.copy()
+                euler[2] = base_yaw + eye_angle_offset
+                cam.alt.euler = euler
+            elif cam.name == f"eye_right{suffix}":
+                euler = cam.alt.euler.copy()
+                euler[2] = base_yaw - eye_angle_offset
+                cam.alt.euler = euler
+
+        # Recompile with updated camera orientations
+        self.compile(forced=True)
 
     @property
     def vision_shape(self):
