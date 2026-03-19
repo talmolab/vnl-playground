@@ -709,6 +709,8 @@ def _train_mlp_highlvl(
     The HighLevelWrapper with pass_vision=False produces flat observations
     (state/privileged_state), suitable for a standard MLP policy.
     """
+    eval_render_cfg = _resolve_eval_render_config(cfg)
+
     latent_size = mimic_cfg.network_config.intention_size
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
@@ -843,8 +845,8 @@ def _train_mlp_highlvl(
     mj_data = mujoco.MjData(mj_model)
     renderer_obj = mujoco.Renderer(
         mj_model,
-        height=cfg.render_config.render_height,
-        width=cfg.render_config.render_width,
+        height=eval_render_cfg["video"]["height"],
+        width=eval_render_cfg["video"]["width"],
     )
 
     # Save reference before it gets shadowed by the functools.partial closure
@@ -901,15 +903,9 @@ def _train_mlp_highlvl(
                 mj_data,
                 renderer_obj,
                 video_path,
-                fps=cfg.render_config.render_fps,
+                fps=eval_render_cfg["video"]["fps"],
                 termination_events=termination_events,
-                hud_config=(
-                    OmegaConf.to_container(
-                        cfg.render_config.get("hud", {}), resolve=True
-                    )
-                    if cfg.render_config.get("hud")
-                    else None
-                ),
+                hud_config=eval_render_cfg["video"].get("hud"),
                 reward_config=(
                     OmegaConf.to_container(
                         cfg.env_config.env_args.get("reward_terms", {}), resolve=True
@@ -992,6 +988,8 @@ def _train_vision_task_obs_highlvl(
     and uses a fusion network that combines CNN features with the task
     observation vector.
     """
+    eval_render_cfg = _resolve_eval_render_config(cfg)
+
     latent_size = mimic_cfg.network_config.intention_size
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
@@ -1090,8 +1088,8 @@ def _train_vision_task_obs_highlvl(
     mj_data = mujoco.MjData(mj_model)
     renderer_obj = mujoco.Renderer(
         mj_model,
-        height=cfg.render_config.render_height,
-        width=cfg.render_config.render_width,
+        height=eval_render_cfg["video"]["height"],
+        width=eval_render_cfg["video"]["width"],
     )
     # Create warp vision renderer (nworld=1) for egocentric overlay in videos
     _video_vision_renderer = None
@@ -1227,16 +1225,10 @@ def _train_vision_task_obs_highlvl(
                 mj_data,
                 renderer_obj,
                 video_path,
-                fps=cfg.render_config.render_fps,
+                fps=eval_render_cfg["video"]["fps"],
                 vision_renderer=_video_vision_renderer,
                 termination_events=termination_events,
-                hud_config=(
-                    OmegaConf.to_container(
-                        cfg.render_config.get("hud", {}), resolve=True
-                    )
-                    if cfg.render_config.get("hud")
-                    else None
-                ),
+                hud_config=eval_render_cfg["video"].get("hud"),
                 reward_config=(
                     OmegaConf.to_container(
                         cfg.env_config.env_args.get("reward_terms", {}), resolve=True
@@ -1364,6 +1356,8 @@ def _train_shared_vision_task_obs_highlvl(
     signal for vision features.
     """
     from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
+
+    eval_render_cfg = _resolve_eval_render_config(cfg)
 
     latent_size = mimic_cfg.network_config.intention_size
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
@@ -1542,8 +1536,8 @@ def _train_shared_vision_task_obs_highlvl(
     mj_data = mujoco.MjData(mj_model)
     renderer_obj = mujoco.Renderer(
         mj_model,
-        height=cfg.render_config.render_height,
-        width=cfg.render_config.render_width,
+        height=eval_render_cfg["video"]["height"],
+        width=eval_render_cfg["video"]["width"],
     )
     # Create warp vision renderer (nworld=1) for egocentric overlay
     _video_vision_renderer = None
@@ -1681,16 +1675,10 @@ def _train_shared_vision_task_obs_highlvl(
                 mj_data,
                 renderer_obj,
                 video_path,
-                fps=cfg.render_config.render_fps,
+                fps=eval_render_cfg["video"]["fps"],
                 vision_renderer=_video_vision_renderer,
                 termination_events=termination_events,
-                hud_config=(
-                    OmegaConf.to_container(
-                        cfg.render_config.get("hud", {}), resolve=True
-                    )
-                    if cfg.render_config.get("hud")
-                    else None
-                ),
+                hud_config=eval_render_cfg["video"].get("hud"),
                 reward_config=(
                     OmegaConf.to_container(
                         cfg.env_config.env_args.get("reward_terms", {}), resolve=True
@@ -1827,6 +1815,9 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     binocular CNN.
     """
     from track_mjx.agent.ff_ppo import losses as ff_ppo_losses
+
+    eval_render_cfg = _resolve_eval_render_config(cfg)
+    logging.info(f"Eval video eye conditions: {eval_render_cfg['eye_conditions']}")
 
     latent_size = mimic_cfg.network_config.intention_size
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
@@ -2013,8 +2004,8 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     mj_data = mujoco.MjData(mj_model)
     renderer_obj = mujoco.Renderer(
         mj_model,
-        height=cfg.render_config.render_height,
-        width=cfg.render_config.render_width,
+        height=eval_render_cfg["video"]["height"],
+        width=eval_render_cfg["video"]["width"],
     )
     # Create two warp vision renderers (nworld=1) for binocular eval overlay
     from vnl_playground.tasks.rodent.vision_jax import (
@@ -2131,10 +2122,10 @@ def _train_binocular_shared_vision_task_obs_highlvl(
 
     # Masked eval functions for multi-condition evaluation
     # Each mode gets its own JIT-compiled reset/step
-    _masked_eval_fns = {
-        "left_only": _make_masked_eval_fns("left_only"),
-        "right_only": _make_masked_eval_fns("right_only"),
-    }
+    _masked_eval_fns = {}
+    for mode in eval_render_cfg["eye_conditions"]:
+        if mode != "binocular":
+            _masked_eval_fns[mode] = _make_masked_eval_fns(mode)
 
     # Ensure render_config has render_interval
     if "render_interval" not in cfg_dict.get("render_config", {}):
@@ -2235,7 +2226,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
 
         _log_memory(f"binocular_vision_policy_params_fn entry step={current_step}")
 
-        eye_modes = ["binocular", "left_only", "right_only"]
+        eye_modes = eval_render_cfg["eye_conditions"]
 
         for eye_mode in eye_modes:
             # Select eval functions for this eye mode
@@ -2312,17 +2303,11 @@ def _train_binocular_shared_vision_task_obs_highlvl(
                     mj_data,
                     renderer_obj,
                     video_path,
-                    fps=cfg.render_config.render_fps,
+                    fps=eval_render_cfg["video"]["fps"],
                     vision_renderer=_video_left_renderer,
                     right_vision_renderer=_video_right_renderer,
                     termination_events=termination_events,
-                    hud_config=(
-                        OmegaConf.to_container(
-                            cfg.render_config.get("hud", {}), resolve=True
-                        )
-                        if cfg.render_config.get("hud")
-                        else None
-                    ),
+                    hud_config=eval_render_cfg["video"].get("hud"),
                     reward_config=(
                         OmegaConf.to_container(
                             cfg.env_config.env_args.get("reward_terms", {}),
@@ -2526,6 +2511,8 @@ def _train_recurrent_vision_task_obs_highlvl(
     from track_mjx.agent.recurrent_ppo import ppo as recurrent_ppo_train
     from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
 
+    eval_render_cfg = _resolve_eval_render_config(cfg)
+
     latent_size = mimic_cfg.network_config.intention_size
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
@@ -2685,8 +2672,8 @@ def _train_recurrent_vision_task_obs_highlvl(
     mj_data = mujoco.MjData(mj_model)
     renderer_obj = mujoco.Renderer(
         mj_model,
-        height=cfg.render_config.render_height,
-        width=cfg.render_config.render_width,
+        height=eval_render_cfg["video"]["height"],
+        width=eval_render_cfg["video"]["width"],
     )
     # Create warp vision renderer (nworld=1) for egocentric overlay
     _video_vision_renderer = None
@@ -2836,16 +2823,10 @@ def _train_recurrent_vision_task_obs_highlvl(
                 mj_data,
                 renderer_obj,
                 video_path,
-                fps=cfg.render_config.render_fps,
+                fps=eval_render_cfg["video"]["fps"],
                 vision_renderer=_video_vision_renderer,
                 termination_events=termination_events,
-                hud_config=(
-                    OmegaConf.to_container(
-                        cfg.render_config.get("hud", {}), resolve=True
-                    )
-                    if cfg.render_config.get("hud")
-                    else None
-                ),
+                hud_config=eval_render_cfg["video"].get("hud"),
                 reward_config=(
                     OmegaConf.to_container(
                         cfg.env_config.env_args.get("reward_terms", {}), resolve=True
@@ -2994,6 +2975,8 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
     from track_mjx.agent.recurrent_ppo import ppo as recurrent_ppo_train
     from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_networks
 
+    eval_render_cfg = _resolve_eval_render_config(cfg)
+
     latent_size = mimic_cfg.network_config.intention_size
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
@@ -3053,7 +3036,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
     # (designed for 2048 parallel envs). For single-world video rollout,
     # this causes Warp to allocate oversized collision buffers (~72 MB EPA).
     # Create a separate env with naconmax appropriate for 1 world.
-    video_naconmax = cfg.get("eval_video", {}).get("video_naconmax", 512)
+    video_naconmax = eval_render_cfg["video_naconmax"]
     video_eval_args = dict(
         OmegaConf.to_container(cfg.env_config.get("env_args", {}), resolve=True)
     )
@@ -3213,8 +3196,8 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
     mj_data = mujoco.MjData(mj_model)
     renderer_obj = mujoco.Renderer(
         mj_model,
-        height=cfg.render_config.render_height,
-        width=cfg.render_config.render_width,
+        height=eval_render_cfg["video"]["height"],
+        width=eval_render_cfg["video"]["width"],
     )
     # Create two warp vision renderers (nworld=1) for binocular eval overlay
     from vnl_playground.tasks.rodent.vision_jax import (
@@ -3332,9 +3315,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
 
     # Read eval video conditions from config (default: binocular only)
     # Must be defined before _masked_eval_fns which uses it.
-    eval_eye_conditions = list(
-        cfg.get("eval_video", {}).get("eye_conditions", ["binocular"])
-    )
+    eval_eye_conditions = eval_render_cfg["eye_conditions"]
     logging.info(f"Eval video eye conditions: {eval_eye_conditions}")
 
     # Only JIT-compile masked eval fns for conditions that are configured
@@ -3532,17 +3513,11 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
                     mj_data,
                     renderer_obj,
                     video_path,
-                    fps=cfg.render_config.render_fps,
+                    fps=eval_render_cfg["video"]["fps"],
                     vision_renderer=_video_left_renderer,
                     right_vision_renderer=_video_right_renderer,
                     termination_events=termination_events,
-                    hud_config=(
-                        OmegaConf.to_container(
-                            cfg.render_config.get("hud", {}), resolve=True
-                        )
-                        if cfg.render_config.get("hud")
-                        else None
-                    ),
+                    hud_config=eval_render_cfg["video"].get("hud"),
                     reward_config=(
                         OmegaConf.to_container(
                             cfg.env_config.env_args.get("reward_terms", {}),
