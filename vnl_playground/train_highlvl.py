@@ -287,6 +287,7 @@ def render_video(
     hud_config=None,
     reward_config=None,
     use_obs_vision=False,
+    eye_qpos_indices=None,
 ):
     """Render a rollout to an MP4 video file with tracking camera.
 
@@ -583,6 +584,19 @@ def render_video(
 
                 if _hud_on("show_action_magnitude") and action_rms is not None:
                     hud_lines.append((f"Action RMS: {action_rms:.3f}", GRAY))
+
+                # Eye angle display for actuable eyes
+                if eye_qpos_indices is not None:
+                    qpos = np.asarray(state.data.qpos)
+                    eye_angles_rad = qpos[eye_qpos_indices]
+                    l_deg = math.degrees(float(eye_angles_rad[0]))
+                    r_deg = math.degrees(float(eye_angles_rad[1]))
+                    # Color: brighter when eyes are moving away from center
+                    max_angle = max(abs(l_deg), abs(r_deg))
+                    eye_color = YELLOW if max_angle > 10 else GRAY
+                    hud_lines.append(
+                        (f"Eye L: {l_deg:+.1f} deg  R: {r_deg:+.1f} deg", eye_color)
+                    )
 
                 if _hud_on("show_step_counter"):
                     hud_lines.append((f"Step: {episode_step}", GRAY))
@@ -2068,6 +2082,11 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     while hasattr(_unwrapped, "env"):
         _unwrapped = _unwrapped.env
 
+    # Extract eye qpos indices for HUD display (None if not actuable)
+    _eye_qpos_indices = getattr(_unwrapped, "_eye_qpos_indices", None)
+    if _eye_qpos_indices is not None:
+        logging.info(f"Actuable eyes detected: eye_qpos_indices={_eye_qpos_indices}")
+
     vision_width = cfg.env_config.get("vision_width", 32)
     vision_height = cfg.env_config.get("vision_height", 32)
     grayscale = cfg.env_config.get("grayscale", True)
@@ -2367,6 +2386,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
                         and cfg.env_config.env_args.get("reward_terms")
                         else None
                     ),
+                    eye_qpos_indices=_eye_qpos_indices,
                 )
                 wandb.log(
                     {f"videos/{eye_mode}": wandb.Video(video_path, format="mp4")},
@@ -3286,6 +3306,11 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
     while hasattr(_unwrapped, "env"):
         _unwrapped = _unwrapped.env
 
+    # Extract eye qpos indices for HUD display (None if not actuable)
+    _eye_qpos_indices = getattr(_unwrapped, "_eye_qpos_indices", None)
+    if _eye_qpos_indices is not None:
+        logging.info(f"Actuable eyes detected: eye_qpos_indices={_eye_qpos_indices}")
+
     vision_width = cfg.env_config.get("vision_width", 32)
     vision_height = cfg.env_config.get("vision_height", 32)
     grayscale = cfg.env_config.get("grayscale", True)
@@ -3604,6 +3629,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
                         else None
                     ),
                     use_obs_vision=True,
+                    eye_qpos_indices=_eye_qpos_indices,
                 )
                 wandb.log(
                     {f"videos/{eye_mode}": wandb.Video(video_path, format="mp4")},
