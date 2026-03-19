@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from vnl_playground.tasks.rodent import run_gap_vision
+from vnl_playground.tasks.wrappers import HighLevelWrapper
 
 
 def _make_actuable_eye_env() -> run_gap_vision.RunGapVision:
@@ -173,3 +174,48 @@ def test_eye_joint_angles_at_zero_on_reset():
 
     eye_angles = state.data.qpos[env._eye_qpos_indices]
     np.testing.assert_allclose(eye_angles, 0.0, atol=1e-6)
+
+
+# ---------- Task 5: HighLevelWrapper eye action bypass ----------
+
+
+def test_highlevel_wrapper_action_size_with_eyes():
+    """HighLevelWrapper action_size should include eye actuators."""
+    env = _make_actuable_eye_env()
+    body_nu = env.action_size - env.n_eye_actuators
+
+    def mock_decoder(x):
+        return jp.zeros(body_nu), {}
+
+    latent_size = 64
+    hlw = HighLevelWrapper(
+        env=env,
+        decoder_inference_fn=mock_decoder,
+        latent_size=latent_size,
+        n_eye_actuators=env.n_eye_actuators,
+        pass_vision=True,
+        pass_task_obs=True,
+    )
+    assert hlw.action_size == latent_size + env.n_eye_actuators
+
+
+def test_highlevel_wrapper_action_size_without_eyes():
+    """HighLevelWrapper action_size should be latent_size when no eye actuators."""
+    cfg = run_gap_vision.default_config()
+    cfg.binocular = True
+    cfg.mujoco_impl = "warp"
+    env = run_gap_vision.RunGapVision(config=cfg)
+    body_nu = env.action_size
+
+    def mock_decoder(x):
+        return jp.zeros(body_nu), {}
+
+    latent_size = 64
+    hlw = HighLevelWrapper(
+        env=env,
+        decoder_inference_fn=mock_decoder,
+        latent_size=latent_size,
+        pass_vision=True,
+        pass_task_obs=True,
+    )
+    assert hlw.action_size == latent_size
