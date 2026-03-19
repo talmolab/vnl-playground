@@ -126,7 +126,9 @@ logging_config:
   notes: "Prior+Decoder Vision high-level transfer for RunGapVision"
   exp_name: prior_decoder_vision_1
 
-render_config:
-  render_fps: 50
-  render_height: 480
-  render_width: 640
+eval_render_config:
+  video:
+    fps: 50
+    height: 480
+    width: 640
+  eye_conditions: ["binocular"]

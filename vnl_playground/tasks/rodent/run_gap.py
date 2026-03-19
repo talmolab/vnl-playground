@@ -735,7 +735,7 @@ class RunGap(rodent_base.RodentEnv):
         proprioception = self._get_proprioception(data, info, flatten=False)
 
         obs = collections.OrderedDict(
-            imitation_target=gap_features,
+            task_obs=gap_features,
             proprioception=proprioception,
         )
         return collections.OrderedDict(

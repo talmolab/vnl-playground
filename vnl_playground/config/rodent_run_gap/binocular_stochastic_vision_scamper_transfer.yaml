@@ -136,20 +136,22 @@ logging_config:
   notes: "Binocular vision transfer with stochastic eye dropout (rate=0.4) for fair monocular comparison"
   exp_name: prior_vel_0.8_stochastic_eye
 
-render_config:
-  render_fps: 50
-  render_height: 480
-  render_width: 640
-  hud:
-    enabled: true
-    show_speed: true
-    show_reward_breakdown: true
-    show_cumulative_reward: true
-    show_gap_crossing: true
-    show_height: true
-    show_heading: true
-    show_step_counter: true
-    show_distance_to_gap: true
-    show_lateral_deviation: true
-    show_action_magnitude: true
-    gap_flash_duration: 1.5
+eval_render_config:
+  video:
+    fps: 50
+    height: 480
+    width: 640
+    hud:
+      enabled: true
+      show_speed: true
+      show_reward_breakdown: true
+      show_cumulative_reward: true
+      show_gap_crossing: true
+      show_height: true
+      show_heading: true
+      show_step_counter: true
+      show_distance_to_gap: true
+      show_lateral_deviation: true
+      show_action_magnitude: true
+      gap_flash_duration: 1.5
+  eye_conditions: ["binocular", "left_only", "right_only"]

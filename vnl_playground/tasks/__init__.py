@@ -47,6 +47,7 @@ _envs = {
     "RodentRunGap": rodent_run_gap.RunGap,
     "RodentRunGapVision": rodent_run_gap_vision.RunGapVision,
     "RodentRunGapBinocularVision": rodent_run_gap_vision.RunGapVision,
+    "RodentRunGapActuableEyes": rodent_run_gap_vision.RunGapVision,
     "RodentGapJumpTrial": rodent_gap_jump_trial.GapJumpTrial,
     "RodentGapJumpTrialVision": rodent_gap_jump_trial_vision.GapJumpTrialVision,
     "RodentGoToTarget": rodent_go_to_target.GoToTarget,
@@ -69,6 +70,16 @@ def _binocular_default_config():
     return cfg
 
 
+def _actuable_eyes_default_config():
+    """Default config for actuable eyes binocular RunGapVision."""
+    cfg = rodent_run_gap_vision.default_config()
+    cfg.binocular = True
+    cfg.actuable_eyes = True
+    cfg.left_camera_name = "eye_left_actuated-rodent"
+    cfg.right_camera_name = "eye_right_actuated-rodent"
+    return cfg
+
+
 _cfgs = {
     "RodentImitation": rodent_imitation.default_config,
     "RodentSparseImitation": rodent_sparse_imitation.default_config,
@@ -79,6 +90,7 @@ _cfgs = {
     "RodentRunGap": rodent_run_gap.default_config,
     "RodentRunGapVision": rodent_run_gap_vision.default_config,
     "RodentRunGapBinocularVision": _binocular_default_config,
+    "RodentRunGapActuableEyes": _actuable_eyes_default_config,
     "RodentGapJumpTrial": rodent_gap_jump_trial.default_config,
     "RodentGapJumpTrialVision": rodent_gap_jump_trial_vision.default_config,
     "RodentGoToTarget": rodent_go_to_target.default_config,

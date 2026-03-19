@@ -245,6 +245,11 @@ class HighLevelWrapper(wrapper.Wrapper):
         pass_task_obs: If True (requires ``pass_vision=True``), also include the
             flattened ``highlvl_obs_key`` as ``"imitation_target"`` alongside
             vision in the observation dict.
+        n_eye_actuators: Number of eye actuators whose controls bypass the
+            decoder. When > 0, the policy action is split into
+            ``[latent, eye_ctrl]``; only ``latent`` is decoded, and
+            ``eye_ctrl`` is concatenated directly onto the body controls.
+            The ``action_size`` property increases accordingly.
     """
 
     def __init__(
@@ -257,6 +262,7 @@ class HighLevelWrapper(wrapper.Wrapper):
         decoder_obs_key: str = "proprioception",
         pass_vision: bool = False,
         pass_task_obs: bool = False,
+        n_eye_actuators: int = 0,
     ):
         super().__init__(env)
         if pass_task_obs and not pass_vision:
@@ -266,6 +272,7 @@ class HighLevelWrapper(wrapper.Wrapper):
             )
         self._decoder_inference_fn = decoder_inference_fn
         self._latent_size = latent_size
+        self._n_eye_actuators = n_eye_actuators
         self._obs_key = obs_key
         self._highlvl_obs_key = highlvl_obs_key
         self._decoder_obs_key = decoder_obs_key
@@ -361,16 +368,26 @@ class HighLevelWrapper(wrapper.Wrapper):
                 state.info["_full_obs"][self._obs_key][self._decoder_obs_key]
             )[0]
         )
-        ctrl, extras = self._decoder_inference_fn(
-            jp.concatenate([action, decoder_obs], axis=-1)
-        )
+
+        if self._n_eye_actuators > 0:
+            latent = action[: self._latent_size]
+            eye_ctrl = action[self._latent_size :]
+            body_ctrl, extras = self._decoder_inference_fn(
+                jp.concatenate([latent, decoder_obs], axis=-1)
+            )
+            ctrl = jp.concatenate([body_ctrl, eye_ctrl], axis=-1)
+        else:
+            ctrl, extras = self._decoder_inference_fn(
+                jp.concatenate([action, decoder_obs], axis=-1)
+            )
+
         next_state = self.env.step(state, ctrl)
         next_state.info["decoder_extras"] = extras
         return self._process_state(next_state)
 
     @property
     def action_size(self) -> int:
-        return self._latent_size
+        return self._latent_size + self._n_eye_actuators
 
     @property
     def observation_size(self) -> dict[str, int]:
@@ -434,6 +451,12 @@ class PriorHighLevelWrapper(wrapper.Wrapper):
         deterministic_prior: If True, use prior mean only (no noise).
         noise_logvar: Fixed log-variance for noise sampling (used when
             deterministic_prior=False).
+        n_eye_actuators: Number of eye actuators whose controls bypass the
+            decoder. When > 0, the policy action is split into
+            ``[residual, eye_ctrl]``; only ``residual`` is used for the
+            prior+decoder pathway, and ``eye_ctrl`` is concatenated directly
+            onto the body controls. The ``action_size`` property increases
+            accordingly.
     """
 
     def __init__(
@@ -449,6 +472,7 @@ class PriorHighLevelWrapper(wrapper.Wrapper):
         pass_task_obs: bool = False,
         deterministic_prior: bool = True,
         noise_logvar: float = -2.0,
+        n_eye_actuators: int = 0,
     ):
         super().__init__(env)
         if pass_task_obs and not pass_vision:
@@ -459,6 +483,7 @@ class PriorHighLevelWrapper(wrapper.Wrapper):
         self._prior_fn = prior_inference_fn
         self._decoder_fn = decoder_inference_fn
         self._latent_size = latent_size
+        self._n_eye_actuators = n_eye_actuators
         self._obs_key = obs_key
         self._highlvl_obs_key = highlvl_obs_key
         self._decoder_obs_key = decoder_obs_key
@@ -568,24 +593,37 @@ class PriorHighLevelWrapper(wrapper.Wrapper):
             )[0]
         )
 
+        # Split action into residual (for prior+decoder) and eye controls
+        if self._n_eye_actuators > 0:
+            residual = action[: self._latent_size]
+            eye_ctrl = action[self._latent_size :]
+        else:
+            residual = action
+
         # Compute prior from proprioception
         prior_mean, prior_logvar = self._prior_fn(decoder_obs)
 
         # Combine residual action with prior
         if self._deterministic:
-            latent = action + prior_mean
+            latent = residual + prior_mean
         else:
             rng = state.info.get("rng", jax.random.PRNGKey(0))
             rng, noise_rng = jax.random.split(rng)
             std = jp.exp(0.5 * self._noise_logvar)
             noise = jax.random.normal(noise_rng, shape=prior_mean.shape) * std
-            latent = action + prior_mean + noise
+            latent = residual + prior_mean + noise
             state.info["rng"] = rng
 
         # Decode latent + proprioception into control
-        ctrl, decoder_extras = self._decoder_fn(
+        body_ctrl, decoder_extras = self._decoder_fn(
             jp.concatenate([latent, decoder_obs], axis=-1)
         )
+
+        # Concatenate eye controls if present
+        if self._n_eye_actuators > 0:
+            ctrl = jp.concatenate([body_ctrl, eye_ctrl], axis=-1)
+        else:
+            ctrl = body_ctrl
 
         # Step the base environment
         next_state = self.env.step(state, ctrl)
@@ -600,7 +638,7 @@ class PriorHighLevelWrapper(wrapper.Wrapper):
         metrics = dict(next_state.metrics) if next_state.metrics else {}
         metrics["prior/mean_norm"] = jp.linalg.norm(prior_mean)
         metrics["prior/logvar_mean"] = jp.mean(prior_logvar)
-        metrics["prior/residual_norm"] = jp.linalg.norm(action)
+        metrics["prior/residual_norm"] = jp.linalg.norm(residual)
         metrics["prior/final_latent_norm"] = jp.linalg.norm(latent)
         next_state = next_state.replace(metrics=metrics)
 
@@ -608,7 +646,7 @@ class PriorHighLevelWrapper(wrapper.Wrapper):
 
     @property
     def action_size(self) -> int:
-        return self._latent_size
+        return self._latent_size + self._n_eye_actuators
 
     @property
     def observation_size(self) -> dict[str, int]:

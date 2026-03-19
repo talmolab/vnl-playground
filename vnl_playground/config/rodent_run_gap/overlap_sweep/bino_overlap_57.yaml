@@ -1,18 +1,10 @@
 # @package _global_
-# v2 MLP Binocular Vision Transfer (Shared Siamese CNN + FF policy)
-# Paired with v2_rnn_binocular_transfer.yaml for fair MLP vs RNN comparison.
-# All env/training parameters are identical between the two configs; only
-# network_config and logging_config differ.
-#
-# Architecture: binocular_shared_vision_task_obs (feedforward MLP)
-#   - Shared-weight Siamese CNN processes left/right eyes independently
-#   - Concatenated features fused with task_obs via MLP policy
-#
-# Changes from aligned_*: num_envs=1024, gap_range=[0.03, 0.25]
+# Binocular Vision — 57° Overlap (Current default)
+# eye_angle_offset = 0.2 rad ≈ 11.5° per eye
 #
 # Usage:
-#   cd vnl-playground
-#   python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/v2_mlp_binocular_transfer
+#   python -m vnl_playground.train_highlvl \
+#     --config-name=rodent_run_gap/overlap_sweep/bino_overlap_57
 
 env_config:
   env_name: RodentRunGapBinocularVision
@@ -33,46 +25,39 @@ env_config:
   use_textures: true
   use_shadows: true
   env_args:
-    # -- Simulation --
     ctrl_dt: 0.01
     sim_dt: 0.002
     solver: "newton"
     mujoco_impl: "warp"
-    # -- Solver memory --
-    naconmax: 12288       # 1024 * 12
+    naconmax: 12288
     njmax: 400
     iterations: 5
     ls_iterations: 5
     noslip_iterations: 0
-    # -- Rodent --
     torque_actuators: true
     rescale_factor: 0.9
-    # -- Corridor geometry --
     corridor_length: 4.0
     corridor_width: 2.0
     platform_length_range: [0.3, 0.6]
-    gap_length_range: [0.03, 0.25]
+    gap_length_range: [0.03, 0.2]
     n_platforms: 20
-    # -- Environment --
     spawn_x: 0.5
     randomize_gaps: true
     aesthetic: "outdoor_natural"
     use_mesh_platforms: true
-    # -- Episode --
-    episode_length: 2000
+    episode_length: 1000
     action_repeat: 1
-    # -- Reward --
+    eye_angle_offset: 0.2
     reward_terms:
       forward_velocity:
         weight: 1.0
-        target_speed: 0.8
+        target_speed: 1
       gap_crossing_bonus:
         weight: 10
-    # -- Termination --
     termination_criteria:
       fallen:
         min_torso_z: 0.0325
-        max_torso_angle: 70
+        max_torso_angle: 85
       nan_termination: {}
 
 network_config:
@@ -80,9 +65,9 @@ network_config:
   binocular_mode: "shared"
   vision_latent_size: 16
   vision_feature_size: 32
-  vision_channels: [4, 8, 16, 32]
   decoder_hidden_layer_sizes: [512, 512, 512]
   value_hidden_layer_sizes: [512, 512, 512, 512]
+  vision_channels: [4, 8, 16, 32]
   fusion_hidden_layer_sizes: [256, 256, 256]
 
 transfer:
@@ -97,7 +82,7 @@ train_setup:
   train_config:
     episode_length: 1000
     num_envs: 1024
-    num_timesteps: 2_000_000_000
+    num_timesteps: 750_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4
@@ -113,8 +98,13 @@ train_setup:
     latent_kl_weight: 0.0
     latent_ar1_weight: 0.0
     use_kl_schedule: false
+    prior_residual_start_weight: 0.0
+    prior_residual_end_weight: 0.0
+    prior_residual_decay_frac: 0.5
+    prior_residual_warmup_frac: 0.0
+    prior_residual_schedule_type: "linear"
     num_eval_envs: 128
-    eval_naconmax: 3840
+    eval_naconmax: 2560
     deterministic_eval: false
     grad_clip_threshold: 20.0
     vf_loss_coefficient: 0.5
@@ -122,10 +112,10 @@ train_setup:
 
 logging_config:
   project_name: vnl-playground
-  group_name: v2-mlp-vs-rnn-binocular
+  group_name: overlap-sweep
   model_path: highlvl_checkpoints
-  notes: "v2 MLP binocular vision transfer. ctrl_dt=0.01, target_speed=0.8, gap_range=[0.03, 0.25], num_envs=1024"
-  exp_name: v2_mlp_binocular
+  notes: "Current default overlap (11.5° offset)"
+  exp_name: bino_overlap_57
 
 eval_render_config:
   video:

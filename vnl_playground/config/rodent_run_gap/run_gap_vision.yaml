@@ -118,8 +118,9 @@ logging_config:
   notes: "RunGapVision with CNN encoder ff_ppo"
   exp_name: run_gap_vision
 
-render_config:
-  render_fps: 50
-  render_height: 480
-  render_width: 640
-  render_interval: 1
+eval_render_config:
+  video:
+    fps: 50
+    height: 480
+    width: 640
+  eye_conditions: ["binocular"]

@@ -99,7 +99,9 @@ logging_config:
   notes: "TaskObs-only MLP high-level transfer for RunGapVision (baseline, no vision)"
   exp_name: run_gap_task_obs_transfer
 
-render_config:
-  render_fps: 50
-  render_height: 480
-  render_width: 640
+eval_render_config:
+  video:
+    fps: 50
+    height: 480
+    width: 640
+  eye_conditions: ["binocular"]

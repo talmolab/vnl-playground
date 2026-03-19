@@ -1,21 +1,25 @@
 # @package _global_
-# Recurrent Vision (CNN+GRU) high-level transfer training for RunGapVision
-# Uses recurrent PPO with shared CNN+GRU backbone
+# Recurrent Binocular Vision (Siamese CNN + GRU) with prior residual decay
+# Same as recurrent_binocular_vision_transfer but with a decaying L2 penalty
+# on policy residuals to control prior network influence over training.
 #
 # Usage:
 #   cd vnl-playground
-#   python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/recurrent_vision_transfer
+#   python -m vnl_playground.train_highlvl \
+#     --config-name=rodent_run_gap/recurrent_bino_prior_decay
 
 env_config:
-  env_name: RodentRunGapVision
-  task_name: run_gap_vision
+  env_name: RodentRunGapBinocularVision
+  task_name: run_gap_binocular_vision
   walker_name: rodent
   render_camera_name: close_profile
   vision: true
   vision_width: 32
   vision_height: 32
   grayscale: true
-  vision_camera_name: "egocentric-rodent"
+  binocular: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
   render_depth: false
   use_textures: true
   use_shadows: true
@@ -28,7 +32,7 @@ env_config:
     solver: "newton"
     mujoco_impl: "warp"
     # -- Solver memory --
-    naconmax: 19456       # 19 * 1024
+    naconmax: 12288       # 1024 * 12
     njmax: 400
     iterations: 5
     ls_iterations: 5
@@ -40,12 +44,12 @@ env_config:
     corridor_length: 4.0
     corridor_width: 2.0
     platform_length_range: [0.3, 0.6]
-    gap_length_range: [0.03, 0.12]
+    gap_length_range: [0.05, 0.3]
     n_platforms: 20
     # -- Environment --
     spawn_x: 0.5
     randomize_gaps: true
-    aesthetic: "default"
+    aesthetic: "outdoor_natural"
     use_mesh_platforms: true
     # -- Episode --
     episode_length: 2000
@@ -54,44 +58,44 @@ env_config:
     reward_terms:
       forward_velocity:
         weight: 1.0
-        target_speed: 2
-      termination_penalty:
-        weight: 10.0
+        target_speed: 1
       gap_crossing_bonus:
-        weight: 2.0
+        weight: 10
     # -- Termination --
     termination_criteria:
       fallen:
         min_torso_z: 0.0325
-        max_torso_angle: 70
+        max_torso_angle: 85
       nan_termination: {}
 
 network_config:
-  arch_name: recurrent_vision_task_obs
+  arch_name: recurrent_binocular_vision_task_obs
+  binocular_mode: "shared"
   vision_feature_size: 32
   vision_channels: [4, 8, 16, 32]
   gru_hidden_size: 256
-  policy_head_sizes: [256]
-  value_head_sizes: [256, 128]
+  policy_head_sizes: [512,256,256,256]
+  value_head_sizes: [256,256,256,256]
 
 transfer:
-  mimic_run_id: "260212_123718_492372"
-  mimic_checkpoint_dir: /home/talmolab/Desktop/SalkResearch/track-mjx/model_checkpoints
+  mode: prior_decoder
+  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/data/prior
   highlvl_obs_key: task_obs
   decoder_obs_key: proprioception
+  deterministic_prior: true
 
 train_setup:
-  eval_every: 10_000_000
+  eval_every: 50_000_000
   train_config:
     episode_length: 1000
     num_envs: 1024
-    num_timesteps: 1_000_000_000
+    num_timesteps: 2_000_000_000
     batch_size: 1024
     num_minibatches: 16
     num_updates_per_batch: 4
-    learning_rate: 3e-4
+    learning_rate: 1e-4
     clipping_epsilon: 0.2
-    discounting: 0.97
+    discounting: 0.98
     entropy_cost: 1e-3
     action_repeat: 1
     unroll_length: 10
@@ -101,18 +105,26 @@ train_setup:
     latent_kl_weight: 0.0
     latent_ar1_weight: 0.0
     use_kl_schedule: false
+    # Prior residual penalty: decaying L2 penalty on policy actions (residuals).
+    # Keeps the policy near the prior mean early in training (kickstart),
+    # then gradually releases to allow more exploration freedom.
+    prior_residual_start_weight: 0.5   # Starting penalty weight (strong prior constraint)
+    prior_residual_end_weight: 0.01    # Small permanent regularizer for biomechanical realism
+    prior_residual_decay_frac: 0.4     # Decay over first 40% of training
+    prior_residual_warmup_frac: 0.0    # No warmup, start decaying immediately
+    prior_residual_schedule_type: "linear"
     num_eval_envs: 128
     deterministic_eval: false
-    grad_clip_threshold: 20.0
+    grad_clip_threshold: 10.0
     vf_loss_coefficient: 0.5
-    vision_lr_multiplier: 3.0
+    vision_lr_multiplier: 1.0
 
 logging_config:
   project_name: vnl-playground
-  group_name: run-gap-recurrent-vision-transfer
+  group_name: run-gap-recurrent-binocular-prior-decay
   model_path: highlvl_checkpoints
-  notes: "Recurrent CNN+GRU Vision high-level transfer for RunGapVision"
-  exp_name: recurrent_vision_v1
+  notes: "Recurrent Binocular (Siamese CNN+GRU) with prior residual decay schedule"
+  exp_name: recurrent_bino_prior_decay_v1
 
 eval_render_config:
   video:
@@ -120,3 +132,4 @@ eval_render_config:
     height: 480
     width: 640
   eye_conditions: ["binocular"]
+  video_naconmax: 64

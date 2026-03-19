@@ -360,17 +360,16 @@ def setup_env_and_policy(
     prior_checkpoint_path: str,
     ckpt_config: Dict[str, Any],
     seed: int = 0,
-) -> Tuple[Any, Callable, Any]:
+) -> Tuple[Any, Callable, Any, Any, Any, str, Optional[Callable]]:
     """Set up the environment, wrappers, and policy for rollout.
 
     Loads the trained binocular vision policy checkpoint and sets up the
     full inference pipeline: base env -> PriorHighLevelWrapper -> policy.
+    Supports both MLP (feedforward) and RNN (recurrent) architectures,
+    detected automatically from the checkpoint's ``network_config.arch_name``.
 
     Vision rendering is handled externally (not wrapped here) so the
     caller can control batch size and rendering lifecycle.
-
-    Uses the same environment construction pattern as ``train_highlvl.py``
-    (``config_overrides=env_args``) to ensure exact config match.
 
     Args:
         checkpoint_path: Path to the trained policy checkpoint directory.
@@ -379,7 +378,13 @@ def setup_env_and_policy(
         seed: Random seed for environment creation.
 
     Returns:
-        Tuple of ``(wrapped_env, policy_fn, params_tuple, mj_model, base_env)``.
+        Tuple of ``(wrapped_env, policy_fn, params_tuple, mj_model, base_env, arch, init_hidden_fn)``.
+
+        - ``arch``: ``"mlp"`` or ``"rnn"``.
+        - ``init_hidden_fn``: For RNN, ``fn(batch_size) -> hidden_state``. ``None`` for MLP.
+        - ``policy_fn``:
+            MLP: ``(params, obs, rng) -> (action, extras)``
+            RNN: ``(params, obs, hidden, rng) -> (action, extras, new_hidden)``
     """
     from omegaconf import OmegaConf
     from orbax import checkpoint as ocp
@@ -440,34 +445,62 @@ def setup_env_and_policy(
     obs_sizes = get_obs_sizes(_tmp_state.obs)
     print(f"  Obs sizes: {obs_sizes}")
 
-    # Step 5: Build PPO network (binocular shared CNN)
+    # Step 5: Detect architecture and build network
     net_cfg = ckpt_config["network_config"]
+    arch_name = net_cfg.get("arch_name", "binocular_shared_vision_task_obs")
     grayscale = ckpt_config["env_config"].get("grayscale", True)
     mono_channels = 1 if grayscale else 3
     binocular_mode = net_cfg.get("binocular_mode", "shared")
     vision_shape = (
         ckpt_config["env_config"].get("vision_height", 32),
         ckpt_config["env_config"].get("vision_width", 32),
-        2 * mono_channels,  # binocular: 2 channels for grayscale
+        2 * mono_channels,
     )
 
-    ppo_network, _shared_module = (
-        ff_ppo_networks.make_binocular_shared_vision_task_obs_highlvl_ppo_networks(
-            obs_sizes=obs_sizes,
-            action_size=latent_size,
-            vision_shape=vision_shape,
-            mono_channels=mono_channels,
-            shared_weights=(binocular_mode == "shared"),
-            vision_latent_size=net_cfg.get("vision_latent_size", 16),
-            vision_feature_size=net_cfg.get("vision_feature_size", 32),
-            decoder_hidden_layer_sizes=tuple(net_cfg["decoder_hidden_layer_sizes"]),
-            value_hidden_layer_sizes=tuple(net_cfg["value_hidden_layer_sizes"]),
-            vision_channels=tuple(net_cfg["vision_channels"]),
-            fusion_hidden_layer_sizes=tuple(
-                net_cfg.get("fusion_hidden_layer_sizes", [256])
-            ),
+    if "recurrent" in arch_name:
+        arch = "rnn"
+        print(f"  Architecture: RNN ({arch_name})")
+        from track_mjx.agent.recurrent_ppo import networks as recurrent_ppo_net
+        from track_mjx.agent.recurrent_ppo.recurrent_binocular_vision_networks import (
+            make_recurrent_binocular_vision_highlvl_ppo_networks,
         )
-    )
+
+        ppo_network, _shared_module = (
+            make_recurrent_binocular_vision_highlvl_ppo_networks(
+                obs_sizes=obs_sizes,
+                action_size=latent_size,
+                vision_shape=vision_shape,
+                cnn_feature_size=net_cfg.get("vision_feature_size", 32),
+                cnn_channels=tuple(net_cfg["vision_channels"]),
+                gru_hidden_size=net_cfg.get("gru_hidden_size", 256),
+                mono_channels=mono_channels,
+                shared_weights=(binocular_mode == "shared"),
+                policy_hidden_sizes=tuple(net_cfg.get("policy_head_sizes", [256])),
+                value_hidden_sizes=tuple(net_cfg.get("value_head_sizes", [256, 128])),
+            )
+        )
+        init_hidden_fn = ppo_network.policy_network.init_hidden
+    else:
+        arch = "mlp"
+        print(f"  Architecture: MLP ({arch_name})")
+        ppo_network, _shared_module = (
+            ff_ppo_networks.make_binocular_shared_vision_task_obs_highlvl_ppo_networks(
+                obs_sizes=obs_sizes,
+                action_size=latent_size,
+                vision_shape=vision_shape,
+                mono_channels=mono_channels,
+                shared_weights=(binocular_mode == "shared"),
+                vision_latent_size=net_cfg.get("vision_latent_size", 16),
+                vision_feature_size=net_cfg.get("vision_feature_size", 32),
+                decoder_hidden_layer_sizes=tuple(net_cfg["decoder_hidden_layer_sizes"]),
+                value_hidden_layer_sizes=tuple(net_cfg["value_hidden_layer_sizes"]),
+                vision_channels=tuple(net_cfg["vision_channels"]),
+                fusion_hidden_layer_sizes=tuple(
+                    net_cfg.get("fusion_hidden_layer_sizes", [256])
+                ),
+            )
+        )
+        init_hidden_fn = None
 
     # Step 6: Load checkpoint params
     print("  Loading policy checkpoint...")
@@ -482,10 +515,13 @@ def setup_env_and_policy(
     # Build abstract policy for restore
     key_policy = jax.random.PRNGKey(seed)
     init_policy_params = ppo_network.policy_network.init(key_policy)
-    dummy_obs = {
-        "imitation_target": jp.zeros((1, obs_sizes.get("imitation_target", 0))),
-        "proprioception": jp.zeros((1, obs_sizes.get("proprioception", 0))),
-    }
+    if arch == "rnn":
+        dummy_obs = {k: jp.zeros((1, v)) for k, v in obs_sizes.items()}
+    else:
+        dummy_obs = {
+            "imitation_target": jp.zeros((1, obs_sizes.get("imitation_target", 0))),
+            "proprioception": jp.zeros((1, obs_sizes.get("proprioception", 0))),
+        }
     abstract_normalizer = init_dict_normalizer(dummy_obs)
 
     # Handle zero-sized arrays for orbax compatibility
@@ -506,12 +542,15 @@ def setup_env_and_policy(
     print(f"  Loaded checkpoint step {latest_step}")
 
     # Step 7: Build inference function
-    make_logging_policy = ff_ppo_networks.make_logging_inference_fn(ppo_network)
+    if arch == "rnn":
+        make_logging_policy = recurrent_ppo_net.make_logging_inference_fn(ppo_network)
+    else:
+        make_logging_policy = ff_ppo_networks.make_logging_inference_fn(ppo_network)
     policy_fn = jax.jit(make_logging_policy(deterministic=True))
 
     mj_model = base_env.mj_model
 
-    return wrapped_env, policy_fn, params_tuple, mj_model, base_env
+    return wrapped_env, policy_fn, params_tuple, mj_model, base_env, arch, init_hidden_fn
 
 
 # ---------------------------------------------------------------------------
@@ -568,6 +607,8 @@ def collect_episodes_batch(
     n_envs: int = 64,
     condition: str = "binocular",
     seed: int = 42,
+    arch: str = "mlp",
+    init_hidden_fn: Optional[Callable] = None,
 ) -> Dict[str, Any]:
     """Collect kinematics data using vmapped batch rollouts.
 
@@ -729,6 +770,10 @@ def collect_episodes_batch(
         env_done = np.zeros(n_envs, dtype=bool)
         actual_steps = max_steps
 
+        # Initialize RNN hidden state for this batch
+        if arch == "rnn" and init_hidden_fn is not None:
+            hidden = init_hidden_fn(n_envs)
+
         for t in range(max_steps):
             obs = state.obs
 
@@ -742,7 +787,10 @@ def collect_episodes_batch(
                 }
 
             _, act_rng = jax.random.split(act_rng)
-            actions, _ = policy_fn(params_tuple, obs, act_rng)
+            if arch == "rnn":
+                actions, _, hidden = policy_fn(params_tuple, obs, hidden, act_rng)
+            else:
+                actions, _ = policy_fn(params_tuple, obs, act_rng)
             state = jit_step(state, actions)
 
             _record_batch(state.data, t + 1)
@@ -1005,11 +1053,13 @@ def main():
 
     # --- 3. Set up environment and policy ---
     print("[3/5] Setting up environment and policy...")
-    wrapped_env, policy_fn, params_tuple, mj_model, base_env = setup_env_and_policy(
-        checkpoint_path=args.checkpoint_path,
-        prior_checkpoint_path=args.prior_checkpoint_path,
-        ckpt_config=ckpt_config,
-        seed=args.seed,
+    wrapped_env, policy_fn, params_tuple, mj_model, base_env, arch, init_hidden_fn = (
+        setup_env_and_policy(
+            checkpoint_path=args.checkpoint_path,
+            prior_checkpoint_path=args.prior_checkpoint_path,
+            ckpt_config=ckpt_config,
+            seed=args.seed,
+        )
     )
 
     # --- 4. Resolve body/camera IDs ---
@@ -1033,6 +1083,8 @@ def main():
         n_envs=args.n_envs,
         condition=args.condition,
         seed=args.seed,
+        arch=arch,
+        init_hidden_fn=init_hidden_fn,
     )
 
     # --- Summary ---
