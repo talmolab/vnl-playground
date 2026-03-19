@@ -715,6 +715,14 @@ def _train_mlp_highlvl(
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
+    # Read n_eye_actuators from the base (unwrapped) env.
+    _unwrapped = env
+    while hasattr(_unwrapped, "env"):
+        _unwrapped = _unwrapped.env
+    n_eye_actuators = getattr(_unwrapped, "n_eye_actuators", 0)
+    if n_eye_actuators > 0:
+        logging.info(f"Actuable eyes: {n_eye_actuators} eye actuators bypass decoder")
+
     if prior_fn is not None:
         env = PriorHighLevelWrapper(
             env,
@@ -726,6 +734,7 @@ def _train_mlp_highlvl(
             pass_vision=False,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = PriorHighLevelWrapper(
             eval_env,
@@ -737,6 +746,7 @@ def _train_mlp_highlvl(
             pass_vision=False,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
     else:
         env = HighLevelWrapper(
@@ -746,6 +756,7 @@ def _train_mlp_highlvl(
             highlvl_obs_key=highlvl_obs_key,
             decoder_obs_key=decoder_obs_key,
             pass_vision=False,
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = HighLevelWrapper(
             eval_env,
@@ -754,6 +765,7 @@ def _train_mlp_highlvl(
             highlvl_obs_key=highlvl_obs_key,
             decoder_obs_key=decoder_obs_key,
             pass_vision=False,
+            n_eye_actuators=n_eye_actuators,
         )
 
     # Brax PPO expects flat array obs and int observation_size.
@@ -994,6 +1006,14 @@ def _train_vision_task_obs_highlvl(
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
+    # Read n_eye_actuators from the base (unwrapped) env.
+    _unwrapped = env
+    while hasattr(_unwrapped, "env"):
+        _unwrapped = _unwrapped.env
+    n_eye_actuators = getattr(_unwrapped, "n_eye_actuators", 0)
+    if n_eye_actuators > 0:
+        logging.info(f"Actuable eyes: {n_eye_actuators} eye actuators bypass decoder")
+
     if prior_fn is not None:
         env = PriorHighLevelWrapper(
             env,
@@ -1006,6 +1026,7 @@ def _train_vision_task_obs_highlvl(
             pass_task_obs=True,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = PriorHighLevelWrapper(
             eval_env,
@@ -1018,6 +1039,7 @@ def _train_vision_task_obs_highlvl(
             pass_task_obs=True,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
     else:
         env = HighLevelWrapper(
@@ -1028,6 +1050,7 @@ def _train_vision_task_obs_highlvl(
             decoder_obs_key=decoder_obs_key,
             pass_vision=True,
             pass_task_obs=True,
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = HighLevelWrapper(
             eval_env,
@@ -1037,6 +1060,7 @@ def _train_vision_task_obs_highlvl(
             decoder_obs_key=decoder_obs_key,
             pass_vision=True,
             pass_task_obs=True,
+            n_eye_actuators=n_eye_actuators,
         )
 
     logging.info(f"Vision+TaskObs HighLevelWrapper: action_size={env.action_size}")
@@ -1363,6 +1387,14 @@ def _train_shared_vision_task_obs_highlvl(
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
+    # Read n_eye_actuators from the base (unwrapped) env.
+    _unwrapped = env
+    while hasattr(_unwrapped, "env"):
+        _unwrapped = _unwrapped.env
+    n_eye_actuators = getattr(_unwrapped, "n_eye_actuators", 0)
+    if n_eye_actuators > 0:
+        logging.info(f"Actuable eyes: {n_eye_actuators} eye actuators bypass decoder")
+
     if prior_fn is not None:
         env = PriorHighLevelWrapper(
             env,
@@ -1375,6 +1407,7 @@ def _train_shared_vision_task_obs_highlvl(
             pass_task_obs=True,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = PriorHighLevelWrapper(
             eval_env,
@@ -1387,6 +1420,7 @@ def _train_shared_vision_task_obs_highlvl(
             pass_task_obs=True,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
     else:
         env = HighLevelWrapper(
@@ -1397,6 +1431,7 @@ def _train_shared_vision_task_obs_highlvl(
             decoder_obs_key=decoder_obs_key,
             pass_vision=True,
             pass_task_obs=True,
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = HighLevelWrapper(
             eval_env,
@@ -1406,6 +1441,7 @@ def _train_shared_vision_task_obs_highlvl(
             decoder_obs_key=decoder_obs_key,
             pass_vision=True,
             pass_task_obs=True,
+            n_eye_actuators=n_eye_actuators,
         )
 
     logging.info(
@@ -1479,11 +1515,12 @@ def _train_shared_vision_task_obs_highlvl(
         )
 
     prior_residual_schedule = None
-    prior_residual_start = ppo_params.get("prior_residual_start_weight", 0.0)
-    prior_residual_end = ppo_params.get("prior_residual_end_weight", 0.0)
+    prior_residual_start = ppo_params.pop("prior_residual_start_weight", 0.0)
+    prior_residual_end = ppo_params.pop("prior_residual_end_weight", 0.0)
+    prior_residual_decay_frac = ppo_params.pop("prior_residual_decay_frac", 0.5)
+    prior_residual_warmup_frac = ppo_params.pop("prior_residual_warmup_frac", 0.0)
+    prior_residual_schedule_type = ppo_params.pop("prior_residual_schedule_type", "linear")
     if prior_residual_start > 0.0:
-        prior_residual_decay_frac = ppo_params.get("prior_residual_decay_frac", 0.5)
-        prior_residual_warmup_frac = ppo_params.get("prior_residual_warmup_frac", 0.0)
         prior_residual_schedule = ff_ppo_losses.create_ramp_schedule(
             # NOTE: min_value is the START value, max_value is the END value.
             # When min_value > max_value, create_ramp_schedule naturally produces
@@ -1492,7 +1529,7 @@ def _train_shared_vision_task_obs_highlvl(
             max_value=prior_residual_end,
             ramp_steps=int(num_evals * prior_residual_decay_frac),
             warmup_steps=int(num_evals * prior_residual_warmup_frac),
-            schedule=ppo_params.get("prior_residual_schedule_type", "linear"),
+            schedule=prior_residual_schedule_type,
         )
         logging.info(
             f"Prior residual penalty: start={prior_residual_start}, "
@@ -1823,6 +1860,14 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
+    # Read n_eye_actuators from the base (unwrapped) env.
+    _unwrapped = env
+    while hasattr(_unwrapped, "env"):
+        _unwrapped = _unwrapped.env
+    n_eye_actuators = getattr(_unwrapped, "n_eye_actuators", 0)
+    if n_eye_actuators > 0:
+        logging.info(f"Actuable eyes: {n_eye_actuators} eye actuators bypass decoder")
+
     if prior_fn is not None:
         env = PriorHighLevelWrapper(
             env,
@@ -1835,6 +1880,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             pass_task_obs=True,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = PriorHighLevelWrapper(
             eval_env,
@@ -1847,6 +1893,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             pass_task_obs=True,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
     else:
         env = HighLevelWrapper(
@@ -1857,6 +1904,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             decoder_obs_key=decoder_obs_key,
             pass_vision=True,
             pass_task_obs=True,
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = HighLevelWrapper(
             eval_env,
@@ -1866,6 +1914,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             decoder_obs_key=decoder_obs_key,
             pass_vision=True,
             pass_task_obs=True,
+            n_eye_actuators=n_eye_actuators,
         )
 
     logging.info(
@@ -1947,11 +1996,12 @@ def _train_binocular_shared_vision_task_obs_highlvl(
         )
 
     prior_residual_schedule = None
-    prior_residual_start = ppo_params.get("prior_residual_start_weight", 0.0)
-    prior_residual_end = ppo_params.get("prior_residual_end_weight", 0.0)
+    prior_residual_start = ppo_params.pop("prior_residual_start_weight", 0.0)
+    prior_residual_end = ppo_params.pop("prior_residual_end_weight", 0.0)
+    prior_residual_decay_frac = ppo_params.pop("prior_residual_decay_frac", 0.5)
+    prior_residual_warmup_frac = ppo_params.pop("prior_residual_warmup_frac", 0.0)
+    prior_residual_schedule_type = ppo_params.pop("prior_residual_schedule_type", "linear")
     if prior_residual_start > 0.0:
-        prior_residual_decay_frac = ppo_params.get("prior_residual_decay_frac", 0.5)
-        prior_residual_warmup_frac = ppo_params.get("prior_residual_warmup_frac", 0.0)
         prior_residual_schedule = ff_ppo_losses.create_ramp_schedule(
             # NOTE: min_value is the START value, max_value is the END value.
             # When min_value > max_value, create_ramp_schedule naturally produces
@@ -1960,7 +2010,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             max_value=prior_residual_end,
             ramp_steps=int(num_evals * prior_residual_decay_frac),
             warmup_steps=int(num_evals * prior_residual_warmup_frac),
-            schedule=ppo_params.get("prior_residual_schedule_type", "linear"),
+            schedule=prior_residual_schedule_type,
         )
         logging.info(
             f"Prior residual penalty: start={prior_residual_start}, "
@@ -2517,6 +2567,14 @@ def _train_recurrent_vision_task_obs_highlvl(
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
+    # Read n_eye_actuators from the base (unwrapped) env.
+    _unwrapped = env
+    while hasattr(_unwrapped, "env"):
+        _unwrapped = _unwrapped.env
+    n_eye_actuators = getattr(_unwrapped, "n_eye_actuators", 0)
+    if n_eye_actuators > 0:
+        logging.info(f"Actuable eyes: {n_eye_actuators} eye actuators bypass decoder")
+
     if prior_fn is not None:
         env = PriorHighLevelWrapper(
             env,
@@ -2529,6 +2587,7 @@ def _train_recurrent_vision_task_obs_highlvl(
             pass_task_obs=True,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = PriorHighLevelWrapper(
             eval_env,
@@ -2541,6 +2600,7 @@ def _train_recurrent_vision_task_obs_highlvl(
             pass_task_obs=True,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
     else:
         env = HighLevelWrapper(
@@ -2551,6 +2611,7 @@ def _train_recurrent_vision_task_obs_highlvl(
             decoder_obs_key=decoder_obs_key,
             pass_vision=True,
             pass_task_obs=True,
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = HighLevelWrapper(
             eval_env,
@@ -2560,6 +2621,7 @@ def _train_recurrent_vision_task_obs_highlvl(
             decoder_obs_key=decoder_obs_key,
             pass_vision=True,
             pass_task_obs=True,
+            n_eye_actuators=n_eye_actuators,
         )
 
     logging.info(
@@ -2981,6 +3043,14 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
+    # Read n_eye_actuators from the base (unwrapped) env.
+    _unwrapped = env
+    while hasattr(_unwrapped, "env"):
+        _unwrapped = _unwrapped.env
+    n_eye_actuators = getattr(_unwrapped, "n_eye_actuators", 0)
+    if n_eye_actuators > 0:
+        logging.info(f"Actuable eyes: {n_eye_actuators} eye actuators bypass decoder")
+
     if prior_fn is not None:
         env = PriorHighLevelWrapper(
             env,
@@ -2993,6 +3063,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
             pass_task_obs=True,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = PriorHighLevelWrapper(
             eval_env,
@@ -3005,6 +3076,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
             pass_task_obs=True,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
     else:
         env = HighLevelWrapper(
@@ -3015,6 +3087,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
             decoder_obs_key=decoder_obs_key,
             pass_vision=True,
             pass_task_obs=True,
+            n_eye_actuators=n_eye_actuators,
         )
         eval_env = HighLevelWrapper(
             eval_env,
@@ -3024,6 +3097,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
             decoder_obs_key=decoder_obs_key,
             pass_vision=True,
             pass_task_obs=True,
+            n_eye_actuators=n_eye_actuators,
         )
 
     logging.info(
@@ -3064,6 +3138,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
             pass_task_obs=True,
             deterministic_prior=cfg.transfer.get("deterministic_prior", True),
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
+            n_eye_actuators=n_eye_actuators,
         )
     else:
         video_eval_env = HighLevelWrapper(
@@ -3074,6 +3149,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
             decoder_obs_key=decoder_obs_key,
             pass_vision=True,
             pass_task_obs=True,
+            n_eye_actuators=n_eye_actuators,
         )
     logging.info(
         f"Created lightweight video eval env: naconmax={video_naconmax}"

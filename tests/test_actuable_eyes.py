@@ -219,3 +219,14 @@ def test_highlevel_wrapper_action_size_without_eyes():
         pass_task_obs=True,
     )
     assert hlw.action_size == latent_size
+
+
+# ---------- Task 6: Task registration ----------
+
+
+def test_actuable_eyes_task_registered():
+    """RodentRunGapActuableEyes should be in the task registry."""
+    from vnl_playground import tasks
+    cfg = tasks.get_default_config("RodentRunGapActuableEyes")
+    assert cfg.actuable_eyes is True
+    assert cfg.binocular is True
