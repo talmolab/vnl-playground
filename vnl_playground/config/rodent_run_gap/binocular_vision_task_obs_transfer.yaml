@@ -127,7 +127,9 @@ logging_config:
   notes: "Binocular (stereo) vision + TaskObs transfer with Siamese shared CNN"
   exp_name: binocular_siamese_shared_cnn_1
 
-render_config:
-  render_fps: 50
-  render_height: 480
-  render_width: 640
+eval_render_config:
+  video:
+    fps: 50
+    height: 480
+    width: 640
+  eye_conditions: ["binocular"]

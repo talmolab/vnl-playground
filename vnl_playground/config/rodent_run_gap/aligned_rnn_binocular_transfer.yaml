@@ -126,20 +126,22 @@ logging_config:
   notes: "Aligned RNN binocular vision transfer for fair RNN vs MLP comparison. ctrl_dt=0.01, target_speed=0.8, gap_range=[0.06, 0.4]. Policy/value heads scaled up to match MLP parameter budget."
   exp_name: aligned_rnn_binocular
 
-render_config:
-  render_fps: 50
-  render_height: 480
-  render_width: 640
-  hud:
-    enabled: true
-    show_speed: true
-    show_reward_breakdown: true
-    show_cumulative_reward: true
-    show_gap_crossing: true
-    show_height: true
-    show_heading: true
-    show_step_counter: true
-    show_distance_to_gap: true
-    show_lateral_deviation: true
-    show_action_magnitude: true
-    gap_flash_duration: 1.5  # seconds of bright green "GAP CROSSED!" text
+eval_render_config:
+  video:
+    fps: 50
+    height: 480
+    width: 640
+    hud:
+      enabled: true
+      show_speed: true
+      show_reward_breakdown: true
+      show_cumulative_reward: true
+      show_gap_crossing: true
+      show_height: true
+      show_heading: true
+      show_step_counter: true
+      show_distance_to_gap: true
+      show_lateral_deviation: true
+      show_action_magnitude: true
+      gap_flash_duration: 1.5  # seconds of bright green "GAP CROSSED!" text
+  eye_conditions: ["binocular"]

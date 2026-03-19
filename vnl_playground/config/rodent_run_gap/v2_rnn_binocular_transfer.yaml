@@ -52,7 +52,7 @@ env_config:
     corridor_length: 4.0
     corridor_width: 2.0
     platform_length_range: [0.3, 0.6]
-    gap_length_range: [0.03, 0.25]
+    gap_length_range: [0.03, 0.2]
     n_platforms: 20
     # -- Environment --
     spawn_x: 0.5
@@ -66,7 +66,7 @@ env_config:
     reward_terms:
       forward_velocity:
         weight: 1.0
-        target_speed: 0.8
+        target_speed: 1.2
       gap_crossing_bonus:
         weight: 10
     # -- Termination --
@@ -124,23 +124,25 @@ logging_config:
   project_name: vnl-playground
   group_name: v2-mlp-vs-rnn-binocular
   model_path: highlvl_checkpoints
-  notes: "v2 RNN binocular vision transfer. ctrl_dt=0.01, target_speed=0.8, gap_range=[0.03, 0.25], num_envs=1024. Policy/value heads scaled up to match MLP parameter budget."
-  exp_name: v2_rnn_binocular
+  notes: "v2 RNN binocular vision transfer. ctrl_dt=0.01, target_speed=1.2, gap_range=[0.03, 0.25], num_envs=1024. Policy/value heads scaled up to match MLP parameter budget."
+  exp_name: v2_rnn_smaller_gaps_vel_1_2
 
-render_config:
-  render_fps: 50
-  render_height: 480
-  render_width: 640
-  hud:
-    enabled: true
-    show_speed: true
-    show_reward_breakdown: true
-    show_cumulative_reward: true
-    show_gap_crossing: true
-    show_height: true
-    show_heading: true
-    show_step_counter: true
-    show_distance_to_gap: true
-    show_lateral_deviation: true
-    show_action_magnitude: true
-    gap_flash_duration: 1.5
+eval_render_config:
+  video:
+    fps: 50
+    height: 480
+    width: 640
+    hud:
+      enabled: true
+      show_speed: true
+      show_reward_breakdown: true
+      show_cumulative_reward: true
+      show_gap_crossing: true
+      show_height: true
+      show_heading: true
+      show_step_counter: true
+      show_distance_to_gap: true
+      show_lateral_deviation: true
+      show_action_magnitude: true
+      gap_flash_duration: 0.5
+  eye_conditions: ["binocular"]
