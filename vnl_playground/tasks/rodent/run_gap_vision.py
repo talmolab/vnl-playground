@@ -48,6 +48,7 @@ import jax
 import jax.numpy as jp
 import numpy as np
 from jax import flatten_util
+from scipy.spatial.transform import Rotation as ScipyRotation
 from ml_collections import config_dict
 
 from vnl_playground.tasks.rodent import run_gap
@@ -128,8 +129,10 @@ class RunGapVision(run_gap.RunGap):
     def _configure_eye_cameras(self, eye_angle_offset: float) -> None:
         """Modify eye camera yaw angles on the spec and recompile.
 
-        Sets the third euler component (Z-rotation / yaw) of each eye camera
-        to ±eye_angle_offset from the forward-facing direction (-π/2).
+        Yaws each eye camera outward by ±eye_angle_offset radians around the
+        skull's dorsal (Z) axis.  Uses quaternion composition to avoid the
+        gimbal-lock / roll-vs-yaw confusion that arises when tweaking a single
+        euler component.
 
         The resulting binocular overlap (for square images) is approximately:
             overlap_deg ≈ fovy - 2 × degrees(eye_angle_offset)
@@ -137,8 +140,8 @@ class RunGapVision(run_gap.RunGap):
         Args:
             eye_angle_offset: Yaw offset in radians for each eye from center.
                 0.0 = both eyes look straight ahead (max overlap = fovy).
-                0.2 = default XML value (~57° overlap with fovy=80°).
-                0.698 = ~40° offset (0° overlap).
+                0.2 ≈ 11.5° offset → ~57° overlap with fovy=80°.
+                0.698 ≈ 40° offset → 0° overlap.
 
         Raises:
             ValueError: If eye_angle_offset is outside [0, π/2].
@@ -148,18 +151,29 @@ class RunGapVision(run_gap.RunGap):
                 f"eye_angle_offset must be in [0, π/2], got {eye_angle_offset}"
             )
 
-        suffix = self._suffix
-        base_yaw = -np.pi / 2  # forward-facing yaw
+        import mujoco as mj
 
+        # Base egocentric orientation: forward-looking camera in skull frame.
+        # euler [0, -π/2, -π/2] => look along skull +X, up along skull -Z.
+        R_ego = ScipyRotation.from_euler("XYZ", [0, -np.pi / 2, -np.pi / 2])
+
+        suffix = self._suffix
         for cam in self._spec.cameras:
             if cam.name == f"eye_left{suffix}":
-                euler = cam.alt.euler.copy()
-                euler[2] = base_yaw + eye_angle_offset
-                cam.alt.euler = euler
+                yaw = +eye_angle_offset
             elif cam.name == f"eye_right{suffix}":
-                euler = cam.alt.euler.copy()
-                euler[2] = base_yaw - eye_angle_offset
-                cam.alt.euler = euler
+                yaw = -eye_angle_offset
+            else:
+                continue
+
+            # Compose: yaw around skull Z, then base camera orientation
+            R_yaw = ScipyRotation.from_rotvec([0, 0, yaw])
+            R_combined = R_yaw * R_ego
+            quat_xyzw = R_combined.as_quat()
+            quat_wxyz = quat_xyzw[[3, 0, 1, 2]]  # MuJoCo uses (w, x, y, z)
+
+            cam.quat = quat_wxyz
+            cam.alt.type = mj.mjtOrientation.mjORIENTATION_QUAT
 
         # Recompile with updated camera orientations
         self.compile(forced=True)

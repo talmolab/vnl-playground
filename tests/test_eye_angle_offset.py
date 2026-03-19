@@ -1,7 +1,14 @@
-"""Tests for configurable eye camera angle offset."""
+"""Tests for configurable eye camera angle offset.
 
+Validates that _configure_eye_cameras() correctly yaws the eye cameras
+by checking the compiled model's camera look directions (cam_mat0).
+"""
+
+import mujoco
 import numpy as np
 import pytest
+import jax
+
 from vnl_playground.tasks.rodent import run_gap_vision
 
 
@@ -10,9 +17,6 @@ def test_default_config_has_eye_angle_offset():
     cfg = run_gap_vision.default_config()
     assert "eye_angle_offset" in cfg
     assert cfg.eye_angle_offset == 0.2
-
-
-import jax
 
 
 def _make_vision_env(eye_angle_offset: float) -> run_gap_vision.RunGapVision:
@@ -25,64 +29,80 @@ def _make_vision_env(eye_angle_offset: float) -> run_gap_vision.RunGapVision:
     return env
 
 
-def test_eye_cameras_modified_with_custom_offset():
-    """Camera euler angles should reflect the configured eye_angle_offset."""
+def _get_camera_look_dir(mj_model, cam_name):
+    """Get the look direction of a camera from the compiled model.
+
+    MuJoCo camera convention: -Z axis is the look direction.
+    cam_mat0 is the 3x3 rotation matrix (row-major) mapping camera frame to world.
+    """
+    cam_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, cam_name)
+    assert cam_id >= 0, f"Camera '{cam_name}' not found in model"
+    R = mj_model.cam_mat0[cam_id].reshape(3, 3)
+    look = R @ np.array([0.0, 0.0, -1.0])
+    return look
+
+
+def _get_camera_up_dir(mj_model, cam_name):
+    """Get the up direction of a camera from the compiled model."""
+    cam_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_CAMERA, cam_name)
+    R = mj_model.cam_mat0[cam_id].reshape(3, 3)
+    up = R @ np.array([0.0, -1.0, 0.0])  # MuJoCo: -Y_cam = up
+    return up
+
+
+def test_eye_cameras_yawed_with_custom_offset():
+    """Camera look directions should be yawed by the configured offset."""
     offset = 0.35  # 20° offset → 40° overlap
     env = _make_vision_env(offset)
 
-    suffix = env._suffix  # "-rodent"
-    left_cam = None
-    right_cam = None
-    for cam in env._spec.cameras:
-        if cam.name == f"eye_left{suffix}":
-            left_cam = cam
-        elif cam.name == f"eye_right{suffix}":
-            right_cam = cam
+    look_left = _get_camera_look_dir(env.mj_model, "eye_left-rodent")
+    look_right = _get_camera_look_dir(env.mj_model, "eye_right-rodent")
 
-    assert left_cam is not None, "eye_left camera not found in spec"
-    assert right_cam is not None, "eye_right camera not found in spec"
+    # Left eye should be yawed left (+Y in skull frame)
+    expected_left = np.array([np.cos(offset), np.sin(offset), 0.0])
+    expected_right = np.array([np.cos(offset), -np.sin(offset), 0.0])
 
-    expected_left_z = -np.pi / 2 + offset
-    expected_right_z = -np.pi / 2 - offset
+    np.testing.assert_allclose(look_left, expected_left, atol=1e-4)
+    np.testing.assert_allclose(look_right, expected_right, atol=1e-4)
 
-    np.testing.assert_allclose(left_cam.alt.euler[2], expected_left_z, atol=1e-6)
-    np.testing.assert_allclose(right_cam.alt.euler[2], expected_right_z, atol=1e-6)
+    # Up vectors should have no roll (pointing along skull -Z)
+    up_left = _get_camera_up_dir(env.mj_model, "eye_left-rodent")
+    up_right = _get_camera_up_dir(env.mj_model, "eye_right-rodent")
+    np.testing.assert_allclose(up_left, [0, 0, -1], atol=1e-4)
+    np.testing.assert_allclose(up_right, [0, 0, -1], atol=1e-4)
 
 
-def test_default_offset_matches_original_xml():
-    """Default offset=0.2 should reproduce the original XML camera angles."""
+def test_default_offset_looks_correct():
+    """Default offset=0.2 should yaw eyes by ~11.5° with no roll."""
     env = _make_vision_env(0.2)
-    suffix = env._suffix
 
-    for cam in env._spec.cameras:
-        if cam.name == f"eye_left{suffix}":
-            np.testing.assert_allclose(
-                cam.alt.euler[2], -np.pi / 2 + 0.2, atol=1e-6
-            )
-        elif cam.name == f"eye_right{suffix}":
-            np.testing.assert_allclose(
-                cam.alt.euler[2], -np.pi / 2 - 0.2, atol=1e-6
-            )
+    look_left = _get_camera_look_dir(env.mj_model, "eye_left-rodent")
+    look_right = _get_camera_look_dir(env.mj_model, "eye_right-rodent")
+
+    # Left eye yawed 0.2 rad left, right eye yawed 0.2 rad right
+    np.testing.assert_allclose(
+        look_left, [np.cos(0.2), np.sin(0.2), 0.0], atol=1e-4
+    )
+    np.testing.assert_allclose(
+        look_right, [np.cos(0.2), -np.sin(0.2), 0.0], atol=1e-4
+    )
 
 
 def test_zero_offset_makes_eyes_look_straight_ahead():
-    """offset=0 should make both eyes point the same direction as egocentric."""
+    """offset=0 should make both eyes look exactly like egocentric (forward)."""
     env = _make_vision_env(0.0)
-    suffix = env._suffix
 
-    ego_euler_z = None
-    left_euler_z = None
-    right_euler_z = None
-    for cam in env._spec.cameras:
-        if cam.name == f"egocentric{suffix}":
-            ego_euler_z = cam.alt.euler[2]
-        elif cam.name == f"eye_left{suffix}":
-            left_euler_z = cam.alt.euler[2]
-        elif cam.name == f"eye_right{suffix}":
-            right_euler_z = cam.alt.euler[2]
+    look_ego = _get_camera_look_dir(env.mj_model, "egocentric-rodent")
+    look_left = _get_camera_look_dir(env.mj_model, "eye_left-rodent")
+    look_right = _get_camera_look_dir(env.mj_model, "eye_right-rodent")
 
-    np.testing.assert_allclose(left_euler_z, ego_euler_z, atol=1e-6)
-    np.testing.assert_allclose(right_euler_z, ego_euler_z, atol=1e-6)
+    np.testing.assert_allclose(look_left, look_ego, atol=1e-4)
+    np.testing.assert_allclose(look_right, look_ego, atol=1e-4)
+
+    # All up vectors should be [0, 0, -1] (no roll)
+    for name in ["egocentric-rodent", "eye_left-rodent", "eye_right-rodent"]:
+        up = _get_camera_up_dir(env.mj_model, name)
+        np.testing.assert_allclose(up, [0, 0, -1], atol=1e-4)
 
 
 def test_config_override_eye_angle_offset():
@@ -96,12 +116,10 @@ def test_config_override_eye_angle_offset():
     )
     assert env._config.eye_angle_offset == 0.5
 
-    suffix = env._suffix
-    for cam in env._spec.cameras:
-        if cam.name == f"eye_left{suffix}":
-            np.testing.assert_allclose(
-                cam.alt.euler[2], -np.pi / 2 + 0.5, atol=1e-6
-            )
+    look_left = _get_camera_look_dir(env.mj_model, "eye_left-rodent")
+    np.testing.assert_allclose(
+        look_left, [np.cos(0.5), np.sin(0.5), 0.0], atol=1e-4
+    )
 
 
 def test_binocular_default_config_has_eye_angle_offset():
