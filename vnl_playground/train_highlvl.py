@@ -483,7 +483,7 @@ def render_video(
                 heading_deg = None
                 lateral_y = None
                 if _torso_id is not None:
-                    forward_vel = float(mj_data.subtree_linvel[_torso_id, 0])
+                    forward_vel = float(np.asarray(state.data.subtree_linvel[_torso_id, 0]))
                     torso_z = float(mj_data.xpos[_torso_id, 2])
                     lateral_y = float(mj_data.xpos[_torso_id, 1])
                     hx = float(mj_data.xmat[_torso_id].reshape(3, 3)[0, 0])
@@ -618,6 +618,74 @@ def render_video(
                     writer.append_data(faded)
             else:
                 writer.append_data(frame)
+
+
+# ---------------------------------------------------------------------------
+# Eval render config resolution
+# ---------------------------------------------------------------------------
+
+
+def _resolve_eval_render_config(cfg) -> dict:
+    """Resolve eval render config from new or legacy config keys.
+
+    Supports four cases:
+    1. ``eval_render_config`` exists — use directly.
+    2. Both ``render_config`` and ``eval_video`` exist — merge + warn.
+    3. Only ``render_config`` exists — merge + warn, defaults for eval fields.
+    4. Neither exists — return full defaults.
+
+    Returns a plain dict (not OmegaConf) with structure::
+
+        {
+            "video": {"fps": 50, "height": 480, "width": 640, "hud": {...} | None},
+            "eye_conditions": ["binocular"],
+            "video_naconmax": 512,
+        }
+    """
+    # Case 1: new key exists
+    if cfg.get("eval_render_config") is not None:
+        erc = OmegaConf.to_container(cfg.eval_render_config, resolve=True)
+        erc.setdefault("video", {})
+        erc["video"].setdefault("fps", 50)
+        erc["video"].setdefault("height", 480)
+        erc["video"].setdefault("width", 640)
+        erc.setdefault("eye_conditions", ["binocular"])
+        erc.setdefault("video_naconmax", 512)
+        return erc
+
+    # Cases 2 & 3: legacy keys
+    has_render_config = cfg.get("render_config") is not None
+    has_eval_video = cfg.get("eval_video") is not None
+
+    if has_render_config or has_eval_video:
+        logging.warning(
+            "Config uses deprecated 'render_config' / 'eval_video' keys. "
+            "Migrate to 'eval_render_config'. See design doc for new structure."
+        )
+
+    video = {}
+    if has_render_config:
+        rc = OmegaConf.to_container(cfg.render_config, resolve=True)
+        video["fps"] = rc.get("render_fps", 50)
+        video["height"] = rc.get("render_height", 480)
+        video["width"] = rc.get("render_width", 640)
+        if rc.get("hud") is not None:
+            video["hud"] = rc["hud"]
+    else:
+        video = {"fps": 50, "height": 480, "width": 640}
+
+    eye_conditions = ["binocular"]
+    video_naconmax = 512
+    if has_eval_video:
+        ev = OmegaConf.to_container(cfg.eval_video, resolve=True)
+        eye_conditions = ev.get("eye_conditions", ["binocular"])
+        video_naconmax = ev.get("video_naconmax", 512)
+
+    return {
+        "video": video,
+        "eye_conditions": list(eye_conditions),
+        "video_naconmax": video_naconmax,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1416,6 +1484,27 @@ def _train_shared_vision_task_obs_highlvl(
             schedule="linear",
         )
 
+    prior_residual_schedule = None
+    prior_residual_start = ppo_params.get("prior_residual_start_weight", 0.0)
+    prior_residual_end = ppo_params.get("prior_residual_end_weight", 0.0)
+    if prior_residual_start > 0.0:
+        prior_residual_decay_frac = ppo_params.get("prior_residual_decay_frac", 0.5)
+        prior_residual_warmup_frac = ppo_params.get("prior_residual_warmup_frac", 0.0)
+        prior_residual_schedule = ff_ppo_losses.create_ramp_schedule(
+            # NOTE: min_value is the START value, max_value is the END value.
+            # When min_value > max_value, create_ramp_schedule naturally produces
+            # a decay: value = start + progress * (end - start) = start - progress * delta
+            min_value=prior_residual_start,
+            max_value=prior_residual_end,
+            ramp_steps=int(num_evals * prior_residual_decay_frac),
+            warmup_steps=int(num_evals * prior_residual_warmup_frac),
+            schedule=ppo_params.get("prior_residual_schedule_type", "linear"),
+        )
+        logging.info(
+            f"Prior residual penalty: start={prior_residual_start}, "
+            f"end={prior_residual_end}, decay over {prior_residual_decay_frac*100:.0f}% of training"
+        )
+
     custom_loss_fn = functools.partial(
         ff_ppo_losses.compute_shared_vision_ppo_loss,
         ppo_network=ppo_network,
@@ -1431,6 +1520,8 @@ def _train_shared_vision_task_obs_highlvl(
         vf_coefficient=ppo_params.get("vf_loss_coefficient", 0.5),
         latent_kl_schedule=latent_kl_schedule,
         latent_ar1_schedule=latent_ar1_schedule,
+        prior_residual_weight=prior_residual_start,
+        prior_residual_schedule=prior_residual_schedule,
     )
 
     # Wrap network_factory to return the pre-built ppo_network
@@ -1864,6 +1955,27 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             schedule="linear",
         )
 
+    prior_residual_schedule = None
+    prior_residual_start = ppo_params.get("prior_residual_start_weight", 0.0)
+    prior_residual_end = ppo_params.get("prior_residual_end_weight", 0.0)
+    if prior_residual_start > 0.0:
+        prior_residual_decay_frac = ppo_params.get("prior_residual_decay_frac", 0.5)
+        prior_residual_warmup_frac = ppo_params.get("prior_residual_warmup_frac", 0.0)
+        prior_residual_schedule = ff_ppo_losses.create_ramp_schedule(
+            # NOTE: min_value is the START value, max_value is the END value.
+            # When min_value > max_value, create_ramp_schedule naturally produces
+            # a decay: value = start + progress * (end - start) = start - progress * delta
+            min_value=prior_residual_start,
+            max_value=prior_residual_end,
+            ramp_steps=int(num_evals * prior_residual_decay_frac),
+            warmup_steps=int(num_evals * prior_residual_warmup_frac),
+            schedule=ppo_params.get("prior_residual_schedule_type", "linear"),
+        )
+        logging.info(
+            f"Prior residual penalty: start={prior_residual_start}, "
+            f"end={prior_residual_end}, decay over {prior_residual_decay_frac*100:.0f}% of training"
+        )
+
     custom_loss_fn = functools.partial(
         ff_ppo_losses.compute_shared_vision_ppo_loss,
         ppo_network=ppo_network,
@@ -1879,6 +1991,8 @@ def _train_binocular_shared_vision_task_obs_highlvl(
         vf_coefficient=ppo_params.get("vf_loss_coefficient", 0.5),
         latent_kl_schedule=latent_kl_schedule,
         latent_ar1_schedule=latent_ar1_schedule,
+        prior_residual_weight=prior_residual_start,
+        prior_residual_schedule=prior_residual_schedule,
     )
 
     # Wrap network_factory to return the pre-built ppo_network
@@ -2495,6 +2609,12 @@ def _train_recurrent_vision_task_obs_highlvl(
     # Pop keys consumed elsewhere (not accepted by recurrent_ppo.train)
     vision_lr_multiplier = ppo_params.pop("vision_lr_multiplier", 1.0)
     ppo_params.pop("eval_naconmax", None)
+    # Pop prior residual params (consumed by loss fn, not by recurrent_ppo.train)
+    _prior_res_start = ppo_params.pop("prior_residual_start_weight", 0.0)
+    _prior_res_end = ppo_params.pop("prior_residual_end_weight", 0.0)
+    _prior_res_decay = ppo_params.pop("prior_residual_decay_frac", 0.5)
+    _prior_res_warmup = ppo_params.pop("prior_residual_warmup_frac", 0.0)
+    _prior_res_sched_type = ppo_params.pop("prior_residual_schedule_type", "linear")
 
     # Network creation: shared CNN+GRU vision module
     recurrent_ppo_network, shared_module = make_recurrent_vision_highlvl_ppo_networks(
@@ -2510,6 +2630,27 @@ def _train_recurrent_vision_task_obs_highlvl(
         ),
     )
 
+    # Compute num_evals (needed for prior residual schedule below)
+    eval_every = cfg.train_setup.get("eval_every", 10_000_000)
+    num_evals = max(1, int(ppo_params["num_timesteps"] / eval_every))
+
+    # Prior residual decay schedule
+    from track_mjx.agent.ff_ppo import losses as _ff_ppo_losses
+
+    _prior_res_schedule = None
+    if _prior_res_start > 0.0:
+        _prior_res_schedule = _ff_ppo_losses.create_ramp_schedule(
+            min_value=_prior_res_start,
+            max_value=_prior_res_end,
+            ramp_steps=int(num_evals * _prior_res_decay),
+            warmup_steps=int(num_evals * _prior_res_warmup),
+            schedule=_prior_res_sched_type,
+        )
+        logging.info(
+            f"Prior residual penalty: start={_prior_res_start}, "
+            f"end={_prior_res_end}, decay over {_prior_res_decay*100:.0f}% of training"
+        )
+
     # Custom loss function for the recurrent shared vision network
     custom_loss_fn = functools.partial(
         compute_recurrent_shared_vision_ppo_loss,
@@ -2522,15 +2663,13 @@ def _train_recurrent_vision_task_obs_highlvl(
         clipping_epsilon=ppo_params.get("clipping_epsilon", 0.2),
         normalize_advantage=ppo_params.get("normalize_advantage", True),
         vf_coefficient=ppo_params.get("vf_loss_coefficient", 0.5),
+        prior_residual_weight=_prior_res_start,
+        prior_residual_schedule=_prior_res_schedule,
     )
 
     # Wrap network_factory to return the pre-built recurrent_ppo_network
     def network_factory(obs_sizes, action_size):
         return recurrent_ppo_network
-
-    # Compute num_evals
-    eval_every = cfg.train_setup.get("eval_every", 10_000_000)
-    num_evals = max(1, int(ppo_params["num_timesteps"] / eval_every))
 
     # Create orbax CheckpointManager
     ckpt_mgr_options = ocp.CheckpointManagerOptions(
@@ -2992,6 +3131,12 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
     # Pop keys consumed elsewhere (not accepted by recurrent_ppo.train)
     vision_lr_multiplier = ppo_params.pop("vision_lr_multiplier", 1.0)
     ppo_params.pop("eval_naconmax", None)
+    # Pop prior residual params (consumed by loss fn, not by recurrent_ppo.train)
+    prior_residual_start = ppo_params.pop("prior_residual_start_weight", 0.0)
+    prior_residual_end = ppo_params.pop("prior_residual_end_weight", 0.0)
+    prior_residual_decay_frac = ppo_params.pop("prior_residual_decay_frac", 0.5)
+    prior_residual_warmup_frac = ppo_params.pop("prior_residual_warmup_frac", 0.0)
+    prior_residual_schedule_type = ppo_params.pop("prior_residual_schedule_type", "linear")
 
     # Network creation: shared binocular CNN+GRU vision module
     recurrent_ppo_network, shared_module = (
@@ -3013,6 +3158,27 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
         )
     )
 
+    # Compute num_evals (needed for prior residual schedule below)
+    eval_every = cfg.train_setup.get("eval_every", 10_000_000)
+    num_evals = max(1, int(ppo_params["num_timesteps"] / eval_every))
+
+    # Prior residual decay schedule
+    from track_mjx.agent.ff_ppo import losses as _ff_ppo_losses
+
+    prior_residual_schedule = None
+    if prior_residual_start > 0.0:
+        prior_residual_schedule = _ff_ppo_losses.create_ramp_schedule(
+            min_value=prior_residual_start,
+            max_value=prior_residual_end,
+            ramp_steps=int(num_evals * prior_residual_decay_frac),
+            warmup_steps=int(num_evals * prior_residual_warmup_frac),
+            schedule=prior_residual_schedule_type,
+        )
+        logging.info(
+            f"Prior residual penalty: start={prior_residual_start}, "
+            f"end={prior_residual_end}, decay over {prior_residual_decay_frac*100:.0f}% of training"
+        )
+
     # Custom loss function for the recurrent shared vision network
     custom_loss_fn = functools.partial(
         compute_recurrent_shared_vision_ppo_loss,
@@ -3025,15 +3191,13 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
         clipping_epsilon=ppo_params.get("clipping_epsilon", 0.2),
         normalize_advantage=ppo_params.get("normalize_advantage", True),
         vf_coefficient=ppo_params.get("vf_loss_coefficient", 0.5),
+        prior_residual_weight=prior_residual_start,
+        prior_residual_schedule=prior_residual_schedule,
     )
 
     # Wrap network_factory to return the pre-built recurrent_ppo_network
     def network_factory(obs_sizes, action_size):
         return recurrent_ppo_network
-
-    # Compute num_evals
-    eval_every = cfg.train_setup.get("eval_every", 10_000_000)
-    num_evals = max(1, int(ppo_params["num_timesteps"] / eval_every))
 
     # Create orbax CheckpointManager
     ckpt_mgr_options = ocp.CheckpointManagerOptions(
