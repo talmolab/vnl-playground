@@ -82,7 +82,7 @@ def default_config() -> config_dict.ConfigDict:
     cfg.actuable_eyes = False
     cfg.eye_yaw_range = 0.698  # ±40° in radians
     cfg.eye_force_range = 0.01
-    cfg.eye_damping = 0.001
+    cfg.eye_damping = 0.05  # joint damping for stable position servo response
     cfg.eye_stiffness = 0.0
     return cfg
 
@@ -239,33 +239,44 @@ class RunGapVision(run_gap.RunGap):
             mount.ipos = [0, 0, 0]
             mount.explicitinertial = True
             # Hinge joint
+            # NOTE: MjSpec uses degree mode (compiler.degree=1), so joint
+            # range must be in degrees, not radians.
+            yaw_range_deg = np.degrees(cfg.eye_yaw_range)
             mount.add_joint(
                 name=f"eye_{side}_yaw{suffix}",
                 type=mj.mjtJoint.mjJNT_HINGE,
                 axis=axis,
                 limited=1,
-                range=[-cfg.eye_yaw_range, cfg.eye_yaw_range],
+                range=[-yaw_range_deg, yaw_range_deg],
                 damping=cfg.eye_damping,
                 stiffness=cfg.eye_stiffness,
+                armature=0.001,
             )
             # Camera on the mount body
+            # NOTE: euler values must also be in degrees (spec degree mode).
             mount.add_camera(
                 name=f"eye_{side}_actuated{suffix}",
-                euler=[0, -np.pi / 2, -np.pi / 2],
+                euler=[0, -90, -90],
                 fovy=80,
             )
-            # Torque actuator
+            # Position actuator: ctrl in [-1, 1] maps to [-eye_yaw_range, +eye_yaw_range]
+            # force = kp * eye_yaw_range * ctrl - kp * qpos
+            # At equilibrium: qpos = eye_yaw_range * ctrl
+            # This naturally respects joint limits and is more stable than
+            # pure torque on a near-massless body.
+            kp = 0.5  # position servo gain
             gainprm = [0.0] * 10
-            gainprm[0] = 1.0
+            gainprm[0] = kp * cfg.eye_yaw_range  # scale ctrl to joint range
+            biasprm = [0.0] * 10
+            biasprm[1] = -kp  # -kp * qpos (position error term)
             self._spec.add_actuator(
                 name=f"eye_{side}_yaw{suffix}",
                 trntype=mj.mjtTrn.mjTRN_JOINT,
                 target=f"eye_{side}_yaw{suffix}",
                 gaintype=mj.mjtGain.mjGAIN_FIXED,
                 gainprm=gainprm,
-                biastype=mj.mjtBias.mjBIAS_NONE,
-                forcelimited=1,
-                forcerange=[-cfg.eye_force_range, cfg.eye_force_range],
+                biastype=mj.mjtBias.mjBIAS_AFFINE,
+                biasprm=biasprm,
                 ctrllimited=1,
                 ctrlrange=[-1.0, 1.0],
             )

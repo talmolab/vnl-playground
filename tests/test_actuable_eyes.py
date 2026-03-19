@@ -47,7 +47,7 @@ def test_actuable_eyes_config_defaults():
     assert cfg.actuable_eyes is False
     assert cfg.eye_yaw_range == pytest.approx(0.698)
     assert cfg.eye_force_range == pytest.approx(0.01)
-    assert cfg.eye_damping == pytest.approx(0.001)
+    assert cfg.eye_damping == pytest.approx(0.05)
     assert cfg.eye_stiffness == pytest.approx(0.0)
 
 

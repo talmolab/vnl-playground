@@ -53,7 +53,7 @@ env_config:
     actuable_eyes: true
     eye_yaw_range: 0.698
     eye_force_range: 0.01
-    eye_damping: 0.001
+    eye_damping: 0.05
     eye_stiffness: 0.0
     reward_terms:
       forward_velocity:
