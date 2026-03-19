@@ -230,3 +230,54 @@ def test_actuable_eyes_task_registered():
     cfg = tasks.get_default_config("RodentRunGapActuableEyes")
     assert cfg.actuable_eyes is True
     assert cfg.binocular is True
+
+
+# ---------- Task 7: Integration smoke tests ----------
+
+
+@pytest.mark.slow
+def test_smoke_actuable_eyes_reset_step():
+    """Env should reset and step without errors. Eye joints should respond to control."""
+    env = _make_actuable_eye_env()
+    rng = jax.random.PRNGKey(42)
+
+    # Reset
+    state = jax.jit(env.reset)(rng)
+    assert state.obs is not None
+
+    # Verify observation shapes
+    task_obs = state.obs["state"]["task_obs"]
+    vision = state.obs["state"]["vision"]
+    assert task_obs.ndim == 1
+    assert vision.shape == env.vision_shape
+
+    # Step with eye actuators at max outward
+    action = jp.zeros(env.action_size)
+    action = action.at[-2:].set(1.0)
+
+    step_fn = jax.jit(env.step)
+    state2 = step_fn(state, action)
+    assert state2.obs is not None
+
+
+@pytest.mark.slow
+def test_smoke_eye_angles_change_with_sustained_control():
+    """Sustained eye control should produce measurable joint angle change."""
+    env = _make_actuable_eye_env()
+    rng = jax.random.PRNGKey(42)
+
+    state = jax.jit(env.reset)(rng)
+
+    # Apply sustained outward eye control for 10 steps
+    action = jp.zeros(env.action_size)
+    action = action.at[-2:].set(1.0)
+
+    step_fn = jax.jit(env.step)
+    for _ in range(10):
+        state = step_fn(state, action)
+
+    # Eye joint angles should be noticeably non-zero after 10 steps of torque
+    eye_angles = state.obs["state"]["task_obs"][-2:]
+    assert jp.any(jp.abs(eye_angles) > 0.001), (
+        f"Eye angles too small after sustained control: {eye_angles}"
+    )
