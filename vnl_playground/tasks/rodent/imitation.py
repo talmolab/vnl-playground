@@ -1,4 +1,5 @@
 import collections
+import tqdm
 import warnings
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
@@ -470,6 +471,20 @@ class Imitation(rodent_base.RodentEnv):
         num_nans = jp.sum(jp.isnan(flattened_vals))
         return num_nans > 0
 
+    def _compile_with_ghost(self) -> mujoco.MjModel:
+        """Compile a new MjModel with an attached transparent ghost walker."""
+        spec = self._spec.copy()
+        ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
+        ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
+        if ghost_rescale != 1.0:
+            ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
+        for body in ghost_rodent.worldbody.bodies:
+            utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
+        spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
+        spawn_body = spawn_site.attach_body(ghost_rodent.worldbody, "", suffix="-ghost")
+        spawn_body.add_freejoint()
+        return spec.compile()
+
     def render(
         self,
         trajectory: List[mjx_env.State],
@@ -509,24 +524,9 @@ class Imitation(rodent_base.RodentEnv):
             Sequence[np.ndarray]: List of rendered frames as numpy arrays.
         """
         if render_ghost:
-            # Create a new spec with a ghost, without modifying the existing one
-            spec = self._spec.copy()
-            ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
-            ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
-            if ghost_rescale != 1.0:
-                ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
-            for body in ghost_rodent.worldbody.bodies:
-                utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
-            spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
-            spawn_body = spawn_site.attach_body(
-                ghost_rodent.worldbody, "", suffix="-ghost"
-            )
-            spawn_body.add_freejoint()
-            mj_model = spec.compile()
+            mj_model = self._compile_with_ghost()
         else:
             mj_model = self.mj_model
-        mj_model.vis.global_.offwidth = width
-        mj_model.vis.global_.offheight = height
         mj_data = mujoco.MjData(mj_model)
 
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
@@ -595,6 +595,72 @@ class Imitation(rodent_base.RodentEnv):
                     faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
                     rendered_frames.append(faded_frame)
         return rendered_frames
+
+    def render_optimized(
+        self,
+        rollout_source: Any,
+        height: int = 480,
+        width: int = 640,
+        camera: Optional[str] = None,
+        scene_option: Optional[mujoco.MjvOption] = None,
+        render_ghost: bool = True,
+    ) -> List[np.ndarray]:
+        """Render from precomputed qposes using the old track-mjx logic.
+
+        Accepts either a rollout dictionary containing ``qposes_rollout`` and
+        ``qposes_ref`` or stacked rollout states. The rendering path stays on the
+        host side and mirrors the historical ``track_mjx.analysis.render`` logic.
+        """
+        if isinstance(rollout_source, Mapping) and "qposes_rollout" in rollout_source:
+            qposes_rollout = np.asarray(rollout_source["qposes_rollout"])
+            qposes_ref = (
+                np.asarray(rollout_source["qposes_ref"])
+                if render_ghost and "qposes_ref" in rollout_source
+                else None
+            )
+        else:
+            qposes_rollout = np.asarray(rollout_source.data.qpos)
+            qposes_ref = None
+            if render_ghost:
+                clip_idx = int(
+                    np.asarray(rollout_source.info["reference_clip"]).reshape(-1)[0]
+                )
+                start_frame = np.asarray(rollout_source.info["start_frame"])
+                times = np.asarray(rollout_source.data.time)
+                frame_indices = np.floor(
+                    times * float(self._config.mocap_hz) + start_frame
+                ).astype(np.int32)
+                ref_qpos = np.asarray(self.reference_clips.qpos[clip_idx])
+                qposes_ref = ref_qpos[frame_indices]
+
+        if render_ghost:
+            mj_model = self._compile_with_ghost()
+            qpos_list = [
+                np.concatenate((qroll, qref))
+                for qroll, qref in zip(qposes_rollout, qposes_ref, strict=False)
+            ]
+        else:
+            mj_model = self.mj_model
+            qpos_list = qposes_rollout
+
+        mj_data = mujoco.MjData(mj_model)
+        renderer = mujoco.Renderer(mj_model, height=height, width=width)
+
+        if camera is None:
+            camera = self._default_render_camera
+        if scene_option is None:
+            scene_option = mujoco.MjvOption()
+            scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
+
+        frames = []
+        for qpos in tqdm.tqdm(qpos_list, desc="Rendering"):
+            mj_data.qpos = qpos
+            mujoco.mj_forward(mj_model, mj_data)
+            renderer.update_scene(mj_data, camera=camera, scene_option=scene_option)
+            frames.append(renderer.render())
+
+        renderer.close()
+        return frames
 
     def verify_reference_data(self, atol: float = 5e-3) -> bool:
         """A set of non-exhaustive sanity checks that the reference data found in
