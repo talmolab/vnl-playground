@@ -471,6 +471,22 @@ class Imitation(rodent_base.RodentEnv):
         num_nans = jp.sum(jp.isnan(flattened_vals))
         return num_nans > 0
 
+    def _compile_with_ghost(self) -> mujoco.MjModel:
+        """Compile a new MjModel with an attached transparent ghost walker."""
+        spec = self._spec.copy()
+        ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
+        ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
+        if ghost_rescale != 1.0:
+            ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
+        for body in ghost_rodent.worldbody.bodies:
+            utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
+        spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
+        spawn_body = spawn_site.attach_body(
+            ghost_rodent.worldbody, "", suffix="-ghost"
+        )
+        spawn_body.add_freejoint()
+        return spec.compile()
+
     def render(
         self,
         trajectory: List[mjx_env.State],
@@ -510,24 +526,9 @@ class Imitation(rodent_base.RodentEnv):
             Sequence[np.ndarray]: List of rendered frames as numpy arrays.
         """
         if render_ghost:
-            # Create a new spec with a ghost, without modifying the existing one
-            spec = self._spec.copy()
-            ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
-            ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
-            if ghost_rescale != 1.0:
-                ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
-            for body in ghost_rodent.worldbody.bodies:
-                utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
-            spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
-            spawn_body = spawn_site.attach_body(
-                ghost_rodent.worldbody, "", suffix="-ghost"
-            )
-            spawn_body.add_freejoint()
-            mj_model = spec.compile()
+            mj_model = self._compile_with_ghost()
         else:
             mj_model = self.mj_model
-        mj_model.vis.global_.offwidth = width
-        mj_model.vis.global_.offheight = height
         mj_data = mujoco.MjData(mj_model)
 
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
@@ -635,21 +636,7 @@ class Imitation(rodent_base.RodentEnv):
                 qposes_ref = ref_qpos[frame_indices]
 
         if render_ghost:
-            # Reuse the environment spec so the compiled model matches the
-            # rollout qpos size exactly, but keep the old host-side qpos path.
-            spec = self._spec.copy()
-            ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
-            ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
-            if ghost_rescale != 1.0:
-                ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
-            for body in ghost_rodent.worldbody.bodies:
-                utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
-            spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
-            spawn_body = spawn_site.attach_body(
-                ghost_rodent.worldbody, "", suffix="-ghost"
-            )
-            spawn_body.add_freejoint()
-            mj_model = spec.compile()
+            mj_model = self._compile_with_ghost()
             qpos_list = [
                 np.concatenate((qroll, qref))
                 for qroll, qref in zip(qposes_rollout, qposes_ref, strict=False)
@@ -657,9 +644,6 @@ class Imitation(rodent_base.RodentEnv):
         else:
             mj_model = self.mj_model
             qpos_list = qposes_rollout
-
-        mj_model.vis.global_.offwidth = width
-        mj_model.vis.global_.offheight = height
 
         mj_data = mujoco.MjData(mj_model)
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
