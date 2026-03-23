@@ -481,9 +481,7 @@ class Imitation(rodent_base.RodentEnv):
         for body in ghost_rodent.worldbody.bodies:
             utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
         spawn_site = spec.worldbody.add_frame(pos=(0, 0, 0.05), quat=(1, 0, 0, 0))
-        spawn_body = spawn_site.attach_body(
-            ghost_rodent.worldbody, "", suffix="-ghost"
-        )
+        spawn_body = spawn_site.attach_body(ghost_rodent.worldbody, "", suffix="-ghost")
         spawn_body.add_freejoint()
         return spec.compile()
 
