@@ -130,11 +130,13 @@ class CelegansEnv(mjx_env.MjxEnv):
         self,
         torque_actuators: bool,
         rescale_factor: float = 1.0,
-        dim: int = 3,
+        trans_joint: str = "free",
         pos: Tuple[float, float, float] = (0, 0, 0.05),
         quat: Tuple[float, float, float, float] = (1, 0, 0, 0),
         friction: Tuple[float, ...] = (1, 1, 0.005, 0.0001, 0.0001),
         solimp: Tuple[float, ...] = (0.9, 0.95, 0.001, 0.5, 2),
+        solref: Tuple[float, ...] = (0.02, 1),
+        solreffriction: Tuple[float, ...] = (0, 0),
         muscle_config: Optional[Dict[str, Any]] = None,
         joint_config: Optional[Dict[str, Any]] = {
             "hinge": {"armature": 0.1},
@@ -186,12 +188,15 @@ class CelegansEnv(mjx_env.MjxEnv):
         spawn_body = spawn_site.attach_body(root, "", suffix=suffix)
         self._suffix = suffix
         self._n_worms += 1
-        slide_config = joint_config.get("slide", {"armature": 0.0})
-        hinge_config = joint_config.get("hinge", {"armature": 0.1})
-        free_body_rot_config = joint_config.get("free_body_rot", {"armature": 0.0})
-        if dim == 3:
+
+        slide_config = joint_config.get("slide", {}) if joint_config is not None else {}
+        hinge_config = joint_config.get("hinge", {}) if joint_config is not None else {}
+        free_body_rot_config = (
+            joint_config.get("free_body_rot", {}) if joint_config is not None else {}
+        )
+        if "free" in trans_joint.lower():
             spawn_body.add_freejoint()
-        elif dim == 2:
+        elif "slide" in trans_joint.lower():
             spawn_body.add_joint(
                 axis=(1, 0, 0),
                 name="rootx" + suffix,
@@ -236,6 +241,8 @@ class CelegansEnv(mjx_env.MjxEnv):
                         condim=3,
                         friction=friction,
                         solimp=solimp,
+                        solref=solref,
+                        solreffriction=solreffriction,
                     )
         if muscle_config is not None:
             for muscle in worm.actuators:
@@ -253,7 +260,8 @@ class CelegansEnv(mjx_env.MjxEnv):
                     elif key == "gainprm":
                         gainprm = np.zeros_like(muscle.gainprm)
                         default_gainprm = {
-                            "range": {"min": 0.75, "max": 1.05},
+                            "range_min": 0.75,
+                            "range_max": 1.05,
                             "force": -1,
                             "scale": 200,
                             "lmin": 0.5,
@@ -263,16 +271,10 @@ class CelegansEnv(mjx_env.MjxEnv):
                             "fvmax": 1.2,
                         }
                         for i, (key, default) in enumerate(default_gainprm.items()):
-                            if key == "range":
-                                gainprm[i] = value.get(key, default).get(
-                                    "min", default["min"]
-                                )
-                                gainprm[i + 1] = value.get(key, default).get(
-                                    "max", default["max"]
-                                )
-                            else:
-                                gainprm[i] = value.get(key, default)
+                            gainprm[i] = value.get(key, default)
                         muscle.gainprm = gainprm
+                        if "biasprm" not in muscle_config.keys():
+                            muscle.biasprm = gainprm
                     elif key == "gear":
                         gear = np.zeros_like(muscle.gear)
                         gear[0] = value
@@ -295,7 +297,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         pos: Tuple[float, float, float] = (0, 0, 0.05),
         ghost_rgba: Tuple[float, float, float, float] = (0.8, 0.8, 0.8, 0.3),
         suffix: str = "-ghost",
-        dim: int = 3,
+        trans_joint: str = "slide",
         inplace: bool = False,
     ) -> Optional[Tuple[mujoco.MjSpec, mujoco.MjModel]]:
         """Add a ghost worm model to the environment.
@@ -335,9 +337,9 @@ class CelegansEnv(mjx_env.MjxEnv):
         root = walker_spec.worldbody
         spawn_body = frame.attach_body(root, "", suffix=suffix)
 
-        if dim == 3:
+        if "free" in trans_joint.lower():
             spawn_body.add_freejoint()
-        elif dim == 2:
+        elif "slide" in trans_joint.lower():
             spawn_body.add_joint(
                 axis=(1, 0, 0),
                 name="rootx" + suffix,
@@ -374,24 +376,24 @@ class CelegansEnv(mjx_env.MjxEnv):
         """
         if not self._compiled or forced:
             self._spec.option.noslip_iterations = self.config.noslip_iterations
-            self._mj_model = self._spec.compile()
-            self._mj_model.opt.timestep = self.config.sim_dt
+            self._spec.option.timestep = self.config.sim_dt
             # Increase offscreen framebuffer size to render at higher resolutions.
-            self._mj_model.vis.global_.offwidth = 3840
-            self._mj_model.vis.global_.offheight = 2160
-            self._mj_model.opt.iterations = self.config.iterations
-            self._mj_model.opt.ls_iterations = self.config.ls_iterations
-            self._mj_model.opt.noslip_iterations = self.config.noslip_iterations
-            self._mj_model.opt.ccd_iterations = self.config.ccd_iterations
-            self._mj_model.opt.impratio = self.config.impratio
-            self._mj_model.opt.integrator = {
+            self._spec.visual.global_.offwidth = 3840
+            self._spec.visual.global_.offheight = 2160
+            self._spec.option.iterations = self.config.iterations
+            self._spec.option.ls_iterations = self.config.ls_iterations
+            self._spec.option.noslip_iterations = self.config.noslip_iterations
+            self._spec.option.ccd_iterations = self.config.ccd_iterations
+            self._spec.option.impratio = self.config.impratio
+            self._spec.option.integrator = {
                 "euler": mujoco.mjtIntegrator.mjINT_EULER,
                 "rk4": mujoco.mjtIntegrator.mjINT_RK4,
             }[self._config.integrator.lower()]
-            self._mj_model.opt.solver = {
+            self._spec.option.solver = {
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
+            self._mj_model = self._spec.compile()
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self.config.mujoco_impl
             )

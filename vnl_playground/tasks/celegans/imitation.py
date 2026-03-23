@@ -55,7 +55,8 @@ def default_config() -> config_dict.ConfigDict:
         init_pos={"x": 0.0, "y": 0.0, "z": 0.05},
         torque_actuators=False,
         rescale_factor=1.0,
-        dim=3,
+        dim=2,
+        trans_joint="slide",
         friction={
             "tan_floor": 1,
             "tan_body": 1,
@@ -64,8 +65,10 @@ def default_config() -> config_dict.ConfigDict:
             "roll_body": 0.0001,
         },
         solimp={"d0": 0.9, "dwidth": 0.95, "width": 0.001, "midpoint": 0.5, "power": 2},
+        solref={"timeconst": 0.02, "dampratio": 1},
+        solreffriction={"timeconst": 0, "dampratio": 0},
         muscle_config=None,
-        joint_config={"slide": {"armature": 0.0}, "hinge": {"armature": 0.1}},
+        joint_config=None,
         contact_geom="sphere",
         mocap_hz=20,
         reference_clips=ReferenceClips(
@@ -158,27 +161,41 @@ class Imitation(worm_base.CelegansEnv):
             self.config.solimp["midpoint"],
             self.config.solimp["power"],
         ]
+        solref = [
+            self.config.solref["timeconst"],
+            self.config.solref["dampratio"],
+        ]
+        solreffriction = [
+            self.config.solreffriction["timeconst"],
+            self.config.solreffriction["dampratio"],
+        ]
         pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.05})
         pos = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.05)]
+
+        if self.config.contact_geom.lower() == "mesh":
+            contact_geom = mujoco.mjtGeom.mjGEOM_MESH
+        elif self.config.contact_geom.lower() == "capsule":
+            contact_geom = mujoco.mjtGeom.mjGEOM_CAPSULE
+        else:
+            contact_geom = mujoco.mjtGeom.mjGEOM_SPHERE
+
         self.add_worm(
             pos=pos,
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
-            dim=self._config.dim,
+            trans_joint=self._config.trans_joint,
             friction=friction,
             solimp=solimp,
+            solref=solref,
+            solreffriction=solreffriction,
             muscle_config=self._config.muscle_config,
             joint_config=self._config.joint_config,
-            contact_geom=(
-                mujoco.mjtGeom.mjGEOM_MESH
-                if self.config.contact_geom.lower() == "mesh"
-                else mujoco.mjtGeom.mjGEOM_SPHERE
-            ),
+            contact_geom=contact_geom,
         )
         if self._config.with_ghost:
             self.add_ghost_worm(
                 rescale_factor=self._config.rescale_factor,
-                dim=self._config.dim,
+                trans_joint=self._config.trans_joint,
                 init_pos=pos,
             )
 
@@ -267,8 +284,7 @@ class Imitation(worm_base.CelegansEnv):
             clip_idx = jax.random.choice(clip_rng, self.num_clips)
         if start_frame is None:
             start_frame = jax.random.randint(start_rng, (), *self.start_frame_range)
-        
-        
+
         data = self._reset_data(clip_idx, start_frame)
         info: dict[str, Any] = {
             "start_frame": start_frame,
@@ -278,7 +294,9 @@ class Imitation(worm_base.CelegansEnv):
         }
 
         last_valid_frame = self.clip_length - self.reference_length - 1
-        info["episode_length"] = last_valid_frame - start_frame
+        info["episode_length"] = (
+            last_valid_frame - start_frame
+        ) * self._steps_for_cur_frame
 
         info["last_valid_frame"] = last_valid_frame
         info["truncated"] = jp.astype(
@@ -399,7 +417,7 @@ class Imitation(worm_base.CelegansEnv):
             max_reward = self._config.reward_terms[name].get("weight", 1e-8)
             metrics[f"rewards/{name}"] = metrics[f"rewards/per_step/{name}"] = reward
             metrics[f"rewards/per_step/normalized/{name}"] = reward / max_reward
-            metrics["rewards/percent/{name}"] = reward / (
+            metrics[f"rewards/percent/{name}"] = reward / (
                 info["episode_length"] * max_reward
             )
         if distance is not None:
@@ -693,7 +711,9 @@ class Imitation(worm_base.CelegansEnv):
 
         reward = weight * jp.exp(-((ang_dist / exp_scale) ** 2) / 2)
 
-        self._insert_metric(metrics, info, "root_quat", reward=reward, distance=ang_dist)
+        self._insert_metric(
+            metrics, info, "root_quat", reward=reward, distance=ang_dist
+        )
         return reward
 
     @_named_reward("joints")
@@ -742,7 +762,9 @@ class Imitation(worm_base.CelegansEnv):
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
 
-        self._insert_metric(metrics, info, "joints_vel", reward=reward, distance=distance)
+        self._insert_metric(
+            metrics, info, "joints_vel", reward=reward, distance=distance
+        )
         return reward
 
     def _get_bodies_dist(
@@ -793,7 +815,9 @@ class Imitation(worm_base.CelegansEnv):
         total_dist = self._get_bodies_dist(data, info, metrics, bodies=self.body_names)
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
 
-        self._insert_metric(metrics, info, "bodies_pos", reward=reward, distance=total_dist)
+        self._insert_metric(
+            metrics, info, "bodies_pos", reward=reward, distance=total_dist
+        )
         return reward
 
     @_named_reward("end_eff")
@@ -814,7 +838,9 @@ class Imitation(worm_base.CelegansEnv):
         )
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
 
-        self._insert_metric(metrics, info, "end_eff", reward=reward, distance=total_dist)
+        self._insert_metric(
+            metrics, info, "end_eff", reward=reward, distance=total_dist
+        )
         return reward
 
     @_named_reward("upright")
@@ -868,7 +894,9 @@ class Imitation(worm_base.CelegansEnv):
         """
         ctrl_magnitude = jp.sum(jp.square(info["action"]))
         cost = weight * ctrl_magnitude
-        self._insert_metric(metrics, info, "control", cost=cost, magnitude=ctrl_magnitude)
+        self._insert_metric(
+            metrics, info, "control", cost=cost, magnitude=ctrl_magnitude
+        )
         return cost
 
     @_named_cost("control_diff")
@@ -885,7 +913,9 @@ class Imitation(worm_base.CelegansEnv):
         """
         ctrl_diff = jp.sum(jp.square(info["action"] - info["prev_action"]))
         cost = weight * ctrl_diff
-        self._insert_metric(metrics, info, "control_diff", cost=cost, magnitude=ctrl_diff)
+        self._insert_metric(
+            metrics, info, "control_diff", cost=cost, magnitude=ctrl_diff
+        )
         return cost
 
     @_named_cost("energy")
@@ -1246,7 +1276,7 @@ class Imitation(worm_base.CelegansEnv):
         if render_ghost:
             spec, mj_model_with_ghost = self.add_ghost(
                 rescale_factor=self._config.rescale_factor,
-                dim=self._config.dim,
+                trans_joint=self._config.trans_joint,
                 pos=pos,
                 ghost_rgba=(1.0, 1.0, 1.0, 0.2),
                 suffix="-ghost",
