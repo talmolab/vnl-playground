@@ -8,7 +8,6 @@
   <option solver="CG" iterations="6" ls_iterations="6" timestep="0.002" gravity="0 0 -981" density="0.00128" viscosity="0.000185" cone="elliptic"/>
   <default>
     <geom conaffinity="1" condim="3" contype="1" material="geom" rgba="0.8 0.6 .4 1"/>
-    <!-- <joint armature="0.1"/> -->
     <site type="sphere" size="0.000416572" rgba="0.8 0.2 0.1 1.0"/>
     <mesh scale="0.0416572 0.0416572 0.0416572"/>
     <muscle ctrllimited="true" ctrlrange="0 1"/>

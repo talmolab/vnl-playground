@@ -2,7 +2,7 @@
 #   - override hydra/launcher: submitit_slurm
 
 reference_config:
-  data_path: /home/aaprasad/mnt/projects/con3trol/run/results/stac/celegans_ik_only_04182019am_centerline_0-500_2d_scale-0.1.h5
+  data_path: /home/aaprasad/mnt/projects/con3trol/run/results/stac/celegans_ik_only_04182019am_centerline_0-500_cgs_forward_reversed.h5
   clip_length: 250
   test_ratio: 0.2
 
@@ -17,6 +17,7 @@ env_config:
   torque_actuators: False  # Changed from False for better performance
   rescale_factor: 1.001
   dim: 2
+  trans_joint: "slide"
   friction: 
     tan_floor: 0.7
     tan_body: 0.6
@@ -33,6 +34,8 @@ env_config:
   muscle_config:
     dynprm:
       tausmooth: 0.0
+    gainprm:
+      force: 0.2
   joint_config:
     hinge:
       damping: 0
