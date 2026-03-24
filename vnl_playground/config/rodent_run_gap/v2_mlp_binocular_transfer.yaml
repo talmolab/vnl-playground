@@ -81,13 +81,13 @@ network_config:
   vision_latent_size: 16
   vision_feature_size: 32
   vision_channels: [4, 8, 16, 32]
-  decoder_hidden_layer_sizes: [512, 512, 512]
+  decoder_hidden_layer_sizes: [512, 512, 512, 512]
   value_hidden_layer_sizes: [512, 512, 512, 512]
-  fusion_hidden_layer_sizes: [256, 256, 256]
+  fusion_hidden_layer_sizes: [256, 256, 256, 256]
 
 transfer:
   mode: prior_decoder
-  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/data/prior
+  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/data/prior/noisy_proprio
   prior_checkpoint_step: null
   highlvl_obs_key: task_obs
   decoder_obs_key: proprioception
@@ -122,10 +122,10 @@ train_setup:
 
 logging_config:
   project_name: vnl-playground
-  group_name: v2-mlp-vs-rnn-binocular
+  group_name: noisy_proprio
   model_path: highlvl_checkpoints
-  notes: "v2 MLP binocular vision transfer. ctrl_dt=0.01, target_speed=0.8, gap_range=[0.03, 0.25], num_envs=1024"
-  exp_name: v2_mlp_binocular
+  notes: "noisy_proprio_prior transfer; MLP policy head; identical env/training params to v2_rnn_binocular_transfer.yaml for fair comparison"
+  exp_name: noisy_proprio_mlp
 
 eval_render_config:
   video:
@@ -144,5 +144,5 @@ eval_render_config:
       show_distance_to_gap: true
       show_lateral_deviation: true
       show_action_magnitude: true
-      gap_flash_duration: 1.5
+      gap_flash_duration: 1
   eye_conditions: ["binocular"]

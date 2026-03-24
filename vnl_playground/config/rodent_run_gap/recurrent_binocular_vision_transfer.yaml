@@ -78,13 +78,13 @@ network_config:
 
 transfer:
   mode: prior_decoder
-  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/data/prior
+  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/data/prior/noisy_proprio
   highlvl_obs_key: task_obs
   decoder_obs_key: proprioception
   deterministic_prior: true
 
 train_setup:
-  eval_every: 5_000_000
+  eval_every: 50_000_000
   train_config:
     episode_length: 1000
     num_envs: 1024
