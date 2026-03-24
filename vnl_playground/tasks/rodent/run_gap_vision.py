@@ -143,15 +143,24 @@ class RunGapVision(run_gap.RunGap):
                 self._config.right_camera_name = f"eye_right_actuated{suffix}"
             else:
                 offset = self._config.get("eye_angle_offset", 0.2)
-                self._configure_eye_cameras(offset)
+                # Only add servo mount bodies when offset differs from the
+                # XML default (0.2 rad).  At 0.2 the original XML cameras
+                # already have the correct yaw baked in, so we skip the
+                # modification to preserve backward compatibility (nu=38,
+                # original camera names, old checkpoints still work).
+                if abs(offset - 0.2) > 1e-6:
+                    self._configure_eye_cameras(offset)
 
     def _configure_eye_cameras(self, eye_angle_offset: float) -> None:
-        """Modify eye camera yaw angles on the spec and recompile.
+        """Set up fixed-yaw eye cameras using servo-locked hinge joints.
 
-        Yaws each eye camera outward by ±eye_angle_offset radians around the
-        skull's dorsal (Z) axis.  Uses quaternion composition to avoid the
-        gimbal-lock / roll-vs-yaw confusion that arises when tweaking a single
-        euler component.
+        Uses the same mount-body + hinge-joint approach as ``_add_eye_actuators``
+        with position servo actuators biased so that ctrl=0 holds each eye at
+        the desired yaw offset. The policy does not need to output eye actions;
+        the servo holds the offset passively.
+
+        High damping (50.0) ensures the eyes stay locked during aggressive
+        locomotion and gap-jumping dynamics.
 
         The resulting binocular overlap (for square images) is approximately:
             overlap_deg ≈ fovy - 2 × degrees(eye_angle_offset)
@@ -172,30 +181,89 @@ class RunGapVision(run_gap.RunGap):
 
         import mujoco as mj
 
-        # Base egocentric orientation: forward-looking camera in skull frame.
-        # euler [0, -π/2, -π/2] => look along skull +X, up along skull -Z.
-        R_ego = ScipyRotation.from_euler("XYZ", [0, -np.pi / 2, -np.pi / 2])
-
         suffix = self._suffix
-        for cam in self._spec.cameras:
-            if cam.name == f"eye_left{suffix}":
-                yaw = +eye_angle_offset
-            elif cam.name == f"eye_right{suffix}":
-                yaw = -eye_angle_offset
-            else:
-                continue
+        skull = self._spec.body(f"skull{suffix}")
+        offset_deg = np.degrees(eye_angle_offset)
 
-            # Compose: yaw around skull Z, then base camera orientation
-            R_yaw = ScipyRotation.from_rotvec([0, 0, yaw])
-            R_combined = R_yaw * R_ego
-            quat_xyzw = R_combined.as_quat()
-            quat_wxyz = quat_xyzw[[3, 0, 1, 2]]  # MuJoCo uses (w, x, y, z)
+        eye_specs = [
+            ("left", [0.015, 0.004, 0.01], [0, 0, 1]),
+            ("right", [0.015, -0.004, 0.01], [0, 0, -1]),
+        ]
 
-            cam.quat = quat_wxyz
-            cam.alt.type = mj.mjtOrientation.mjORIENTATION_QUAT
+        for side, pos, axis in eye_specs:
+            # Mount body (same structure as _add_eye_actuators)
+            mount = skull.add_body(
+                name=f"eye_{side}_fixed_mount{suffix}",
+                pos=pos,
+            )
+            mount.mass = 1e-6
+            mount.inertia = [1e-9, 1e-9, 1e-9]
+            mount.ipos = [0, 0, 0]
+            mount.explicitinertial = True
 
-        # Recompile with updated camera orientations
+            # Hinge joint for yaw (same axis convention as actuable eyes)
+            # Range allows the offset position plus small margin
+            yaw_range_deg = offset_deg + 1.0
+            mount.add_joint(
+                name=f"eye_{side}_yaw_fixed{suffix}",
+                type=mj.mjtJoint.mjJNT_HINGE,
+                axis=axis,
+                limited=1,
+                range=[-1.0, max(yaw_range_deg, 1.0)],
+                damping=50.0,
+                stiffness=0.0,
+                armature=0.001,
+            )
+
+            # Camera with standard egocentric euler (degrees)
+            mount.add_camera(
+                name=f"eye_{side}_yawed{suffix}",
+                euler=[0, -90, -90],
+                fovy=80,
+            )
+
+            # Position servo actuator: at ctrl=0, holds eye at eye_angle_offset.
+            # Force = gainprm[0]*ctrl + biasprm[0] + biasprm[1]*qpos
+            # At ctrl=0: force = kp*offset - kp*qpos → equilibrium at qpos=offset
+            # kp must be >> damping for fast settling (time constant = damping/kp)
+            kp = 500.0
+            gainprm = [0.0] * 10
+            biasprm = [0.0] * 10
+            biasprm[0] = kp * eye_angle_offset   # constant bias toward offset
+            biasprm[1] = -kp                       # position feedback
+            self._spec.add_actuator(
+                name=f"eye_{side}_yaw_fixed{suffix}",
+                trntype=mj.mjtTrn.mjTRN_JOINT,
+                target=f"eye_{side}_yaw_fixed{suffix}",
+                gaintype=mj.mjtGain.mjGAIN_FIXED,
+                gainprm=gainprm,
+                biastype=mj.mjtBias.mjBIAS_AFFINE,
+                biasprm=biasprm,
+                ctrllimited=1,
+                ctrlrange=[-1.0, 1.0],
+            )
+
+        # Update config to use the new yawed camera names
+        self._config.left_camera_name = f"eye_left_yawed{suffix}"
+        self._config.right_camera_name = f"eye_right_yawed{suffix}"
+
+        # Track the number of fixed eye actuators for action padding
+        self._n_fixed_eye_actuators = 2
+
+        # Recompile
         self.compile(forced=True)
+
+    @property
+    def action_size(self) -> int:
+        """Action size excluding fixed eye servos (policy doesn't control them)."""
+        return self._mj_model.nu - getattr(self, "_n_fixed_eye_actuators", 0)
+
+    def step(self, state, action):
+        """Step with zero-padding for fixed eye servo actuators."""
+        if getattr(self, "_n_fixed_eye_actuators", 0) > 0:
+            # Pad action with zeros for the fixed eye servos (last 2 actuators)
+            action = jp.concatenate([action, jp.zeros(self._n_fixed_eye_actuators)])
+        return super().step(state, action)
 
     @property
     def n_eye_actuators(self) -> int:

@@ -17,8 +17,8 @@ env_config:
   grayscale: true
   vision_camera_name: "egocentric-rodent"
   binocular: true
-  left_camera_name: "eye_left-rodent"
-  right_camera_name: "eye_right-rodent"
+  left_camera_name: "eye_left_yawed-rodent"
+  right_camera_name: "eye_right_yawed-rodent"
   eye_dropout_rate: 0.0
   eval_eye_mode: "binocular"
   render_depth: false
