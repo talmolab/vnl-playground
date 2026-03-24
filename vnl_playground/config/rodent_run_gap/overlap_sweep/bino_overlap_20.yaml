@@ -72,7 +72,7 @@ network_config:
 
 transfer:
   mode: prior_decoder
-  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/data/prior
+  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/data/prior/noisy_proprio
   prior_checkpoint_step: null
   highlvl_obs_key: task_obs
   decoder_obs_key: proprioception
