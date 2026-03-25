@@ -542,6 +542,7 @@ class ModularImitation_v4(modular_base.ModularRodentEnv):
         }
         if self._config.energy_cost != 0.0:
             for module, actuator_ids in self._ctrl_indices.items():
+                actuator_ids = jp.array(actuator_ids)
                 module_energy_cost = jp.sum(jp.abs(
                     data.actuator_velocity[actuator_ids] * data.actuator_force[actuator_ids]
                 ))
@@ -590,8 +591,7 @@ class ModularImitation_v4(modular_base.ModularRodentEnv):
         metrics["terminations/root_too_far"] = too_far
 
         # 3. NaN check
-        flattened_vals, _ = flatten_util.ravel_pytree(data)
-        nan_terminated = jp.sum(jp.isnan(flattened_vals)) > 0
+        nan_terminated = jp.any(jp.isnan(data.qpos))
         metrics["terminations/nan_termination"] = jp.astype(nan_terminated, float)
 
         any_terminated = jp.logical_or(too_low, jp.logical_or(too_far, nan_terminated))
