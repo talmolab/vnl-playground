@@ -466,10 +466,7 @@ class Imitation(rodent_base.RodentEnv):
 
     @_registry.termination("nan_termination")
     def _nan_termination(self, data, info) -> bool:
-        # Handle nans during sim by resetting env
-        flattened_vals, _ = flatten_util.ravel_pytree(data)
-        num_nans = jp.sum(jp.isnan(flattened_vals))
-        return num_nans > 0
+        return jp.any(jp.isnan(data.qpos))
 
     def _compile_with_ghost(self) -> mujoco.MjModel:
         """Compile a new MjModel with an attached transparent ghost walker."""

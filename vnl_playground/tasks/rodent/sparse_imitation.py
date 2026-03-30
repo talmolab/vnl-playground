@@ -530,12 +530,9 @@ class SparseImitation(rodent_base.RodentEnv):
             info: State info (unused).
 
         Returns:
-            Boolean indicating if NaN detected.
+            Boolean indicating if NaN detected in qpos.
         """
-        del info
-        flattened_vals, _ = flatten_util.ravel_pytree(data)
-        num_nans = jp.sum(jp.isnan(flattened_vals))
-        return num_nans > 0
+        return jp.any(jp.isnan(data.qpos))
 
     def _wrapped_angle_distance(
         self, angles1: jax.Array, angles2: jax.Array
