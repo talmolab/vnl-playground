@@ -55,7 +55,7 @@ class MouseReferenceClips:
                 If None, all clips are retained.
         """
         # Find all h5 files
-        h5_files = sorted(glob.glob(os.path.join(data_path, "*.h5")))
+        h5_files = sorted(glob.glob(os.path.join(str(data_path), "*.h5")))
         if not h5_files:
             raise ValueError(f"No h5 files found in {data_path}")
 
