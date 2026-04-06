@@ -59,7 +59,8 @@ def default_config() -> config_dict.ConfigDict:
             "root_pos_weight": 5.0,      # weight for root position reward
             "root_orientation_weight": 5.0,      # weight for root angle reward
         },
-        energy_cost = 0.01,
+        energy_cost = -0.04,
+        force_cost = 0.0,
     )
 
 
@@ -540,9 +541,15 @@ class ModularImitation_v4(modular_base.ModularRodentEnv):
                 "orientation_x": root_orientation_weight * target["root"]["xaxis"][0] #Dot-product
             },
         }
-        if self._config.energy_cost != 0.0:
-            for module, actuator_ids in self._ctrl_indices.items():
-                actuator_ids = jp.array(actuator_ids)
+        
+        for module, actuator_ids in self._ctrl_indices.items():
+            actuator_ids = jp.array(actuator_ids)
+
+            if self._config.force_cost != 0.0:
+                module_sum_force = jp.sum(jp.abs(data.actuator_force[actuator_ids]))
+                rewards[module]["force_cost"] = self._config.force_cost * module_sum_force
+            
+            if self._config.energy_cost != 0.0:
                 module_energy_cost = jp.sum(jp.abs(
                     data.actuator_velocity[actuator_ids] * data.actuator_force[actuator_ids]
                 ))
