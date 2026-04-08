@@ -15,7 +15,8 @@ from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.rodent import consts
-from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, dm_scale_spec
+from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -41,6 +42,10 @@ def default_config() -> config_dict.ConfigDict:
 
 class RodentEnv(mjx_env.MjxEnv):
     """Base class for rodent environments."""
+
+    # Subclasses should set this to their RewardRegistry instance
+    _registry: RewardRegistry = None
+    _default_render_camera: str = "close_profile"
 
     def __init__(
         self,
@@ -99,7 +104,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
         if rescale_factor != 1.0:
             logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
-            rodent = dm_scale_spec(rodent, rescale_factor)
+            rodent = scale_spec(rodent, rescale_factor)
 
         # Recolor the body if rgba is specified
         if rgba is not None:
@@ -143,22 +148,31 @@ class RodentEnv(mjx_env.MjxEnv):
             # Increase offscreen framebuffer size to render at higher resolutions.
             self._mj_model.vis.global_.offwidth = 3840
             self._mj_model.vis.global_.offheight = 2160
-            self._mj_model.opt.iterations = self._config.iterations
-            self._mj_model.opt.ls_iterations = self._config.ls_iterations
             self._mj_model.opt.solver = {
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
+            if self._config.mujoco_impl == "warp":
+                # Warp backend uses CCD iterations instead of solver iterations/ls_iterations.
+                self._mj_model.opt.ccd_iterations = 50
+            else:
+                self._mj_model.opt.iterations = self._config.iterations
+                self._mj_model.opt.ls_iterations = self._config.ls_iterations
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self._config.mujoco_impl
             )
             self._compiled = True
+            cam_name = f"{self._default_render_camera}{self._suffix}"
+            cam_names = [
+                self._mj_model.camera(i).name for i in range(self._mj_model.ncam)
+            ]
+            self._default_render_camera = cam_name if cam_name in cam_names else -1
 
     def _get_appendages_pos(
         self, data: mjx.Data, flatten: bool = True
     ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
         """Get _egocentric_ position of the appendages."""
-        torso = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         appendages_pos = collections.OrderedDict()
         for apppendage_name in consts.END_EFFECTORS:
             global_xpos = data.bind(
@@ -231,12 +245,14 @@ class RodentEnv(mjx_env.MjxEnv):
     ) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
         """Get kinematic sensors data from the environment."""
         accelerometer = data.bind(
-            self.mjx_model, self._spec.sensor("accelerometer-rodent")
+            self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")
         ).sensordata
         velocimeter = data.bind(
-            self.mjx_model, self._spec.sensor("velocimeter-rodent")
+            self.mjx_model, self._spec.sensor(f"velocimeter{self._suffix}")
         ).sensordata
-        gyro = data.bind(self.mjx_model, self._spec.sensor("gyro-rodent")).sensordata
+        gyro = data.bind(
+            self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")
+        ).sensordata
         sensors = collections.OrderedDict(
             accelerometer=accelerometer,
             velocimeter=velocimeter,
@@ -275,6 +291,87 @@ class RodentEnv(mjx_env.MjxEnv):
     def root_body(self, data):
         # TODO: Double-check which body should be considered the root (walker or torso)
         return data.bind(self.mjx_model, self._spec.body(f"walker{self._suffix}"))
+
+    def _get_reward(
+        self, data: mjx.Data, info: Mapping[str, Any], metrics: dict
+    ) -> float:
+        """Compute total reward from registered reward functions.
+
+        Args:
+            data: Simulation data.
+            info: State info dictionary.
+            metrics: Metrics dictionary for logging.
+
+        Returns:
+            Total reward value.
+        """
+        if self._registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no RewardRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
+        net_reward = 0.0
+        for name, kwargs in self._config.reward_terms.items():
+            if name not in self._registry.rewards:
+                raise KeyError(
+                    f"Reward '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self._registry.rewards.keys())}"
+                )
+            net_reward += self._registry.rewards[name](
+                self, data, info, metrics, **kwargs
+            )
+        return net_reward
+
+    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: dict) -> bool:
+        """Check if episode should terminate based on registered criteria.
+
+        Args:
+            data: Simulation data.
+            info: State info dictionary.
+            metrics: Metrics dictionary for logging.
+
+        Returns:
+            Boolean indicating if episode should terminate.
+        """
+        if self._registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no RewardRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
+        any_terminated = False
+        for name, kwargs in self._config.termination_criteria.items():
+            if name not in self._registry.terminations:
+                raise KeyError(
+                    f"Termination '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self._registry.terminations.keys())}"
+                )
+            terminated = self._registry.terminations[name](self, data, info, **kwargs)
+            any_terminated = jp.logical_or(any_terminated, terminated)
+            metrics["terminations/" + name] = jp.astype(terminated, float)
+        metrics["terminations/any"] = jp.astype(any_terminated, float)
+        return any_terminated
+
+    @property
+    def proprioceptive_obs_size(self) -> int:
+        obs_size = self.non_flattened_observation_size
+        return jp.sum(
+            jax.flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0]
+        )
+
+    @property
+    def non_proprioceptive_obs_size(self) -> int:
+        return self.observation_size - self.proprioceptive_obs_size
+
+    @property
+    def observation_size(self):
+        obs = self.non_flattened_observation_size
+        return jp.sum(jax.flatten_util.ravel_pytree(obs)[0])
+
+    @property
+    def non_flattened_observation_size(self):
+        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+        obs = abstract_state.obs
+        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     @property
     def action_size(self) -> int:

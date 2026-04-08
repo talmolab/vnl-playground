@@ -24,8 +24,8 @@ dependencies = [
     "wandb",
     "mujoco",
     "dm_control",
-    "mujoco-mjx[warp]>=3.3.5",
-    "warp-lang>=1.9.0",
+    "mujoco-mjx[warp]>=3.4.0",
+    "warp-lang>=1.11.0",
     "mediapy",
     "jax>=0.7.2",
     "flax",
@@ -51,25 +51,11 @@ readme = {file = ["README.md"], content-type="text/markdown"}
 version_file = "vnl_playground/_version.py"
 
 [project.optional-dependencies]
-cuda12 = ["jax[cuda12]==0.7.2 ; sys_platform == 'linux'"]
-cuda13 = ["jax[cuda13]==0.7.2 ; sys_platform == 'linux'"]
+cuda12 = ["jax[cuda12]>=0.7.2 ; sys_platform == 'linux'"]
+cuda13 = ["jax[cuda13]>=0.7.2 ; sys_platform == 'linux'"]
 dev = [
-    "pytest",
-    "pytest-cov",
-    "pytest-watch",
-    "black",
-    "pydocstyle",
-    "toml",
-    "twine",
-    "build",
-    "mkdocs-material[imaging]",
-    "mkdocs-jupyter",
-    "mkdocstrings[python]>=0.18",
-    "mkdocs-gen-files",
-    "mkdocs-literate-nav",
-    "mkdocs-section-index",
-    "mike",
-    ]
+    "black[jupyter]>=26.1.0",
+]
 
 with-cuda = [
     "vnl-playground[dev]",
@@ -84,14 +70,10 @@ Repository = "https://github.com/talmolab/vnl-playground"
 include-package-data = true
 
 [tool.setuptools.package-data]
-"*" = ["*.xml"]
+"*" = ["**/*.xml"]
 
 [tool.setuptools.packages.find]
 exclude = ["site", "model_checkpoints*", "checkpoints*", "wandb*", "outputs"]
 
 [tool.black]
 line-length = 88
-
-[pydocstyle]
-convention = "google"
-match-dir = "vnl_playground"

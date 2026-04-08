@@ -20,8 +20,11 @@ from mujoco_playground._src import reward as reward_fns
 
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 import matplotlib.colors as mcolors
+
+_registry = RewardRegistry()
 
 
 def default_vision_config() -> config_dict.ConfigDict:
@@ -66,11 +69,11 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         ctrl_dt=0.01,
         sim_dt=0.002,
-        solver="cg",
+        solver="newton",
         mujoco_impl="jax",
-        naconmax=16 * 8192,
-        njmax=512,
-        iterations=10,
+        naconmax=90 * 1024,
+        njmax=1200,
+        iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
         vision=False,
@@ -86,7 +89,7 @@ def default_config() -> config_dict.ConfigDict:
         bowl_amplitude=-10,
         reward_terms={
             "escape_x_upright": {"weight": 1.0},
-            "speed": {"weight": 1.0},
+            "speed": {"weight": 0.0},
         },
         termination_criteria={
             "fallen": {},
@@ -95,12 +98,10 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
-_REWARD_FCN_REGISTRY: dict[str, Callable] = {}
-_TERMINATION_FCN_REGISTRY: dict[str, Callable] = {}
-
-
 class BowlEscape(rodent_base.RodentEnv):
     """Bowl escape environment."""
+
+    _registry = _registry
 
     def __init__(
         self,
@@ -225,16 +226,15 @@ class BowlEscape(rodent_base.RodentEnv):
         )
         return state
 
-    def _get_obs(
-        self, data: mjx.Data, info: dict[str, Any]
-    ) -> Tuple[jp.ndarray, jp.ndarray]:
+    def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> collections.OrderedDict:
         """Get the current observation from the simulation data.
 
         Args:
             data (mjx.Data): The simulation data.
+            info: State info dictionary.
 
         Returns:
-            jp.ndarray: The concatenated position and velocity observations.
+            OrderedDict with state and privileged_state keys.
         """
         kinematic_sensors = self._get_kinematic_sensors(data)
         touch_sensors = self._get_touch_sensors(data)
@@ -242,48 +242,20 @@ class BowlEscape(rodent_base.RodentEnv):
         task_obs = jp.concatenate(
             [
                 info["prev_action"],
-                # proprioception,
                 kinematic_sensors,
                 touch_sensors,
                 origin,
             ]
         )
 
-        return collections.OrderedDict(
+        obs = collections.OrderedDict(
             task_obs=task_obs,
             proprioception=self._get_proprioception(data, info, flatten=False),
         )
-
-    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics) -> bool:
-        any_terminated = False
-        for name, kwargs in self._config.termination_criteria.items():
-            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-            terminated = termination_fcn(self, data, info, **kwargs)
-            any_terminated = jp.logical_or(any_terminated, terminated)
-            # Also log terminations as floats so averaging -> hazard rate
-            metrics["terminations/" + name] = jp.astype(terminated, float)
-        metrics["terminations/any"] = jp.astype(any_terminated, float)
-        return any_terminated
-
-    def _get_reward(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Dict
-    ) -> float:
-        net_reward = 0.0
-        for name, kwargs in self._config.reward_terms.items():
-            net_reward += _REWARD_FCN_REGISTRY[name](
-                self, data, info, metrics, **kwargs
-            )
-        return net_reward
+        return collections.OrderedDict(state=obs)
 
     # Rewards
-    def _named_reward(name: str):
-        def decorator(reward_fcn: Callable):
-            _REWARD_FCN_REGISTRY[name] = reward_fcn
-            return reward_fcn
-
-        return decorator
-
-    @_named_reward("escape_x_upright")
+    @_registry.reward("escape_x_upright")
     def _escape_x_upright_reward(self, data, info, metrics, weight) -> float:
         """Calculate escape reward based on torso position relative to terrain size.
 
@@ -295,7 +267,9 @@ class BowlEscape(rodent_base.RodentEnv):
         """
         del info
         terrain_size = float(self._config.bowl_hsize)
-        torso_xpos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
+        torso_xpos = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos
         escape_reward = reward_fns.tolerance(
             jp.linalg.norm(torso_xpos),
             bounds=(terrain_size, float("inf")),
@@ -304,15 +278,15 @@ class BowlEscape(rodent_base.RodentEnv):
             sigmoid="linear",
         )
 
-        deviation_angle = 0
+        deviation_angle = 30
         deviation = np.cos(np.deg2rad(deviation_angle))
         # xmat is the 3x3 rotation matrix of the current frame
-        upright_torso = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xmat[
-            -1, -1
-        ]
-        upright_head = data.bind(self.mjx_model, self._spec.body("skull-rodent")).xmat[
-            -1, -1
-        ]
+        upright_torso = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xmat[-1, -1]
+        upright_head = data.bind(
+            self.mjx_model, self._spec.body(f"skull{self._suffix}")
+        ).xmat[-1, -1]
         upright = reward_fns.tolerance(
             jp.stack([upright_torso, upright_head]),
             bounds=(deviation, np.inf),
@@ -328,10 +302,10 @@ class BowlEscape(rodent_base.RodentEnv):
         metrics["rewards/escape_x_upright"] = reward
         return reward
 
-    @_named_reward("speed")
+    @_registry.reward("speed")
     def _speed_reward(self, data, info, metrics, weight) -> float:
         del info
-        body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         vel = jp.linalg.norm(body.subtree_linvel)
         target_speed = self._config.target_speed
         reward = (
@@ -348,14 +322,7 @@ class BowlEscape(rodent_base.RodentEnv):
         return reward
 
     # Termination
-    def _named_termination_criterion(name: str):
-        def decorator(termination_fcn: Callable):
-            _TERMINATION_FCN_REGISTRY[name] = termination_fcn
-            return termination_fcn
-
-        return decorator
-
-    @_named_termination_criterion("fallen")
+    @_registry.termination("fallen")
     def _torso_too_low(self, data: mjx.Data, info) -> bool:
         """Check if the episode should terminate based on torso position relative to bowl surface.
 
@@ -367,7 +334,9 @@ class BowlEscape(rodent_base.RodentEnv):
         """
         del info
         # Torso (root) position
-        torso_pos = data.bind(self.mjx_model, self._spec.body("torso-rodent")).xpos
+        torso_pos = data.bind(
+            self.mjx_model, self._spec.body(f"torso{self._suffix}")
+        ).xpos
         x, y, z = torso_pos
 
         # fetch bowl surface height at torso (x, y)
@@ -375,36 +344,12 @@ class BowlEscape(rodent_base.RodentEnv):
         # make stricter by adding a small threshold
         return z <= height_z + 0.03
 
-    @_named_termination_criterion("nan_termination")
+    @_registry.termination("nan_termination")
     def _nan_termination(self, data, info) -> bool:
-        del info
-        # Handle nans during sim by resetting env
-        flattened_vals, _ = flatten_util.ravel_pytree(data)
-        num_nans = jp.sum(jp.isnan(flattened_vals))
-        return num_nans > 0
+        return jp.any(jp.isnan(data.qpos))
 
     def null_action(self) -> jp.ndarray:
         return jp.zeros(self.action_size)
-
-    @property
-    def proprioceptive_obs_size(self) -> int:
-        obs_size = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs_size["proprioception"])[0])
-
-    @property
-    def non_proprioceptive_obs_size(self) -> int:
-        return self.observation_size - self.proprioceptive_obs_size
-
-    @property
-    def observation_size(self) -> mjx_env.ObservationSize:
-        obs = self.non_flattened_observation_size
-        return jp.sum(flatten_util.ravel_pytree(obs)[0])
-
-    @property
-    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        obs = abstract_state.obs
-        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     def _interpolate_bowl_height(self, x: float, y: float) -> float:
         """Interpolate the bowl surface height at world coordinates (x, y).

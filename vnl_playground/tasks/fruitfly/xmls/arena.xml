@@ -1,17 +1,23 @@
 <mujoco>
   <visual>
-    <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
-    <global offwidth="2048" offheight="1536"/>
-    <quality shadowsize="8192"/>
+    <headlight diffuse=".5 .5 .5" specular="1 1 1" />
+    <global offwidth="2048" offheight="1536" />
+    <quality shadowsize="8192" />
   </visual>
+<!-- This is the root file where the physics get defined. -->
+  <compiler autolimits="true" angle="radian"/>
+  <option timestep="0.0001" gravity="0 0 -981" density="0.00128" viscosity="0.000185" cone="elliptic" noslip_iterations="3"/>
+  <size njmax="300" nconmax="100" nkey="1"/>
+  <statistic meansize="0.02"/>
 
   <asset>
     <!-- <skin name="skin" file="rodent_walker_skin.skn"/> -->
-    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
-    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3"
+      rgb2=".2 .3 .4" />
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2" />
   </asset>
 
   <worldbody>
-    <geom name="floor" pos="0 0 -0.005" size="10 10 0.005" type="plane" material="grid"/>
+    <geom name="floor" type="plane" size="5 5 .1" material="grid" pos="0 0 -0.131" />
   </worldbody>
 </mujoco>
