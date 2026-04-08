@@ -776,7 +776,8 @@ def collect_episodes_batch(
             )
 
         # Task obs
-        task_obs_shape = state.obs["task_obs"].shape  # (n_envs, task_obs_dim)
+        task_obs_key = "imitation_target" if "imitation_target" in state.obs else "task_obs"
+        task_obs_shape = state.obs[task_obs_key].shape  # (n_envs, task_obs_dim)
         batch_task_obs = np.zeros((T, *task_obs_shape), dtype=np.float32)
 
         # Activation storage (initialized on first step)
@@ -804,7 +805,7 @@ def collect_episodes_batch(
                 state_data.cam_xpos
             )[:, right_cam_id]
 
-            batch_task_obs[t_idx] = np.asarray(obs["task_obs"])
+            batch_task_obs[t_idx] = np.asarray(obs[task_obs_key])
             if capture_vision and "vision" in obs:
                 # Store as uint8 (0-255)
                 vision_data = np.asarray(obs["vision"])
