@@ -45,6 +45,8 @@ xla_flags = os.environ.get("XLA_FLAGS", "")
 xla_flags += " --xla_gpu_triton_gemm_any=True"
 os.environ["XLA_FLAGS"] = xla_flags
 
+import vnl_playground.naccdmax_patch  # noqa: F401 — fix CCD overflow
+
 import jax
 import jax.numpy as jp
 import mujoco
@@ -768,6 +770,21 @@ def collect_episodes_batch(
         batch_cam_left = np.zeros((T, n_envs, 3), dtype=np.float32)
         batch_cam_right = np.zeros((T, n_envs, 3), dtype=np.float32)
 
+        # Hand positions and touch sensors (for psychometric analysis)
+        hand_l_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "hand_L-rodent")
+        hand_r_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "hand_R-rodent")
+        batch_hand_l_xpos = np.zeros((T, n_envs, 3), dtype=np.float32)
+        batch_hand_r_xpos = np.zeros((T, n_envs, 3), dtype=np.float32)
+        # Touch sensors
+        palm_l_sensor_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, "palm_L-rodent")
+        palm_r_sensor_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SENSOR, "palm_R-rodent")
+        has_touch = palm_l_sensor_id >= 0 and palm_r_sensor_id >= 0
+        if has_touch:
+            palm_l_adr = mj_model.sensor_adr[palm_l_sensor_id]
+            palm_r_adr = mj_model.sensor_adr[palm_r_sensor_id]
+            batch_palm_l_touch = np.zeros((T, n_envs), dtype=np.float32)
+            batch_palm_r_touch = np.zeros((T, n_envs), dtype=np.float32)
+
         # Vision
         if capture_vision:
             vision_shape = state.obs["vision"].shape  # (n_envs, H, W, C)
@@ -804,6 +821,16 @@ def collect_episodes_batch(
             batch_cam_right[t_idx] = np.asarray(
                 state_data.cam_xpos
             )[:, right_cam_id]
+            # Hand positions
+            if hand_l_id >= 0:
+                batch_hand_l_xpos[t_idx] = xpos[:, hand_l_id]
+            if hand_r_id >= 0:
+                batch_hand_r_xpos[t_idx] = xpos[:, hand_r_id]
+            # Touch sensors
+            if has_touch:
+                sdata = np.asarray(state_data.sensordata)
+                batch_palm_l_touch[t_idx] = sdata[:, palm_l_adr]
+                batch_palm_r_touch[t_idx] = sdata[:, palm_r_adr]
 
             batch_task_obs[t_idx] = np.asarray(obs[task_obs_key])
             if capture_vision and "vision" in obs:
@@ -945,6 +972,11 @@ def collect_episodes_batch(
                 "skull_xmat": batch_skull_xmat[:ep_len, env_idx].copy(),
                 "cam_left_xpos": batch_cam_left[:ep_len, env_idx].copy(),
                 "cam_right_xpos": batch_cam_right[:ep_len, env_idx].copy(),
+                "hand_l_xpos": batch_hand_l_xpos[:ep_len, env_idx].copy(),
+                "hand_r_xpos": batch_hand_r_xpos[:ep_len, env_idx].copy(),
+                **({"palm_l_touch": batch_palm_l_touch[:ep_len, env_idx].copy(),
+                    "palm_r_touch": batch_palm_r_touch[:ep_len, env_idx].copy()}
+                   if has_touch else {}),
             }
 
             episode_data["timesteps"] = timesteps
