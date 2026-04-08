@@ -581,6 +581,7 @@ def _slice_activation_storage(
 def _create_renderers(
     base_env: Any,
     n_envs: int,
+    ckpt_config: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, Any, str, str]:
     """Create binocular vision renderers for batched rollouts.
 
@@ -598,9 +599,16 @@ def _create_renderers(
     grayscale = base_env._config.grayscale
     left_camera = base_env._config.left_camera_name
     right_camera = base_env._config.right_camera_name
-    render_depth = base_env._config.render_depth
-    use_textures = base_env._config.use_textures
-    use_shadows = base_env._config.use_shadows
+    render_depth = base_env._config.get("render_depth", False)
+    # use_textures/use_shadows are in ckpt_config["env_config"] (top-level),
+    # NOT in env_args. base_env._config may default to False.
+    # Read from ckpt_config when available to match training rendering.
+    if ckpt_config is not None:
+        use_textures = ckpt_config["env_config"].get("use_textures", True)
+        use_shadows = ckpt_config["env_config"].get("use_shadows", True)
+    else:
+        use_textures = base_env._config.get("use_textures", True)
+        use_shadows = base_env._config.get("use_shadows", True)
 
     renderer_kwargs = dict(
         mj_model=base_env.mj_model,
@@ -646,6 +654,7 @@ def collect_episodes_batch(
     capture_cnn_maps: bool = False,
     min_gaps_crossed: int = 0,
     gap_length: Optional[float] = None,
+    ckpt_config: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Collect rollout episodes using vmapped batch rollouts.
 
@@ -678,7 +687,7 @@ def collect_episodes_batch(
     from vnl_playground.tasks.rodent.vision_jax import VisionRenderWrapper
 
     left_renderer, right_renderer, _, _ = _create_renderers(
-        base_env, n_envs
+        base_env, n_envs, ckpt_config=ckpt_config
     )
 
     # Vmapped reset/step
@@ -1182,6 +1191,7 @@ def run_variable_gap_mode(
         capture_activations=config.capture_activations,
         capture_cnn_maps=config.capture_cnn_maps,
         min_gaps_crossed=config.min_gaps_crossed,
+        ckpt_config=ckpt_config,
     )
 
     # Build output
@@ -1313,6 +1323,7 @@ def run_fixed_gap_mode(
             capture_cnn_maps=config.capture_cnn_maps,
             min_gaps_crossed=fixed_config.min_gaps_crossed,
             gap_length=float(gl),
+            ckpt_config=ckpt_config,
         )
 
         all_episodes.extend(episodes)
