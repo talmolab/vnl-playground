@@ -578,6 +578,13 @@ class ModularImitation_v4(modular_base.ModularRodentEnv):
         metrics["leg_L"] = {
             "orientation_match": jp.dot(prop["foot_L"]["xaxis"], target["foot_L"]["xaxis"]),
         }
+        metrics["average_appendage_err"] = (
+            jp.linalg.norm(prop["hand_L"]["hand_pos"][0:3] - target["hand_L"]["pos"]) +
+            jp.linalg.norm(prop["hand_R"]["hand_pos"][0:3] - target["hand_R"]["pos"]) +
+            jp.linalg.norm(prop["foot_L"]["foot_pos"][0:3] - target["foot_L"]["pos"]) +
+            jp.linalg.norm(prop["foot_R"]["foot_pos"][0:3] - target["foot_R"]["pos"]) +
+            jp.linalg.norm(prop["head"]["pos"][0:3] - target["head"]["pos"])
+        ) / 5.0
         metrics["root"] = {
             # target["root"]["pos"/"rot"] are egocentric (from _build_target)
             "pos_err": jp.linalg.norm(target["root"]["pos"][0:3]),
