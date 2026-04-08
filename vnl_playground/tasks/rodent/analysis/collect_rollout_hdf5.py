@@ -1266,45 +1266,39 @@ def run_fixed_gap_mode(
           f"{gap_lengths[0]:.3f} to {gap_lengths[-1]:.3f}")
 
     all_episodes: List[Dict[str, Any]] = []
-    rodent_qpos_start = None
-    rodent_qvel_start = None
+
+    # Setup env + policy ONCE (same MuJoCo model for all gap lengths).
+    # We override gap_length_range at runtime before each reset batch —
+    # no need to rebuild the env, which avoids warp memory accumulation.
+    (
+        wrapped_env,
+        policy_fn,
+        params_tuple,
+        mj_model,
+        base_env,
+        arch,
+        init_hidden_fn,
+    ) = setup_env_and_policy(
+        checkpoint_path=config.checkpoint_path,
+        prior_checkpoint_path=prior_path,
+        ckpt_config=ckpt_config,
+        seed=config.seed,
+        get_activation=config.capture_activations,
+    )
+    body_cam_ids = resolve_body_and_camera_ids(mj_model)
+    rodent_qpos_start = int(base_env._rodent_qpos_start)
+    rodent_qvel_start = int(base_env._rodent_qvel_start)
+    print(f"  rodent_qpos_start: {rodent_qpos_start}")
+    print(f"  rodent_qvel_start: {rodent_qvel_start}")
 
     for gi, gl in enumerate(gap_lengths):
         print(f"\n{'='*60}")
         print(f"  Gap length {gi+1}/{len(gap_lengths)}: {gl:.4f} m")
         print(f"{'='*60}")
 
-        # Create env with fixed gap length
-        env_overrides = {
-            "gap_length_range": [float(gl), float(gl)],
-            "n_platforms": fixed_config.n_gaps_per_env,
-        }
-
-        (
-            wrapped_env,
-            policy_fn,
-            params_tuple,
-            mj_model,
-            base_env,
-            arch,
-            init_hidden_fn,
-        ) = setup_env_and_policy(
-            checkpoint_path=config.checkpoint_path,
-            prior_checkpoint_path=prior_path,
-            ckpt_config=ckpt_config,
-            seed=config.seed,
-            env_overrides=env_overrides,
-            get_activation=config.capture_activations,
-        )
-
-        if rodent_qpos_start is None:
-            body_cam_ids = resolve_body_and_camera_ids(mj_model)
-            rodent_qpos_start = int(base_env._rodent_qpos_start)
-            rodent_qvel_start = int(base_env._rodent_qvel_start)
-            print(f"  rodent_qpos_start: {rodent_qpos_start}")
-            print(f"  rodent_qvel_start: {rodent_qvel_start}")
-        else:
-            body_cam_ids = resolve_body_and_camera_ids(mj_model)
+        # Override gap_length_range at runtime (no model rebuild needed).
+        # The env samples gap lengths from this range at reset.
+        base_env._config.gap_length_range = (float(gl), float(gl))
 
         episodes = collect_episodes_batch(
             wrapped_env=wrapped_env,
@@ -1333,11 +1327,6 @@ def run_fixed_gap_mode(
             f"(total: {len(all_episodes)})"
         )
 
-        # Free GPU memory between gap lengths (warp caches accumulate)
-        import gc as gc_mod
-        del wrapped_env, policy_fn, params_tuple, base_env
-        gc_mod.collect()
-        jax.clear_caches()
 
     # Build output
     output_dict = build_output_dict(
