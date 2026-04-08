@@ -41,6 +41,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.4"
 xla_flags = os.environ.get("XLA_FLAGS", "")
 xla_flags += " --xla_gpu_triton_gemm_any=True"
 os.environ["XLA_FLAGS"] = xla_flags
@@ -1331,6 +1332,12 @@ def run_fixed_gap_mode(
             f"  Gap {gl:.4f}: collected {len(episodes)} episodes "
             f"(total: {len(all_episodes)})"
         )
+
+        # Free GPU memory between gap lengths (warp caches accumulate)
+        import gc as gc_mod
+        del wrapped_env, policy_fn, params_tuple, base_env
+        gc_mod.collect()
+        jax.clear_caches()
 
     # Build output
     output_dict = build_output_dict(
