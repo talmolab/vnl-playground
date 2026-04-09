@@ -255,8 +255,10 @@ class ReferenceClips:
                 if keep_clips_idx is not None:
                     logging.info(f"{k}: Keeping {len(keep_clips_idx)} clips")
                     self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
-                    if self.clip_names is not None:
-                        self.clip_names = self.clip_names[keep_clips_idx]
+
+        # Filter clip names once (outside the loop to avoid repeated indexing)
+        if keep_clips_idx is not None and self.clip_names is not None:
+            self.clip_names = self.clip_names[keep_clips_idx]
 
         # Load name mappings
         if "names_qpos" in fid:
