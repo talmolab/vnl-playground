@@ -115,10 +115,10 @@ class Rearing(rodent_base.RodentEnv):
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info.copy()
-        obs = self._get_obs(data, info)
-
         info["prev_action"] = info["action"]
         info["action"] = action
+
+        obs = self._get_obs(data, info)
 
         # Update rearing step counter with reset requirement
         relative_height = self._get_relative_head_height(data)

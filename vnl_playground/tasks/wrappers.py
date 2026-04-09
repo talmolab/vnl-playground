@@ -194,6 +194,18 @@ class LegacyObsWrapper(wrapper.Wrapper):
         return state.replace(obs=state.obs[self._obs_key])
 
     @property
+    def unwrapped(self) -> mjx_env.MjxEnv:
+        return self
+
+    @property
+    def _mjx_model(self):
+        return self.env._mjx_model
+
+    @_mjx_model.setter
+    def _mjx_model(self, value):
+        self.env._mjx_model = value
+
+    @property
     def non_flattened_observation_size(self):
         return self.env.non_flattened_observation_size[self._obs_key]
 
