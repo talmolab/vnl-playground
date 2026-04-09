@@ -207,10 +207,10 @@ class BowlEscape(rodent_base.RodentEnv):
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
-        obs = self._get_obs(data, info)
-
         info["prev_action"] = info["action"]
         info["action"] = action
+
+        obs = self._get_obs(data, info)
 
         done = self._is_done(data, info, state.metrics)
         reward = self._get_reward(data, info, state.metrics)
