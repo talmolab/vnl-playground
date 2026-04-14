@@ -169,7 +169,7 @@ class Imitation(rodent_base.RodentEnv):
             "start_frame": start_frame,
             "reference_clip": clip_idx,
         }
-        truncated = self._get_cur_frame(data, info) > self._last_valid_frame()
+        truncated = self._get_cur_frame(data, info) > self._last_valid_frame(clip_idx)
         info["truncated"] = jp.astype(truncated, float)
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
@@ -199,7 +199,7 @@ class Imitation(rodent_base.RodentEnv):
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
-        truncated = self._get_cur_frame(data, info) > self._last_valid_frame()
+        truncated = self._get_cur_frame(data, info) > self._last_valid_frame(info["reference_clip"])
         info["truncated"] = jp.astype(truncated, float)
         info["prev_action"] = state.info["action"]
         info["action"] = action
@@ -262,9 +262,20 @@ class Imitation(rodent_base.RodentEnv):
     def _clip_length(self):
         return self.reference_clips.qpos.shape[1]
 
-    def _last_valid_frame(self):
+    def _last_valid_frame(self, clip_idx=None):
+        """Last valid frame for a clip before truncation.
+
+        If per-clip lengths are available and clip_idx is provided,
+        uses the real (unpadded) clip length. Otherwise uses the
+        global padded clip length.
+        """
+        clip_lengths = self.reference_clips.clip_lengths
+        if clip_lengths is not None and clip_idx is not None:
+            length = clip_lengths[clip_idx]
+        else:
+            length = self._clip_length()
         return (
-            self._clip_length()
+            length
             - (self._config.reference_length - 1) * self._config.reference_stride
             - 2
         )

@@ -356,6 +356,7 @@ class RunGap(rodent_base.RodentEnv):
                 x_cursor = ref_center_x + max_plat / 2.0
 
             self._reference_positions = jp.array(self._reference_positions)
+            self._corridor_end_x = x_cursor
             self._n_gaps = n_platforms
         else:
             # Legacy: deterministic layout with fixed seed
@@ -398,6 +399,8 @@ class RunGap(rodent_base.RodentEnv):
                 self._platform_positions.append((x_cursor, x_cursor + plat_length))
                 x_cursor += plat_length
 
+            self._corridor_end_x = x_cursor
+
             # Precompute static gap arrays for legacy mode
             gap_starts, gap_ends, gap_lengths = [], [], []
             for i in range(1, len(self._platform_positions)):
@@ -435,6 +438,7 @@ class RunGap(rodent_base.RodentEnv):
             "stale_steps": jp.array(0, dtype=jp.int32),
             "gaps_crossed": jp.array(0, dtype=jp.int32),
             "just_crossed_gap": jp.array(False),
+            "max_x_reached": jp.array(self._config.spawn_x, dtype=jp.float32),
         }
 
         data = mjx.make_data(
@@ -481,6 +485,11 @@ class RunGap(rodent_base.RodentEnv):
 
             # Run forward kinematics so xpos reflects the new joint positions
             data = mjx.forward(self.mjx_model, data)
+
+        # Set max_x_reached to actual torso position after forward kinematics
+        # (spawn_x is a config constant that may differ from the settled position)
+        torso_body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        info["max_x_reached"] = torso_body.xpos[0]
 
         metrics = {}
         obs = self._get_obs(data, info)
@@ -539,6 +548,10 @@ class RunGap(rodent_base.RodentEnv):
         done = self._is_done(data, info, state.metrics)
         reward = self._get_reward(data, info, state.metrics)
         reward = jp.nan_to_num(reward)
+
+        # High water mark update AFTER reward computation so new_progress
+        # can see the delta between current_x and the previous max.
+        info["max_x_reached"] = jp.maximum(current_x, info["max_x_reached"])
 
         state = state.replace(
             data=data,
@@ -777,6 +790,63 @@ class RunGap(rodent_base.RodentEnv):
 
         return weighted_reward
 
+    @_registry.reward("forward_velocity_range")
+    def _forward_velocity_range_reward(
+        self,
+        data,
+        info,
+        metrics,
+        weight,
+        min_speed: float = 0.5,
+        max_speed: float = 1.0,
+        ramp_down_width: float = 0.5,
+    ) -> float:
+        """Trapezoidal velocity reward over a valid speed range.
+
+        Reward shape (as a function of forward x-velocity):
+          - Ramps linearly from 0 at v=0 to 1 at v=min_speed
+          - Plateau at 1 across v in [min_speed, max_speed]
+          - Ramps linearly from 1 at v=max_speed back to 0 at
+            v = max_speed + ramp_down_width
+          - Clipped to [0, 1] everywhere (backwards motion = 0 reward)
+
+        Unlike ``forward_velocity`` which enforces a single target speed,
+        this lets the agent choose any speed in the valid range without
+        penalty — it can slow down near gaps to assess jumps and speed up
+        on platforms, all while receiving the same max reward. Going above
+        max_speed is still penalised (by construction) to discourage
+        unrealistic fast locomotion.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            metrics: Metrics dict for logging.
+            weight: Reward weight multiplier.
+            min_speed: Lower bound of the max-reward plateau (m/s).
+            max_speed: Upper bound of the max-reward plateau (m/s).
+            ramp_down_width: Distance above max_speed over which reward
+                decays to 0 (m/s). Default matches min_speed for a
+                symmetric trapezoid.
+
+        Returns:
+            Weighted trapezoidal velocity reward.
+        """
+        del info
+
+        body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        forward_vel = body.subtree_linvel[0]
+
+        lower_ramp = jp.clip(forward_vel / min_speed, 0.0, 1.0)
+        upper_ramp = jp.clip(
+            1.0 - (forward_vel - max_speed) / ramp_down_width, 0.0, 1.0
+        )
+        reward_value = jp.minimum(lower_ramp, upper_ramp)
+
+        weighted_reward = reward_value * weight
+        metrics["rewards/forward_velocity_range"] = weighted_reward
+
+        return weighted_reward
+
     @_registry.reward("termination_penalty")
     def _termination_penalty(self, data, info, metrics, weight) -> float:
         """Negative reward applied on the timestep when the episode terminates.
@@ -819,6 +889,75 @@ class RunGap(rodent_base.RodentEnv):
         bonus = jp.where(info.get("just_crossed_gap", False), weight, 0.0)
         metrics["rewards/gap_crossing_bonus"] = bonus
         return bonus
+
+    @_registry.reward("corridor_progress")
+    def _corridor_progress_reward(self, data, info, metrics, weight) -> float:
+        """Reward proportional to normalized position along the corridor.
+
+        Returns weight * progress where progress is 0 at spawn_x and 1 at
+        the corridor end (last platform trailing edge). Clamped to [0, 1].
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            metrics: Metrics dict for logging.
+            weight: Reward weight multiplier.
+
+        Returns:
+            Weighted corridor progress reward.
+        """
+        del info
+        body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        current_x = body.xpos[0]
+        spawn_x = self._config.spawn_x
+        corridor_end = self._corridor_end_x
+        progress = jp.clip((current_x - spawn_x) / (corridor_end - spawn_x), 0.0, 1.0)
+        weighted_reward = progress * weight
+        metrics["rewards/corridor_progress"] = weighted_reward
+        return weighted_reward
+
+    @_registry.reward("time_penalty")
+    def _time_penalty_reward(self, data, info, metrics, weight) -> float:
+        """Constant negative reward per step to discourage standing still.
+
+        Args:
+            data: Simulation data (unused).
+            info: State info (unused).
+            metrics: Metrics dict for logging.
+            weight: Penalty magnitude (positive number, applied as negative).
+
+        Returns:
+            Negative reward equal to -weight every step.
+        """
+        del data, info
+        penalty = -weight
+        metrics["rewards/time_penalty"] = penalty
+        return penalty
+
+    @_registry.reward("new_progress")
+    def _new_progress_reward(self, data, info, metrics, weight) -> float:
+        """Reward for covering new ground (high water mark progress).
+
+        Only rewards forward movement beyond the furthest x-position ever
+        reached in this episode. Standing still or revisiting old ground
+        yields zero. No target speed is imposed.
+
+        Args:
+            data: Simulation data.
+            info: State info containing max_x_reached.
+            metrics: Metrics dict for logging.
+            weight: Reward weight multiplier.
+
+        Returns:
+            Weighted new progress reward.
+        """
+        body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
+        current_x = body.xpos[0]
+        corridor_length = self._corridor_end_x - self._config.spawn_x
+        delta = jp.clip(current_x - info["max_x_reached"], 0.0, None) / corridor_length
+        weighted_reward = delta * weight
+        metrics["rewards/new_progress"] = weighted_reward
+        return weighted_reward
 
     # ---- Termination criteria ----
 
@@ -890,6 +1029,10 @@ class RunGap(rodent_base.RodentEnv):
     def _nan_termination(self, data, info) -> bool:
         """Check for NaN values in simulation data.
 
+        Only checks qpos to avoid flattening the entire warp data object,
+        which includes massive shared contact buffers (O(n_envs * naconmax))
+        that get copied per environment when vmapped. See PR #67.
+
         Args:
             data: Simulation data.
             info: State info (unused).
@@ -898,9 +1041,7 @@ class RunGap(rodent_base.RodentEnv):
             Boolean indicating if NaN detected.
         """
         del info
-        flattened_vals, _ = flatten_util.ravel_pytree(data)
-        num_nans = jp.sum(jp.isnan(flattened_vals))
-        return num_nans > 0
+        return jp.any(jp.isnan(data.qpos))
 
     # ---- Utility methods ----
 

@@ -669,3 +669,108 @@ class PriorHighLevelWrapper(wrapper.Wrapper):
         if not self._pass_vision:
             raise AttributeError("vision_shape is only available when pass_vision=True")
         return self._vision_shape
+
+
+class EndToEndWrapper(wrapper.Wrapper):
+    """Wrapper for end-to-end training with NO frozen decoder.
+
+    Mirrors ``HighLevelWrapper(pass_vision=True, pass_task_obs=True)`` but
+    without routing proprioception to a frozen decoder. Instead, the
+    policy outputs the full joint action directly; proprioception is
+    exposed to the policy as a real observation key so the network's
+    internal decoder can condition on body state.
+
+    Intended for the ``transfer.mode: from_scratch`` path where no
+    SCAMPER weights are loaded.
+
+    The policy observation dict is::
+
+        {
+            "imitation_target": flat_task_obs,
+            "proprioception":   real_proprioception,
+            "vision":           egocentric_pixels,
+        }
+
+    ``action_size`` equals the underlying env's native action size (the
+    full joint control space), so PPO trains the same binocular shared-
+    vision architecture, with the ``intention`` bottleneck still present
+    inside the network, but without any frozen body motor decoder.
+    """
+
+    def __init__(
+        self,
+        env: wrapper.mjx_env.MjxEnv,
+        obs_key: str = "state",
+        highlvl_obs_key: str = "task_obs",
+        decoder_obs_key: str = "proprioception",
+    ):
+        super().__init__(env)
+        self._obs_key = obs_key
+        self._highlvl_obs_key = highlvl_obs_key
+        self._decoder_obs_key = decoder_obs_key
+        self._proprioceptive_obs_size = int(env.proprioceptive_obs_size)
+
+        sample_state = env.reset(jax.random.PRNGKey(0))
+        if not isinstance(sample_state.obs, Mapping):
+            raise ValueError(
+                f"EndToEndWrapper requires dict observations. "
+                f"Got {type(sample_state.obs).__name__}."
+            )
+
+        self._state_obs_size = int(
+            jax.flatten_util.ravel_pytree(
+                sample_state.obs["state"][highlvl_obs_key]
+            )[0].shape[0]
+        )
+        if "vision" not in sample_state.obs.get("state", {}):
+            raise ValueError(
+                "EndToEndWrapper requires env observations to contain a "
+                "'vision' key inside 'state'. Use a vision-enabled env."
+            )
+        self._vision_shape = sample_state.obs["state"]["vision"].shape
+
+    def _process_state(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
+        state.info["_full_obs"] = state.obs
+        flat_task_obs = jp.nan_to_num(
+            jax.flatten_util.ravel_pytree(
+                state.obs["state"][self._highlvl_obs_key]
+            )[0]
+        )
+        proprioception = jp.nan_to_num(
+            jax.flatten_util.ravel_pytree(
+                state.obs["state"][self._decoder_obs_key]
+            )[0]
+        )
+        new_obs = {
+            "imitation_target": flat_task_obs,
+            "proprioception": proprioception,
+            "vision": state.obs["state"]["vision"],
+        }
+        return state.replace(obs=new_obs)
+
+    def reset(
+        self,
+        rng: jax.Array,
+        **kwargs: Any,
+    ) -> wrapper.mjx_env.State:
+        state = self.env.reset(rng, **kwargs)
+        return self._process_state(state)
+
+    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        next_state = self.env.step(state, action)
+        return self._process_state(next_state)
+
+    @property
+    def action_size(self) -> int:
+        return int(self.env.action_size)
+
+    @property
+    def observation_size(self) -> dict[str, int]:
+        return {
+            "imitation_target": self._state_obs_size,
+            "proprioception": self._proprioceptive_obs_size,
+        }
+
+    @property
+    def vision_shape(self):
+        return self._vision_shape

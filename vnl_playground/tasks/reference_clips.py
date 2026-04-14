@@ -162,6 +162,7 @@ class ReferenceClips:
         self._is_legacy_format = False
         self._config: Optional[dict] = None
         self.clip_names: Optional[np.ndarray] = None
+        self._clip_lengths: Optional[jp.ndarray] = None
 
         self._load_from_disk(
             data_path, n_frames_per_clip, keep_clips_idx, joint_names, body_names
@@ -255,8 +256,22 @@ class ReferenceClips:
                 if keep_clips_idx is not None:
                     logging.info(f"{k}: Keeping {len(keep_clips_idx)} clips")
                     self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
-                    if self.clip_names is not None:
-                        self.clip_names = self.clip_names[keep_clips_idx]
+
+        if keep_clips_idx is not None and self.clip_names is not None:
+            self.clip_names = self.clip_names[keep_clips_idx]
+
+        # Load per-clip lengths (for mixed-length datasets with padded clips)
+        if "clip_lengths" in fid:
+            clip_lengths = fid["clip_lengths"][()]
+            n_clips = self._data_arrays[self._LEGACY_ARRAYS[0]].shape[0]
+            clip_lengths = clip_lengths[:n_clips]  # handle any mismatch
+            if keep_clips_idx is not None:
+                clip_lengths = clip_lengths[keep_clips_idx]
+            self._clip_lengths = jp.array(clip_lengths, dtype=jp.int32)
+            logging.info(
+                f"Loaded per-clip lengths: {len(clip_lengths)} clips, "
+                f"range [{clip_lengths.min()}, {clip_lengths.max()}]"
+            )
 
         # Load name mappings
         if "names_qpos" in fid:
@@ -435,6 +450,8 @@ class ReferenceClips:
         }
         if self.clip_names is not None:
             train_clips.clip_names = self.clip_names[train_indices]
+        if self._clip_lengths is not None:
+            train_clips._clip_lengths = self._clip_lengths[train_indices]
 
         test_clips = copy.copy(self)
         test_clips._data_arrays = {
@@ -444,12 +461,19 @@ class ReferenceClips:
         }
         if self.clip_names is not None:
             test_clips.clip_names = self.clip_names[test_indices]
+        if self._clip_lengths is not None:
+            test_clips._clip_lengths = self._clip_lengths[test_indices]
 
         return train_clips, test_clips
 
     # -------------------------------------------------------------------------
     # Core data properties
     # -------------------------------------------------------------------------
+
+    @property
+    def clip_lengths(self) -> Optional[jp.ndarray]:
+        """Per-clip real lengths (before padding), or None if all clips are full-length."""
+        return self._clip_lengths
 
     @property
     def qpos(self) -> jp.ndarray:

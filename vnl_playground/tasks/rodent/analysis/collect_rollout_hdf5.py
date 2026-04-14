@@ -482,6 +482,53 @@ def _flatten_activations(
     return result
 
 
+def _flatten_nested_subdict(activations: Dict[str, Any]) -> Dict[str, Any]:
+    """Collapse nesting deeper than 2 levels inside any top-level value.
+
+    The activation storage helpers support the shape
+    ``{top_key: array}`` or ``{top_key: {sub_key: array}}``. However some
+    architectures (notably the binocular vision policy) emit a 3-level
+    structure such as
+    ``{"cnn": {"left": {"conv_0": array, ...}, "right": {"conv_0": array, ...}}}``.
+    This helper walks each top-level subdict and, if it contains further
+    dicts, flattens them into a single level with ``"_"``-joined key paths
+    (e.g. ``{"cnn": {"left_conv_0": array, "right_conv_0": array, ...}}``).
+    Top-level values that are already flat dicts or arrays are returned
+    unchanged.
+
+    Args:
+        activations: Raw activation dict from policy extras (possibly 3+
+            levels deep for binocular architectures).
+
+    Returns:
+        Activation dict with at most 2 levels of nesting, suitable for the
+        existing prealloc/record/slice helpers.
+    """
+    result: Dict[str, Any] = {}
+    for top_key, top_val in activations.items():
+        if not isinstance(top_val, dict):
+            result[top_key] = top_val
+            continue
+        # Shortcut: if no nested dicts, already 2-level.
+        if not any(isinstance(v, dict) for v in top_val.values()):
+            result[top_key] = top_val
+            continue
+        # Walk recursively and flatten.
+        flat: Dict[str, Any] = {}
+
+        def _walk(prefix: str, node: Dict[str, Any]) -> None:
+            for k, v in node.items():
+                name = f"{prefix}_{k}" if prefix else k
+                if isinstance(v, dict):
+                    _walk(name, v)
+                else:
+                    flat[name] = v
+
+        _walk("", top_val)
+        result[top_key] = flat
+    return result
+
+
 def _preallocate_activation_storage(
     sample_activations: Dict[str, Any],
     max_steps: int,
@@ -877,6 +924,9 @@ def collect_episodes_batch(
             # Record activations
             if capture_activations and "activations" in extras:
                 raw_acts = extras["activations"]
+                # Binocular archs nest cnn maps 3-deep (cnn/left/conv_0 ...);
+                # flatten to the 2-level shape the storage helpers expect.
+                raw_acts = _flatten_nested_subdict(raw_acts)
                 if activation_storage is None:
                     # First step: pre-allocate
                     activation_storage = _preallocate_activation_storage(
