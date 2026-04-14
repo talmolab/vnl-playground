@@ -9,7 +9,6 @@ from typing import List
 from etils import epath
 
 
-
 CELEGANS_PATH: epath.Path = epath.Path(__file__).parent
 
 CELEGANS_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "celegans_cgs.xml"
