@@ -13,8 +13,8 @@ from mujoco_playground._src import mjx_env
 
 CELEGANS_PATH: epath.Path = epath.Path(__file__).parent
 
-CELEGANS_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "celegans_fast.xml"
-ARENA_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "arena.xml"
+CELEGANS_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "celegans_cgs.xml"
+ARENA_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "arena_cgs.xml"
 WHITE_ARENA_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "white_arena.xml"
 REFERENCE_H5_PATH: epath.Path = CELEGANS_PATH / "reference_data" / "reference2d.h5"
 
