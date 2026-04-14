@@ -19,7 +19,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.celegans import consts
-from vnl_playground.tasks.utils import _recolour_tree, _scale_body_tree, dm_scale_spec
+from vnl_playground.tasks.utils import _recolour_tree, scale_spec
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -173,7 +173,7 @@ class CelegansEnv(mjx_env.MjxEnv):
 
         if rescale_factor != 1.0:
             logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
-            worm = dm_scale_spec(worm, rescale_factor)
+            worm = scale_spec(worm, rescale_factor)
 
         # Recolor the body if rgba is specified
         if rgba is not None:
@@ -326,7 +326,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         )
         if rescale_factor != 1.0:
             logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
-            walker_spec = dm_scale_spec(walker_spec, rescale_factor)
+            walker_spec = scale_spec(walker_spec, rescale_factor)
 
         # Recolor the body if rgba is specified
         if ghost_rgba is not None:

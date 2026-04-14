@@ -10,7 +10,6 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from pprint import pformat
 
 import brax.math
-import cv2
 import jax
 import jax.flatten_util
 import jax.numpy as jp
@@ -71,13 +70,13 @@ def default_config() -> config_dict.ConfigDict:
         joint_config=None,
         contact_geom="sphere",
         mocap_hz=20,
-        reference_clips=ReferenceClips(
-            data_path=consts.REFERENCE_H5_PATH, n_frames_per_clip=250
-        ),
+        reference_data_path=consts.REFERENCE_H5_PATH,
+        clip_length=250,
         clip_set="all",
         reference_length=5,
-        start_frame_range=[0, 44],
+        start_frame_range=[0, 50],
         qvel_init="zeros",
+        keep_clips_idx=None,
         with_ghost=False,
         var_window_size=10,
         proprioceptive_filter=[],
@@ -137,6 +136,7 @@ class Imitation(worm_base.CelegansEnv):
         config_overrides: Optional[
             Dict[str, Union[str, int, List[Any], Dict[str, Any]]]
         ] = None,
+        clips: Optional[ReferenceClips] = None,
     ) -> None:
         """Initialize the imitation environment.
 
@@ -209,10 +209,14 @@ class Imitation(worm_base.CelegansEnv):
         self._config.termination_criteria["nan"] = {}  # nan termination always on
 
         self.compile()
-        self.reference_clips = (
-            self._config.reference_clips
-        )  # ReferenceClips(self._config.reference_data_path,
-        # self._config.clip_length)
+
+        if clips is not None:
+            self.reference_clips = clips
+        else:
+            self.reference_clips = ReferenceClips(
+                self._config.reference_data_path,
+                self._config.clip_length,
+            )
         max_n_clips = self.reference_clips.n_clips
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
@@ -383,15 +387,16 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Dictionary containing proprioception and imitation target data.
         """
-        return collections.OrderedDict(
-            imitation_target=self._get_imitation_target(data, info),
+        obs = collections.OrderedDict(
+            task_obs=self._get_imitation_target(data, info),
             proprioception=self._get_proprioception(
                 data,
                 info,
-                filter_keys=self._config.proprioceptive_filter,
                 flatten=False,
+                filter_keys=self._config.proprioceptive_filter,
             ),
         )
+        return collections.OrderedDict(state=obs)
 
     def _insert_metric(
         self,
@@ -1270,6 +1275,8 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Sequence[np.ndarray]: List of rendered frames as numpy arrays.
         """
+        if add_labels:
+            import cv2
         # Create a new spec with a ghost, without modifying the existing one
         pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.05})
         pos = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.05)]

@@ -4,7 +4,7 @@ This module provides utilities for loading and processing motion capture data
 for C. elegans, including train/test splitting and data access methods.
 """
 
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any
 import copy
 
 import h5py
@@ -26,7 +26,7 @@ class ReferenceClips:
 
     _DATA_ARRAYS: List[str] = ["qpos", "qvel", "xpos", "xquat"]
 
-    def __init__(self, data_path: str, n_frames_per_clip: int) -> None:
+    def __init__(self, data_path: str, n_frames_per_clip: int, **kwargs: Any) -> None:
         """Initialize ReferenceClips with data from HDF5 file.
 
         Args:
@@ -187,6 +187,19 @@ class ReferenceClips:
             test_set._clip_idx = test_idx
 
         return train_set, test_set
+
+    def split(
+        self, train_ratio: float = 0.8, seed: int = 0
+    ) -> Tuple["ReferenceClips", "ReferenceClips"]:
+        """Split the clips into train and test sets.
+
+        Args:
+            train_ratio: Ratio of clips to use for training.
+            seed: Random seed for reproducible splits.
+        """
+        return self.generate_train_test_split(
+            self.data_path, self.n_frames_per_clip, seed, test_ratio=1.0 - train_ratio
+        )
 
     @property
     def data_arrays(self) -> Dict[str, jp.ndarray]:
