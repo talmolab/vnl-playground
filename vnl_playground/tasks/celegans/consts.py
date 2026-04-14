@@ -8,7 +8,6 @@ from typing import List
 
 from etils import epath
 
-from mujoco_playground._src import mjx_env
 
 
 CELEGANS_PATH: epath.Path = epath.Path(__file__).parent
