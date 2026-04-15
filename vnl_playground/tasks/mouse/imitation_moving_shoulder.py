@@ -35,6 +35,9 @@ def default_config() -> config_dict.ConfigDict:
     cfg.reference_data_path = str(MOUSE_REFERENCE_DATA_MOVING_SHOULDER_PATH)
     cfg.recompute_kinematics = False  # ref was STAC-fit with same kinematic chain
     cfg.ik_driven_dims = 3  # leading qpos/qvel dims to snap + mask
+    # Moving-shoulder XML has 'wrist' (not 'wrist_body') and no 'radius'.
+    cfg.tracked_bodies = ["scapula", "humerus", "ulna", "wrist"]
+    cfg.end_effector = "wrist"
     return cfg
 
 
