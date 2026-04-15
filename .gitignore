@@ -47,6 +47,9 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+
+# Mouse model XMLs — never tracked; generated from base model
+vnl_playground/tasks/mouse/xmls/mouse_forelimb_right_moving_shoulder_ik.xml
 *.cover
 *.py,cover
 .hypothesis/
