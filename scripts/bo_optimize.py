@@ -175,8 +175,44 @@ def launch_training(params: dict, tag: str, log_dir: Path) -> int:
     return result.returncode
 
 
+def _wandb_api():
+    import wandb  # imported lazily so tests can patch without wandb login
+    return wandb.Api()
+
+
 def read_metrics(tag: str, retries: int = 3, backoff_s: float = 30.0) -> Optional[dict]:
-    raise NotImplementedError
+    for attempt in range(retries):
+        api = _wandb_api()
+        runs = list(api.runs(
+            path=WANDB_PROJECT,
+            filters={"tags": {"$in": [tag]}},
+        ))
+        if runs:
+            summary = runs[0].summary
+            try:
+                R = float(summary[REWARD_KEY])
+                bcorr = float(summary["eval/emg_biceps_corr"])
+                tcorr = float(summary["eval/emg_triceps_corr"])
+                bmae = float(summary["eval/emg_biceps_mae"])
+                tmae = float(summary["eval/emg_triceps_mae"])
+                btrial = float(summary["eval/emg_biceps_trial_mae"])
+                ttrial = float(summary["eval/emg_triceps_trial_mae"])
+            except (KeyError, TypeError, ValueError):
+                R = bcorr = tcorr = bmae = tmae = btrial = ttrial = float("nan")
+            if any(math.isnan(v) for v in (R, bcorr, tcorr, bmae, tmae, btrial, ttrial)):
+                return None
+            return {
+                "R": R,
+                "bcorr": bcorr,
+                "tcorr": tcorr,
+                "bmae": bmae,
+                "tmae": tmae,
+                "btrial": btrial,
+                "ttrial": ttrial,
+            }
+        if attempt < retries - 1:
+            time.sleep(backoff_s)
+    return None
 
 
 def report_frontier(study: optuna.Study, out_csv: Path) -> None:

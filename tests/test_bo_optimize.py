@@ -126,3 +126,70 @@ def test_launch_training_returns_nonzero_on_failure(monkeypatch, tmp_path):
         "trial-0099", tmp_path,
     )
     assert rc == 7
+
+
+class _FakeRun:
+    def __init__(self, summary):
+        self.summary = summary
+
+
+class _FakeApi:
+    def __init__(self, runs_by_tag):
+        self._runs_by_tag = runs_by_tag
+        self.call_count = 0
+
+    def runs(self, path, filters):
+        self.call_count += 1
+        tag = filters["tags"]["$in"][0]
+        return list(self._runs_by_tag.get(tag, []))
+
+
+def test_read_metrics_returns_dict_on_success(monkeypatch):
+    summary = {
+        "eval/episode_reward": 405.0,
+        "eval/emg_biceps_corr": 0.71,
+        "eval/emg_triceps_corr": 0.62,
+        "eval/emg_biceps_mae": 0.12,
+        "eval/emg_triceps_mae": 0.14,
+        "eval/emg_biceps_trial_mae": 0.19,
+        "eval/emg_triceps_trial_mae": 0.20,
+    }
+    api = _FakeApi({"trial-0001": [_FakeRun(summary)]})
+    monkeypatch.setattr(bo, "_wandb_api", lambda: api)
+
+    out = bo.read_metrics("trial-0001", retries=1, backoff_s=0.0)
+    assert out == {
+        "R": 405.0,
+        "bcorr": 0.71,
+        "tcorr": 0.62,
+        "bmae": 0.12,
+        "tmae": 0.14,
+        "btrial": 0.19,
+        "ttrial": 0.20,
+    }
+
+
+def test_read_metrics_retries_then_returns_none(monkeypatch):
+    api = _FakeApi({})  # no runs at all
+    monkeypatch.setattr(bo, "_wandb_api", lambda: api)
+
+    out = bo.read_metrics("trial-9999", retries=3, backoff_s=0.0)
+    assert out is None
+    assert api.call_count == 3
+
+
+def test_read_metrics_nan_returns_none(monkeypatch):
+    summary = {
+        "eval/episode_reward": float("nan"),
+        "eval/emg_biceps_corr": 0.5,
+        "eval/emg_triceps_corr": 0.5,
+        "eval/emg_biceps_mae": 0.2,
+        "eval/emg_triceps_mae": 0.2,
+        "eval/emg_biceps_trial_mae": 0.25,
+        "eval/emg_triceps_trial_mae": 0.25,
+    }
+    api = _FakeApi({"trial-0002": [_FakeRun(summary)]})
+    monkeypatch.setattr(bo, "_wandb_api", lambda: api)
+
+    out = bo.read_metrics("trial-0002", retries=1, backoff_s=0.0)
+    assert out is None
