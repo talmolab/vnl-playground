@@ -5,6 +5,7 @@ See docs/superpowers/specs/2026-04-20-bo-shape-constrained-sweep-design.md.
 from __future__ import annotations
 
 import argparse
+import csv as _csv
 import json
 import math
 import subprocess
@@ -216,7 +217,49 @@ def read_metrics(tag: str, retries: int = 3, backoff_s: float = 30.0) -> Optiona
 
 
 def report_frontier(study: optuna.Study, out_csv: Path) -> None:
-    raise NotImplementedError
+    completed = [t for t in study.trials if t.state == TrialState.COMPLETE]
+    winners = []
+    for t in completed:
+        R = t.user_attrs.get("R")
+        if R is None or R < WINNER_REWARD_FLOOR:
+            continue
+        # Require values to be present (completed multi-objective trials have values).
+        if t.values is None:
+            continue
+        bcorr, tcorr, bmae, tmae, btrial, ttrial = t.values
+        winners.append({
+            "trial": t.number,
+            "R": R,
+            "bcorr": bcorr,
+            "tcorr": tcorr,
+            "bmae": bmae,
+            "tmae": tmae,
+            "btrial": btrial,
+            "ttrial": ttrial,
+            "fs": t.params.get("fs"),
+            "damp": t.params.get("damp"),
+            "cc": t.params.get("cc"),
+            "cdc": t.params.get("cdc"),
+            "qvel_init": t.params.get("qvel_init"),
+            "source_name": t.user_attrs.get("source_name", ""),
+        })
+
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = ["trial", "R", "bcorr", "tcorr", "bmae", "tmae", "btrial", "ttrial",
+                  "fs", "damp", "cc", "cdc", "qvel_init", "source_name"]
+    with open(out_csv, "w", newline="") as fp:
+        w = _csv.DictWriter(fp, fieldnames=fieldnames)
+        w.writeheader()
+        for row in winners:
+            w.writerow(row)
+
+    print(f"Wrote {len(winners)} winner(s) to {out_csv}")
+    for row in sorted(winners, key=lambda r: -r["bcorr"])[:5]:
+        print(f"  trial={row['trial']} R={row['R']:.0f} "
+              f"bcorr={row['bcorr']:.2f} tcorr={row['tcorr']:.2f} "
+              f"bmae={row['bmae']:.2f} tmae={row['tmae']:.2f} "
+              f"btrial={row['btrial']:.2f} ttrial={row['ttrial']:.2f} "
+              f"fs={row['fs']:.2f} damp={row['damp']:.1e} cc={row['cc']:.3f} cdc={row['cdc']:.3f}")
 
 
 def main() -> None:

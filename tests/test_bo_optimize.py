@@ -193,3 +193,35 @@ def test_read_metrics_nan_returns_none(monkeypatch):
 
     out = bo.read_metrics("trial-0002", retries=1, backoff_s=0.0)
     assert out is None
+
+
+def test_report_frontier_filters_below_400(tmp_path):
+    journal = tmp_path / "j.log"
+    study = bo.make_study("frontier-test", journal)
+
+    # Trial A: feasible, R=410 -> should appear
+    tA = study.ask(bo.SEARCH_SPACE_DISTRIBUTIONS)
+    tA.set_user_attr("constraint", [380.0 - 410.0])
+    tA.set_user_attr("R", 410.0)
+    study.tell(tA, [0.7, 0.6, 0.12, 0.13, 0.18, 0.19])
+
+    # Trial B: feasible under BO but R<400 post-hoc -> dropped from winner CSV
+    tB = study.ask(bo.SEARCH_SPACE_DISTRIBUTIONS)
+    tB.set_user_attr("constraint", [380.0 - 390.0])
+    tB.set_user_attr("R", 390.0)
+    study.tell(tB, [0.8, 0.7, 0.10, 0.11, 0.16, 0.17])
+
+    # Trial C: infeasible -> dropped
+    tC = study.ask(bo.SEARCH_SPACE_DISTRIBUTIONS)
+    tC.set_user_attr("constraint", [380.0 - 350.0])
+    tC.set_user_attr("R", 350.0)
+    study.tell(tC, [0.9, 0.8, 0.08, 0.09, 0.14, 0.15])
+
+    out = tmp_path / "frontier.csv"
+    bo.report_frontier(study, out)
+
+    import csv
+    with open(out) as fp:
+        rows = list(csv.DictReader(fp))
+    assert len(rows) == 1
+    assert float(rows[0]["R"]) == pytest.approx(410.0)
