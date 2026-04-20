@@ -74,3 +74,55 @@ def test_make_study_resumes_from_journal(tmp_path):
 
     s2 = bo.make_study("resume-test", journal)
     assert len(s2.trials) == 1
+
+
+def test_launch_training_builds_correct_cli(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        class R:
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(bo.subprocess, "run", fake_run)
+
+    params = {
+        "fs": 0.95,
+        "damp": 7e-7,
+        "cc": 0.03,
+        "cdc": 0.02,
+        "qvel_init": "zeros",
+    }
+    rc = bo.launch_training(params, "trial-0003", tmp_path)
+
+    assert rc == 0
+    cmd = captured["cmd"]
+    assert cmd[0].endswith("python") or cmd[0] == sys.executable
+    assert bo.TRAINING_SCRIPT in cmd
+    assert "--force-scale" in cmd and cmd[cmd.index("--force-scale") + 1] == "0.95"
+    assert "--joint-damping" in cmd and cmd[cmd.index("--joint-damping") + 1] == "7e-07"
+    assert "--control-cost" in cmd and cmd[cmd.index("--control-cost") + 1] == "0.03"
+    assert "--control-diff-cost" in cmd and cmd[cmd.index("--control-diff-cost") + 1] == "0.02"
+    assert "--qvel-init" in cmd and cmd[cmd.index("--qvel-init") + 1] == "zeros"
+    assert "--seed" in cmd and cmd[cmd.index("--seed") + 1] == "1"
+    # tags are nargs="*" -- bo-s13 first, then trial tag
+    tag_idx = cmd.index("--wandb-tags")
+    assert cmd[tag_idx + 1] == "bo-s13"
+    assert cmd[tag_idx + 2] == "trial-0003"
+    # log file exists
+    assert (tmp_path / "trial-0003.log").exists()
+
+
+def test_launch_training_returns_nonzero_on_failure(monkeypatch, tmp_path):
+    def fake_run(cmd, **kwargs):
+        class R:
+            returncode = 7
+        return R()
+    monkeypatch.setattr(bo.subprocess, "run", fake_run)
+    rc = bo.launch_training(
+        {"fs": 1.0, "damp": 5e-7, "cc": 0.025, "cdc": 0.025, "qvel_init": "zeros"},
+        "trial-0099", tmp_path,
+    )
+    assert rc == 7

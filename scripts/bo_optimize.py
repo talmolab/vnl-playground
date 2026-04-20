@@ -127,8 +127,52 @@ def make_study(study_name: str, journal_path: Path) -> optuna.Study:
     )
 
 
+FIXED_CLI_ARGS = (
+    "--seed", "1",
+    "--num-timesteps", "800000000",
+    "--num-evals", "8",
+    "--episode-length", "100",
+    "--joint-armature", "4e-10",
+    "--ctrl-dt", "0.0025",
+    "--sim-dt", "0.00125",
+    "--joints-weight", "5.0",
+    "--joints-vel-weight", "0.5",
+    "--wrist-pos-weight", "0.1",
+    "--bodies-pos-weight", "0.1",
+)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _fmt_float(x: float) -> str:
+    # Use a consistent format so tests can assert exact strings.
+    if abs(x) < 1e-3 and x != 0:
+        return f"{x:.0e}"
+    return str(x)
+
+
 def launch_training(params: dict, tag: str, log_dir: Path) -> int:
-    raise NotImplementedError
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{tag}.log"
+    cmd = [
+        sys.executable,
+        TRAINING_SCRIPT,
+        "--force-scale", _fmt_float(params["fs"]),
+        "--joint-damping", _fmt_float(params["damp"]),
+        "--control-cost", _fmt_float(params["cc"]),
+        "--control-diff-cost", _fmt_float(params["cdc"]),
+        "--qvel-init", str(params["qvel_init"]),
+        *FIXED_CLI_ARGS,
+        "--wandb-tags", "bo-s13", tag,
+    ]
+    with open(log_path, "w") as fp:
+        result = subprocess.run(
+            cmd,
+            stdout=fp,
+            stderr=subprocess.STDOUT,
+            cwd=str(PROJECT_ROOT),
+        )
+    return result.returncode
 
 
 def read_metrics(tag: str, retries: int = 3, backoff_s: float = 30.0) -> Optional[dict]:
