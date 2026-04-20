@@ -11,21 +11,23 @@ Replace offline surrogate analysis + hand-picked grids with a closed-loop Bayesi
 1. Warm-starts from the 237-run s10+s11 pool.
 2. Launches training runs one at a time on the free single-GPU node.
 3. Updates an NSGA-II surrogate after each run and proposes the next config.
-4. After 20 trials (~20h wallclock), reports a Pareto frontier of configs that satisfy the reward floor.
+4. After 40 trials (~40h wallclock), reports a Pareto frontier of configs that satisfy the reward floor.
 
-This is a tactical experiment, not permanent infrastructure. Goal is to see whether adaptive search finds a config that crosses all four of s12's targets where grid search has not:
+This is a tactical experiment, not permanent infrastructure. Goal is to see whether adaptive search finds a config that crosses all s12-style targets where grid search has not:
 
 - `eval/episode_reward ≥ 400`
 - `eval/emg_biceps_corr ≥ 0.70`
 - `eval/emg_triceps_corr ≥ 0.60`
 - `eval/emg_biceps_mae ≤ 0.15`
 - `eval/emg_triceps_mae ≤ 0.15`
+- `eval/emg_biceps_trial_mae ≤ 0.20`
+- `eval/emg_triceps_trial_mae ≤ 0.20`
 
 ## Optimizer choice
 
 **Optuna with `NSGAIISampler`**, `JournalFileStorage` backend. Chosen over BoTorch / GPJax / sklearn-GP because:
 
-- Sample efficiency gap between NSGA-II and GP-based MOBO is negligible on a 5-D problem with ~200 warm-start points + 20 new evals — the bottleneck is 1h/run, not acquisition quality.
+- Sample efficiency gap between NSGA-II and GP-based MOBO is negligible on a 5-D problem with ~200 warm-start points + 40 new evals — the bottleneck is 1h/run, not acquisition quality.
 - No new heavy deps (no torch, no JAX-side GP library). Optuna adds one pip install.
 - `JournalFileStorage` is single-process-native, append-only, plain-file, resumable — no SQL machinery.
 
@@ -43,12 +45,16 @@ This is a tactical experiment, not permanent infrastructure. Goal is to see whet
 
 Reopening `force_scale` down to 0.5 deliberately — s10's shape-king run (bcorr=0.90 at fs=0.7) lives in that region and we want the surrogate to keep it on the table.
 
-**Objectives** (4, all on `eval/` keys from wandb):
+**Objectives** (6, all on `eval/` keys from wandb):
 
 - maximize `emg_biceps_corr`
 - maximize `emg_triceps_corr`
 - minimize `emg_biceps_mae`
 - minimize `emg_triceps_mae`
+- minimize `emg_biceps_trial_mae` (per-trial averaged error)
+- minimize `emg_triceps_trial_mae`
+
+Note: 6 objectives with 40 trials is a stretch for NSGA-II's sample efficiency — the Pareto frontier will grow broad. Accepted tradeoff because the user explicitly wants both per-timestep MAE and per-trial MAE tracked independently rather than collapsed into a single score.
 
 **Constraint:**
 
@@ -62,12 +68,18 @@ Rationale for 380 during BO: ~40 warm-start runs clear 380 but only ~15 clear 40
 | param | value |
 |---|---|
 | `seed` | 1 (match s11-ms main-factorial convention) |
-| `iterations` | 6 (s12 default; ~1h/run) |
+| `num_timesteps` | 800_000_000 (s12-ms main-arm default; ~1h/run) |
+| `num_evals` | 8 |
 | `episode_length` | 100 |
 | `joint_armature` | 4e-10 |
 | `ctrl_dt` | 0.0025 |
 | `sim_dt` | 0.00125 |
+| `joints_weight` | 5.0 |
+| `joints_vel_weight` | 0.5 |
+| `wrist_pos_weight` | 0.1 |
+| `bodies_pos_weight` | 0.1 |
 | training script | `train_mouse_janelia_sigmoid_moving_shoulder.py` |
+| wandb project | `vnl-mjx-rl` |
 | env | moving-shoulder |
 | muscle tau | default (no per-muscle overrides) |
 
@@ -98,7 +110,7 @@ Single-process Python driver. One long-running loop, serial trials, one GPU.
                             |
                             v
   +-----------------------------------------------+
-  | Optuna study (NSGAIISampler, 4 objectives,    |
+  | Optuna study (NSGAIISampler, 6 objectives,    |
   | R>=380 constraint, JournalFileStorage)        |
   +-----------------------------------------------+
                             |
@@ -121,7 +133,7 @@ Single-process Python driver. One long-running loop, serial trials, one GPU.
          wandb API: fetch run.summary by tag (3x retry, 30s backoff)
                             |
                             v
-         study.tell(trial, [bcorr, tcorr, bmae, tmae],
+         study.tell(trial, [bcorr, tcorr, bmae, tmae, btrial, ttrial],
                     constraint=[380 - R])
                             |
                             v
@@ -140,7 +152,7 @@ All in `scripts/bo_optimize.py`. Five functions, one entry point.
 
 ### `load_warmstart(csv_path: Path) -> list[FrozenTrial]`
 
-Read CSV with pandas, apply filter rules (above), map columns to Optuna `FrozenTrial` with `COMPLETE` state, 4-objective values, and constraint value `380 - R`. Return list.
+Read CSV with pandas, apply filter rules (above), map columns to Optuna `FrozenTrial` with `COMPLETE` state, 6-objective values `[bcorr, tcorr, bmae, tmae, btrial, ttrial]`, and constraint value `[380 - R]`. Return list.
 
 Unit-testable by passing a small fixture CSV.
 
@@ -168,15 +180,15 @@ Parameters mapped to CLI flags:
 - `control_cost` -> `--control-cost`
 - `control_diff_cost` -> `--control-diff-cost`
 - `qvel_init` -> `--qvel-init`
-- fixed: `--seed 1`, `--iterations 6`, `--wandb-tags bo-s13,<tag>`
+- fixed: `--seed 1`, `--num-timesteps 800000000`, `--num-evals 8`, `--episode-length 100`, `--joint-armature 4e-10`, `--ctrl-dt 0.0025`, `--sim-dt 0.00125`, `--joints-weight 5.0`, `--joints-vel-weight 0.5`, `--wrist-pos-weight 0.1`, `--bodies-pos-weight 0.1`, `--wandb-tags bo-s13 <tag>`
 
 ### `read_metrics(tag: str) -> dict | None`
 
 Query wandb API:
 ```python
-api.runs(path="<entity>/<project>", filters={"tags": tag})
+api.runs(path="vnl-mjx-rl", filters={"tags": tag})
 ```
-Pick the single matching run. Pull `eval/episode_reward`, `eval/emg_biceps_corr`, `eval/emg_triceps_corr`, `eval/emg_biceps_mae`, `eval/emg_triceps_mae` from `run.summary`.
+(entity is the user's default; project is `vnl-mjx-rl` per `wandb.init` in the training script). Pick the single matching run. Pull `eval/episode_reward`, `eval/emg_biceps_corr`, `eval/emg_triceps_corr`, `eval/emg_biceps_mae`, `eval/emg_triceps_mae` from `run.summary`.
 
 Retry up to 3 times with 30s backoff — wandb upload can lag briefly after process exit. Return `None` on final failure or NaN values.
 
@@ -254,11 +266,11 @@ Three cheap checks (~15 min total):
 
 ## Success criteria
 
-At end of 20 trials:
+At end of 40 trials:
 
-- **Primary:** Pareto frontier contains at least one trial with `R >= 400 AND bcorr >= 0.70 AND tcorr >= 0.60 AND bmae <= 0.15 AND tmae <= 0.15`. This is the "BO found a config s11/s12 grids missed" result.
-- **Partial:** frontier contains a trial with 3 of 4 shape thresholds cleared at R >= 400 — suggests the 4th is in tension and needs a different axis (seeds, tau, reward shaping).
-- **Null:** no feasible-at-400 trial clears more shape thresholds than the best s11 frontier cell — BO and grid agree there's a ceiling; pivot to direct EMG-trace supervision (deferred to future work).
+- **Primary:** Pareto frontier contains at least one trial with `R >= 400 AND bcorr >= 0.70 AND tcorr >= 0.60 AND bmae <= 0.15 AND tmae <= 0.15 AND btrial <= 0.20 AND ttrial <= 0.20`. This is the "BO found a config s11/s12 grids missed" result.
+- **Partial:** frontier contains a trial that clears 5 of 6 shape/trial thresholds at R >= 400 — suggests the one remaining is in tension and needs a different axis (seeds, tau, reward shaping).
+- **Null:** no feasible-at-400 trial clears more shape+trial thresholds than the best s11 frontier cell — BO and grid agree there's a ceiling; pivot to direct EMG-trace supervision (deferred to future work).
 
 ## Out of scope
 
@@ -271,6 +283,6 @@ At end of 20 trials:
 ## Risks
 
 - **Warm-start quality:** if s10 is silently non-comparable to s11/bo-s13 due to env drift, ~40 warm-start points mislead the surrogate. Mitigated by filter being loose — NSGA-II doesn't extrapolate aggressively from warm-starts.
-- **NSGA-II with 4 objectives is information-hungry:** 20 new trials is modest. Expect the frontier to be dominated by warm-start points; the value of the 20 trials is filling specific gaps the surrogate identifies, not replacing the frontier.
+- **NSGA-II with 6 objectives is information-hungry:** even 40 new trials is modest for 6-objective MOBO — the Pareto frontier grows broad and sampler pressure weakens. Expect the frontier to be dominated by warm-start points; the value of the 40 trials is filling specific gaps the surrogate identifies, not replacing the frontier.
 - **Constraint-handling in NSGA-II:** infeasible trials still run (NSGA-II doesn't predict feasibility cheaply). If most of the feasible region is narrow, the first several trials may be infeasible — that's expected, not a bug.
 - **Wandb flakiness:** 3-retry with backoff covers normal upload lag but not extended wandb outages. Extended outage -> trials FAIL and budget is consumed. Manual intervention required.
