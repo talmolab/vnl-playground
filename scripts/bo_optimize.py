@@ -262,8 +262,83 @@ def report_frontier(study: optuna.Study, out_csv: Path) -> None:
               f"fs={row['fs']:.2f} damp={row['damp']:.1e} cc={row['cc']:.3f} cdc={row['cdc']:.3f}")
 
 
+CONSECUTIVE_FAIL_LIMIT = 5
+
+
+def _append_jsonl(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as fp:
+        fp.write(json.dumps(row) + "\n")
+
+
 def main() -> None:
-    raise NotImplementedError
+    p = argparse.ArgumentParser()
+    p.add_argument("--warmstart-csv", type=Path, required=True)
+    p.add_argument("--study-name", type=str, required=True)
+    p.add_argument("--journal", type=Path, required=True)
+    p.add_argument("--n-trials", type=int, default=40)
+    p.add_argument("--jsonl-log", type=Path, required=True)
+    p.add_argument("--frontier-csv", type=Path, required=True)
+    p.add_argument("--log-dir", type=Path, required=True)
+    args = p.parse_args()
+
+    study = make_study(args.study_name, args.journal)
+
+    # Warm-start only if the study is empty (avoid re-adding on resume).
+    if len(study.trials) == 0:
+        warmstarts = load_warmstart(args.warmstart_csv)
+        print(f"Adding {len(warmstarts)} warm-start trials...")
+        study.add_trials(warmstarts)
+    else:
+        print(f"Resuming study with {len(study.trials)} existing trials; skipping warm-start.")
+
+    args.log_dir.mkdir(parents=True, exist_ok=True)
+
+    consecutive_fail = 0
+    for i in range(args.n_trials):
+        trial = study.ask(SEARCH_SPACE_DISTRIBUTIONS)
+        tag = f"trial-{trial.number:04d}"
+        params = {
+            "fs": trial.params["fs"],
+            "damp": trial.params["damp"],
+            "cc": trial.params["cc"],
+            "cdc": trial.params["cdc"],
+            "qvel_init": trial.params["qvel_init"],
+        }
+        print(f"[{i+1}/{args.n_trials}] {tag}  params={params}")
+
+        rc = launch_training(params, tag, args.log_dir)
+        metrics = read_metrics(tag) if rc == 0 else None
+
+        if metrics is None:
+            print(f"  {tag} FAILED (rc={rc} or no metrics)")
+            study.tell(trial, state=TrialState.FAIL)
+            consecutive_fail += 1
+            if consecutive_fail >= CONSECUTIVE_FAIL_LIMIT:
+                print(f"ABORT: {CONSECUTIVE_FAIL_LIMIT} consecutive failures", file=sys.stderr)
+                _append_jsonl(args.jsonl_log, {"event": "abort",
+                                               "reason": "consecutive_fail_limit",
+                                               "trial": trial.number})
+                sys.exit(2)
+            continue
+
+        consecutive_fail = 0
+        R = metrics["R"]
+        trial.set_user_attr("constraint", [CONSTRAINT_REWARD_FLOOR - R])
+        trial.set_user_attr("R", R)
+        study.tell(trial, [metrics["bcorr"], metrics["tcorr"],
+                           metrics["bmae"], metrics["tmae"],
+                           metrics["btrial"], metrics["ttrial"]])
+        _append_jsonl(args.jsonl_log, {
+            "trial": trial.number,
+            "tag": tag,
+            **params,
+            **metrics,
+        })
+        print(f"  {tag} OK  R={R:.0f} bcorr={metrics['bcorr']:.2f} "
+              f"tcorr={metrics['tcorr']:.2f}")
+
+    report_frontier(study, args.frontier_csv)
 
 
 if __name__ == "__main__":

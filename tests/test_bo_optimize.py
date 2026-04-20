@@ -225,3 +225,74 @@ def test_report_frontier_filters_below_400(tmp_path):
         rows = list(csv.DictReader(fp))
     assert len(rows) == 1
     assert float(rows[0]["R"]) == pytest.approx(410.0)
+
+
+def test_main_loop_completes_with_mocked_training(monkeypatch, tmp_path):
+    # Fake successful training: subprocess returns 0 and wandb returns metrics.
+    def fake_launch(params, tag, log_dir):
+        (log_dir / f"{tag}.log").write_text("ok")
+        return 0
+
+    call_log = []
+
+    def fake_read(tag, retries=3, backoff_s=30.0):
+        call_log.append(tag)
+        return {
+            "R": 405.0 + len(call_log),
+            "bcorr": 0.7,
+            "tcorr": 0.6,
+            "bmae": 0.12,
+            "tmae": 0.13,
+            "btrial": 0.18,
+            "ttrial": 0.19,
+        }
+
+    monkeypatch.setattr(bo, "launch_training", fake_launch)
+    monkeypatch.setattr(bo, "read_metrics", fake_read)
+
+    fixture = Path(__file__).parent / "fixtures" / "bo_warmstart_sample.csv"
+    argv = [
+        "bo_optimize.py",
+        "--warmstart-csv", str(fixture),
+        "--study-name", "main-loop-test",
+        "--journal", str(tmp_path / "j.log"),
+        "--n-trials", "3",
+        "--jsonl-log", str(tmp_path / "trials.jsonl"),
+        "--frontier-csv", str(tmp_path / "frontier.csv"),
+        "--log-dir", str(tmp_path / "runs"),
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    bo.main()
+
+    assert len(call_log) == 3
+    jsonl = (tmp_path / "trials.jsonl").read_text().strip().splitlines()
+    assert len(jsonl) == 3
+    # Frontier contains at least 1 row (all 3 trials are feasible with R>=400)
+    frontier_rows = (tmp_path / "frontier.csv").read_text().strip().splitlines()
+    assert len(frontier_rows) >= 2  # header + >=1 data
+
+
+def test_main_loop_aborts_after_5_consecutive_failures(monkeypatch, tmp_path):
+    def fake_launch(params, tag, log_dir):
+        (log_dir / f"{tag}.log").write_text("fail")
+        return 1  # non-zero exit
+
+    monkeypatch.setattr(bo, "launch_training", fake_launch)
+    monkeypatch.setattr(bo, "read_metrics", lambda *a, **kw: None)
+
+    fixture = Path(__file__).parent / "fixtures" / "bo_warmstart_sample.csv"
+    argv = [
+        "bo_optimize.py",
+        "--warmstart-csv", str(fixture),
+        "--study-name", "abort-test",
+        "--journal", str(tmp_path / "j.log"),
+        "--n-trials", "20",
+        "--jsonl-log", str(tmp_path / "trials.jsonl"),
+        "--frontier-csv", str(tmp_path / "frontier.csv"),
+        "--log-dir", str(tmp_path / "runs"),
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit):
+        bo.main()
