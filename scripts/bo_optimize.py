@@ -106,8 +106,25 @@ def load_warmstart(csv_path: Path) -> list[FrozenTrial]:
     return trials
 
 
+def _constraints_func(trial: FrozenTrial) -> list[float]:
+    c = trial.user_attrs.get("constraint")
+    if c is None:
+        # Unknown feasibility -> treat as feasible; NSGA-II will still use objectives.
+        return [-1.0]
+    return list(c)
+
+
 def make_study(study_name: str, journal_path: Path) -> optuna.Study:
-    raise NotImplementedError
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    storage = JournalStorage(JournalFileBackend(str(journal_path)))
+    sampler = NSGAIISampler(constraints_func=_constraints_func)
+    return optuna.create_study(
+        study_name=study_name,
+        storage=storage,
+        directions=OBJECTIVE_DIRECTIONS,
+        sampler=sampler,
+        load_if_exists=True,
+    )
 
 
 def launch_training(params: dict, tag: str, log_dir: Path) -> int:
