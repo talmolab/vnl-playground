@@ -1,0 +1,8 @@
+Name,State,Tags,_fields.reference_data_path,_fields.force_scale,_fields.joint_damping,_fields.control_cost,_fields.control_diff_cost,_fields.qvel_init,eval/episode_reward,eval/emg_biceps_corr,eval/emg_triceps_corr,eval/emg_biceps_mae,eval/emg_triceps_mae,eval/emg_biceps_trial_mae,eval/emg_triceps_trial_mae
+keep-ms-a,finished,"s11-ms, moving-shoulder","/root/vast/eric/vnl-playground/vnl_playground/tasks/mouse/reference_data_moving_shoulder",1.0,5e-7,0.025,0.025,zeros,396,0.57,0.57,0.13,0.14,0.20,0.19
+keep-ms-b,finished,"s10-ms, moving-shoulder","/root/vast/eric/vnl-playground/vnl_playground/tasks/mouse/reference_data_moving_shoulder",0.7,5e-7,0.05,0.1,zeros,344,0.90,0.79,0.18,0.21,0.22,0.23
+drop-tau-extra,finished,"s11-ms, moving-shoulder, tau-extra","/root/vast/eric/vnl-playground/vnl_playground/tasks/mouse/reference_data_moving_shoulder",1.0,3e-7,0.025,0.025,zeros,350,0.40,0.30,0.18,0.18,0.22,0.22
+drop-nan-eval,finished,"s11-ms, moving-shoulder","/root/vast/eric/vnl-playground/vnl_playground/tasks/mouse/reference_data_moving_shoulder",1.0,5e-7,0.025,0.025,zeros,,,,,,,
+drop-non-ms,finished,"s11, arm-only","/root/vast/eric/vnl-playground/vnl_playground/tasks/mouse/reference_data",1.0,5e-7,0.025,0.025,zeros,380,0.50,0.50,0.15,0.15,0.20,0.20
+drop-crashed,crashed,"s11-ms, moving-shoulder","/root/vast/eric/vnl-playground/vnl_playground/tasks/mouse/reference_data_moving_shoulder",1.0,5e-7,0.025,0.025,zeros,,,,,,,
+keep-out-of-bounds,finished,"s10-ms, moving-shoulder","/root/vast/eric/vnl-playground/vnl_playground/tasks/mouse/reference_data_moving_shoulder",0.3,2e-7,0.05,0.1,zeros,200,0.30,0.30,0.25,0.25,0.28,0.28
