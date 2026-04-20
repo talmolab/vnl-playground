@@ -75,8 +75,8 @@ def load_warmstart(csv_path: Path) -> list[FrozenTrial]:
         try:
             fs = float(row["_fields.force_scale"])
             damp = float(row["_fields.joint_damping"])
-            cc = float(row["_fields.control_cost"])
-            cdc = float(row["_fields.control_diff_cost"])
+            cc = float(row["reward_weights/control_cost"])
+            cdc = float(row["reward_weights/control_diff_cost"])
             qvel = str(row["_fields.qvel_init"])
             R = float(row["eval/episode_reward"])
             bcorr = float(row["eval/emg_biceps_corr"])
