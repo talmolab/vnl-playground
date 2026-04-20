@@ -166,12 +166,15 @@ def launch_training(params: dict, tag: str, log_dir: Path) -> int:
         *FIXED_CLI_ARGS,
         "--wandb-tags", "bo-s13", tag,
     ]
+    import os
+    env = {**os.environ, "PYOPENGL_PLATFORM": "egl"}
     with open(log_path, "w") as fp:
         result = subprocess.run(
             cmd,
             stdout=fp,
             stderr=subprocess.STDOUT,
             cwd=str(PROJECT_ROOT),
+            env=env,
         )
     return result.returncode
 
@@ -298,11 +301,13 @@ def main() -> None:
     for i in range(args.n_trials):
         trial = study.ask(SEARCH_SPACE_DISTRIBUTIONS)
         tag = f"trial-{trial.number:04d}"
+        # NSGA-II crossover can extrapolate past distribution bounds with
+        # out-of-bound warm-starts in the pool; clamp to declared ranges.
         params = {
-            "fs": trial.params["fs"],
-            "damp": trial.params["damp"],
-            "cc": trial.params["cc"],
-            "cdc": trial.params["cdc"],
+            "fs": min(max(trial.params["fs"], 0.5), 1.0),
+            "damp": min(max(trial.params["damp"], 1e-7), 1.5e-6),
+            "cc": min(max(trial.params["cc"], 0.0), 0.1),
+            "cdc": min(max(trial.params["cdc"], 0.0), 0.1),
             "qvel_init": trial.params["qvel_init"],
         }
         print(f"[{i+1}/{args.n_trials}] {tag}  params={params}")
