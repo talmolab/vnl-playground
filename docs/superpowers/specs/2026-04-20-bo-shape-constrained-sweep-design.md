@@ -101,6 +101,16 @@ Expected retained count: ~200 trials.
 
 **Loader:** maps CSV columns to Optuna `FrozenTrial` objects with `state=COMPLETE` and feeds them via `study.add_trials()` before the first `ask()`.
 
+## Node prerequisites
+
+Before launching on a fresh node:
+
+- `apt install libegl1` — otherwise the training script's `MUJOCO_GL=egl` import path fails because PyOpenGL needs a vendor-neutral `libEGL.so`, not just `libEGL_nvidia.so.0`.
+- `wandb login <api-key>` — read_metrics uses the wandb Python API; training's `wandb.init` also requires authentication.
+- Venv: `/root/vast/eric/track-mjx/.venv` must have `optuna` installed (the venv is uv-managed but may not have `uv`/`pip` on PATH; use `/root/miniforge3/bin/pip install --target /root/vast/eric/track-mjx/.venv/lib/python3.12/site-packages optuna` as a workaround).
+
+The driver sets `PYOPENGL_PLATFORM=egl` in the subprocess environment for each launched training run — MUJOCO_GL=egl alone triggers a broken PyOpenGL import path in this venv; `PYOPENGL_PLATFORM=egl` is what actually routes mujoco through the working EGL loader.
+
 ## Architecture
 
 Single-process Python driver. One long-running loop, serial trials, one GPU.
