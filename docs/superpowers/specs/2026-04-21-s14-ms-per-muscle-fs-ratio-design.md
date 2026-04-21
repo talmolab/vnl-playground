@@ -1,6 +1,6 @@
 ---
 name: s14-ms-per-muscle-fs-ratio-design
-description: Design for s14_ms — per-muscle (biceps vs triceps) force-scale ratio ladder across 3 s13 anchors, plus lagged cross-correlation EMG metric
+description: Design for s14_ms — per-muscle (biceps vs triceps) force-scale ratio ladder + coupled diagonal at 2 well-performing damping anchors, plus lagged cross-correlation EMG metric
 type: project
 ---
 
@@ -177,24 +177,42 @@ Out of scope for the gating backfill: s10/s11/s12. The s13 backfill is enough to
 
 ## Anchors
 
-Inherit the same three `(damp, cc, cdc)` triples from s13, with the global `fs_shoulder` pinned at each anchor's best-reward level from s13. At all three anchors, `fs_shoulder = 1.3` falls inside the R ≥ 410 region:
+Two anchors — both at "well-performing" damping regimes. Dropping anchor B from s13 (d=3e-7); s12's surrogate-model analysis and s13's per-anchor peaks both show the composite (reward + shape) frontier sits at d ∈ {9e-7, 1e-6}, not at low damping. Keeping two damping levels rather than one as a robustness check on the ratio hypothesis.
 
-| anchor | damp | cc | cdc | fs_shoulder | s13 @ fs=1.3 reward |
-|---|---|---|---|---|---|
-| A | 9e-7 | 0.025 | 0.025 | 1.3 | 415 / 438 (s1/s2) |
-| B | 3e-7 | 0.025 | 0.05 | 1.3 | 440 |
-| C | 1e-6 | 0.035 | 0.00 | 1.3 | 431 / 413 (s1/s2) |
+| anchor | damp | cc | cdc | fs_shoulder | s13 @ fs=1.3 reward | s12 composite notes |
+|---|---|---|---|---|---|---|
+| A | 9e-7 | 0.025 | 0.025 | 1.3 | 415 / 438 (s1/s2) | s12 near-R-bar regime (R=397 at fs=1.0) |
+| C | 1e-6 | 0.035 | 0.00 | 1.3 | 431 / 413 (s1/s2) | s12 surrogate optimum; shape frontier |
 
-Uniform `fs_shoulder=1.3` across anchors keeps the shoulder-muscle operating point consistent, so differences across anchors can be attributed to `(damp, cc, cdc)` rather than shoulder force.
+Uniform `fs_shoulder=1.3` across anchors keeps the shoulder-muscle operating point consistent, so differences between A and C can be attributed to damping rather than shoulder force.
 
 ## Ratio ladder
 
-10 cells per anchor — 1 symmetric baseline + 8 asymmetric "biceps-ahead, both-high" cells + 1 reverse-ratio falsifier. All `t_eff ≥ 1.0`: we have **no direct evidence** that `t_eff < 1.0` with shoulder at fs=1.3 helps triceps (s10's low-fs shape-king regime had *everything* at low fs, not just triceps; we'd expect the reach dynamics to break if shoulder is fast but triceps can't keep up with extension).
+24 cells per anchor, split into four zones:
 
-| # | t_eff | b_eff | gap | rationale |
+- **Coupled diagonal (8 cells, C1–C8):** `t_eff = b_eff` sweep, spans `{0.7, 0.8, 0.9, 1.1, 1.2, 1.3, 1.4, 1.5}`. Serves as the "no asymmetry" baseline at every fs level — so every asymmetric cell has a matched coupled neighbor to compare against. `(1.3, 1.3)` also matches s13 anchor-X fs=1.3 exactly (shoulder = elbow = 1.3), giving a same-eval-pipeline cross-check with s13 per-trial seeds. `(1.0, 1.0)` lives in the core zone as `L0`.
+- **Low-t asymmetric zone (6 cells, E1–E6):** `t_eff ∈ {0.7, 0.8, 0.9}` × `b_eff ∈ {1.0, 1.3}`. Tests whether a weakened triceps paired with a strong shoulder (fs_shoulder=1.3) helps tcorr or breaks the reach.
+- **Core both-high zone (9 cells, L0–L8):** `t_eff ∈ {1.0, 1.1, 1.2}` × `b_eff ∈ {1.0, …, 1.5}`, all `b_eff ≥ t_eff`. Primary hypothesis region.
+- **Falsifier (1 cell, F1):** reverse ratio `t_eff > b_eff`.
+
+| # | t_eff | b_eff | gap | zone / rationale |
 |---|---|---|---|---|
-| L0 | 1.0 | 1.0 | 0.0 | symmetric elbow baseline at fs_shoulder=1.3 (no s13 analog — s13 always synchronized shoulder+elbow) |
-| L1 | 1.0 | 1.1 | 0.1 | smallest gap — sensitivity to tiny asymmetry |
+| C1 | 0.7 | 0.7 | 0.0 | coupled low — pure fs=0.7 effect at shoulder=1.3 |
+| C2 | 0.8 | 0.8 | 0.0 | coupled |
+| C3 | 0.9 | 0.9 | 0.0 | coupled |
+| L0 | 1.0 | 1.0 | 0.0 | coupled; baseline at fs_shoulder=1.3 |
+| C4 | 1.1 | 1.1 | 0.0 | coupled; matches s13 anchor-X fs=1.1 at shoulder=1.3 |
+| C5 | 1.2 | 1.2 | 0.0 | coupled |
+| C6 | 1.3 | 1.3 | 0.0 | coupled; matches s13 anchor-X fs=1.3 identically |
+| C7 | 1.4 | 1.4 | 0.0 | coupled |
+| C8 | 1.5 | 1.5 | 0.0 | coupled |
+| E1 | 0.7 | 1.0 | 0.3 | low-t asymmetric |
+| E2 | 0.7 | 1.3 | 0.6 | low-t asymmetric — widest gap |
+| E3 | 0.8 | 1.0 | 0.2 | low-t asymmetric |
+| E4 | 0.8 | 1.3 | 0.5 | low-t asymmetric |
+| E5 | 0.9 | 1.0 | 0.1 | low-t asymmetric |
+| E6 | 0.9 | 1.3 | 0.4 | low-t asymmetric |
+| L1 | 1.0 | 1.1 | 0.1 | tiny gap at triceps floor |
 | L2 | 1.0 | 1.2 | 0.2 | gap 0.2 at triceps floor |
 | L3 | 1.0 | 1.3 | 0.3 | gap 0.3 at triceps floor (central prediction) |
 | L4 | 1.0 | 1.4 | 0.4 | gap 0.4 at triceps floor |
@@ -202,15 +220,22 @@ Uniform `fs_shoulder=1.3` across anchors keeps the shoulder-muscle operating poi
 | L6 | 1.1 | 1.4 | 0.3 | raised triceps floor, gap 0.3 |
 | L7 | 1.2 | 1.4 | 0.2 | higher floor both, gap 0.2 |
 | L8 | 1.2 | 1.5 | 0.3 | top regime, gap 0.3 |
-| F1 | 1.3 | 1.0 | −0.3 | **reverse ratio (falsifier)** — if this improves tcorr too, mechanism is wrong |
+| F1 | 1.3 | 1.0 | −0.3 | **reverse ratio (falsifier)** |
 
-The ladder densely samples (t=1.0, b ∈ {1.0, 1.1, 1.2, 1.3, 1.4}) as the primary 1D slice through the hypothesis (fix triceps at the shape-king-at-high-shoulder-fs floor, vary biceps). L5–L8 probe whether raising the triceps floor above 1.0 pays off on reward without losing the tcorr gain. F1 falsifies.
+Primary 1D slices for analysis:
+- **Coupled diagonal:** C1–C8 plus L0 (pure fs effect at shoulder=1.3; directly comparable to s13 at X=1.1–1.5 and a new regime below that)
+- **Asymmetric at b=1.0:** E1, E3, E5, L0 (lower triceps alone, no biceps boost)
+- **Asymmetric at b=1.3:** E2, E4, E6, L3, C6 (sweep triceps 0.7→1.3 with biceps fixed at central value)
+- **t=1.0 slice:** L0, L1, L2, L3, L4 (hold triceps at symmetric-baseline, sweep biceps)
+- **Anti-diagonal asymmetric:** L3, L5, L7, L8 (matched-gap at rising triceps floor)
+
+Ratio effect is real iff asymmetric cells beat their coupled neighbors (lattice-close cells with t=b at midpoint) on composite. F1 falsifies.
 
 **Seeds.** 2 seeds per cell (not 1) because s13 showed ±0.3 bcorr seed-variance at some anchor-C cells; a 1-seed readout is not robust enough to distinguish real effects from seed noise at the ratio scale we're testing.
 
 ### Total
 
-3 anchors × 10 cells × 2 seeds = **60 runs**.
+2 anchors × 24 cells × 2 seeds = **96 runs**.
 
 ## Pinned base args
 
@@ -250,31 +275,33 @@ A winner replicates in s15 with ≥3 seeds.
 
 **Arm-level partial signals:**
 
-- **Ratio works.** Along the (t_eff, b_eff) ladder at fixed anchor, `tcorr` rises as gap grows (monotonic up to some optimum) while `bcorr` stays ≥ 0.6 and R stays ≥ 400 → ratio hypothesis confirmed; s15 drills in finer ratio grid around the optimum.
+- **Ratio works (asymmetric beats coupled).** Any asymmetric cell produces composite (reward + min(bcorr,tcorr) + min lag) strictly better than its coupled neighbors (e.g., L3=(1.0,1.3) beats both L0=(1.0,1.0) and C6=(1.3,1.3)) → ratio hypothesis confirmed; s15 drills in finer ratio grid around the optimum.
+- **Coupled diagonal is always best.** If C1–C8 sweep out the Pareto front and no asymmetric cell beats its coupled neighbors → ratio hypothesis rejected; ask instead whether we need better damping/cc/cdc or a non-force mechanism.
 - **Ratio fails, lag explains.** `tcorr` stays flat across the ladder, but `lagged_corr` is consistently 0.1+ higher than `corr` at all cells → current tcorr gap is mostly phase lag; s15 adds a phase-aligned EMG reward term rather than more ratio.
 - **Reverse control F1 matches L4 on shape.** `(t=1.3, b=1.0)` produces tcorr ≥ L4's tcorr → mechanism is not differential-force but something else (maybe total actuator energy or co-contraction); s14 hypothesis falsified.
-- **Nothing crosses but C anchor dominates.** If C consistently out-performs A and B across the ladder, s15 focuses solely on C and adds a damping micro-sweep.
+- **Low-t zone (E1–E6 + C1–C3) outperforms the high-t zone.** If the best cells all have `t_eff ≤ 0.9`, that contradicts my initial argument about shoulder/triceps mismatch and suggests the s10 shape-king mechanism does transfer — s15 focuses the ratio around the low-t frontier.
+- **Anchor C dominates A across the board.** If C consistently out-performs A on the composite, s15 focuses on C and adds a damping micro-sweep.
 
 ## Execution
 
 **Compute.** 2 × 2-GPU workers + 4 × 1-GPU workers = 6 parallel streams (same as s13 allocation). Training ≈ 1 hr/run at 800M timesteps.
 
-**Partition.** 60 runs split across six `sweep_s14_ms_N.sh` scripts of 10 runs each, one script per GPU stream, assigned so each script stays within a single anchor:
+**Partition.** 96 runs split across six `sweep_s14_ms_N.sh` scripts of 16 runs each, one script per GPU stream, assigned so each script stays within a single anchor and a coherent zone:
 
 | Script | GPU | Anchor | Cells | Seeds | Count |
 |---|---|---|---|---|---|
-| `sweep_s14_ms_1.sh` | 2-GPU / GPU0 | A | L0–L4 | 1, 2 | 10 |
-| `sweep_s14_ms_2.sh` | 2-GPU / GPU1 | A | L5–L8, F1 | 1, 2 | 10 |
-| `sweep_s14_ms_3.sh` | 2-GPU / GPU0 | B | L0–L4 | 1, 2 | 10 |
-| `sweep_s14_ms_4.sh` | 2-GPU / GPU1 | B | L5–L8, F1 | 1, 2 | 10 |
-| `sweep_s14_ms_5.sh` | 1-GPU | C | L0–L4 | 1, 2 | 10 |
-| `sweep_s14_ms_6.sh` | 1-GPU | C | L5–L8, F1 | 1, 2 | 10 |
+| `sweep_s14_ms_1.sh` | 2-GPU / GPU0 | A | C1–C8 (coupled diag) | 1, 2 | 16 |
+| `sweep_s14_ms_2.sh` | 2-GPU / GPU1 | A | E1–E6, L0, F1 (low-t + sym + falsifier) | 1, 2 | 16 |
+| `sweep_s14_ms_3.sh` | 2-GPU / GPU0 | A | L1–L8 (asymmetric core) | 1, 2 | 16 |
+| `sweep_s14_ms_4.sh` | 2-GPU / GPU1 | C | C1–C8 (coupled diag) | 1, 2 | 16 |
+| `sweep_s14_ms_5.sh` | 1-GPU | C | E1–E6, L0, F1 (low-t + sym + falsifier) | 1, 2 | 16 |
+| `sweep_s14_ms_6.sh` | 1-GPU | C | L1–L8 (asymmetric core) | 1, 2 | 16 |
 
 Concrete run order inside each script is finalized in the implementation plan.
 
 Per-script structure: inherit the `run_cell` loop from `sweep_s13_ms_N.sh` — OK/CRASHED tallies, per-cell log redirect, timestamped run names, wandb tags.
 
-**Wallclock.** 10 cells × ~1 hr / stream = ~10 hr per stream, all six streams in parallel ≈ 10 hr total.
+**Wallclock.** 16 cells × ~1 hr / stream = ~16 hr per stream, all six streams in parallel ≈ 16 hr total.
 
 **Launch doc.** `S14_MS_LAUNCH.md` with six shell commands, GPU assignments, screen/tmux session names, wandb filter URL, and the pre-launch checklist (P1–P3 completed).
 
@@ -282,7 +309,7 @@ Per-script structure: inherit the `run_cell` loop from `sweep_s13_ms_N.sh` — O
 
 - **Lag window too narrow/wide.** ±50 ms may clip real lags at the highest-fs anchor-A cells; too wide lets the metric match unrelated bumps. Mitigation: inspect s13 backfill output — if >5% of phase_lag values saturate at ±20 steps, widen window and rerun backfill before s14 launch.
 - **Sign convention bugs.** `phase_lag_steps` positive-means-sim-leads must be consistently implemented and documented; wrong sign inverts the winner definition. Mitigation: unit test P2.
-- **Shoulder-muscle imbalance.** Setting `fs_shoulder=1.3` uniformly across anchors A/B/C (each with different damping) may not be that anchor's best-R operating point. In s13, at fs=1.3, anchor A had R=415–438, B had R=440, C had R=413–431 — all ≥ 400, so the risk is small, but cells that underperform on R may be fs_shoulder-limited rather than ratio-limited. If s14 seed 1 at L0 (symmetric elbow, fs_shoulder=1.3) regresses below R=400 at any anchor, that anchor's fs_shoulder is wrong; pause that anchor's remaining runs and re-pick fs_shoulder.
+- **Shoulder-muscle imbalance.** Setting `fs_shoulder=1.3` uniformly across anchors A and C may not be each anchor's best-R operating point. In s13, at fs=1.3, anchor A had R=415–438 and anchor C had R=413–431 — both ≥ 400, so the risk is small, but cells that underperform on R may be fs_shoulder-limited rather than ratio-limited. If s14 seed 1 at L0 (symmetric elbow, fs_shoulder=1.3) regresses below R=400 at either anchor, that anchor's fs_shoulder is wrong; pause that anchor's remaining runs and re-pick fs_shoulder. The coupled cell C6 (1.3, 1.3) is equivalent to s13 anchor-X fs=1.3; a sanity check that C6's R lands in s13's range gives early confirmation that the new eval pipeline reproduces s13.
 - **Per-muscle override ÷ fs_shoulder rounding.** `0.1 * b_eff / fs_shoulder` must be computed in the shell script to float precision; rounding errors silently change effective force. Mitigation: compute via `python3 -c "print(0.1 * $B_EFF / $FS_S)"` in the launch script and echo the value so the log captures exact args.
 - **Reverse falsifier F1 interpretation ambiguity.** If F1 produces any bcorr drop but no tcorr change, that's a null result for the falsifier, not a confirmation. Mitigation: pre-registered interpretation rule — F1 "falsifies" only if tcorr is ≥ L4's tcorr within ±0.05.
 
