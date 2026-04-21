@@ -189,20 +189,22 @@ Uniform `fs_shoulder=1.3` across anchors keeps the shoulder-muscle operating poi
 
 ## Ratio ladder
 
-10 cells per anchor — 9 asymmetric cells spanning the "both-high, biceps-ahead" region plus 1 reverse-ratio falsifier.
+10 cells per anchor — 1 symmetric baseline + 8 asymmetric "biceps-ahead, both-high" cells + 1 reverse-ratio falsifier. All `t_eff ≥ 1.0`: we have **no direct evidence** that `t_eff < 1.0` with shoulder at fs=1.3 helps triceps (s10's low-fs shape-king regime had *everything* at low fs, not just triceps; we'd expect the reach dynamics to break if shoulder is fast but triceps can't keep up with extension).
 
 | # | t_eff | b_eff | gap | rationale |
 |---|---|---|---|---|
 | L0 | 1.0 | 1.0 | 0.0 | symmetric elbow baseline at fs_shoulder=1.3 (no s13 analog — s13 always synchronized shoulder+elbow) |
-| L1 | 0.7 | 1.0 | 0.3 | wide gap; triceps in s10 shape-king regime, biceps at s12 peak |
-| L2 | 0.9 | 1.2 | 0.3 | moderate both, biceps ahead |
-| L3 | 1.0 | 1.2 | 0.2 | both high, gap 0.2 |
-| L4 | 1.0 | 1.3 | 0.3 | both high, gap 0.3 (central prediction) |
-| L5 | 1.0 | 1.4 | 0.4 | both high, gap 0.4 |
-| L6 | 1.1 | 1.3 | 0.2 | both higher, gap 0.2 |
-| L7 | 1.1 | 1.4 | 0.3 | both higher, gap 0.3 |
-| L8 | 1.2 | 1.5 | 0.3 | top regime |
+| L1 | 1.0 | 1.1 | 0.1 | smallest gap — sensitivity to tiny asymmetry |
+| L2 | 1.0 | 1.2 | 0.2 | gap 0.2 at triceps floor |
+| L3 | 1.0 | 1.3 | 0.3 | gap 0.3 at triceps floor (central prediction) |
+| L4 | 1.0 | 1.4 | 0.4 | gap 0.4 at triceps floor |
+| L5 | 1.1 | 1.3 | 0.2 | raised triceps floor, gap 0.2 |
+| L6 | 1.1 | 1.4 | 0.3 | raised triceps floor, gap 0.3 |
+| L7 | 1.2 | 1.4 | 0.2 | higher floor both, gap 0.2 |
+| L8 | 1.2 | 1.5 | 0.3 | top regime, gap 0.3 |
 | F1 | 1.3 | 1.0 | −0.3 | **reverse ratio (falsifier)** — if this improves tcorr too, mechanism is wrong |
+
+The ladder densely samples (t=1.0, b ∈ {1.0, 1.1, 1.2, 1.3, 1.4}) as the primary 1D slice through the hypothesis (fix triceps at the shape-king-at-high-shoulder-fs floor, vary biceps). L5–L8 probe whether raising the triceps floor above 1.0 pays off on reward without losing the tcorr gain. F1 falsifies.
 
 **Seeds.** 2 seeds per cell (not 1) because s13 showed ±0.3 bcorr seed-variance at some anchor-C cells; a 1-seed readout is not robust enough to distinguish real effects from seed noise at the ratio scale we're testing.
 
