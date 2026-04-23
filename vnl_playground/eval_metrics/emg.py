@@ -73,3 +73,52 @@ def compute_lag_metrics(sim_mean, bio_mean, ctrl_dt_ms: float = 2.5,
         "lagged_corr_at_pos5": _at(+5),
         "lagged_corr_fwhm_steps": fwhm_steps,
     }
+
+
+def compute_per_trial_metrics(sim_muscle, bio_traces, ctrl_dt_ms: float = 2.5,
+                              lag_range_steps: int = LAG_RANGE_STEPS_DEFAULT) -> dict:
+    """Per-trial Pearson r, per-trial MAE, and per-trial lag summary.
+
+    sim_muscle: (n_sim, T). bio_traces: (n_bio, T). Aligns first min(n_sim, n_bio)
+    pairs. Trials with zero variance in either trace are skipped in corr / lag
+    statistics but still contribute to MAE.
+    """
+    sim_muscle = np.asarray(sim_muscle, dtype=np.float64)
+    bio_traces = np.asarray(bio_traces, dtype=np.float64)
+    n = min(sim_muscle.shape[0], bio_traces.shape[0])
+    T = min(sim_muscle.shape[1], bio_traces.shape[1])
+    sim = sim_muscle[:n, :T]
+    bio = bio_traces[:n, :T]
+
+    trial_corrs = []
+    trial_maes = []
+    per_trial_lagged_corrs = []
+    per_trial_lags_steps = []
+    for i in range(n):
+        s, b = sim[i], bio[i]
+        trial_maes.append(float(np.mean(np.abs(s - b))))
+        if s.std() > 0 and b.std() > 0:
+            r = np.corrcoef(s, b)[0, 1]
+            if np.isfinite(r):
+                trial_corrs.append(float(r))
+            lag_m = compute_lag_metrics(s, b, ctrl_dt_ms=ctrl_dt_ms,
+                                        lag_range_steps=lag_range_steps)
+            if np.isfinite(lag_m["lagged_corr_max"]):
+                per_trial_lagged_corrs.append(lag_m["lagged_corr_max"])
+                per_trial_lags_steps.append(lag_m["phase_lag_steps"])
+
+    def _mean(xs):
+        return float(np.mean(xs)) if xs else float("nan")
+
+    def _median(xs):
+        return float(np.median(xs)) if xs else float("nan")
+
+    return {
+        "trial_corr_mean": _mean(trial_corrs),
+        "trial_corr_median": _median(trial_corrs),
+        "trial_mae": _mean(trial_maes),
+        "per_trial_lagged_corr_mean": _mean(per_trial_lagged_corrs),
+        "per_trial_lagged_corr_median": _median(per_trial_lagged_corrs),
+        "per_trial_phase_lag_mean_ms": float(np.mean(per_trial_lags_steps) * ctrl_dt_ms) if per_trial_lags_steps else float("nan"),
+        "per_trial_phase_lag_std_ms": float(np.std(per_trial_lags_steps) * ctrl_dt_ms) if per_trial_lags_steps else float("nan"),
+    }
