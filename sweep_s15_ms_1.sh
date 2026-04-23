@@ -25,7 +25,7 @@ BASE_ARGS=(
     --bodies-pos-weight 0.1
     --num-timesteps 800000000
     --num-evals 8
-    --emg-norm-percentile 100
+    --emg-norm-percentile 98
     --wandb-group "${WANDB_GROUP}"
 )
 
@@ -67,31 +67,31 @@ run_cell() {
 run_cell "A1-baselineA" \
     --force-scale 1.1 --joint-damping 9e-7 --shoulder-damping 9e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates A1 baselineA seed1 p100
+    --wandb-tags s15-ms candidates A1 baselineA seed1 p98clip
 
 # Cell 2 — R1 bursty  (cc=0, cdc=0.05 — allow sharp triceps bursts)
 run_cell "R1-bursty" \
     --force-scale 1.1 --joint-damping 9e-7 --shoulder-damping 9e-7 \
     --control-cost 0.0 --control-diff-cost 0.05 --seed 1 \
-    --wandb-tags s15-ms candidates R1 bursty seed1 p100
+    --wandb-tags s15-ms candidates R1 bursty seed1 p98clip
 
 # Cell 3 — F5 fs1p05_d8e7  (dense goldilocks fill)
 run_cell "F5-fs1p05_d8e7" \
     --force-scale 1.05 --joint-damping 8e-7 --shoulder-damping 8e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates F5 fs1p05_d8e7 seed1 p100
+    --wandb-tags s15-ms candidates F5 fs1p05_d8e7 seed1 p98clip
 
 # Cell 4 — S5 shWeak_fs1p2  (shoulder decouple at fs=1.2, budget permitting)
 run_cell "S5-shWeak_fs1p2" \
     --force-scale 1.2 --joint-damping 1e-6 --shoulder-damping 4e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates S5 shWeak_fs1p2 seed1 p100
+    --wandb-tags s15-ms candidates S5 shWeak_fs1p2 seed1 p98clip
 
 # Cell 5 — A5 anchorCstrong  (higher-damping anchor-C variant, budget permitting)
 run_cell "A5-anchorCstrong" \
     --force-scale 1.2 --joint-damping 1.2e-6 --shoulder-damping 1.2e-6 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates A5 anchorCstrong seed1 p100
+    --wandb-tags s15-ms candidates A5 anchorCstrong seed1 p98clip
 
 echo "================================================================"
 echo "=== S15-MS part 1/6 complete ==="

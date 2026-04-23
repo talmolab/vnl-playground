@@ -23,7 +23,7 @@ BASE_ARGS=(
     --bodies-pos-weight 0.1
     --num-timesteps 800000000
     --num-evals 8
-    --emg-norm-percentile 100
+    --emg-norm-percentile 98
     --wandb-group "${WANDB_GROUP}"
 )
 
@@ -65,31 +65,31 @@ run_cell() {
 run_cell "A2-anchorCfs1p2" \
     --force-scale 1.2 --joint-damping 1e-6 --shoulder-damping 1e-6 \
     --control-cost 0.035 --control-diff-cost 0.0 --seed 1 \
-    --wandb-tags s15-ms candidates A2 anchorCfs1p2 seed1 p100
+    --wandb-tags s15-ms candidates A2 anchorCfs1p2 seed1 p98clip
 
 # Cell 2 — F6 fs1p15_d9e7  (dense mid-point fs=1.15)
 run_cell "F6-fs1p15_d9e7" \
     --force-scale 1.15 --joint-damping 9e-7 --shoulder-damping 9e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates F6 fs1p15_d9e7 seed1 p100
+    --wandb-tags s15-ms candidates F6 fs1p15_d9e7 seed1 p98clip
 
 # Cell 3 — R5 lightPenalty  (cc=0.01, cdc=0.02 — mild reward shaping)
 run_cell "R5-lightPenalty" \
     --force-scale 1.1 --joint-damping 9e-7 --shoulder-damping 9e-7 \
     --control-cost 0.01 --control-diff-cost 0.02 --seed 1 \
-    --wandb-tags s15-ms candidates R5 lightPenalty seed1 p100
+    --wandb-tags s15-ms candidates R5 lightPenalty seed1 p98clip
 
 # Cell 4 — S2 shMid6e7  (shoulder=6e-7, intermediate decouple)
 run_cell "S2-shMid6e7" \
     --force-scale 1.1 --joint-damping 9e-7 --shoulder-damping 6e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates S2 shMid6e7 seed1 p100
+    --wandb-tags s15-ms candidates S2 shMid6e7 seed1 p98clip
 
 # Cell 5 — F4 fs0p9_d6e7  (lower fs + lower damping)
 run_cell "F4-fs0p9_d6e7" \
     --force-scale 0.9 --joint-damping 6e-7 --shoulder-damping 6e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates F4 fs0p9_d6e7 seed1 p100
+    --wandb-tags s15-ms candidates F4 fs0p9_d6e7 seed1 p98clip
 
 echo "================================================================"
 echo "=== S15-MS part 3/6 complete ==="

@@ -83,9 +83,12 @@ def parse_args():
                    help="Override walker XML path (for testing XML variants)")
     p.add_argument("--latent-size", type=int, default=4,
                    help="Latent size for IntentionPolicy (default: 4)")
-    p.add_argument("--emg-norm-percentile", type=float, default=100.0,
-                   help="Percentile for reference EMG normalization. 100 matches s15 trainer default; "
-                        "use 98 to reproduce pre-s15 metrics.")
+    p.add_argument("--emg-norm-percentile", type=float, default=98.0,
+                   help="Percentile for reference EMG normalization "
+                        "(arr / np.percentile(arr, P), then clipped to [0,1]). "
+                        "Default 98 preserves dynamic range and plateaus top 2% at 1.0 "
+                        "to match MuJoCo's Hill activation ceiling. Use 100 to probe "
+                        "the compressed (no-plateau) variant.")
     p.add_argument("--output-json", type=str, default=None,
                    help="If set, write metrics_by_muscle as JSON to this path (for s15 Stage 2 aggregation).")
     return p.parse_args()
@@ -169,7 +172,9 @@ def process_emg_data(emg_file_path, valid_trials_df, n_clips, target_samples=TAR
         return None
 
     arr = np.array(envelopes)
-    return arr / np.percentile(arr, percentile)
+    # Divide by per-muscle percentile for dynamic range, then clip to [0,1]
+    # so the reference saturates at the same ceiling as MuJoCo's Hill activation.
+    return np.clip(arr / np.percentile(arr, percentile), 0.0, 1.0)
 
 
 def process_sim_actions(ctrl, target_timesteps=TARGET_TIMESTEPS):

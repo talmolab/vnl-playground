@@ -1,7 +1,7 @@
 # S15-MS Launch Commands
 
 **30 runs** across **6 scripts**, **6 GPUs**, organized as 2× 2-GPU jobs + 2× 1-GPU jobs.
-All cells use the moving-shoulder XML (`mouse_forelimb_right_moving_shoulder_ik.xml`, trainer default) and the new EMG metric pipeline (`--emg-norm-percentile 100`, `lagged_corr_max`, `phase_lag_ms`, per-trial corr, edge-saturation flag, all logged every eval cycle).
+All cells use the moving-shoulder XML (`mouse_forelimb_right_moving_shoulder_ik.xml`, trainer default) and the new EMG metric pipeline: **reference normalized as `arr / p98(arr)` then clipped to [0, 1]** so the bio reference saturates at the same 1.0 ceiling as MuJoCo's Hill-model activation (`--emg-norm-percentile 98`). Full 17-metric EMG set logged every eval cycle (`lagged_corr_max`, `phase_lag_ms`, `lagged_corr_edge_saturated`, `trial_corr_mean`, per-trial lag mean/std, etc.).
 
 **Design:** 30 hypothesis-driven parameter combos across 5 groups (anchors, shoulder-decoupling, reward-shaping, fs×damping fills, interactions). Each GPU runs 5 candidates single-seed; priority-ordered so the first 3 complete at ~10.5 h and the 4th/5th run budget-permitting (default `BUDGET_HOURS=12`, `ESTIMATED_RUN_SECONDS=12600`). Full rationale in `docs/superpowers/specs/2026-04-23-s15-ms-design.md` and `docs/superpowers/specs/2026-04-23-s15-ms-thinking.md`.
 
@@ -16,7 +16,7 @@ All Stage 1 infra is already merged on `eric/janelia` (commits `5cc0553` through
 
 No additional prerequisites.
 
-## Interactive Job 1 — 2 GPUs
+## Interactive Job 1 — 2 GPUs ericmmimic2
 
 ```bash
 cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=0 nohup bash sweep_s15_ms_1.sh > /tmp/sweep_s15_ms_1_master.log 2>&1 &
@@ -26,7 +26,7 @@ cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=0 nohup bash sweep_s15
 cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=1 nohup bash sweep_s15_ms_2.sh > /tmp/sweep_s15_ms_2_master.log 2>&1 &
 ```
 
-## Interactive Job 2 — 2 GPUs
+## Interactive Job 2 — 2 GPUs vastlrn
 
 ```bash
 cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=0 nohup bash sweep_s15_ms_3.sh > /tmp/sweep_s15_ms_3_master.log 2>&1 &

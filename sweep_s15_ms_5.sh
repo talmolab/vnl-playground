@@ -23,7 +23,7 @@ BASE_ARGS=(
     --bodies-pos-weight 0.1
     --num-timesteps 800000000
     --num-evals 8
-    --emg-norm-percentile 100
+    --emg-norm-percentile 98
     --wandb-group "${WANDB_GROUP}"
 )
 
@@ -65,31 +65,31 @@ run_cell() {
 run_cell "A4-anchorAmid" \
     --force-scale 1.1 --joint-damping 7e-7 --shoulder-damping 7e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates A4 anchorAmid seed1 p100
+    --wandb-tags s15-ms candidates A4 anchorAmid seed1 p98clip
 
 # Cell 2 — I2 interpAC_asym  (between A and C + asymmetric shoulder)
 run_cell "I2-interpAC_asym" \
     --force-scale 1.2 --joint-damping 1e-6 --shoulder-damping 5e-7 \
     --control-cost 0.03 --control-diff-cost 0.0125 --seed 1 \
-    --wandb-tags s15-ms candidates I2 interpAC_asym seed1 p100
+    --wandb-tags s15-ms candidates I2 interpAC_asym seed1 p98clip
 
 # Cell 3 — S6 shWeak_fs1p3  (weak shoulder at fs=1.3)
 run_cell "S6-shWeak_fs1p3" \
     --force-scale 1.3 --joint-damping 1e-6 --shoulder-damping 5e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates S6 shWeak_fs1p3 seed1 p100
+    --wandb-tags s15-ms candidates S6 shWeak_fs1p3 seed1 p98clip
 
 # Cell 4 — F7 fs1p25_d1p1  (dense fs=1.25 fill)
 run_cell "F7-fs1p25_d1p1" \
     --force-scale 1.25 --joint-damping 1.1e-6 --shoulder-damping 1.1e-6 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates F7 fs1p25_d1p1 seed1 p100
+    --wandb-tags s15-ms candidates F7 fs1p25_d1p1 seed1 p98clip
 
 # Cell 5 — R3 s11style  (cc=0.05, cdc=0.1 — full s11 reward shaping)
 run_cell "R3-s11style" \
     --force-scale 1.1 --joint-damping 9e-7 --shoulder-damping 9e-7 \
     --control-cost 0.05 --control-diff-cost 0.1 --seed 1 \
-    --wandb-tags s15-ms candidates R3 s11style seed1 p100
+    --wandb-tags s15-ms candidates R3 s11style seed1 p98clip
 
 echo "================================================================"
 echo "=== S15-MS part 5/6 complete ==="

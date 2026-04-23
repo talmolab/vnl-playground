@@ -23,7 +23,7 @@ BASE_ARGS=(
     --bodies-pos-weight 0.1
     --num-timesteps 800000000
     --num-evals 8
-    --emg-norm-percentile 100
+    --emg-norm-percentile 98
     --wandb-group "${WANDB_GROUP}"
 )
 
@@ -65,31 +65,31 @@ run_cell() {
 run_cell "S3-elbowStrong" \
     --force-scale 1.1 --joint-damping 1.5e-6 --shoulder-damping 6e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates S3 elbowStrong seed1 p100
+    --wandb-tags s15-ms candidates S3 elbowStrong seed1 p98clip
 
 # Cell 2 — F8 fs1p4_d1p2  (high-reward fs region at stronger damping)
 run_cell "F8-fs1p4_d1p2" \
     --force-scale 1.4 --joint-damping 1.2e-6 --shoulder-damping 1.2e-6 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates F8 fs1p4_d1p2 seed1 p100
+    --wandb-tags s15-ms candidates F8 fs1p4_d1p2 seed1 p98clip
 
 # Cell 3 — I4 slow_weakSh  (slow arm dynamics + weak shoulder)
 run_cell "I4-slow_weakSh" \
     --force-scale 1.0 --joint-damping 1.2e-6 --shoulder-damping 5e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates I4 slow_weakSh seed1 p100
+    --wandb-tags s15-ms candidates I4 slow_weakSh seed1 p98clip
 
 # Cell 4 — R4 noPenalty  (cc=0, cdc=0 — no reward shaping at all)
 run_cell "R4-noPenalty" \
     --force-scale 1.1 --joint-damping 9e-7 --shoulder-damping 9e-7 \
     --control-cost 0.0 --control-diff-cost 0.0 --seed 1 \
-    --wandb-tags s15-ms candidates R4 noPenalty seed1 p100
+    --wandb-tags s15-ms candidates R4 noPenalty seed1 p98clip
 
 # Cell 5 — I5 weakSh_mildBurst  (weak shoulder + mild bursty reward)
 run_cell "I5-weakSh_mildBurst" \
     --force-scale 1.1 --joint-damping 9e-7 --shoulder-damping 5e-7 \
     --control-cost 0.0 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates I5 weakSh_mildBurst seed1 p100
+    --wandb-tags s15-ms candidates I5 weakSh_mildBurst seed1 p98clip
 
 echo "================================================================"
 echo "=== S15-MS part 6/6 complete ==="

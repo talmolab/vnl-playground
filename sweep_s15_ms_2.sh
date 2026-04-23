@@ -23,7 +23,7 @@ BASE_ARGS=(
     --bodies-pos-weight 0.1
     --num-timesteps 800000000
     --num-evals 8
-    --emg-norm-percentile 100
+    --emg-norm-percentile 98
     --wandb-group "${WANDB_GROUP}"
 )
 
@@ -65,31 +65,31 @@ run_cell() {
 run_cell "S1-shWeak3e7" \
     --force-scale 1.1 --joint-damping 9e-7 --shoulder-damping 3e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates S1 shWeak3e7 seed1 p100
+    --wandb-tags s15-ms candidates S1 shWeak3e7 seed1 p98clip
 
 # Cell 2 — F2 fs1p2_d9e7  (fs=1.2 at anchor-A damping)
 run_cell "F2-fs1p2_d9e7" \
     --force-scale 1.2 --joint-damping 9e-7 --shoulder-damping 9e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates F2 fs1p2_d9e7 seed1 p100
+    --wandb-tags s15-ms candidates F2 fs1p2_d9e7 seed1 p98clip
 
 # Cell 3 — R2 smoothOnly  (cc=0.05, cdc=0 — only action magnitude penalty)
 run_cell "R2-smoothOnly" \
     --force-scale 1.1 --joint-damping 9e-7 --shoulder-damping 9e-7 \
     --control-cost 0.05 --control-diff-cost 0.0 --seed 1 \
-    --wandb-tags s15-ms candidates R2 smoothOnly seed1 p100
+    --wandb-tags s15-ms candidates R2 smoothOnly seed1 p98clip
 
 # Cell 4 — I3 fs1p3_weakSh  (high fs + weak shoulder)
 run_cell "I3-fs1p3_weakSh" \
     --force-scale 1.3 --joint-damping 9e-7 --shoulder-damping 4e-7 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates I3 fs1p3_weakSh seed1 p100
+    --wandb-tags s15-ms candidates I3 fs1p3_weakSh seed1 p98clip
 
 # Cell 5 — F1 fs1p0_d1p2  (slow arm at fs=1.0)
 run_cell "F1-fs1p0_d1p2" \
     --force-scale 1.0 --joint-damping 1.2e-6 --shoulder-damping 1.2e-6 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates F1 fs1p0_d1p2 seed1 p100
+    --wandb-tags s15-ms candidates F1 fs1p0_d1p2 seed1 p98clip
 
 echo "================================================================"
 echo "=== S15-MS part 2/6 complete ==="

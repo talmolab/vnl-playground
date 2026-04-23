@@ -142,7 +142,12 @@ def load_emg_reference(n_clips, target_timesteps, clip_start_frame=0,
 
         if envelopes:
             arr = np.array(envelopes)
-            emg_by_muscle[muscle_name] = arr / np.percentile(arr, norm_percentile)
+            # Divide by per-muscle dataset percentile for dynamic range, then
+            # clip to [0,1] so the reference saturates at the same ceiling as
+            # MuJoCo's Hill-model activation. With percentile=98 the top 2% of
+            # samples plateau at 1.0 — the same behavior as sim act[...].
+            emg_by_muscle[muscle_name] = np.clip(
+                arr / np.percentile(arr, norm_percentile), 0.0, 1.0)
 
     if not emg_by_muscle:
         return None
@@ -398,10 +403,13 @@ def parse_args():
     p.add_argument("--triceps-long-tau-deact", type=float, default=None)
     p.add_argument("--triceps-lat-tau-act", type=float, default=None)
     p.add_argument("--triceps-lat-tau-deact", type=float, default=None)
-    p.add_argument("--emg-norm-percentile", type=float, default=100.0,
-                   help="Percentile used to normalize reference EMG envelopes (arr / np.percentile(arr, P)). "
-                        "Default 100 (true max) ensures no reference sample exceeds 1.0 pre-clip. "
-                        "Pre-s15 default was 98 — use 98.0 to reproduce old metrics.")
+    p.add_argument("--emg-norm-percentile", type=float, default=98.0,
+                   help="Percentile used to normalize reference EMG envelopes "
+                        "(arr / np.percentile(arr, P), then clipped to [0,1]). "
+                        "Default 98 preserves dynamic range for the typical burst "
+                        "and plateaus the top 2% at 1.0, matching MuJoCo's Hill-model "
+                        "activation ceiling. Use 100 to probe the signal without any "
+                        "plateau (reference compressed below 1.0).")
 
     # Timestep overrides
     p.add_argument("--ctrl-dt", type=float, default=None,

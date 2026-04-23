@@ -23,7 +23,7 @@ BASE_ARGS=(
     --bodies-pos-weight 0.1
     --num-timesteps 800000000
     --num-evals 8
-    --emg-norm-percentile 100
+    --emg-norm-percentile 98
     --wandb-group "${WANDB_GROUP}"
 )
 
@@ -65,31 +65,31 @@ run_cell() {
 run_cell "I1-weakSh_bursty" \
     --force-scale 1.1 --joint-damping 9e-7 --shoulder-damping 3e-7 \
     --control-cost 0.0 --control-diff-cost 0.05 --seed 1 \
-    --wandb-tags s15-ms candidates I1 weakSh_bursty seed1 p100
+    --wandb-tags s15-ms candidates I1 weakSh_bursty seed1 p98clip
 
 # Cell 2 — F3 fs1p3_d1p2  (fs=1.3 at higher damping)
 run_cell "F3-fs1p3_d1p2" \
     --force-scale 1.3 --joint-damping 1.2e-6 --shoulder-damping 1.2e-6 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates F3 fs1p3_d1p2 seed1 p100
+    --wandb-tags s15-ms candidates F3 fs1p3_d1p2 seed1 p98clip
 
 # Cell 3 — S4 shStrong  (shoulder stiffer than elbow — reverse of S1)
 run_cell "S4-shStrong" \
     --force-scale 1.1 --joint-damping 6e-7 --shoulder-damping 1.5e-6 \
     --control-cost 0.025 --control-diff-cost 0.025 --seed 1 \
-    --wandb-tags s15-ms candidates S4 shStrong seed1 p100
+    --wandb-tags s15-ms candidates S4 shStrong seed1 p98clip
 
 # Cell 4 — R6 mildBursty  (cc=0.015, cdc=0.035 — between bursty and default)
 run_cell "R6-mildBursty" \
     --force-scale 1.1 --joint-damping 9e-7 --shoulder-damping 9e-7 \
     --control-cost 0.015 --control-diff-cost 0.035 --seed 1 \
-    --wandb-tags s15-ms candidates R6 mildBursty seed1 p100
+    --wandb-tags s15-ms candidates R6 mildBursty seed1 p98clip
 
 # Cell 5 — A3 s11goldilocks  (s11 d5em7 fs1p0 reference)
 run_cell "A3-s11goldilocks" \
     --force-scale 1.0 --joint-damping 5e-7 --shoulder-damping 5e-7 \
     --control-cost 0.05 --control-diff-cost 0.1 --seed 1 \
-    --wandb-tags s15-ms candidates A3 s11goldilocks seed1 p100
+    --wandb-tags s15-ms candidates A3 s11goldilocks seed1 p98clip
 
 echo "================================================================"
 echo "=== S15-MS part 4/6 complete ==="
