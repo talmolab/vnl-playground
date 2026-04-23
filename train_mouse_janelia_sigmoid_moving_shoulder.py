@@ -88,8 +88,14 @@ EMG_DURATION_MS = 250
 EMG_CTRL_DT = 0.0025
 
 
-def load_emg_reference(n_clips, target_timesteps):
-    """Pre-process biological EMG data. Called once at startup."""
+def load_emg_reference(n_clips, target_timesteps, clip_start_frame=0,
+                       norm_percentile: float = 100.0):
+    """Pre-process biological EMG data. Called once at startup.
+
+    clip_start_frame: the in-clip mocap-frame index (200 Hz) where the sim
+    rollout begins. Shifts the bio EMG window by the same amount so bio and
+    sim are time-aligned. Default 0 preserves the legacy behavior.
+    """
     try:
         trial_info = pd.read_csv(TRIAL_CSV)
         valid_mask = ~((trial_info["start"] == 0) & (trial_info["end"] == 0))
@@ -113,7 +119,7 @@ def load_emg_reference(n_clips, target_timesteps):
         for i, (idx, row) in enumerate(valid_trials.iterrows()):
             if i >= n_clips:
                 break
-            emg_start = int(1 / 200 * row["start"] * 30000)
+            emg_start = int(1 / 200 * (row["start"] + clip_start_frame) * 30000)
             emg_end = emg_start + emg_duration_samples
             if idx >= len(emg_data) or emg_start >= 90000 or emg_end > 90000:
                 continue
@@ -135,7 +141,7 @@ def load_emg_reference(n_clips, target_timesteps):
 
         if envelopes:
             arr = np.array(envelopes)
-            emg_by_muscle[muscle_name] = arr / np.percentile(arr, 98)
+            emg_by_muscle[muscle_name] = arr / np.percentile(arr, norm_percentile)
 
     if not emg_by_muscle:
         return None
@@ -408,6 +414,19 @@ def parse_args():
                    help="Override muscle activation time constant (sec) for all muscles")
     p.add_argument("--muscle-tau-deact", type=float, default=None,
                    help="Override muscle deactivation time constant (sec) for all muscles")
+    # Per-muscle tau overrides (override global --muscle-tau-* for the named actuator only)
+    p.add_argument("--biceps-tau-act", type=float, default=None)
+    p.add_argument("--biceps-tau-deact", type=float, default=None)
+    p.add_argument("--brachialis-tau-act", type=float, default=None)
+    p.add_argument("--brachialis-tau-deact", type=float, default=None)
+    p.add_argument("--triceps-long-tau-act", type=float, default=None)
+    p.add_argument("--triceps-long-tau-deact", type=float, default=None)
+    p.add_argument("--triceps-lat-tau-act", type=float, default=None)
+    p.add_argument("--triceps-lat-tau-deact", type=float, default=None)
+    p.add_argument("--emg-norm-percentile", type=float, default=100.0,
+                   help="Percentile used to normalize reference EMG envelopes (arr / np.percentile(arr, P)). "
+                        "Default 100 (true max) ensures no reference sample exceeds 1.0 pre-clip. "
+                        "Pre-s15 default was 98 — use 98.0 to reproduce old metrics.")
 
     # Timestep overrides
     p.add_argument("--ctrl-dt", type=float, default=None,
@@ -737,11 +756,14 @@ env_cfg.end_effector = "wrist"
 env_cfg.recompute_kinematics = False  # IK from same kinematic chain as sim model
 env_cfg.ik_driven_dims = 3
 
-# S9 best-frontier winner: d9em7-fs0p4 (reward=106, tc=0.87, bc=0.71,
-# trip_trial_mae=0.22, bic_trial_mae=0.33). See janelia_progress notes.
-env_cfg.joint_damping = 9e-7
+# S9-redo (moving-shoulder) best-frontier winner: d8em7-fs1p0
+# (reward=403, triceps_corr=0.77, biceps_corr=0.48, trip_trial_mae=0.16,
+#  bic_trial_mae=0.23 at clip_length=50, episode_length=100, ref_length=2).
+# Pattern across the redo: fs=1.0 dominates on reward at every damping;
+# fs<=0.4 caps reward near 100 with no EMG benefit worth the trade.
+env_cfg.joint_damping = 8e-7
 env_cfg.joint_armature = 4e-10
-env_cfg.force_scale = 0.3
+env_cfg.force_scale = 1.0
 
 # Reward defaults matching S9 winners (cc=0.05, cdc=0.1 — the cdc=0.1 weight
 # is load-bearing for EMG quality; every historical run with tc+bc>1.2 used it).
@@ -775,6 +797,22 @@ if args.muscle_tau_act is not None:
     env_cfg.muscle_tau_act = args.muscle_tau_act
 if args.muscle_tau_deact is not None:
     env_cfg.muscle_tau_deact = args.muscle_tau_deact
+if args.biceps_tau_act is not None:
+    env_cfg.biceps_tau_act = args.biceps_tau_act
+if args.biceps_tau_deact is not None:
+    env_cfg.biceps_tau_deact = args.biceps_tau_deact
+if args.brachialis_tau_act is not None:
+    env_cfg.brachialis_tau_act = args.brachialis_tau_act
+if args.brachialis_tau_deact is not None:
+    env_cfg.brachialis_tau_deact = args.brachialis_tau_deact
+if args.triceps_long_tau_act is not None:
+    env_cfg.triceps_long_tau_act = args.triceps_long_tau_act
+if args.triceps_long_tau_deact is not None:
+    env_cfg.triceps_long_tau_deact = args.triceps_long_tau_deact
+if args.triceps_lat_tau_act is not None:
+    env_cfg.triceps_lat_tau_act = args.triceps_lat_tau_act
+if args.triceps_lat_tau_deact is not None:
+    env_cfg.triceps_lat_tau_deact = args.triceps_lat_tau_deact
 if args.ctrl_dt is not None:
     env_cfg.ctrl_dt = args.ctrl_dt
 if args.sim_dt is not None:
@@ -1469,7 +1507,12 @@ if __name__ == "__main__":
 
     # Pre-process biological EMG (static, done once)
     print("Loading biological EMG reference data...")
-    emg_reference = load_emg_reference(n_emg_clips, emg_target_timesteps)
+    emg_reference = load_emg_reference(
+        n_emg_clips,
+        emg_target_timesteps,
+        clip_start_frame=int(env_cfg.start_frame_range[0]),
+        norm_percentile=args.emg_norm_percentile,
+    )
 
     @jax.jit
     def jit_emg_rollout(policy_params, normalizer_params, rng):
@@ -1482,9 +1525,11 @@ if __name__ == "__main__":
         signal with the bio EMG temporally for honest comparison.
         """
 
+        emg_start_frame = int(env_cfg.start_frame_range[0])
+
         def single_clip(clip_idx):
             clip_rng = jax.random.fold_in(rng, clip_idx)
-            state = emg_env.reset(clip_rng, clip_idx=clip_idx, start_frame=0)
+            state = emg_env.reset(clip_rng, clip_idx=clip_idx, start_frame=emg_start_frame)
             state = state.replace(obs=flatten_obs(state.obs))
 
             def step_fn(carry, _):
@@ -1512,7 +1557,11 @@ if __name__ == "__main__":
         return all_actions  # (n_clips, T, act_size)
 
     n_joints = proprio_size // 2  # qpos + qvel
-    joint_labels = ["sh_elv", "sh_ext", "sh_rot", "elbow"][:n_joints]
+    # Moving-shoulder xml qpos order: sh_tx, sh_ty, sh_tz (IK-driven),
+    # then sh_rotation, sh_extension, sh_elv (humerus hinges), then elbow.
+    joint_labels = (
+        ["sh_tx", "sh_ty", "sh_tz", "sh_rot", "sh_ext", "sh_elv", "elbow"][:n_joints]
+    )
     muscle_labels = [
         "Pec_C", "Lat", "AD", "PD", "MD",
         "Tri_Lat", "Tri_Long", "Brach", "Bic_Long",
