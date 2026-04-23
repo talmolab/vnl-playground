@@ -11,17 +11,11 @@ import numpy as np
 LAG_RANGE_STEPS_DEFAULT = 20  # ±20 steps × ctrl-dt = ±50 ms at ctrl_dt=2.5 ms
 
 
-def compute_lag_metrics(sim_mean, bio_mean, ctrl_dt_ms: float = 2.5,
-                        lag_range_steps: int = LAG_RANGE_STEPS_DEFAULT) -> dict:
-    """Cross-correlation with lag over ±lag_range_steps steps.
+def _lag_scan(sim_mean, bio_mean, lag_range_steps):
+    """Return (best_r, best_lag, corrs, lags). Shared by compute_lag_metrics and
+    compute_per_trial_metrics. No ms conversion, no dict building — pure math.
 
-    Takes 1-D sim_mean and bio_mean (trial-averaged traces). Returns dict with:
-      lagged_corr_max, phase_lag_steps, phase_lag_ms,
-      lagged_corr_at_0, lagged_corr_at_neg5, lagged_corr_at_pos5,
-      lagged_corr_fwhm_steps.
-
-    Positive phase_lag_steps means sim leads bio by that many steps (i.e., the
-    best match is at bio[lag:] vs sim[:-lag]).
+    Returns (nan, 0, corrs_all_nan, lags) if every slice was zero-variance.
     """
     sim_mean = np.asarray(sim_mean, dtype=np.float64)
     bio_mean = np.asarray(bio_mean, dtype=np.float64)
@@ -42,6 +36,32 @@ def compute_lag_metrics(sim_mean, bio_mean, ctrl_dt_ms: float = 2.5,
             corrs[i] = np.corrcoef(s, b)[0, 1]
 
     if np.all(np.isnan(corrs)):
+        return float("nan"), 0, corrs, lags
+
+    argmax = int(np.nanargmax(corrs))
+    best_r = float(corrs[argmax])
+    best_lag = int(lags[argmax])
+    return best_r, best_lag, corrs, lags
+
+
+def compute_lag_metrics(sim_mean, bio_mean, ctrl_dt_ms: float = 2.5,
+                        lag_range_steps: int = LAG_RANGE_STEPS_DEFAULT) -> dict:
+    """Cross-correlation with lag over ±lag_range_steps steps.
+
+    Takes 1-D sim_mean and bio_mean (trial-averaged traces). Returns dict with:
+      lagged_corr_max, phase_lag_steps, phase_lag_ms,
+      lagged_corr_at_0, lagged_corr_at_neg5, lagged_corr_at_pos5,
+      lagged_corr_fwhm_steps, lagged_corr_edge_saturated.
+
+    Positive phase_lag_steps means sim leads bio by that many steps (i.e., the
+    best match is at bio[lag:] vs sim[:-lag]).
+
+    `lagged_corr_edge_saturated` is 1 if argmax lag is pinned to ±lag_range_steps
+    (signal that true lag likely lies outside window), else 0.
+    """
+    best_r, best_lag, corrs, lags = _lag_scan(sim_mean, bio_mean, lag_range_steps)
+
+    if np.all(np.isnan(corrs)):
         return {
             "lagged_corr_max": float("nan"),
             "phase_lag_steps": 0,
@@ -50,14 +70,13 @@ def compute_lag_metrics(sim_mean, bio_mean, ctrl_dt_ms: float = 2.5,
             "lagged_corr_at_neg5": float("nan"),
             "lagged_corr_at_pos5": float("nan"),
             "lagged_corr_fwhm_steps": 0,
+            "lagged_corr_edge_saturated": 0,
         }
 
-    argmax = int(np.nanargmax(corrs))
-    best_r = float(corrs[argmax])
-    best_lag = int(lags[argmax])
     half_max = max(best_r / 2.0, 0.0)
     above = np.nan_to_num(corrs, nan=-np.inf) >= half_max
     fwhm_steps = int(np.sum(above))
+    edge_saturated = int(abs(best_lag) == lag_range_steps)
 
     def _at(target_lag: int) -> float:
         idx = int(np.where(lags == target_lag)[0][0])
@@ -72,6 +91,7 @@ def compute_lag_metrics(sim_mean, bio_mean, ctrl_dt_ms: float = 2.5,
         "lagged_corr_at_neg5": _at(-5),
         "lagged_corr_at_pos5": _at(+5),
         "lagged_corr_fwhm_steps": fwhm_steps,
+        "lagged_corr_edge_saturated": edge_saturated,
     }
 
 
@@ -101,11 +121,10 @@ def compute_per_trial_metrics(sim_muscle, bio_traces, ctrl_dt_ms: float = 2.5,
             r = np.corrcoef(s, b)[0, 1]
             if np.isfinite(r):
                 trial_corrs.append(float(r))
-            lag_m = compute_lag_metrics(s, b, ctrl_dt_ms=ctrl_dt_ms,
-                                        lag_range_steps=lag_range_steps)
-            if np.isfinite(lag_m["lagged_corr_max"]):
-                per_trial_lagged_corrs.append(lag_m["lagged_corr_max"])
-                per_trial_lags_steps.append(lag_m["phase_lag_steps"])
+            best_r, best_lag, _, _ = _lag_scan(s, b, lag_range_steps)
+            if np.isfinite(best_r):
+                per_trial_lagged_corrs.append(best_r)
+                per_trial_lags_steps.append(best_lag)
 
     def _mean(xs):
         return float(np.mean(xs)) if xs else float("nan")

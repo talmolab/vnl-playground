@@ -47,8 +47,36 @@ def test_lagged_corr_returns_expected_keys():
     assert set(m.keys()) == {
         "lagged_corr_max", "phase_lag_steps", "phase_lag_ms",
         "lagged_corr_at_0", "lagged_corr_at_neg5", "lagged_corr_at_pos5",
-        "lagged_corr_fwhm_steps",
+        "lagged_corr_fwhm_steps", "lagged_corr_edge_saturated",
     }
+
+
+def test_lagged_corr_edge_saturated_flag_on_out_of_window_lag():
+    from vnl_playground.eval_metrics import emg
+    # True lag is 30 steps, window is 20 — should saturate.
+    t = np.linspace(0, 2 * np.pi, 100)
+    bio = np.sin(t)
+    sim = np.sin(t + 30 * (t[1] - t[0]))
+    m = emg.compute_lag_metrics(sim, bio, ctrl_dt_ms=2.5, lag_range_steps=20)
+    assert m["lagged_corr_edge_saturated"] == 1
+    assert abs(m["phase_lag_steps"]) == 20  # pinned to edge
+
+
+def test_lagged_corr_edge_saturated_flag_off_for_in_window_lag():
+    from vnl_playground.eval_metrics import emg
+    t = np.linspace(0, 2 * np.pi, 100)
+    bio = np.sin(t)
+    sim = np.sin(t + 5 * (t[1] - t[0]))
+    m = emg.compute_lag_metrics(sim, bio, ctrl_dt_ms=2.5, lag_range_steps=20)
+    assert m["lagged_corr_edge_saturated"] == 0
+
+
+def test_lagged_corr_edge_saturated_key_in_all_metrics():
+    from vnl_playground.eval_metrics import emg
+    sim = np.random.default_rng(0).uniform(size=(3, 60))
+    bio = np.random.default_rng(1).uniform(size=(3, 60))
+    m = emg.compute_all_emg_metrics(sim, bio_traces=bio, ctrl_dt_ms=2.5)
+    assert "lagged_corr_edge_saturated" in m
 
 
 def test_per_trial_metrics_identical_traces():
@@ -93,7 +121,7 @@ def test_compute_all_emg_metrics_has_union_of_keys():
         "trial_corr_mean", "trial_corr_median", "trial_mae",
         "lagged_corr_max", "phase_lag_steps", "phase_lag_ms",
         "lagged_corr_at_0", "lagged_corr_at_neg5", "lagged_corr_at_pos5",
-        "lagged_corr_fwhm_steps",
+        "lagged_corr_fwhm_steps", "lagged_corr_edge_saturated",
         "per_trial_lagged_corr_mean", "per_trial_lagged_corr_median",
         "per_trial_phase_lag_mean_ms", "per_trial_phase_lag_std_ms",
     }
