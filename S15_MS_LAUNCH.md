@@ -60,42 +60,56 @@ Decision tree:
 
 If you choose to skip Stage 2 and go straight to Branch 1 (training), the sweep below is still the right default: it gives 5 seeds on the current single-run leader plus bracketing cells to absorb seed variance.
 
-### 2. Stage 3 Branch 1 launch (default, 15 runs)
+### 2. Stage 3 Branch 1 launch (default, 15 runs on your 6-GPU / 4-job topology)
 
-3 cells × 5 seeds = 15 runs. Each run ~1.5–2 h at 800M steps.
+3 cells × 5 seeds = 15 runs. Each run ~3–3.5 h at 800M steps (the expanded EMG metric computation adds CPU-side work during each eval cycle, so slower than s13's ~1 h).
 
-**Single GPU serial** (~30 h wall-clock, too long for the 12 h budget):
+**Your layout: 2× 2-GPU jobs + 2× 1-GPU jobs = 6 GPUs across 4 job slots.**
+Partition: each 2-GPU job owns one fs cell and runs 5 seeds across its 2 GPUs (3 seeds on GPU0, 2 seeds on GPU1). The 2 single-GPU jobs split the third cell's 5 seeds (3 + 2). Max per-GPU wall-clock = **3 × ~3.5 h ≈ 10–11 h**, fitting the 12 h budget.
+
+| Job | GPUs | Cell (fs) | Seeds on GPU0 | Seeds on GPU1 | Per-GPU runs |
+|---|---|---|---|---|---|
+| Job 1 (2-GPU) | 0, 1 | **fs=1.0** | 1, 2, 3 | 4, 5 | 3 / 2 |
+| Job 2 (2-GPU) | 0, 1 | **fs=1.1** | 1, 2, 3 | 4, 5 | 3 / 2 |
+| Job 3 (1-GPU) | 0 | **fs=1.2** | 1, 2, 3 | — | 3 |
+| Job 4 (1-GPU) | 0 | **fs=1.2** | 4, 5 | — | 2 |
+
+**Launch commands (run each pair in its own shell on the appropriate job).**
+
+Job 1 — 2-GPU machine #1, fs=1.0:
 ```bash
-cd /root/vast/eric/vnl-playground
-CUDA_VISIBLE_DEVICES=0 nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_master.log 2>&1 &
+cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=0 CELLS_TO_RUN="1.0" SEEDS_TO_RUN="1 2 3" nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p0_gpu0.log 2>&1 &
+cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=1 CELLS_TO_RUN="1.0" SEEDS_TO_RUN="4 5"   nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p0_gpu1.log 2>&1 &
 ```
 
-**3 GPUs in parallel (~10 h wall-clock, recommended):**
+Job 2 — 2-GPU machine #2, fs=1.1:
 ```bash
-cd /root/vast/eric/vnl-playground
-CUDA_VISIBLE_DEVICES=0 CELLS_TO_RUN="1.0" nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p0.log 2>&1 &
-CUDA_VISIBLE_DEVICES=1 CELLS_TO_RUN="1.1" nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p1.log 2>&1 &
-CUDA_VISIBLE_DEVICES=2 CELLS_TO_RUN="1.2" nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p2.log 2>&1 &
+cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=0 CELLS_TO_RUN="1.1" SEEDS_TO_RUN="1 2 3" nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p1_gpu0.log 2>&1 &
+cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=1 CELLS_TO_RUN="1.1" SEEDS_TO_RUN="4 5"   nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p1_gpu1.log 2>&1 &
 ```
 
-Each GPU runs 5 seeds of one fs cell. Total wall-clock ~10 h.
-
-**2 GPUs in parallel** (~15 h, over budget but close):
+Job 3 — 1-GPU machine #1, fs=1.2 seeds 1–3:
 ```bash
-cd /root/vast/eric/vnl-playground
-CUDA_VISIBLE_DEVICES=0 CELLS_TO_RUN="1.0 1.1" SEEDS_TO_RUN="1 2 3" nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_gpu0.log 2>&1 &
-CUDA_VISIBLE_DEVICES=1 CELLS_TO_RUN="1.2"      SEEDS_TO_RUN="1 2 3 4 5" nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_gpu1.log 2>&1 &
-CUDA_VISIBLE_DEVICES=0 CELLS_TO_RUN="1.0 1.1" SEEDS_TO_RUN="4 5" nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_gpu0_b.log 2>&1 &
+cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=0 CELLS_TO_RUN="1.2" SEEDS_TO_RUN="1 2 3" nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p2_a.log 2>&1 &
 ```
-(Adjust partition to match your actual topology.)
 
-**1 GPU, trim to 3 seeds × 3 cells** (9 runs, ~16 h — still over budget) or **1 GPU 5 seeds × 1 cell** (5 runs, ~10 h):
+Job 4 — 1-GPU machine #2, fs=1.2 seeds 4–5:
 ```bash
-cd /root/vast/eric/vnl-playground
-CUDA_VISIBLE_DEVICES=0 CELLS_TO_RUN="1.1" SEEDS_TO_RUN="1 2 3 4 5" \
-    nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p1_only.log 2>&1 &
+cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=0 CELLS_TO_RUN="1.2" SEEDS_TO_RUN="4 5"   nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p2_b.log 2>&1 &
 ```
-This focuses on just the current leader cell (fs=1.1). If all 5 seeds median `min(lagged_corr) ≥ 0.80`, ship.
+
+Monitor: `tail -f /tmp/s15_ms_branch1_*.log` on each machine.
+
+**Fallback — fewer GPUs available tonight.** If only 3 GPUs are free, drop fs=1.2 (it's the bracketing sibling, not the leader) and run 2 cells × 5 seeds = 10 runs on 3 GPUs. With ~3.5 h per run, GPU0-with-3-runs finishes in ~10.5 h; GPU1-with-2-runs in ~7 h; 1-GPU slot with 5 serial runs in ~17.5 h (over budget — trim to 3 seeds there):
+```bash
+# 2-GPU job: fs=1.1 (leader), 5 seeds split 3/2
+cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=0 CELLS_TO_RUN="1.1" SEEDS_TO_RUN="1 2 3" nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p1_gpu0.log 2>&1 &
+cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=1 CELLS_TO_RUN="1.1" SEEDS_TO_RUN="4 5"   nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p1_gpu1.log 2>&1 &
+# 1-GPU job: fs=1.0 (low sibling), 3 seeds serial (~10.5 h)
+cd /root/vast/eric/vnl-playground && CUDA_VISIBLE_DEVICES=0 CELLS_TO_RUN="1.0" SEEDS_TO_RUN="1 2 3" nohup bash sweep_s15_ms_branch1.sh > /tmp/s15_ms_branch1_fs1p0.log 2>&1 &
+```
+
+**Stage 2 timing caveat.** At ~20 min per eval-replay run × 16 runs, Stage 2 is still ~3 h. If you run it on one of the 1-GPU slots *in parallel* with the sweep, that slot's sweep share (fs=1.2 seeds 1-3) starts after Stage 2 finishes — adding ~3 h to that slot's wall-clock, pushing it to ~13.5 h. If the 12 h ceiling is firm, either (a) run Stage 2 first and defer the sweep, or (b) skip Stage 2 tonight and launch all 4 job slots into the sweep directly (the bracketing fs=1.0/1.1/1.2 covers branch uncertainty).
 
 ### 3. Success criteria (ship gate)
 
