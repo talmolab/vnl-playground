@@ -66,6 +66,7 @@ from vnl_playground.tasks.mouse.consts import (
     JANELIA_MOUSE_MOVING_SHOULDER_IK_XML_PATH,
     MOUSE_REFERENCE_DATA_MOVING_SHOULDER_PATH,
 )
+from vnl_playground.eval_metrics import emg as emg_metrics
 
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
@@ -155,32 +156,6 @@ def load_emg_reference(n_clips, target_timesteps, clip_start_frame=0,
 
     print(f"  EMG: loaded {', '.join(f'{k}({v.shape[0]} trials)' for k, v in emg_by_muscle.items())}")
     return {"traces": emg_by_muscle, "means": emg_means, "sems": emg_sems}
-
-
-def compute_emg_metrics(sim_muscle, emg_mean_trace, bio_traces=None):
-    """Correlation and MAE metrics for simulated vs biological EMG.
-
-    Returns:
-        mean_corr: correlation between sim mean and bio mean
-        mean_mae: MAE between sim mean and bio mean (mean-of-means)
-        trial_mae: MAE computed trial-by-trial (sim_i - bio_i), averaged
-                   across all paired trials and timesteps. None if no
-                   bio_traces provided.
-    """
-    sim_mean = sim_muscle.mean(axis=0)
-    mean_corr = float(np.corrcoef(sim_mean, emg_mean_trace)[0, 1])
-    mean_mae = float(np.mean(np.abs(sim_mean - emg_mean_trace)))
-    result = {
-        "mean_corr": mean_corr,
-        "mean_mae": mean_mae,
-    }
-    if bio_traces is not None:
-        n_pairs = min(sim_muscle.shape[0], bio_traces.shape[0])
-        T = min(sim_muscle.shape[1], bio_traces.shape[1])
-        # Per-trial absolute error, then average across trials and time
-        trial_errors = np.abs(sim_muscle[:n_pairs, :T] - bio_traces[:n_pairs, :T])
-        result["trial_mae"] = float(np.mean(trial_errors))
-    return result
 
 
 def plot_emg_error_fig(sim_actions, emg_ref, target_timesteps, ctrl_dt):
@@ -2022,22 +1997,40 @@ if __name__ == "__main__":
                 # the Hill muscle model, but clip defensively for numerics.
                 sim_actions = np.clip(all_actions[:, :emg_target_timesteps, :], 0.0, 1.0)
 
-                # Compute metrics per muscle
-                emg_metrics = {}
+                # Compute metrics per muscle using shared emg_metrics module.
+                emg_per_muscle = {}
+                ctrl_dt_ms = float(env_cfg.ctrl_dt) * 1000.0
                 for sim_idx, sim_name, _, muscle_name in EMG_MUSCLE_CONFIGS:
                     emg_mean = emg_reference["means"].get(muscle_name)
                     if emg_mean is None:
                         continue
                     bio_traces = emg_reference["traces"].get(muscle_name)
-                    m = compute_emg_metrics(
-                        sim_actions[:, :, sim_idx], emg_mean,
-                        bio_traces=bio_traces[:, :emg_target_timesteps] if bio_traces is not None else None,
+                    bio_traces_slice = (bio_traces[:, :emg_target_timesteps]
+                                        if bio_traces is not None else None)
+                    m = emg_metrics.compute_all_emg_metrics(
+                        sim_actions[:, :, sim_idx],
+                        bio_traces=bio_traces_slice,
+                        bio_mean_only=emg_mean if bio_traces_slice is None else None,
+                        ctrl_dt_ms=ctrl_dt_ms,
                     )
-                    emg_metrics[muscle_name] = m
-                    wandb_log[f"eval/emg_{muscle_name.lower()}_corr"] = m["mean_corr"]
-                    wandb_log[f"eval/emg_{muscle_name.lower()}_mae"] = m["mean_mae"]
-                    if "trial_mae" in m:
-                        wandb_log[f"eval/emg_{muscle_name.lower()}_trial_mae"] = m["trial_mae"]
+                    emg_per_muscle[muscle_name] = m
+                    prefix = f"eval/emg_{muscle_name.lower()}"
+                    # Back-compat aliases (preserve existing wandb panels).
+                    wandb_log[f"{prefix}_corr"] = m["mean_corr"]
+                    wandb_log[f"{prefix}_mae"] = m["mean_mae"]
+                    wandb_log[f"{prefix}_trial_mae"] = m["trial_mae"]
+                    # Full expanded metric set.
+                    for key in (
+                        "mean_corr", "mean_mae",
+                        "trial_corr_mean", "trial_corr_median", "trial_mae",
+                        "lagged_corr_max", "phase_lag_steps", "phase_lag_ms",
+                        "lagged_corr_at_0", "lagged_corr_at_neg5", "lagged_corr_at_pos5",
+                        "lagged_corr_fwhm_steps", "lagged_corr_edge_saturated",
+                        "per_trial_lagged_corr_mean", "per_trial_lagged_corr_median",
+                        "per_trial_phase_lag_mean_ms", "per_trial_phase_lag_std_ms",
+                    ):
+                        if key in m:
+                            wandb_log[f"{prefix}_{key}"] = m[key]
 
                 # Co-contraction index (biceps * triceps)
                 biceps_act = sim_actions[:, :, 8]
@@ -2048,11 +2041,11 @@ if __name__ == "__main__":
                 print(f"  EMG comparison: " + ", ".join(
                     f"{k}(r={m['mean_corr']:.3f}, meanMAE={m['mean_mae']:.4f}"
                     f", trialMAE={m.get('trial_mae', 0):.4f})"
-                    for k, m in emg_metrics.items()
+                    for k, m in emg_per_muscle.items()
                 ))
 
                 fig = plot_emg_comparison_fig(
-                    sim_actions, emg_reference, emg_metrics, emg_target_timesteps,
+                    sim_actions, emg_reference, emg_per_muscle, emg_target_timesteps,
                     ctrl_dt=env_cfg.ctrl_dt
                 )
                 wandb_log["eval/emg_comparison"] = wandb.Image(fig)
