@@ -80,3 +80,31 @@ def test_per_trial_metrics_handles_zero_variance_trial():
     bio = np.sin(np.linspace(0, 2 * np.pi, 30))[np.newaxis].repeat(2, axis=0)
     m = emg.compute_per_trial_metrics(sim, bio, ctrl_dt_ms=2.5)
     assert np.isfinite(m["trial_corr_mean"])
+
+
+def test_compute_all_emg_metrics_has_union_of_keys():
+    from vnl_playground.eval_metrics import emg
+    rng = np.random.default_rng(3)
+    sim = rng.uniform(size=(4, 60))
+    bio = rng.uniform(size=(4, 60))
+    m = emg.compute_all_emg_metrics(sim, bio, ctrl_dt_ms=2.5)
+    expected = {
+        "mean_corr", "mean_mae",
+        "trial_corr_mean", "trial_corr_median", "trial_mae",
+        "lagged_corr_max", "phase_lag_steps", "phase_lag_ms",
+        "lagged_corr_at_0", "lagged_corr_at_neg5", "lagged_corr_at_pos5",
+        "lagged_corr_fwhm_steps",
+        "per_trial_lagged_corr_mean", "per_trial_lagged_corr_median",
+        "per_trial_phase_lag_mean_ms", "per_trial_phase_lag_std_ms",
+    }
+    assert expected.issubset(m.keys())
+
+
+def test_compute_all_emg_metrics_bio_traces_none_still_returns_mean_keys():
+    from vnl_playground.eval_metrics import emg
+    sim = np.random.default_rng(1).uniform(size=(4, 60))
+    bio_mean = sim.mean(axis=0)
+    m = emg.compute_all_emg_metrics(sim, bio_mean_only=bio_mean, ctrl_dt_ms=2.5)
+    assert np.isfinite(m["mean_corr"])
+    assert np.isfinite(m["lagged_corr_max"])
+    assert np.isnan(m["trial_corr_mean"])

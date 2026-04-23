@@ -122,3 +122,54 @@ def compute_per_trial_metrics(sim_muscle, bio_traces, ctrl_dt_ms: float = 2.5,
         "per_trial_phase_lag_mean_ms": float(np.mean(per_trial_lags_steps) * ctrl_dt_ms) if per_trial_lags_steps else float("nan"),
         "per_trial_phase_lag_std_ms": float(np.std(per_trial_lags_steps) * ctrl_dt_ms) if per_trial_lags_steps else float("nan"),
     }
+
+
+def compute_all_emg_metrics(sim_muscle, bio_traces=None, bio_mean_only=None,
+                            ctrl_dt_ms: float = 2.5,
+                            lag_range_steps: int = LAG_RANGE_STEPS_DEFAULT) -> dict:
+    """One-call entry point used by both the trainer and the eval-replay script.
+
+    sim_muscle: (n_sim, T) simulated muscle activations for one muscle.
+    bio_traces: (n_bio, T) per-trial reference EMG (preferred input).
+    bio_mean_only: (T,) pre-averaged reference trace (used only if bio_traces is None).
+
+    Returns a flat dict of floats/ints. Keys missing an input source are NaN.
+    """
+    sim_muscle = np.asarray(sim_muscle, dtype=np.float64)
+    if bio_traces is not None:
+        bio_traces = np.asarray(bio_traces, dtype=np.float64)
+        bio_mean = bio_traces.mean(axis=0)
+    elif bio_mean_only is not None:
+        bio_mean = np.asarray(bio_mean_only, dtype=np.float64)
+    else:
+        raise ValueError("Must provide either bio_traces or bio_mean_only.")
+
+    sim_mean = sim_muscle.mean(axis=0)
+    L = min(len(sim_mean), len(bio_mean))
+    sim_mean = sim_mean[:L]
+    bio_mean = bio_mean[:L]
+
+    out = {
+        "mean_corr": float(np.corrcoef(sim_mean, bio_mean)[0, 1])
+                     if sim_mean.std() > 0 and bio_mean.std() > 0 else float("nan"),
+        "mean_mae": float(np.mean(np.abs(sim_mean - bio_mean))),
+    }
+    out.update(compute_lag_metrics(sim_mean, bio_mean, ctrl_dt_ms=ctrl_dt_ms,
+                                   lag_range_steps=lag_range_steps))
+
+    if bio_traces is not None:
+        out.update(compute_per_trial_metrics(sim_muscle, bio_traces,
+                                             ctrl_dt_ms=ctrl_dt_ms,
+                                             lag_range_steps=lag_range_steps))
+    else:
+        out.update({
+            "trial_corr_mean": float("nan"),
+            "trial_corr_median": float("nan"),
+            "trial_mae": float("nan"),
+            "per_trial_lagged_corr_mean": float("nan"),
+            "per_trial_lagged_corr_median": float("nan"),
+            "per_trial_phase_lag_mean_ms": float("nan"),
+            "per_trial_phase_lag_std_ms": float("nan"),
+        })
+
+    return out
