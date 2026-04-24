@@ -123,13 +123,13 @@ Never-touched corners of the established parameter space.
 
 ### Group V — Seed-variance control (3 cells)
 
-Same config as `B03 + τ-asym-mild`, seeds 1, 2, 3. Measures noise floor for interpreting single-seed comparisons across the remaining 99 cells. ("V" avoids collision with the s15 cell label "S3".)
+Same config as `B03 + τ-asym-mild`, seeds 2, 3, 4 (B03-asym-mild in Group B is seed 1, giving us 4 seeds total at the shared config). Measures noise floor for interpreting single-seed comparisons across the remaining cells. ("V" avoids collision with the s15 cell label "S3".)
 
 | ID | Config | Seed |
 |---|---|---|
-| V1 | B03 + τ-asym-mild | 1 |
-| V2 | B03 + τ-asym-mild | 2 |
-| V3 | B03 + τ-asym-mild | 3 |
+| V1 | B03 + τ-asym-mild | 2 |
+| V2 | B03 + τ-asym-mild | 3 |
+| V3 | B03 + τ-asym-mild | 4 |
 
 ### Group X — Novel exploratory probes (10 cells, τ-asym-mild, S3 base)
 
