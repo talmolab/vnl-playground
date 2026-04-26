@@ -60,7 +60,12 @@ from track_mjx.agent.ff_ppo import ppo as ff_ppo_train
 from track_mjx.agent.ff_ppo import ppo_networks as ff_ppo_networks
 
 from vnl_playground import tasks
-from vnl_playground.tasks.wrappers import HighLevelWrapper, PriorHighLevelWrapper
+from vnl_playground.tasks.wrappers import (
+    EndToEndWrapper,
+    HighLevelWrapper,
+    PriorHighLevelWrapper,
+)
+from vnl_playground import run_state
 from vnl_playground.wandb_state import load_wandb_state, save_wandb_state
 
 
@@ -359,11 +364,23 @@ def render_video(
             except Exception:
                 continue
 
-    target_speed = None
+    # Speed target info: either a single target_speed (forward_velocity) or a
+    # range [min_speed, max_speed] (forward_velocity_range).
+    speed_target_type = None  # None | "single" | "range"
+    speed_target_info = None
     if reward_config is not None:
         fv = reward_config.get("forward_velocity", {})
-        if isinstance(fv, dict):
-            target_speed = fv.get("target_speed", None)
+        if isinstance(fv, dict) and fv.get("target_speed") is not None:
+            speed_target_type = "single"
+            speed_target_info = (float(fv.get("target_speed")),)
+        else:
+            fvr = reward_config.get("forward_velocity_range", {})
+            if isinstance(fvr, dict):
+                min_s = fvr.get("min_speed")
+                max_s = fvr.get("max_speed")
+                if min_s is not None and max_s is not None:
+                    speed_target_type = "range"
+                    speed_target_info = (float(min_s), float(max_s))
 
     # -- Ego vision overlay ---------------------------------------------------
     ego_overlay_np = None
@@ -492,7 +509,6 @@ def render_video(
                     heading_deg = math.degrees(math.atan2(hy, hx))
 
                 # Read reward components from state.metrics
-                fwd_reward = float(state.metrics.get("rewards/forward_velocity", 0.0))
                 gap_bonus = float(state.metrics.get("rewards/gap_crossing_bonus", 0.0))
                 step_reward = float(state.reward)
                 cumulative_reward += step_reward
@@ -526,30 +542,35 @@ def render_video(
 
                 if _hud_on("show_speed") and forward_vel is not None:
                     speed_text = f"Speed: {forward_vel:.2f} m/s"
-                    if target_speed is not None:
-                        speed_text += f" / {target_speed:.1f} target"
-                        pct = (
-                            min(forward_vel / target_speed, 1.0)
-                            if target_speed > 0
-                            else 0
-                        )
+                    if speed_target_type == "single":
+                        target = speed_target_info[0]
+                        speed_text += f" / {target:.1f} target"
+                        pct = min(forward_vel / target, 1.0) if target > 0 else 0
                         speed_color = (
                             GREEN if pct > 0.8 else YELLOW if pct > 0.4 else WHITE
                         )
+                    elif speed_target_type == "range":
+                        min_s, max_s = speed_target_info
+                        speed_text += f" / [{min_s:.1f}-{max_s:.1f}]"
+                        if min_s <= forward_vel <= max_s:
+                            speed_color = GREEN  # in valid range
+                        elif min_s * 0.6 <= forward_vel <= max_s * 1.4:
+                            speed_color = YELLOW  # near range
+                        else:
+                            speed_color = WHITE  # well outside
                     else:
                         speed_color = WHITE
                     hud_lines.append((speed_text, speed_color))
 
                 if _hud_on("show_reward_breakdown"):
-                    parts = f"vel={fwd_reward:.3f}"
-                    if "rewards/gap_crossing_bonus" in state.metrics:
-                        parts += f", gap={gap_bonus:.1f}"
-                    term_pen = float(
-                        state.metrics.get("rewards/termination_penalty", 0.0)
-                    )
-                    if term_pen != 0:
-                        parts += f", term={term_pen:.1f}"
-                    hud_lines.append((f"Reward: {step_reward:.3f}  ({parts})", CYAN))
+                    parts = []
+                    for mk, mv in state.metrics.items():
+                        if mk.startswith("rewards/"):
+                            short = mk.split("/", 1)[1]
+                            val = float(mv)
+                            if val != 0 or short == "gap_crossing_bonus":
+                                parts.append(f"{short}={val:.3f}")
+                    hud_lines.append((f"Reward: {step_reward:.3f}  ({', '.join(parts)})", CYAN))
 
                 if _hud_on("show_cumulative_reward"):
                     hud_lines.append((f"Cumulative: {cumulative_reward:.1f}", YELLOW))
@@ -917,6 +938,7 @@ def _train_mlp_highlvl(
                         table, "frame", metric_name, title=metric_name
                     )
                 },
+                step=current_step,
                 commit=False,
             )
 
@@ -943,6 +965,7 @@ def _train_mlp_highlvl(
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
+                step=current_step,
                 commit=False,
             )
         except mujoco.FatalError as e:
@@ -1007,6 +1030,7 @@ def _train_vision_task_obs_highlvl(
     cfg_dict,
     progress_fn,
     prior_fn=None,
+    checkpoint_callback=None,
 ):
     """Train high-level vision+task_obs policy using ff_ppo with CNN encoder.
 
@@ -1234,7 +1258,11 @@ def _train_vision_task_obs_highlvl(
             params, obs_blank_vision, sensitivity_rng
         )
         vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
-        wandb.log({"eval/vision_sensitivity": vision_sensitivity}, commit=False)
+        wandb.log(
+            {"eval/vision_sensitivity": vision_sensitivity},
+            step=current_step,
+            commit=False,
+        )
 
         # Log per-step reward metrics
         for metric_name in [
@@ -1251,6 +1279,7 @@ def _train_vision_task_obs_highlvl(
                         table, "frame", metric_name, title=metric_name
                     )
                 },
+                step=current_step,
                 commit=False,
             )
 
@@ -1278,6 +1307,7 @@ def _train_vision_task_obs_highlvl(
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
+                step=current_step,
                 commit=False,
             )
         except mujoco.FatalError as e:
@@ -1360,6 +1390,7 @@ def _train_vision_task_obs_highlvl(
         progress_fn=progress_fn,
         policy_params_fn=vision_task_obs_policy_params_fn,
         wrap_for_training=wrap_with_vision,
+        checkpoint_callback=checkpoint_callback,
     )
 
     logging.info("Starting vision+task_obs high-level PPO training (ff_ppo)...")
@@ -1385,6 +1416,7 @@ def _train_shared_vision_task_obs_highlvl(
     cfg_dict,
     progress_fn,
     prior_fn=None,
+    checkpoint_callback=None,
 ):
     """Train high-level vision+task_obs policy with a SHARED CNN.
 
@@ -1697,7 +1729,11 @@ def _train_shared_vision_task_obs_highlvl(
             params, obs_blank_vision, sensitivity_rng
         )
         vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
-        wandb.log({"eval/vision_sensitivity": vision_sensitivity}, commit=False)
+        wandb.log(
+            {"eval/vision_sensitivity": vision_sensitivity},
+            step=current_step,
+            commit=False,
+        )
 
         # Log per-step reward metrics
         for metric_name in [
@@ -1714,6 +1750,7 @@ def _train_shared_vision_task_obs_highlvl(
                         table, "frame", metric_name, title=metric_name
                     )
                 },
+                step=current_step,
                 commit=False,
             )
 
@@ -1741,6 +1778,7 @@ def _train_shared_vision_task_obs_highlvl(
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
+                step=current_step,
                 commit=False,
             )
         except mujoco.FatalError as e:
@@ -1830,6 +1868,7 @@ def _train_shared_vision_task_obs_highlvl(
         policy_params_fn=shared_vision_policy_params_fn,
         wrap_for_training=wrap_with_vision,
         custom_loss_fn=custom_loss_fn,
+        checkpoint_callback=checkpoint_callback,
     )
 
     logging.info("Starting shared-CNN vision+task_obs high-level PPO training...")
@@ -1855,6 +1894,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     cfg_dict,
     progress_fn,
     prior_fn=None,
+    checkpoint_callback=None,
 ):
     """Train high-level vision+task_obs policy with a SHARED binocular CNN.
 
@@ -1870,7 +1910,14 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     eval_render_cfg = _resolve_eval_render_config(cfg)
     logging.info(f"Eval video eye conditions: {eval_render_cfg['eye_conditions']}")
 
-    latent_size = mimic_cfg.network_config.intention_size
+    # In from_scratch mode (decoder_policy_fn is None) there is no intention
+    # bottleneck dimensionality imposed by a frozen decoder — pull the latent
+    # size straight from the config instead.
+    from_scratch_mode = decoder_policy_fn is None
+    if from_scratch_mode:
+        latent_size = int(cfg.network_config.get("vision_latent_size", 16))
+    else:
+        latent_size = mimic_cfg.network_config.intention_size
     highlvl_obs_key = cfg.transfer.get("highlvl_obs_key", "imitation_target")
     decoder_obs_key = cfg.transfer.get("decoder_obs_key", "proprioception")
 
@@ -1879,10 +1926,26 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     while hasattr(_unwrapped, "env"):
         _unwrapped = _unwrapped.env
     n_eye_actuators = getattr(_unwrapped, "n_eye_actuators", 0)
-    if n_eye_actuators > 0:
+    if n_eye_actuators > 0 and not from_scratch_mode:
         logging.info(f"Actuable eyes: {n_eye_actuators} eye actuators bypass decoder")
 
-    if prior_fn is not None:
+    if from_scratch_mode:
+        env = EndToEndWrapper(
+            env,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+        )
+        eval_env = EndToEndWrapper(
+            eval_env,
+            highlvl_obs_key=highlvl_obs_key,
+            decoder_obs_key=decoder_obs_key,
+        )
+        logging.info(
+            f"EndToEndWrapper (from_scratch): action_size={env.action_size}, "
+            f"obs_sizes={env.observation_size}"
+        )
+        _log_memory("after EndToEndWrapper")
+    elif prior_fn is not None:
         env = PriorHighLevelWrapper(
             env,
             prior_fn,
@@ -1909,6 +1972,10 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             noise_logvar=cfg.transfer.get("noise_logvar", -2.0),
             n_eye_actuators=n_eye_actuators,
         )
+        logging.info(
+            f"Binocular Shared-CNN Vision+TaskObs PriorHighLevelWrapper: action_size={env.action_size}"
+        )
+        _log_memory("after Binocular Shared-CNN PriorHighLevelWrapper")
     else:
         env = HighLevelWrapper(
             env,
@@ -1930,11 +1997,10 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             pass_task_obs=True,
             n_eye_actuators=n_eye_actuators,
         )
-
-    logging.info(
-        f"Binocular Shared-CNN Vision+TaskObs HighLevelWrapper: action_size={env.action_size}"
-    )
-    _log_memory("after Binocular Shared-CNN HighLevelWrapper")
+        logging.info(
+            f"Binocular Shared-CNN Vision+TaskObs HighLevelWrapper: action_size={env.action_size}"
+        )
+        _log_memory("after Binocular Shared-CNN HighLevelWrapper")
 
     # Set Warp's CUDA memory pool release threshold to 512 MB.
     # Memory above this threshold is returned to CUDA on wp.synchronize().
@@ -2317,7 +2383,11 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             # -- Per-condition metrics --
             metrics = _compute_rollout_metrics(rollout)
             for metric_name, value in metrics.items():
-                wandb.log({f"eval/{eye_mode}/{metric_name}": value}, commit=False)
+                wandb.log(
+                    {f"eval/{eye_mode}/{metric_name}": value},
+                    step=current_step,
+                    commit=False,
+                )
 
             # Vision sensitivity diagnostic (action delta: real vs blank vision)
             mid = len(rollout) // 2
@@ -2338,6 +2408,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
             wandb.log(
                 {f"eval/{eye_mode}/vision_sensitivity": vision_sensitivity},
+                step=current_step,
                 commit=False,
             )
 
@@ -2360,6 +2431,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
                                 title=metric_name,
                             )
                         },
+                        step=current_step,
                         commit=False,
                     )
 
@@ -2390,6 +2462,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
                 )
                 wandb.log(
                     {f"videos/{eye_mode}": wandb.Video(video_path, format="mp4")},
+                    step=current_step,
                     commit=False,
                 )
             except mujoco.FatalError as e:
@@ -2476,6 +2549,7 @@ def _train_binocular_shared_vision_task_obs_highlvl(
         policy_params_fn=binocular_vision_policy_params_fn,
         wrap_for_training=wrap_with_vision,
         custom_loss_fn=custom_loss_fn,
+        checkpoint_callback=checkpoint_callback,
     )
 
     logging.info(
@@ -2560,6 +2634,7 @@ def _train_recurrent_vision_task_obs_highlvl(
     cfg_dict,
     progress_fn,
     prior_fn=None,
+    checkpoint_callback=None,
 ):
     """Train high-level vision+task_obs policy with recurrent CNN+GRU backbone.
 
@@ -2876,7 +2951,11 @@ def _train_recurrent_vision_task_obs_highlvl(
             params, obs_blank_vision, hidden_for_check, sensitivity_rng
         )
         vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
-        wandb.log({"eval/vision_sensitivity": vision_sensitivity}, commit=False)
+        wandb.log(
+            {"eval/vision_sensitivity": vision_sensitivity},
+            step=current_step,
+            commit=False,
+        )
 
         # Log per-step reward metrics
         for metric_name in [
@@ -2893,6 +2972,7 @@ def _train_recurrent_vision_task_obs_highlvl(
                         table, "frame", metric_name, title=metric_name
                     )
                 },
+                step=current_step,
                 commit=False,
             )
 
@@ -2920,6 +3000,7 @@ def _train_recurrent_vision_task_obs_highlvl(
             )
             wandb.log(
                 {"videos/rollout": wandb.Video(video_path, format="mp4")},
+                step=current_step,
                 commit=False,
             )
         except mujoco.FatalError as e:
@@ -3010,6 +3091,7 @@ def _train_recurrent_vision_task_obs_highlvl(
         wrap_for_training=wrap_with_vision,
         custom_loss_fn=custom_loss_fn,
         vision_lr_multiplier=vision_lr_multiplier,
+        checkpoint_callback=checkpoint_callback,
     )
 
     logging.info("Starting recurrent vision+task_obs high-level PPO training...")
@@ -3036,6 +3118,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
     cfg_dict,
     progress_fn,
     prior_fn=None,
+    checkpoint_callback=None,
 ):
     """Train high-level vision+task_obs policy with recurrent binocular CNN+GRU.
 
@@ -3556,7 +3639,11 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
             # -- Per-condition metrics --
             metrics = _compute_rollout_metrics(rollout)
             for metric_name, value in metrics.items():
-                wandb.log({f"eval/{eye_mode}/{metric_name}": value}, commit=False)
+                wandb.log(
+                    {f"eval/{eye_mode}/{metric_name}": value},
+                    step=current_step,
+                    commit=False,
+                )
 
             # Vision sensitivity diagnostic (action delta: real vs blank vision)
             mid = len(rollout) // 2
@@ -3580,6 +3667,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
             vision_sensitivity = float(jp.linalg.norm(act_real - act_blank))
             wandb.log(
                 {f"eval/{eye_mode}/vision_sensitivity": vision_sensitivity},
+                step=current_step,
                 commit=False,
             )
 
@@ -3602,6 +3690,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
                                 title=metric_name,
                             )
                         },
+                        step=current_step,
                         commit=False,
                     )
 
@@ -3633,6 +3722,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
                 )
                 wandb.log(
                     {f"videos/{eye_mode}": wandb.Video(video_path, format="mp4")},
+                    step=current_step,
                     commit=False,
                 )
             except mujoco.FatalError as e:
@@ -3720,6 +3810,7 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
         wrap_for_training=wrap_with_vision,
         custom_loss_fn=custom_loss_fn,
         vision_lr_multiplier=vision_lr_multiplier,
+        checkpoint_callback=checkpoint_callback,
     )
 
     logging.info(
@@ -3749,17 +3840,42 @@ def main(cfg: DictConfig):
     logging.info(f"Config: {OmegaConf.to_container(cfg, resolve=True)}")
 
     # ---- Generate or resume run ID and checkpoint path ----
+    # Priority: 1) auto-discover from run_state file, 2) manual resume_run_id, 3) fresh
+    existing_run_state = run_state.discover_existing_run_state(cfg)
     resume_run_id = cfg.train_setup.get("resume_run_id", None)
-    if resume_run_id:
+
+    if existing_run_state:
+        run_id = existing_run_state["run_id"]
+        checkpoint_path = Path(existing_run_state["checkpoint_path"])
+        # Set checkpoint_to_restore so architecture functions auto-load state
+        OmegaConf.update(
+            cfg, "train_setup.checkpoint_to_restore", str(checkpoint_path), force_add=True
+        )
+        logging.info(
+            f"AUTO-RESUME: run_id={run_id} "
+            f"(step {existing_run_state.get('latest_checkpoint_step', '?')})"
+        )
+    elif resume_run_id:
+        # Backward compat: manual resume via hydra override from autoresume.sh
         run_id = str(resume_run_id)
         checkpoint_path = Path(
             hydra.utils.to_absolute_path(f"./{cfg.logging_config.model_path}/{run_id}")
         )
         if not checkpoint_path.exists():
-            raise FileNotFoundError(
-                f"Cannot resume: checkpoint path {checkpoint_path} does not exist"
-            )
-        logging.info(f"RESUMING run_id: {run_id}")
+            # Hydra strips underscores from numeric values (Python convention).
+            # Re-insert separator for YYMMDD_HHMMSS run IDs (12 digits).
+            if run_id.isdigit() and len(run_id) == 12:
+                run_id = f"{run_id[:6]}_{run_id[6:]}"
+                checkpoint_path = Path(
+                    hydra.utils.to_absolute_path(
+                        f"./{cfg.logging_config.model_path}/{run_id}"
+                    )
+                )
+            if not checkpoint_path.exists():
+                raise FileNotFoundError(
+                    f"Cannot resume: checkpoint path {checkpoint_path} does not exist"
+                )
+        logging.info(f"MANUAL RESUME: run_id={run_id}")
     else:
         run_id = datetime.now().strftime("%y%m%d_%H%M%S")
         checkpoint_path = Path(
@@ -3779,7 +3895,20 @@ def main(cfg: DictConfig):
     transfer_mode = cfg.transfer.get("mode", "decoder_only")
     logging.info(f"Transfer mode: {transfer_mode}")
 
-    if transfer_mode == "prior_decoder":
+    if transfer_mode == "from_scratch":
+        # ---- No weight transfer. End-to-end training from random init. ----
+        # Skip loading any SCAMPER/mimic checkpoint. The env will be wrapped
+        # in EndToEndWrapper (below) which passes full joint actions straight
+        # through — no frozen decoder, no prior RNN. The high-level binocular
+        # shared-vision network is used as-is, with its internal decoder head
+        # trained from random initialization alongside the rest of the policy.
+        logging.info("from_scratch mode: no SCAMPER weights will be loaded.")
+        prior_fn = None
+        decoder_policy_fn = None
+        mimic_cfg = None
+        _log_memory("from_scratch: skipped prior/decoder load")
+
+    elif transfer_mode == "prior_decoder":
         # ---- Load frozen prior + decoder from SCAMPER prior checkpoint ----
         from vnl_playground.tasks.prior_utils import (
             load_prior_checkpoint,
@@ -3877,7 +4006,11 @@ def main(cfg: DictConfig):
 
     # CRITICAL: Match ctrl_dt from mimic config so the frozen decoder produces
     # correct behavior. The decoder was trained with a specific ctrl_dt.
-    if hasattr(mimic_cfg, "env_config") and hasattr(mimic_cfg.env_config, "ctrl_dt"):
+    # In from_scratch mode there is no frozen decoder, so no ctrl_dt constraint
+    # is imposed — the value from cfg.env_config.env_args is used directly.
+    if mimic_cfg is not None and hasattr(mimic_cfg, "env_config") and hasattr(
+        mimic_cfg.env_config, "ctrl_dt"
+    ):
         mimic_ctrl_dt = float(mimic_cfg.env_config.ctrl_dt)
         env_args["ctrl_dt"] = mimic_ctrl_dt
         logging.info(f"Enforcing ctrl_dt={mimic_ctrl_dt} from mimic config")
@@ -3924,18 +4057,18 @@ def main(cfg: DictConfig):
     wandb_run_id = f"{cfg.logging_config.exp_name}_{env_name}_{run_id}"
     wandb_resume = "allow"
 
-    if resume_run_id:
-        # On resume, try to restore the exact wandb_run_id from saved state
-        saved_wandb_state = load_wandb_state(checkpoint_path)
-        if saved_wandb_state:
-            wandb_run_id = saved_wandb_state["wandb_run_id"]
+    if existing_run_state:
+        # Auto-resume: use the exact wandb_run_id from run state
+        wandb_run_id = existing_run_state["wandb_run_id"]
+        wandb_resume = "must"
+        logging.info(f"Resuming wandb run (auto): {wandb_run_id}")
+    elif resume_run_id:
+        # Manual resume: try run_state file in checkpoint dir, then legacy wandb_state
+        saved = load_wandb_state(checkpoint_path)
+        if saved:
+            wandb_run_id = saved["wandb_run_id"]
             wandb_resume = "must"
-            logging.info(f"Resuming wandb run: {wandb_run_id}")
-        else:
-            # Fallback: reconstruct ID (for checkpoints saved before this fix)
-            logging.info(
-                f"No saved wandb state found, using reconstructed ID: {wandb_run_id}"
-            )
+            logging.info(f"Resuming wandb run (legacy): {wandb_run_id}")
 
     wandb.init(
         project=cfg.logging_config.project_name,
@@ -3946,8 +4079,16 @@ def main(cfg: DictConfig):
         group=cfg.logging_config.get("group_name", env_name),
     )
 
-    # Save wandb state for future resume
+    # Persist run state (atomic, file-locked) for crash recovery
+    run_state.save_run_state(cfg, run_id, str(checkpoint_path), wandb_run_id)
+    # Also save wandb_run_id inside checkpoint dir (survives --fresh which only
+    # deletes run_state_*.json in the model_path root)
     save_wandb_state(checkpoint_path, wandb_run_id)
+
+    # Checkpoint callback updates run state after every checkpoint save
+    checkpoint_callback = run_state.create_checkpoint_callback(
+        cfg, run_id, str(checkpoint_path), wandb_run_id
+    )
     _log_memory("after wandb init")
 
     def wandb_progress(num_steps, metrics):
@@ -3971,6 +4112,7 @@ def main(cfg: DictConfig):
         checkpoint_path_phase,
         cfg_dict_phase,
         progress_fn_phase,
+        checkpoint_callback_phase=None,
     ):
         """Dispatch to the appropriate architecture-specific training function."""
         if arch_name == "mlp":
@@ -3984,6 +4126,7 @@ def main(cfg: DictConfig):
                 cfg_dict_phase,
                 progress_fn=progress_fn_phase,
                 prior_fn=prior_fn,
+                # MLP uses Brax PPO which doesn't support checkpoint_callback
             )
         elif arch_name == "vision_task_obs":
             return _train_vision_task_obs_highlvl(
@@ -3996,6 +4139,7 @@ def main(cfg: DictConfig):
                 cfg_dict_phase,
                 progress_fn=progress_fn_phase,
                 prior_fn=prior_fn,
+                checkpoint_callback=checkpoint_callback_phase,
             )
         elif arch_name == "shared_vision_task_obs":
             return _train_shared_vision_task_obs_highlvl(
@@ -4008,6 +4152,7 @@ def main(cfg: DictConfig):
                 cfg_dict_phase,
                 progress_fn=progress_fn_phase,
                 prior_fn=prior_fn,
+                checkpoint_callback=checkpoint_callback_phase,
             )
         elif arch_name == "recurrent_vision_task_obs":
             return _train_recurrent_vision_task_obs_highlvl(
@@ -4020,6 +4165,7 @@ def main(cfg: DictConfig):
                 cfg_dict_phase,
                 progress_fn=progress_fn_phase,
                 prior_fn=prior_fn,
+                checkpoint_callback=checkpoint_callback_phase,
             )
         elif arch_name == "binocular_shared_vision_task_obs":
             return _train_binocular_shared_vision_task_obs_highlvl(
@@ -4032,6 +4178,7 @@ def main(cfg: DictConfig):
                 cfg_dict_phase,
                 progress_fn=progress_fn_phase,
                 prior_fn=prior_fn,
+                checkpoint_callback=checkpoint_callback_phase,
             )
         elif arch_name == "recurrent_binocular_vision_task_obs":
             return _train_recurrent_binocular_vision_task_obs_highlvl(
@@ -4044,6 +4191,7 @@ def main(cfg: DictConfig):
                 cfg_dict_phase,
                 progress_fn=progress_fn_phase,
                 prior_fn=prior_fn,
+                checkpoint_callback=checkpoint_callback_phase,
             )
         else:
             raise ValueError(
@@ -4175,6 +4323,7 @@ def main(cfg: DictConfig):
                 phase_ckpt_path,
                 phase_cfg_dict,
                 phase_progress_fn,
+                checkpoint_callback_phase=checkpoint_callback,
             )
 
             graduated = monitor.should_graduate
@@ -4197,9 +4346,13 @@ def main(cfg: DictConfig):
     else:
         # Standard single-phase training
         logging.info(f"Architecture: {arch_name}")
-        _dispatch_train(cfg, env, eval_env, checkpoint_path, cfg_dict, wandb_progress)
+        _dispatch_train(
+            cfg, env, eval_env, checkpoint_path, cfg_dict, wandb_progress,
+            checkpoint_callback_phase=checkpoint_callback,
+        )
 
     logging.info("Training complete.")
+    run_state.cleanup_run_state(cfg)
     wandb.finish()
 
 

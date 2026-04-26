@@ -8,7 +8,8 @@ import os
 xla_flags = os.environ.get("XLA_FLAGS", "")
 xla_flags += " --xla_gpu_triton_gemm_any=True"
 os.environ["XLA_FLAGS"] = xla_flags
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true"
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.90"
 os.environ["MUJOCO_GL"] = "egl"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
@@ -41,7 +42,7 @@ from mujoco_playground import locomotion, wrapper
 from mujoco_playground.config import locomotion_params
 
 from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent import wrappers as rodent_wrappers
+from vnl_playground.tasks import wrappers as rodent_wrappers
 
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
@@ -50,33 +51,42 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = imitation.default_config()
 env_cfg.mujoco_impl = "warp"
-env_cfg.keep_clips_idx = np.arange(50)
+
+# Monsees gap-crossing reference clips
+env_cfg.reference_data_path = epath.Path("/home/talmolab/Desktop/SalkResearch/monsees-retarget/output/monsees_gap_reference_clips.h5")
+env_cfg.clip_length = 100          # 100 frames per clip (2s @ 50Hz)
+env_cfg.start_frame_range = [0, 10]
+env_cfg.keep_clips_idx = None      # Use all clips
+
+# Warp backend memory — 256 envs to fit in 32GB VRAM
+# (imitation env tracks more state per env than gap-crossing)
+env_cfg.naconmax = 12 * 256        # 256 envs * 12 contacts/env
+env_cfg.njmax = 400
 
 ppo_params = config_dict.create(
-    num_envs=4096,
-    num_timesteps=int(4_000_000_000),
+    num_envs=256,
+    num_timesteps=int(2_000_000_000),
     batch_size=1024,
     num_minibatches=16,
-    num_updates_per_batch=3,
-    learning_rate=1e-3,
-    clipping_epsilon=0.1,
-    discounting=0.95,
+    num_updates_per_batch=4,
+    learning_rate=1e-4,
+    clipping_epsilon=0.2,
+    discounting=0.97,
     action_repeat=1,
-    entropy_cost=1e-2,
+    entropy_cost=1e-3,
     reward_scaling=1.0,
     normalize_observations=True,
-    unroll_length=20,
+    unroll_length=5,
     episode_length=400,
     max_grad_norm=1.0,
     network_factory=config_dict.create(
-        policy_hidden_layer_sizes=(2048, 1024, 1024, 1024, 1024, 512),
-        value_hidden_layer_sizes=(2048, 1024, 1024, 1024, 1024, 512),
+        policy_hidden_layer_sizes=(512, 512, 512, 512),
+        value_hidden_layer_sizes=(512, 512, 512, 512),
     ),
-    eval_every=1_000_000,  # num_evals = num_timesteps // eval_every
+    eval_every=50_000_000,  # num_evals = num_timesteps // eval_every = 40
 )
 
-env_name = "imitation"
-env_cfg.nconmax *= ppo_params.num_envs
+env_name = "monsees-gap-imitation"
 
 from pprint import pprint
 
@@ -118,7 +128,7 @@ with open(ckpt_path / "config.json", "w") as fp:
 USE_WANDB = True
 
 if USE_WANDB:
-    wandb.init(project="vnl-mjx-rl", config=env_cfg, id=f"imitation-{exp_name}")
+    wandb.init(project="vnl-playground", group="monsees-gap-imitation", config=env_cfg, id=f"imitation-{exp_name}")
     wandb.config.update(
         {
             "env_name": env_name,
@@ -265,7 +275,4 @@ if __name__ == "__main__":
     make_inference_fn, params, _ = train_fn(
         environment=env,
         eval_env=eval_env,
-        policy_params_fn=functools.partial(
-            policy_params_fn, jit_logging_inference_fn=jit_logging_inference_fn
-        ),
     )
