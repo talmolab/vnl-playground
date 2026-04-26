@@ -21,12 +21,12 @@ env_config:
   env_name: "RodentImitation"
   mujoco_impl: "warp"
 
-  # Physics solver
+  # Physics solver (aligned with v2_mlp_binocular_transfer)
   solver: "newton"
   iterations: 5
   ls_iterations: 5
-  nconmax: 19
-  njmax: 1000
+  naconmax: 12288            # 1024 envs * 12 contacts/env (warp total budget)
+  njmax: 400
   noslip_iterations: 0
 
   # Timing
@@ -39,12 +39,12 @@ env_config:
   rescale_factor: 0.9           # Matches STAC SCALE_FACTOR
 
   # Reference clip settings
-  reference_data_path: "/home/talmolab/Desktop/SalkResearch/monsees-retarget/output/gap_reference_clips_stac_relaxed_smoothfloor_all.h5"
-  clip_length: 50               # 50 frames per clip (2s @ 50Hz, decimated from 100Hz)
+  reference_data_path: "/home/talmolab/Desktop/SalkResearch/monsees-retarget/output/monsees_gap_reference_clips.h5"
+  clip_length: 100              # 100 frames per clip (1 trial = 1 clip, 2s @ 50Hz)
   clip_set: "all"
   reference_length: 5           # 5-frame reference window for reward
   reference_stride: 1
-  start_frame_range: [0, 5]     # Short clips — narrow start range
+  start_frame_range: [0, 10]    # 100-frame clips, moderate start range
   qvel_init: "zeros"
   keep_clips_idx: null          # Use all 88 clips
 
@@ -93,25 +93,25 @@ env_config:
 # PPO Training Hyperparameters
 # =============================================================================
 train_config:
-  num_envs: 4096
-  num_timesteps: 4_000_000_000
+  num_envs: 1024
+  num_timesteps: 2_000_000_000
   batch_size: 1024
   num_minibatches: 16
-  num_updates_per_batch: 3
-  learning_rate: 1e-3
-  clipping_epsilon: 0.1
-  discounting: 0.95
+  num_updates_per_batch: 4
+  learning_rate: 1e-4
+  clipping_epsilon: 0.2
+  discounting: 0.97
   action_repeat: 1
-  entropy_cost: 1e-2
+  entropy_cost: 1e-3
   reward_scaling: 1.0
   normalize_observations: true
-  unroll_length: 20
+  unroll_length: 10
   episode_length: 400
   max_grad_norm: 1.0
   network_factory:
-    policy_hidden_layer_sizes: [2048, 1024, 1024, 1024, 1024, 512]
-    value_hidden_layer_sizes: [2048, 1024, 1024, 1024, 1024, 512]
-  eval_every: 1_000_000
+    policy_hidden_layer_sizes: [512, 512, 512, 512]
+    value_hidden_layer_sizes: [512, 512, 512, 512]
+  eval_every: 50_000_000
   seed: 0
 
 # =============================================================================

@@ -1,11 +1,14 @@
 # @package _global_
-# Recurrent Binocular Vision (Siamese CNN + GRU) high-level transfer training
-# Enables motion parallax through temporal integration of stereo vision.
+# RNN Binocular Vision — variable velocity range [0.4, 1.0] m/s
+# Uses the same num_envs/batch/naconmax as the MLP velocity_range_only config.
+#
+# Architecture: recurrent_binocular_vision_task_obs (GRU-based recurrent policy)
+#   - Shared-weight Siamese CNN processes left/right eyes
+#   - GRU fuses CNN features + task_obs across time
+#   - Policy/value MLP heads
 #
 # Usage:
-#   cd vnl-playground
-#   python -m vnl_playground.train_highlvl \
-#     --config-name=rodent_run_gap/recurrent_binocular_vision_transfer
+#   python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/rnn_velocity_range_only
 
 env_config:
   env_name: RodentRunGapBinocularVision
@@ -16,51 +19,44 @@ env_config:
   vision_width: 32
   vision_height: 32
   grayscale: true
+  vision_camera_name: "egocentric-rodent"
   binocular: true
   left_camera_name: "eye_left-rodent"
   right_camera_name: "eye_right-rodent"
+  eye_dropout_rate: 0.0
+  eval_eye_mode: "binocular"
   render_depth: false
   use_textures: true
   use_shadows: true
   env_args:
-    # -- Simulation --
-    # NOTE: ctrl_dt is overridden at runtime by train_highlvl.py to match the
-    # frozen decoder's mimic config. Changing it here has no effect for transfer training.
-    ctrl_dt: 0.02
+    ctrl_dt: 0.01
     sim_dt: 0.002
     solver: "newton"
     mujoco_impl: "warp"
-    # -- Solver memory --
-    naconmax: 12288       # 1024 * 12
+    naconmax: 49152
     njmax: 400
     iterations: 5
     ls_iterations: 5
     noslip_iterations: 0
-    # -- Rodent --
     torque_actuators: true
     rescale_factor: 0.9
-    # -- Corridor geometry --
     corridor_length: 4.0
     corridor_width: 2.0
     platform_length_range: [0.3, 0.6]
-    gap_length_range: [0.05, 0.3]
+    gap_length_range: [0.03, 0.2]
     n_platforms: 20
-    # -- Environment --
     spawn_x: 0.5
     randomize_gaps: true
     aesthetic: "outdoor_natural"
     use_mesh_platforms: true
-    # -- Episode --
-    episode_length: 2000
+    episode_length: 1000
     action_repeat: 1
-    # -- Reward --
     reward_terms:
-      forward_velocity:
+      forward_velocity_range:
         weight: 1.0
-        target_speed: 1
-      gap_crossing_bonus:
-        weight: 10
-    # -- Termination --
+        min_speed: 0.4
+        max_speed: 1.0
+        ramp_down_width: 0.5
     termination_criteria:
       fallen:
         min_torso_z: 0.0325
@@ -73,24 +69,24 @@ network_config:
   vision_feature_size: 32
   vision_channels: [4, 8, 16, 32]
   gru_hidden_size: 256
-  policy_head_sizes: [512,256,256,256]
-  value_head_sizes: [256,256,256,256]
+  policy_head_sizes: [512, 512, 512]
+  value_head_sizes: [512, 512, 512, 512]
 
 transfer:
   mode: prior_decoder
-  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/data/prior/default
+  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/SCAMPER/model_checkpoints/260407_183223_056788
+  prior_checkpoint_step: null
   highlvl_obs_key: task_obs
   decoder_obs_key: proprioception
-  deterministic_prior: true
 
 train_setup:
   eval_every: 50_000_000
   train_config:
     episode_length: 1000
-    num_envs: 1024
+    num_envs: 4096
     num_timesteps: 2_000_000_000
     batch_size: 1024
-    num_minibatches: 16
+    num_minibatches: 4
     num_updates_per_batch: 4
     learning_rate: 1e-4
     clipping_epsilon: 0.2
@@ -105,22 +101,35 @@ train_setup:
     latent_ar1_weight: 0.0
     use_kl_schedule: false
     num_eval_envs: 128
+    eval_naconmax: 2560
     deterministic_eval: false
-    grad_clip_threshold: 10.0
+    grad_clip_threshold: 20.0
     vf_loss_coefficient: 0.5
     vision_lr_multiplier: 1.0
 
 logging_config:
   project_name: vnl-playground
-  group_name: run-gap-recurrent-binocular-vision-transfer
+  group_name: rnn-binocular-combined-prior
   model_path: highlvl_checkpoints
-  notes: "Recurrent Binocular (Siamese CNN+GRU) for motion parallax gap-crossing"
-  exp_name: recurrent_binocular_v1
+  notes: "RNN binocular vision, velocity_range=[0.4, 1.0], combined prior, num_envs=4096."
+  exp_name: rnn_vel_range_0.4_1.0_prior
 
 eval_render_config:
   video:
     fps: 50
     height: 480
     width: 640
+    hud:
+      enabled: true
+      show_speed: true
+      show_reward_breakdown: true
+      show_cumulative_reward: true
+      show_gap_crossing: true
+      show_height: true
+      show_heading: true
+      show_step_counter: true
+      show_distance_to_gap: true
+      show_lateral_deviation: true
+      show_action_magnitude: true
+      gap_flash_duration: 1.5
   eye_conditions: ["binocular"]
-  video_naconmax: 64

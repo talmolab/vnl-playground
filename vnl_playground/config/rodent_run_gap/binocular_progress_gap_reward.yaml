@@ -1,23 +1,11 @@
 # @package _global_
-# Binocular Vision + SCAMPER Golden Prior Transfer Training (Shared Siamese CNN)
-# Uses ff_ppo with BinocularVisionEncoder (shared-weight Siamese CNN)
-#
-# Loads a SCAMPER golden prior decoder from a checkpoint directory.
-# Two transfer modes are supported:
-#   - decoder_only   : freeze the entire prior decoder; train only the high-level policy
-#   - prior_decoder  : fine-tune the prior decoder alongside the high-level policy
-#
-# The high-level policy receives stereo egocentric vision (left + right eye)
-# AND body-state signals. A shared-weight Siamese CNN processes each eye
-# independently with the same weights, then concatenated features are fused
-# with task_obs to produce latent intentions for the frozen/fine-tuned decoder.
-#
-# binocular_mode: "shared" = Option C (Siamese, biologically plausible)
-# binocular_mode: "independent" = Option B (separate CNNs, experimental control)
+# Binocular Vision + SCAMPER Transfer: Progress + Gap Crossing Reward
+# Uses corridor_progress (0→1 along corridor) + gap_crossing_bonus (100 per gap)
+# instead of forward_velocity reward. No prior residual decay.
 #
 # Usage:
 #   cd vnl-playground
-#   python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/binocular_vision_scamper_transfer
+#   python -m vnl_playground.train_highlvl --config-name=rodent_run_gap/binocular_progress_gap_reward
 
 env_config:
   env_name: RodentRunGapBinocularVision
@@ -32,12 +20,8 @@ env_config:
   binocular: true
   left_camera_name: "eye_left-rodent"
   right_camera_name: "eye_right-rodent"
-  # Stochastic eye dropout: probability of masking one eye per step.
-  # This trains the network to use monocular cues, enabling fair
-  # monocular vs binocular evaluation (analogous to Parker et al. occlusion).
-  # Set to 0.0 to disable (pure binocular training).
   eye_dropout_rate: 0.0
-  eval_eye_mode: "binocular"  # "binocular", "left_only", or "right_only"
+  eval_eye_mode: "binocular"
   render_depth: false
   use_textures: true
   use_shadows: true
@@ -48,7 +32,7 @@ env_config:
     solver: "newton"
     mujoco_impl: "warp"
     # -- Solver memory --
-    naconmax: 12288       # 2048 * 12
+    naconmax: 6144
     njmax: 400
     iterations: 5
     ls_iterations: 5
@@ -60,7 +44,7 @@ env_config:
     corridor_length: 4.0
     corridor_width: 2.0
     platform_length_range: [0.3, 0.6]
-    gap_length_range: [0.06, 0.4]
+    gap_length_range: [0.03, 0.2]
     n_platforms: 20
     # -- Environment --
     spawn_x: 0.5
@@ -72,13 +56,10 @@ env_config:
     action_repeat: 1
     # -- Reward --
     reward_terms:
-      forward_velocity:
+      new_progress:
         weight: 1.0
-        target_speed: 1
-      # termination_penalty:
-      #   weight: 10.0
       gap_crossing_bonus:
-        weight: 10
+        weight: 100
     # -- Termination --
     termination_criteria:
       fallen:
@@ -124,17 +105,13 @@ train_setup:
     latent_kl_weight: 0.0
     latent_ar1_weight: 0.0
     use_kl_schedule: false
-    # Prior residual penalty: decaying L2 penalty on policy actions (residuals).
-    # Keeps the policy near the prior mean early in training (kickstart),
-    # then gradually releases to allow more exploration freedom.
-    # Set prior_residual_start_weight > 0 to enable.
-    prior_residual_start_weight: 0.0   # Starting penalty weight (set >0 to enable, e.g. 0.5)
-    prior_residual_end_weight: 0.0     # Final penalty weight (0 = no constraint)
-    prior_residual_decay_frac: 0.5     # Fraction of training over which to decay
-    prior_residual_warmup_frac: 0.0    # Fraction of training at start weight before decay begins
-    prior_residual_schedule_type: "linear"  # "linear" or "cosine"
+    prior_residual_start_weight: 0.0
+    prior_residual_end_weight: 0.0
+    prior_residual_decay_frac: 0.5
+    prior_residual_warmup_frac: 0.0
+    prior_residual_schedule_type: "linear"
     num_eval_envs: 128
-    eval_naconmax: 2560  # If set, use this naconmax for eval env; otherwise auto-scale from training naconmax
+    eval_naconmax: 2560
     deterministic_eval: false
     grad_clip_threshold: 20.0
     vf_loss_coefficient: 0.5
@@ -142,10 +119,10 @@ train_setup:
 
 logging_config:
   project_name: vnl-playground
-  group_name: run-gap-binocular-scamper-transfer
+  group_name: run-gap-progress-reward
   model_path: highlvl_checkpoints
-  notes: "Binocular vision transfer with SCAMPER golden prior decoder"
-  exp_name: prior_vel_1.0
+  notes: "New progress (high water mark) + gap crossing (100). Gaps [0.03, 0.2]. No speed target."
+  exp_name: new_progress_gap100
 
 eval_render_config:
   video:
@@ -164,5 +141,5 @@ eval_render_config:
       show_distance_to_gap: true
       show_lateral_deviation: true
       show_action_magnitude: true
-      gap_flash_duration: 1.5  # seconds of bright green "GAP CROSSED!" text
+      gap_flash_duration: 1.5
   eye_conditions: ["binocular"]
