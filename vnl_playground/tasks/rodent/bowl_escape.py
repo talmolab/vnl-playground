@@ -252,7 +252,7 @@ class BowlEscape(rodent_base.RodentEnv):
             task_obs=task_obs,
             proprioception=self._get_proprioception(data, info, flatten=False),
         )
-        return collections.OrderedDict(state=obs)
+        return collections.OrderedDict(state=obs, privileged_state=obs)
 
     # Rewards
     @_registry.reward("escape_x_upright")
