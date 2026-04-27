@@ -289,7 +289,22 @@ class CelegansEnv(mjx_env.MjxEnv):
                     and "free_body_rot" not in joint.name
                 ):
                     for key, value in hinge_config.items():
-                        setattr(joint, key, value)
+                        if key.lower() == "damping":
+                            if isinstance(value, (int, float)):
+                                value = np.array(
+                                    [float(value), 0.0, 0.0], dtype=np.float64
+                                )
+                            else:
+                                arr = np.zeros(3, dtype=np.float64)
+                                arr[: len(value)] = value
+                                value = arr
+                        try:
+                            setattr(joint, key, value)
+                        except Exception as e:
+                            print(
+                                f"Error setting {key} to {value} for joint {joint.name}: {e}"
+                            )
+                            raise e
 
     def add_ghost(
         self,
@@ -321,9 +336,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         else:
             spec = self._spec
 
-        walker_spec = mujoco.MjSpec.from_string(
-            epath.Path(self._walker_xml_path).read_text()
-        )
+        walker_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
         if rescale_factor != 1.0:
             logging.info(f"Rescaling body tree with scale factor {rescale_factor}")
             walker_spec = scale_spec(walker_spec, rescale_factor)

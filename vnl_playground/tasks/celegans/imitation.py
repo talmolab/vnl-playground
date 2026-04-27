@@ -114,6 +114,7 @@ def default_config() -> config_dict.ConfigDict:
             "pose_error": {"max_l2_error": 4.5},  # Joint-space L2 distance
             "nan": {},
         },
+        render_camera="track",
     )
 
 
@@ -236,6 +237,13 @@ class Imitation(worm_base.CelegansEnv):
             - int(self.config.start_frame_range[1])
             - self.config.reference_length
         ) * (1 / (self.mocap_hz * self.ctrl_dt))
+        self._default_render_camera = f"{self._config.render_camera}-worm"
+        if self._default_render_camera not in self.spec.cameras:
+            warnings.warn(
+                f"Camera {self._default_render_camera} not found in available cameras: {self.spec.cameras}! (Hint: did you forget the suffix?)"
+            )
+            warnings.warn("Defaulting to camera: 'track-worm'")
+            self._default_render_camera = "track-worm"
 
     def __repr__(self) -> str:
         walker_config = pformat(
@@ -1228,6 +1236,28 @@ class Imitation(worm_base.CelegansEnv):
         """
         self._reference_clips = reference_clips
 
+    @property
+    def default_render_camera(self) -> str:
+        """Get the default render camera.
+
+        Returns:
+            Default render camera.
+        """
+        return self._default_render_camera
+
+    @default_render_camera.setter
+    def default_render_camera(self, default_render_camera: str) -> None:
+        """Set the default render camera.
+
+        Args:
+            default_render_camera: Default render camera.
+        """
+        self._default_render_camera = default_render_camera
+        if self._default_render_camera not in self.spec.cameras:
+            raise ValueError(
+                f"Camera {self._default_render_camera} not found in available cameras: {self.spec.cameras}! (Hint: did you forget the suffix?)"
+            )
+
     def _clip_length(self) -> int:
         """Get the length of each clip.
 
@@ -1382,6 +1412,83 @@ class Imitation(worm_base.CelegansEnv):
                 for frame in rendered_frames:
                     writer.append_data(frame)
         return rendered_frames
+
+    def render_optimized(
+        self,
+        rollout_source: Any,
+        height: int = 480,
+        width: int = 640,
+        camera: Optional[str] = None,
+        scene_option: Optional[mujoco.MjvOption] = None,
+        render_ghost: bool = True,
+    ) -> List[np.ndarray]:
+        """Render from precomputed qposes using the old track-mjx logic.
+
+        Accepts either a rollout dictionary containing ``qposes_rollout`` and
+        ``qposes_ref`` or stacked rollout states. The rendering path stays on the
+        host side and mirrors the historical ``track_mjx.analysis.render`` logic.
+        """
+        import tqdm
+
+        if isinstance(rollout_source, Mapping) and "qposes_rollout" in rollout_source:
+            qposes_rollout = np.asarray(rollout_source["qposes_rollout"])
+            qposes_ref = (
+                np.asarray(rollout_source["qposes_ref"])
+                if render_ghost and "qposes_ref" in rollout_source
+                else None
+            )
+        else:
+            qposes_rollout = np.asarray(rollout_source.data.qpos)
+            qposes_ref = None
+            if render_ghost:
+                clip_idx = int(
+                    np.asarray(rollout_source.info["reference_clip"]).reshape(-1)[0]
+                )
+                start_frame = np.asarray(rollout_source.info["start_frame"])
+                times = np.asarray(rollout_source.data.time)
+                frame_indices = np.floor(
+                    times * float(self._config.mocap_hz) + start_frame
+                ).astype(np.int32)
+                ref_qpos = np.asarray(self.reference_clips.qpos[clip_idx])
+                qposes_ref = ref_qpos[frame_indices]
+
+        if render_ghost:
+            pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.05})
+            pos = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.05)]
+            spec, mj_model = self.add_ghost(
+                rescale_factor=self._config.rescale_factor,
+                trans_joint=self._config.trans_joint,
+                pos=pos,
+                ghost_rgba=(1.0, 1.0, 1.0, 0.2),
+                suffix="-ghost",
+                inplace=False,
+            )
+            qpos_list = [
+                np.concatenate((qroll, qref))
+                for qroll, qref in zip(qposes_rollout, qposes_ref, strict=False)
+            ]
+        else:
+            mj_model = self.mj_model
+            qpos_list = qposes_rollout
+
+        mj_data = mujoco.MjData(mj_model)
+        renderer = mujoco.Renderer(mj_model, height=height, width=width)
+
+        if camera is None:
+            camera = self._default_render_camera
+        if scene_option is None:
+            scene_option = mujoco.MjvOption()
+            scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
+
+        frames = []
+        for qpos in tqdm.tqdm(qpos_list, desc="Rendering"):
+            mj_data.qpos = qpos
+            mujoco.mj_forward(mj_model, mj_data)
+            renderer.update_scene(mj_data, camera=camera, scene_option=scene_option)
+            frames.append(renderer.render())
+
+        renderer.close()
+        return frames
 
     def verify_reference_data(self, atol: float = 5e-3) -> bool:
         """A set of non-exhaustive sanity checks that the reference data found in
