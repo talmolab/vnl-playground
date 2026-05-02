@@ -83,16 +83,16 @@ Every run is eval'd against **all 5 animals** (per-animal `eval/emg_<animal>_<mu
 
 ## GPU partition (matches s17 layout)
 
-6 sweep scripts, one per GPU; budget 30h each. Cells distributed across animals so a single script doesn't bottleneck on one animal:
+6 sweep scripts, one per GPU; `BUDGET_HOURS=30` each. Balanced at 5–8 cells per script (max 28h wall) so all scripts fit comfortably under budget. Script 1 is intentionally lightest so it finishes first and gives the per-animal pattern preview before scripts 4–6 complete.
 
 - `sweep_sAnimal_1.sh` — GPU0 — A36-1: C0, F1, F2, F3, F4 (5 cells)
-- `sweep_sAnimal_2.sh` — GPU1 — A36-1: F5, F6, F7, F8 + AT006: C0, F1, F2 (7 cells)
-- `sweep_sAnimal_3.sh` — GPU2 — AT006: F3, F4, F5, F6, F7, F8 (6 cells)
-- `sweep_sAnimal_4.sh` — GPU3 — AT009: all 9 cells (9 cells)
-- `sweep_sAnimal_5.sh` — GPU4 — AT012: all 9 cells (9 cells)
-- `sweep_sAnimal_6.sh` — GPU5 — AT013: all 9 cells (9 cells)
+- `sweep_sAnimal_2.sh` — GPU1 — A36-1: F5, F6, F7, F8 + AT006: C0, F1, F2, F3 (8 cells)
+- `sweep_sAnimal_3.sh` — GPU2 — AT006: F4, F5, F6, F7, F8 + AT009: C0, F1, F2 (8 cells)
+- `sweep_sAnimal_4.sh` — GPU3 — AT009: F3, F4, F5, F6, F7, F8 + AT012: C0, F1 (8 cells)
+- `sweep_sAnimal_5.sh` — GPU4 — AT012: F2, F3, F4, F5, F6, F7, F8 + AT013: C0 (8 cells)
+- `sweep_sAnimal_6.sh` — GPU5 — AT013: F1, F2, F3, F4, F5, F6, F7, F8 (8 cells)
 
-Per-script wall time: 5–9 cells × 3.5h = 17–32h. The 30h budget covers the longest script with margin. Scripts have early-exit on budget like s17.
+Per-script wall time at ~3.5h/cell: 17.5h (script 1) to 28h (scripts 2–6). Budget 30h covers all with 2h margin. Scripts have early-exit on budget like s17.
 
 ## Decision gates before launching
 
