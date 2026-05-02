@@ -19,6 +19,20 @@ Spec & rationale: `docs/superpowers/specs/2026-05-02-s19-ms-bayesian-population-
 
 No pre-flight needed for anchor seeds (C1 already known to converge from s18). γ cells run an automatic 50M-step preflight gate inside the sweep script (`PREFLIGHT_REWARD_FLOOR=250` default; override via env var).
 
+## Wake-up resume protocol (vastlrn / eric-vast-lrn-0-0)
+
+**As of 2026-05-02 ~10:30, both GPUs on this machine are still running s18-ms-C7 and s18-ms-C8 (last cells of s18 scripts 1+2). Estimated finish ~13:00–13:15 today.**
+
+**Before launching s19 scripts 3+4 on this machine, verify s18 has actually finished:**
+
+```bash
+# Should print empty if s18 sweeps are done. If anything prints, s18 is still running.
+pgrep -af "sweep_s18_ms_[12].sh"
+pgrep -af "train_mouse_janelia_sigmoid_moving_shoulder.py"
+```
+
+When clear, fire scripts 3 + 4 on this machine (Job2 below) plus the others:
+
 ## Interactive Job 1 — 2 GPUs (machine #1) ericmimic2
 
 ```bash
