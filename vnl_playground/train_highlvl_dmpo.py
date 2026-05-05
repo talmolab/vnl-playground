@@ -104,7 +104,11 @@ def _build_env(hydra_cfg: DictConfig, prior_fn, decoder_fn, latent_size):
     """
     env_name = str(hydra_cfg.env_name)
     env_args = OmegaConf.to_container(hydra_cfg.get("env_config", {}), resolve=True) or {}
-    env_args = {k: v for k, v in env_args.items() if k not in ("env_name", "flatten_obs")}
+    # Filter to only keys that are valid in the env's default config. This drops
+    # YAML-only metadata (env_name, task_name, walker_name, render_camera_name,
+    # flatten_obs) that the env's ConfigDict doesn't accept.
+    valid_keys = set(tasks.get_default_config(env_name).keys())
+    env_args = {k: v for k, v in env_args.items() if k in valid_keys}
     base_env = tasks.load(env_name, flatten_obs=False, config_overrides=env_args)
     raw_env = base_env.env if hasattr(base_env, "env") else base_env
     mj_model = getattr(raw_env, "mj_model", None)
