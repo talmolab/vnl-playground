@@ -1,0 +1,66 @@
+# =============================================================================
+# DMPO config for RodentRunGapBinocularVision (Path 3 of the binocular
+# integration). High-level transfer with frozen SCAMPER prior + decoder.
+#
+# Inherits all DMPO knobs from rodent-dmpo.yaml; overrides:
+#   - env_name (vision env)
+#   - env_config (vision rendering settings)
+#   - network_config (CNN encoder hyper-params)
+#   - transfer (frozen prior + decoder paths)
+#   - train_config (smaller batch — vision env is heavier)
+# =============================================================================
+defaults:
+  - rodent-dmpo-base
+  - _self_
+
+env_name: RodentRunGapBinocularVision
+walker: rodent_no_tail_collisions
+
+env_config:
+  env_name: RodentRunGapBinocularVision
+  binocular: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  flatten_obs: false
+  # Match vnl-playground v2_rnn_binocular_transfer episode budget. Without this
+  # the brax EpisodeWrapper truncates at unroll_length=50 instead of the
+  # natural episode horizon, hurting credit assignment.
+  episode_length: 1000
+  action_repeat: 1
+  use_textures: false
+  use_shadows: false
+  eye_dropout_rate: 0.0
+  eval_eye_mode: binocular
+
+network_config:
+  arch_name: dmpo_binocular_vision_feedforward
+  binocular_mode: shared
+  vision_feature_size: 32
+  vision_channels: [4, 8, 16, 32]
+
+transfer:
+  mode: prior_decoder
+  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/data/prior/default
+  prior_checkpoint_step: null
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+  deterministic_prior: true
+  noise_logvar: -2.0
+
+train_config:
+  # Vision env is heavier than non-vision; smaller batch.
+  num_envs: 1024
+  num_timesteps: 1_000_000_000
+  unroll_length: 50
+  batch_size: 256
+  # Replay tuned per-env so total stays at vnl-ray's defaults:
+  min_replay_size: 50_000
+  max_replay_size: 4_000_000
+  sequence_length: 50
+  samples_per_insert: 2.0
+
+  log_every_steps: 10_000
+  eval_every_steps: 1_000_000

@@ -254,7 +254,7 @@ def _load_env_and_networks(hydra_cfg: DictConfig, cfg: DMPOConfig):
     return env, raw_env, None, None, env_spec, transition_template, nets, None
 
 
-@hydra.main(config_path="config", config_name="rodent_run_gap/run_gap_vision_scratch_position",
+@hydra.main(config_path="config", config_name="rodent_run_gap_dmpo/vision_scratch_position",
             version_base=None)
 def main(hydra_cfg: DictConfig):
     """DMPO entry for VNL downstream tasks (gap, vision, etc.)."""
