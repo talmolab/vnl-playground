@@ -46,7 +46,12 @@ env_config:
   sim_dt: 0.002
   solver: "newton"
   mujoco_impl: "warp"
-  naconmax: 32768
+  # naconmax bumped 32768 -> 65536 (32 contacts/env at 2048 envs).
+  # Earlier kl_a_v1 run hit broadphase overflow up to 61740 (~31 contacts/env)
+  # at 159M env_steps when behavior diversified — contact truncation in
+  # mid-air / takeoff phases would silently break physics and prevent
+  # learning ballistic moves. 32/env gives ~5% headroom over observed peak.
+  naconmax: 65536
   njmax: 400
   iterations: 5
   ls_iterations: 5
