@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 import jax
 import jax.numpy as jp
+from jax import flatten_util as _flatten_util
 from mujoco_playground._src import wrapper, mjx_env
 
 
@@ -42,6 +43,7 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
         self._proprio_obs_key = proprio_obs_key
 
     def _flatten_proprio(self, full_obs):
+        proprio = None
         if isinstance(full_obs, dict):
             if self._anchor_obs_key in full_obs and isinstance(
                 full_obs[self._anchor_obs_key], dict
@@ -49,18 +51,19 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
                 proprio = full_obs[self._anchor_obs_key].get(
                     self._proprio_obs_key, None
                 )
-                if proprio is not None:
-                    if isinstance(proprio, dict):
-                        return jp.concatenate(
-                            [proprio[k] for k in sorted(proprio.keys())], axis=-1
-                        )
-                    return proprio
-            if self._proprio_obs_key in full_obs:
-                return full_obs[self._proprio_obs_key]
-        raise KeyError(
-            f"Cannot find proprio key {self._proprio_obs_key} under "
-            f"{self._anchor_obs_key} in obs"
-        )
+            if proprio is None and self._proprio_obs_key in full_obs:
+                proprio = full_obs[self._proprio_obs_key]
+        if proprio is None:
+            raise KeyError(
+                f"Cannot find proprio key {self._proprio_obs_key} under "
+                f"{self._anchor_obs_key} in obs"
+            )
+        # Proprio may be a (possibly nested) dict of arrays; ravel the
+        # whole pytree to a flat 1-D vector matching the decoder's input.
+        if isinstance(proprio, dict):
+            flat, _ = _flatten_util.ravel_pytree(proprio)
+            return flat
+        return proprio
 
     def _compute_anchor(self, proprio):
         prior_mean, _ = self._prior_fn(proprio)
@@ -106,3 +109,45 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
     @property
     def action_size(self) -> int:
         return self.env.action_size if hasattr(self.env, "action_size") else self._action_size
+
+    @property
+    def observation_size(self):
+        """Return the observation-size dict expected by the kl-anchor entry.
+
+        The kl-anchor policy consumes ``proprioception`` + ``imitation_target``
+        (vision is added later by ``BinocularVisionRenderWrapper``). We
+        delegate to the wrapped env's ``non_flattened_observation_size``
+        (a nested dict) and emit a flat dict with the keys the entry
+        script reads (``proprioception``, ``imitation_target``).
+        """
+        try:
+            import jax
+            import jax.numpy as jnp
+            from jax import flatten_util as _flatten_util
+            obs = self.env.non_flattened_observation_size
+            # Some chains (brax wrappers) hide the original env behind ``.env``;
+            # walk down until we find ``non_flattened_observation_size`` shape.
+            inner = obs
+            if "state" in inner:
+                inner = inner["state"]
+            proprio = inner.get("proprioception", 0)
+            task_obs = inner.get("task_obs", inner.get("imitation_target", 0))
+
+            def _size(x):
+                if isinstance(x, dict):
+                    flat, _ = _flatten_util.ravel_pytree(x)
+                    return int(jnp.sum(flat))
+                # Already an int-ish
+                try:
+                    return int(jnp.sum(jnp.array(x)))
+                except Exception:
+                    return int(x)
+
+            return {
+                "proprioception": _size(proprio),
+                "imitation_target": _size(task_obs),
+            }
+        except Exception:
+            # Fall back to underlying observation_size; caller will fail
+            # with a clearer error.
+            return self.env.observation_size

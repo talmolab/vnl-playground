@@ -249,6 +249,11 @@ def main(hydra_cfg: DictConfig):
     }
     rng, k_state = jax.random.split(rng)
     state = init_training_state(k_state, nets, env_spec, cfg)
+    # init_training_state builds state with the DEFAULT optimizer; replace
+    # the policy_opt_state with one initialized by the kl-anchor multi_transform
+    # optimizer so update() can resolve per-block inner_states.
+    pol_opt_kl, _, _ = optimizers
+    state = state._replace(policy_opt_state=pol_opt_kl.init(state.policy_params))
 
     ckpt_mgr = make_checkpointer(ckpt_dir)
     restored = restore_ckpt(ckpt_mgr, state_template=state)
