@@ -8,6 +8,13 @@ returns, computes:
     r_total = r_task + alpha_anchor * r_anchor
 and replaces state.reward with r_total. Also stores a_imit + the per-step
 anchor MSE in state.info / state.metrics for diagnostic logging.
+
+Also flattens the env's nested observation dict into the canonical
+{"vision", "imitation_target", "proprioception"} shape that the kl-anchor
+policy network and the eval rollout helper expect. This mirrors what
+HighLevelWrapper does in the PPO pipeline. The vision field is preserved
+as a placeholder (zeros from the registry env) and is replaced with real
+binocular renders by BinocularVisionRenderWrapper downstream.
 """
 from __future__ import annotations
 
@@ -17,6 +24,8 @@ import jax
 import jax.numpy as jp
 from jax import flatten_util as _flatten_util
 from mujoco_playground._src import wrapper, mjx_env
+
+from track_mjx.agent.observation_utils import flatten_obs_dict
 
 
 class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
@@ -71,6 +80,16 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
         a_imit, _ = self._decoder_fn(latent_proprio)
         return a_imit, prior_mean
 
+    def _flatten_for_policy(self, obs):
+        """Convert nested env obs to {vision, imitation_target, proprioception}.
+
+        Mirrors what HighLevelWrapper does so the kl-anchor policy and eval
+        rollout receive obs in the same flat shape they expect. Preserves
+        the `vision` placeholder so BinocularVisionRenderWrapper downstream
+        can replace it with the real render.
+        """
+        return flatten_obs_dict(obs)
+
     def reset(self, rng, **kwargs):
         state = self.env.reset(rng, **kwargs)
         full_obs = state.info.get("_full_obs", state.obs)
@@ -82,7 +101,7 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
         m["anchor/r_anchor"] = jp.float32(1.0)
         m["anchor/action_mse"] = jp.float32(0.0)
         m["anchor/r_task"] = jp.float32(0.0)
-        return state.replace(metrics=m)
+        return state.replace(obs=self._flatten_for_policy(state.obs), metrics=m)
 
     def step(self, state, action):
         next_state = self.env.step(state, action)
@@ -104,7 +123,11 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
         m["anchor/action_mse"] = action_mse.astype(jp.float32)
         m["anchor/r_task"] = r_task.astype(jp.float32)
 
-        return next_state.replace(reward=r_total, metrics=m)
+        return next_state.replace(
+            obs=self._flatten_for_policy(next_state.obs),
+            reward=r_total,
+            metrics=m,
+        )
 
     @property
     def action_size(self) -> int:
@@ -114,39 +137,46 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
     def observation_size(self):
         """Return the observation-size dict expected by the kl-anchor entry.
 
-        The kl-anchor policy consumes ``proprioception`` + ``imitation_target``
-        (vision is added later by ``BinocularVisionRenderWrapper``). We
-        delegate to the wrapped env's ``non_flattened_observation_size``
-        (a nested dict) and emit a flat dict with the keys the entry
-        script reads (``proprioception``, ``imitation_target``).
+        The kl-anchor policy consumes ``vision`` (HxWxC), ``imitation_target``,
+        and ``proprioception``. We mirror the structure produced by
+        ``flatten_obs_dict``: the flattened sizes for proprio + task_obs
+        plus the vision shape preserved as a tuple.
         """
         try:
             import jax
             import jax.numpy as jnp
             from jax import flatten_util as _flatten_util
             obs = self.env.non_flattened_observation_size
-            # Some chains (brax wrappers) hide the original env behind ``.env``;
-            # walk down until we find ``non_flattened_observation_size`` shape.
             inner = obs
             if "state" in inner:
                 inner = inner["state"]
             proprio = inner.get("proprioception", 0)
             task_obs = inner.get("task_obs", inner.get("imitation_target", 0))
+            vision = inner.get("vision", None)
 
             def _size(x):
                 if isinstance(x, dict):
                     flat, _ = _flatten_util.ravel_pytree(x)
                     return int(jnp.sum(flat))
-                # Already an int-ish
                 try:
                     return int(jnp.sum(jnp.array(x)))
                 except Exception:
                     return int(x)
 
-            return {
+            result = {
                 "proprioception": _size(proprio),
                 "imitation_target": _size(task_obs),
             }
+            if vision is not None:
+                # Preserve vision shape (H, W, C) — caller may want a tuple.
+                if hasattr(vision, "shape"):
+                    result["vision"] = tuple(vision.shape)
+                elif isinstance(vision, (tuple, list)):
+                    result["vision"] = tuple(vision)
+                else:
+                    # Fallback to scalar size if unknown.
+                    result["vision"] = _size(vision)
+            return result
         except Exception:
             # Fall back to underlying observation_size; caller will fail
             # with a clearer error.
