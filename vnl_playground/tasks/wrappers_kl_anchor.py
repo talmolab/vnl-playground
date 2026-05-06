@@ -1,13 +1,18 @@
-"""Wrapper for DMPO kl-anchor mode.
+"""Wrapper for DMPO kl-anchor mode (KL-in-loss surface).
 
 Computes the frozen anchor pipeline (frozen Prior -> frozen Decoder) at
-every reset/step using *only* proprioception. After the base env step
-returns, computes:
-    a_imit = anchor_decoder_fn(prior_mean(proprio), proprio)  # mode action
-    r_anchor = exp(-w_anchor * ||a_taken - a_imit||^2 / action_size)
-    r_total = r_task + alpha_anchor * r_anchor
-and replaces state.reward with r_total. Also stores a_imit + the per-step
-anchor MSE in state.info / state.metrics for diagnostic logging.
+every reset/step using *only* proprioception. The decoder now returns
+raw pre-tanh logits, which are split into the Gaussian distribution
+params (mu_imit, log_std_imit). These are written to ``state.info`` so
+that the policy loss can read them at SGD time and compute a closed-form
+KL term (see DMPOConfig.kl_anchor_alpha). The env reward is set to
+``r_task`` only — the anchor signal flows through the *policy loss*, not
+through the critic via env reward.
+
+The diagnostic ``anchor/r_anchor`` (MSE-based, post-tanh) and
+``anchor/action_mse`` are still emitted to ``state.metrics`` for
+monitoring. The constructor keeps ``w_anchor`` and ``alpha_anchor`` for
+this diagnostic only — the loss-side weight lives in DMPOConfig.
 
 Also flattens the env's nested observation dict into the canonical
 {"vision", "imitation_target", "proprioception"} shape that the kl-anchor
@@ -35,19 +40,19 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
         self,
         env: mjx_env.MjxEnv,
         prior_fn: Callable,
-        decoder_fn: Callable,
+        decoder_logits_fn: Callable,
         action_size: int,
-        w_anchor: float = 0.01,
-        alpha_anchor: float = 10.0,
+        w_anchor: float = 0.5,
+        alpha_anchor: float = 0.0,    # diagnostic-only after KL-in-loss port
         anchor_obs_key: str = "state",
         proprio_obs_key: str = "proprioception",
     ):
         super().__init__(env)
         self._prior_fn = prior_fn
-        self._decoder_fn = decoder_fn
+        self._decoder_logits_fn = decoder_logits_fn
         self._action_size = action_size
         self._w_anchor = float(w_anchor)
-        self._alpha_anchor = float(alpha_anchor)
+        self._alpha_anchor = float(alpha_anchor)  # kept for diagnostics only
         self._anchor_obs_key = anchor_obs_key
         self._proprio_obs_key = proprio_obs_key
 
@@ -77,8 +82,10 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
     def _compute_anchor(self, proprio):
         prior_mean, _ = self._prior_fn(proprio)
         latent_proprio = jp.concatenate([prior_mean, proprio], axis=-1)
-        a_imit, _ = self._decoder_fn(latent_proprio)
-        return a_imit, prior_mean
+        logits, _ = self._decoder_logits_fn(latent_proprio)
+        mu = logits[..., : self._action_size]
+        log_std = logits[..., self._action_size :]
+        return mu, log_std, prior_mean
 
     def _flatten_for_policy(self, obs):
         """Convert nested env obs to {vision, imitation_target, proprioception}.
@@ -94,7 +101,10 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
         state = self.env.reset(rng, **kwargs)
         full_obs = state.info.get("_full_obs", state.obs)
         proprio = self._flatten_proprio(full_obs)
-        a_imit, prior_mean = self._compute_anchor(proprio)
+        mu_imit, log_std_imit, prior_mean = self._compute_anchor(proprio)
+        a_imit = jp.tanh(mu_imit[..., : self._action_size])
+        state.info["anchor_mu_imit"] = mu_imit[..., : self._action_size]
+        state.info["anchor_log_std_imit"] = log_std_imit[..., : self._action_size]
         state.info["anchor_a_imit"] = a_imit
         state.info["anchor_prior_mean"] = prior_mean
         m = dict(state.metrics) if state.metrics else {}
@@ -107,14 +117,21 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
         next_state = self.env.step(state, action)
         full_obs = next_state.info.get("_full_obs", next_state.obs)
         proprio = self._flatten_proprio(full_obs)
-        a_imit, prior_mean = self._compute_anchor(proprio)
+        mu_imit, log_std_imit, prior_mean = self._compute_anchor(proprio)
+        a_imit = jp.tanh(mu_imit[..., : self._action_size])
 
-        diff = action[..., : self._action_size] - a_imit[..., : self._action_size]
+        # Diagnostic anchor/r_anchor: MSE between sampled action and the imit
+        # mode (post-tanh). KEPT for monitoring only; NOT added to reward.
+        diff = action[..., : self._action_size] - a_imit
         action_mse = jp.mean(diff * diff)
         r_anchor = jp.exp(-self._w_anchor * action_mse * self._action_size)
         r_task = next_state.reward
-        r_total = r_task + self._alpha_anchor * r_anchor
+        # r_total = r_task ONLY. The anchor signal flows through the policy
+        # loss in the learner (NOT through the env reward + critic).
+        r_total = r_task
 
+        next_state.info["anchor_mu_imit"] = mu_imit[..., : self._action_size]
+        next_state.info["anchor_log_std_imit"] = log_std_imit[..., : self._action_size]
         next_state.info["anchor_a_imit"] = a_imit
         next_state.info["anchor_prior_mean"] = prior_mean
 
