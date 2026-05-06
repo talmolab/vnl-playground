@@ -280,6 +280,45 @@ def main(hydra_cfg: DictConfig):
         log.info("Restored DMPO checkpoint at step %d", int(restored.steps))
         state = restored
 
+    # ---- Startup invariant probe -------------------------------------------------
+    # Run a single env step with the warm-started policy and log the wrapper's
+    # anchor metrics. This is a tripwire: a fresh kl-anchor pipeline with
+    # working warm-start should observe r_anchor very close to 1.0 (the policy's
+    # mode action equals tanh(mu_imit_pretanh) up to numerics). If r_anchor drops,
+    # one of the warm-start fixes (Tasks 1-6) regressed.
+    try:
+        from track_mjx.agent.dmpo.action_utils import bind as _bind
+        from track_mjx.agent.dmpo.learner import _normalize_obs
+        probe_label = (
+            "anchor_invariant_probe_resumed"
+            if restored is not None
+            else "anchor_invariant_probe"
+        )
+        rng_probe, k_probe = jax.random.split(rng)
+        keys = jax.random.split(k_probe, cfg.num_envs)
+        st0 = env.reset(keys)
+        norm_obs = _normalize_obs(st0.obs, state.normalizer_params)
+        action = jax.vmap(
+            lambda o: nets.policy.apply(state.policy_params, o).mode()
+        )(norm_obs)
+        bound = _bind(action)
+        st1 = env.step(st0, bound)
+        next_state = st1[0] if isinstance(st1, tuple) else st1
+        r_anchor = float(
+            jnp.mean(next_state.metrics.get("anchor/r_anchor", jnp.float32(0.0)))
+        )
+        action_mse = float(
+            jnp.mean(next_state.metrics.get("anchor/action_mse", jnp.float32(0.0)))
+        )
+        log.info(
+            "%s r_anchor=%.4f action_mse=%.4f",
+            probe_label, r_anchor, action_mse,
+        )
+        rng = rng_probe
+    except Exception as exc:
+        log.warning("Startup invariant probe failed (non-fatal): %s", exc, exc_info=True)
+    # ----------------------------------------------------------------------------
+
     rb = make_replay(
         max_size=max(cfg.sequence_length + 1, cfg.max_replay_size // cfg.num_envs),
         min_size=max(cfg.sequence_length + 1, cfg.min_replay_size // cfg.num_envs),
@@ -297,6 +336,16 @@ def main(hydra_cfg: DictConfig):
     def wandb_log_cb(payload, env_steps):
         if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
             wandb.log(payload, step=int(env_steps))
+        # Also mirror the anchor metric to stdout so non-wandb runs (smoke
+        # tests, offline) can verify the warm-start invariant without
+        # parsing wandb's binary log.
+        if "anchor/r_anchor" in payload:
+            log.info(
+                "anchor_metrics env_steps=%d r_anchor=%.4f action_mse=%.4f",
+                int(env_steps),
+                float(payload.get("anchor/r_anchor", 0.0)),
+                float(payload.get("anchor/action_mse", 0.0)),
+            )
 
     def ckpt_save_cb(state, env_steps):
         save_ckpt(ckpt_mgr, int(env_steps), state, config=cfg_dict)
