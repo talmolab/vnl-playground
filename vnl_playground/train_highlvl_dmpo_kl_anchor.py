@@ -293,7 +293,6 @@ def main(hydra_cfg: DictConfig):
     # mode action equals tanh(mu_imit_pretanh) up to numerics). If r_anchor drops,
     # one of the warm-start fixes (Tasks 1-6) regressed.
     try:
-        from track_mjx.agent.dmpo.action_utils import bind as _bind  # noqa: F401
         from track_mjx.agent.dmpo.learner import _normalize_obs
         from track_mjx.agent.dmpo.kl_anchor_utils import pretanh_gaussian_kl
         probe_label = (
@@ -310,16 +309,21 @@ def main(hydra_cfg: DictConfig):
         mu_theta = dist0.mean()
         log_std_theta = jnp.log(dist0.stddev())
         # Anchor distribution from state.info — populated by the wrapper.
+        # Both wrapper and loss compute log_std as log(softplus(raw)+1e-3) so the
+        # KL on this side is in the same units as the loss-side anchor signal.
         mu_imit = st0.info["anchor_mu_imit"]
         log_std_imit = st0.info["anchor_log_std_imit"]
         kl = pretanh_gaussian_kl(mu_theta, log_std_theta, mu_imit, log_std_imit)
         # kl is per-sample shape (num_envs,); aggregate via mean(exp(-w*kl))
         # which matches the loss-side r_anchor formula.
         r_anchor = float(jnp.mean(jnp.exp(-cfg.kl_anchor_w * kl)))
-        action_mse_diag = 0.0  # diag MSE is computed by wrapper; not exposed here
+        kl_mean = float(jnp.mean(kl))
+        # Format keeps `action_mse=` for smoke-test regex compat (post-port
+        # the wrapper's MSE diagnostic is no longer relevant for the probe;
+        # we report kl_mean here as the meaningful diagnostic).
         log.info(
-            "%s r_anchor=%.4f action_mse=%.4f",
-            probe_label, r_anchor, action_mse_diag,
+            "%s r_anchor=%.4f action_mse=%.4f kl_mean=%.4f",
+            probe_label, r_anchor, 0.0, kl_mean,
         )
         rng = rng_probe
     except Exception as exc:
