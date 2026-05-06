@@ -103,6 +103,50 @@ def make_decoder_inference_fn(
     return decoder_fn
 
 
+def make_decoder_logits_fn(
+    decoder_params: Dict,
+    normalizer_params: DictRunningStatisticsState,
+    config: Dict,
+) -> Callable:
+    """Create a decoder-logits inference function (raw pre-tanh, no mode).
+
+    Returns the **raw** decoder logits (shape ``(..., 2*action_size)`` —
+    concatenation of pre-tanh ``mu`` and ``log_std``). Used by the
+    KL-anchor wrapper to expose `(mu_imit, log_std_imit)` to the policy
+    loss for closed-form KL.
+
+    Args:
+        decoder_params: Frozen decoder parameters from the imit checkpoint.
+        normalizer_params: Dict normalizer with proprioception statistics.
+        config: Checkpoint config dict (as returned by
+            ``load_prior_checkpoint``).
+
+    Returns:
+        Function ``(latent_proprio) -> (logits, extras)`` where
+        ``latent_proprio`` is ``[latent, proprio]`` concatenated and
+        ``logits`` has shape ``(..., 2 * action_size)``.
+    """
+    action_size = config["network_config"]["action_size"]
+    latent_size = config["network_config"]["intention_size"]
+    decoder_hidden_layer_sizes = tuple(config["network_config"]["decoder_layer_sizes"])
+
+    decoder_module = intention_network.Decoder(
+        layer_sizes=list(decoder_hidden_layer_sizes) + [2 * action_size],
+    )
+
+    proprio_normalizer = normalizer_params.proprioception
+
+    def decoder_logits_fn(latent_proprio: jnp.ndarray) -> Tuple[jnp.ndarray, Dict]:
+        latent = latent_proprio[..., :latent_size]
+        proprio = latent_proprio[..., latent_size:]
+        normalized_proprio = running_statistics.normalize(proprio, proprio_normalizer)
+        decoder_input = jnp.concatenate([latent, normalized_proprio], axis=-1)
+        logits, _ = decoder_module.apply({"params": decoder_params}, decoder_input)
+        return logits, {"logits": logits}
+
+    return decoder_logits_fn
+
+
 def make_prior_inference_fn(
     prior_params: Dict,
     normalizer_params: DictRunningStatisticsState,
