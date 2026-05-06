@@ -130,8 +130,17 @@ def make_decoder_logits_fn(
     latent_size = config["network_config"]["intention_size"]
     decoder_hidden_layer_sizes = tuple(config["network_config"]["decoder_layer_sizes"])
 
+    # Use NormalTanhDistribution.param_size for the output layer to stay in
+    # lockstep with make_decoder_inference_fn — both functions construct the
+    # SAME decoder module shape; only the postprocessing differs (mode vs
+    # raw logits). Hardcoding `2 * action_size` would silently desync if
+    # brax ever ships a NormalTanh variant with a different param_size.
+    parametric_action_distribution = distribution.NormalTanhDistribution(
+        event_size=action_size
+    )
     decoder_module = intention_network.Decoder(
-        layer_sizes=list(decoder_hidden_layer_sizes) + [2 * action_size],
+        layer_sizes=list(decoder_hidden_layer_sizes)
+        + [parametric_action_distribution.param_size],
     )
 
     proprio_normalizer = normalizer_params.proprioception

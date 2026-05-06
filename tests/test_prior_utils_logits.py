@@ -5,14 +5,17 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 
 def test_make_decoder_logits_fn_returns_raw_logits():
     """The new fn returns logits of shape (..., 2*action_size) — concat of
     [mu_pretanh, log_std_pretanh] — without applying tanh.
+
+    Uses non-zero input + non-zero params so that |mu| > 1 in some dim,
+    which is the regime where tanh would be observable. A buggy
+    implementation that applied tanh to mu would fail the allclose.
     """
-    from brax.training.acme import running_statistics, specs
+    from brax.training.acme import running_statistics
     from scamper.agent.imitation.intention_network import Decoder as ScamperDecoder
     from scamper.agent.observation_utils import DictRunningStatisticsState
 
@@ -55,13 +58,25 @@ def test_make_decoder_logits_fn_returns_raw_logits():
     }
 
     fn = make_decoder_logits_fn(decoder_params, normalizer_params, cfg)
-    latent_proprio = jnp.zeros((1, latent_size + proprio_size))
+    # Non-zero input — drives the decoder into a regime where mu may exceed
+    # |1|, exposing any accidental tanh application.
+    latent_proprio = jax.random.normal(
+        jax.random.PRNGKey(7), (3, latent_size + proprio_size)
+    ) * 3.0
     logits, extras = fn(latent_proprio)
 
-    # Shape check: (1, 2 * action_size).
-    assert logits.shape[-1] == 2 * action_size, logits.shape
-    # Must NOT have tanh applied — so the output range can exceed [-1, 1].
-    # We can't easily prove "no tanh" with random params; but we can verify
-    # logits == decoder.apply directly.
+    # Shape check: (3, 2 * action_size).
+    assert logits.shape == (3, 2 * action_size), logits.shape
+    # Verify logits == decoder.apply directly (no postprocessing).
     expected, _ = decoder.apply({"params": decoder_params}, latent_proprio)
     np.testing.assert_allclose(np.asarray(logits), np.asarray(expected), atol=1e-6)
+    # Confirm the test actually traverses the |mu| > 1 regime — otherwise a
+    # buggy tanh would not be observable. Bump seed/scale if this trips.
+    mu = expected[..., :action_size]
+    assert float(jnp.max(jnp.abs(mu))) > 1.0, (
+        f"Test does not exercise the |mu|>1 regime where tanh would be "
+        f"observable; max(|mu|)={float(jnp.max(jnp.abs(mu))):.4f}. Increase "
+        f"input scale or change seed."
+    )
+    # Lock the extras dict contract so Task 3 callers can rely on it.
+    np.testing.assert_array_equal(np.asarray(extras["logits"]), np.asarray(logits))
