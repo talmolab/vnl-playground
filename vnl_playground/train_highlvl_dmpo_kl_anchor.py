@@ -48,7 +48,7 @@ from vnl_playground import tasks
 from vnl_playground.tasks.wrappers_kl_anchor import KLAnchorPriorDecoderWrapper
 from vnl_playground.tasks.prior_utils import (
     load_prior_checkpoint,
-    make_decoder_inference_fn as make_prior_decoder_fn,
+    make_decoder_logits_fn,
     make_prior_inference_fn,
 )
 
@@ -62,7 +62,7 @@ except ImportError:
     wandb = None  # type: ignore
 
 
-def _build_env(hydra_cfg, prior_fn, decoder_fn, latent_size, action_size):
+def _build_env(hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size):
     """Load registry env, wrap in KLAnchorPriorDecoderWrapper +
     brax wrap_for_brax_training + BinocularVisionRenderWrapper.
     """
@@ -81,7 +81,7 @@ def _build_env(hydra_cfg, prior_fn, decoder_fn, latent_size, action_size):
     base_env = KLAnchorPriorDecoderWrapper(
         base_env,
         prior_fn=prior_fn,
-        decoder_fn=decoder_fn,
+        decoder_logits_fn=decoder_logits_fn,
         action_size=action_size,
         w_anchor=float(hydra_cfg.kl_anchor.w_anchor),
         alpha_anchor=float(hydra_cfg.kl_anchor.alpha_anchor),
@@ -133,6 +133,10 @@ def _build_env(hydra_cfg, prior_fn, decoder_fn, latent_size, action_size):
 def main(hydra_cfg: DictConfig):
     raw_train_cfg = OmegaConf.to_container(hydra_cfg.train_config, resolve=True)
     cfg = DMPOConfig(**_filter_dmpo_kwargs(raw_train_cfg))
+    # Populate the loss-side KL-anchor coefficients on cfg so _policy_loss_fn
+    # picks them up. DMPOConfig is a dataclass; mutate in place.
+    cfg.kl_anchor_alpha = float(hydra_cfg.kl_anchor.alpha_anchor)
+    cfg.kl_anchor_w = float(hydra_cfg.kl_anchor.w_anchor)
     iters_per_chunk = int(hydra_cfg.train_config.get("iters_per_chunk", 32))
     cfg_dict = OmegaConf.to_container(hydra_cfg, resolve=True)
     seed = int(hydra_cfg.get("seed", 0))
@@ -183,13 +187,13 @@ def main(hydra_cfg: DictConfig):
     log.info("Prior loaded. intention_size=%d", latent_size)
 
     prior_fn = make_prior_inference_fn(prior_params, normalizer_params, prior_cfg)
-    decoder_fn = make_prior_decoder_fn(decoder_params, normalizer_params, prior_cfg)
+    decoder_logits_fn = make_decoder_logits_fn(decoder_params, normalizer_params, prior_cfg)
 
     # --- 2. Build env ---
     base_env_for_size = tasks.load(str(hydra_cfg.env_name), flatten_obs=False)
     action_size_base = int(base_env_for_size.action_size)
     env, base_env_wrapped, mj_model, mjx_model, vision_shape = _build_env(
-        hydra_cfg, prior_fn, decoder_fn, latent_size, action_size_base,
+        hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size_base,
     )
     obs_size_dict = dict(env.observation_size)
     proprio_size = int(obs_size_dict.get("proprioception", 0))
@@ -247,6 +251,8 @@ def main(hydra_cfg: DictConfig):
         "reward": jnp.zeros((), dtype=jnp.float32),
         "discount": jnp.zeros((), dtype=jnp.float32),
         "next_observation": env_spec["obs_template"],
+        "anchor_mu_imit": jnp.zeros((action_size,), dtype=jnp.float32),
+        "anchor_log_std_imit": jnp.zeros((action_size,), dtype=jnp.float32),
     }
     rng, k_state = jax.random.split(rng)
     state = init_training_state(k_state, nets, env_spec, cfg)
@@ -287,8 +293,9 @@ def main(hydra_cfg: DictConfig):
     # mode action equals tanh(mu_imit_pretanh) up to numerics). If r_anchor drops,
     # one of the warm-start fixes (Tasks 1-6) regressed.
     try:
-        from track_mjx.agent.dmpo.action_utils import bind as _bind
+        from track_mjx.agent.dmpo.action_utils import bind as _bind  # noqa: F401
         from track_mjx.agent.dmpo.learner import _normalize_obs
+        from track_mjx.agent.dmpo.kl_anchor_utils import pretanh_gaussian_kl
         probe_label = (
             "anchor_invariant_probe_resumed"
             if restored is not None
@@ -298,21 +305,21 @@ def main(hydra_cfg: DictConfig):
         keys = jax.random.split(k_probe, cfg.num_envs)
         st0 = env.reset(keys)
         norm_obs = _normalize_obs(st0.obs, state.normalizer_params)
-        action = jax.vmap(
-            lambda o: nets.policy.apply(state.policy_params, o).mode()
-        )(norm_obs)
-        bound = _bind(action)
-        st1 = env.step(st0, bound)
-        next_state = st1[0] if isinstance(st1, tuple) else st1
-        r_anchor = float(
-            jnp.mean(next_state.metrics.get("anchor/r_anchor", jnp.float32(0.0)))
-        )
-        action_mse = float(
-            jnp.mean(next_state.metrics.get("anchor/action_mse", jnp.float32(0.0)))
-        )
+        # Online policy distribution at the spawn obs.
+        dist0 = jax.vmap(lambda o: nets.policy.apply(state.policy_params, o))(norm_obs)
+        mu_theta = dist0.mean()
+        log_std_theta = jnp.log(dist0.stddev())
+        # Anchor distribution from state.info — populated by the wrapper.
+        mu_imit = st0.info["anchor_mu_imit"]
+        log_std_imit = st0.info["anchor_log_std_imit"]
+        kl = pretanh_gaussian_kl(mu_theta, log_std_theta, mu_imit, log_std_imit)
+        # kl is per-sample shape (num_envs,); aggregate via mean(exp(-w*kl))
+        # which matches the loss-side r_anchor formula.
+        r_anchor = float(jnp.mean(jnp.exp(-cfg.kl_anchor_w * kl)))
+        action_mse_diag = 0.0  # diag MSE is computed by wrapper; not exposed here
         log.info(
             "%s r_anchor=%.4f action_mse=%.4f",
-            probe_label, r_anchor, action_mse,
+            probe_label, r_anchor, action_mse_diag,
         )
         rng = rng_probe
     except Exception as exc:
@@ -405,6 +412,7 @@ def main(hydra_cfg: DictConfig):
         wandb_log_callback=wandb_log_cb,
         ckpt_mgr=ckpt_mgr, ckpt_save_callback=ckpt_save_cb,
         cfg_dict=cfg_dict,
+        extra_state_extras=("anchor_mu_imit", "anchor_log_std_imit"),
     )
 
     ckpt_mgr.wait_until_finished()

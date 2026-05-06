@@ -87,7 +87,14 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
         latent_proprio = jp.concatenate([prior_mean, proprio], axis=-1)
         logits, _ = self._decoder_logits_fn(latent_proprio)
         mu = logits[..., : self._action_size]
-        log_std = logits[..., self._action_size :]
+        # The decoder emits raw pre-softplus log_std (NormalTanhDistribution
+        # convention: scale = softplus(raw) + min_std). The loss-side and
+        # the startup probe pull `log_std_theta = log(online_dist.stddev())`
+        # which equals `log(softplus(raw) + 1e-3)`. To put both sides in the
+        # SAME units (so KL is honest at warm-start), apply the same transform
+        # here before exposing log_std_imit to state.info.
+        raw_log_std = logits[..., self._action_size :]
+        log_std = jp.log(jax.nn.softplus(raw_log_std) + 1e-3)
         return mu, log_std, prior_mean
 
     def _flatten_for_policy(self, obs):

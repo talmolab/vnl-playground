@@ -111,8 +111,14 @@ def test_wrapper_stores_pretanh_distribution_params_and_passes_through_r_task():
     assert "anchor_log_std_imit" in state0.info
     np.testing.assert_allclose(np.asarray(state0.info["anchor_mu_imit"]),
                                np.full((action_size,), 0.5), atol=1e-6)
-    np.testing.assert_allclose(np.asarray(state0.info["anchor_log_std_imit"]),
-                               np.full((action_size,), -1.0), atol=1e-6)
+    # Wrapper applies log(softplus(raw) + 1e-3) so the units match the
+    # online policy's log(stddev()) on the loss side. For raw log_std=-1.0:
+    # log(softplus(-1) + 1e-3) = log(0.3133 + 0.001) ≈ -1.1572.
+    expected_log_std = float(np.log(np.log1p(np.exp(-1.0)) + 1e-3))
+    np.testing.assert_allclose(
+        np.asarray(state0.info["anchor_log_std_imit"]),
+        np.full((action_size,), expected_log_std), atol=1e-5,
+    )
     # The diagnostic anchor/r_anchor should also be in metrics.
     assert "anchor/r_anchor" in state0.metrics
 
