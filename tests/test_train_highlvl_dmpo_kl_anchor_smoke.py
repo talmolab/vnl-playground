@@ -46,12 +46,14 @@ def test_smoke_one_chunk(tmp_path):
     ), "No chunk metrics found"
 
     # Parse the startup invariant probe and assert r_anchor > 0.85.
-    # The probe runs a single env.reset + policy.mode + bind + env.step cycle
-    # right after warm-start setup, before the training loop. Because we use
-    # `.mode()` (deterministic), the warm-started policy's bound action equals
-    # tanh(mu_imit_pretanh) up to numerics — so r_anchor should be ~1.0.
-    # The 0.85 threshold is conservative; even a small regression in any of:
-    # normalizer seeding, sigma parameterization, or warm-start splice will
+    # As of 2026-05-06-2 (KL-in-loss port), r_anchor is computed as
+    # exp(-w * KL(pi_theta || pi_imit)) where KL is closed-form Gaussian
+    # on pre-tanh logits and is averaged over per-sample (Jensen-correct).
+    # With a working warm-start, the online policy distribution at the
+    # spawn obs reproduces the imit decoder's distribution → KL ≈ 0
+    # → r_anchor ≈ 1.0. The 0.85 threshold is conservative; even a small
+    # regression in normalizer seeding, sigma parameterization, the
+    # warm-start splice, or the wrapper's log_std-units alignment will
     # push r_anchor well below this.
     m = re.findall(
         r"anchor_invariant_probe r_anchor=([\d.]+) action_mse=([\d.]+)",
