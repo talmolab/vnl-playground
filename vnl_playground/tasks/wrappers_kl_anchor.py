@@ -34,7 +34,10 @@ from track_mjx.agent.observation_utils import flatten_obs_dict
 
 
 class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
-    """Adds an action-anchor reward bonus on top of a base env."""
+    """Exposes the frozen anchor's pre-tanh Gaussian distribution params via
+    state.info for downstream KL-in-loss; emits MSE-based diagnostics on
+    state.metrics. Does NOT modify state.reward — the env reward stays r_task.
+    """
 
     def __init__(
         self,
@@ -106,11 +109,13 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
         state.info["anchor_mu_imit"] = mu_imit[..., : self._action_size]
         state.info["anchor_log_std_imit"] = log_std_imit[..., : self._action_size]
         state.info["anchor_a_imit"] = a_imit
-        state.info["anchor_prior_mean"] = prior_mean
         m = dict(state.metrics) if state.metrics else {}
         m["anchor/r_anchor"] = jp.float32(1.0)
         m["anchor/action_mse"] = jp.float32(0.0)
         m["anchor/r_task"] = jp.float32(0.0)
+        # Emit diagnostic alpha so wandb sees the YAML knob even though the
+        # env reward is no longer scaled by it.
+        m["anchor/alpha_anchor_diag"] = jp.float32(self._alpha_anchor)
         return state.replace(obs=self._flatten_for_policy(state.obs), metrics=m)
 
     def step(self, state, action):
@@ -133,12 +138,12 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
         next_state.info["anchor_mu_imit"] = mu_imit[..., : self._action_size]
         next_state.info["anchor_log_std_imit"] = log_std_imit[..., : self._action_size]
         next_state.info["anchor_a_imit"] = a_imit
-        next_state.info["anchor_prior_mean"] = prior_mean
 
         m = dict(next_state.metrics) if next_state.metrics else {}
         m["anchor/r_anchor"] = r_anchor.astype(jp.float32)
         m["anchor/action_mse"] = action_mse.astype(jp.float32)
         m["anchor/r_task"] = r_task.astype(jp.float32)
+        m["anchor/alpha_anchor_diag"] = jp.float32(self._alpha_anchor)
 
         return next_state.replace(
             obs=self._flatten_for_policy(next_state.obs),
