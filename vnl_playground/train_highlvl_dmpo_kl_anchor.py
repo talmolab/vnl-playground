@@ -24,6 +24,7 @@ from track_mjx.agent.dmpo.checkpoint import (
 from track_mjx.agent.dmpo.config import DMPOConfig
 from track_mjx.agent.dmpo.learner import init_training_state
 from track_mjx.agent.dmpo.networks_kl_anchor import make_dmpo_kl_anchor_networks
+from track_mjx.agent.dmpo.normalizer_seeding import seed_proprio_from_imit
 from track_mjx.agent.dmpo.optim_kl_anchor import make_kl_anchor_optimizers
 from track_mjx.agent.dmpo.replay import make_replay
 from track_mjx.agent.dmpo.train import (
@@ -254,6 +255,24 @@ def main(hydra_cfg: DictConfig):
     # optimizer so update() can resolve per-block inner_states.
     pol_opt_kl, _, _ = optimizers
     state = state._replace(policy_opt_state=pol_opt_kl.init(state.policy_params))
+    # Seed DMPO's running-stats normalizer with the imit checkpoint's proprio
+    # stats. Without this, the warm-started prior+decoder receive un-normalized
+    # proprio at step 0 and produce garbage — breaking the warm-start invariant
+    # that the entire B-aggressive design depends on. Done BEFORE restore_ckpt
+    # so a resumed run will overwrite this with its own (already-seeded-and-
+    # updated) normalizer from disk.
+    state = state._replace(
+        normalizer_params=seed_proprio_from_imit(
+            state.normalizer_params, normalizer_params,
+        )
+    )
+    log.info(
+        "Seeded DMPO normalizer with imit proprio stats: mean=%.3f±%.3f std=%.3f±%.3f",
+        float(state.normalizer_params.proprioception.mean.mean()),
+        float(state.normalizer_params.proprioception.mean.std()),
+        float(state.normalizer_params.proprioception.std.mean()),
+        float(state.normalizer_params.proprioception.std.std()),
+    )
 
     ckpt_mgr = make_checkpointer(ckpt_dir)
     restored = restore_ckpt(ckpt_mgr, state_template=state)
