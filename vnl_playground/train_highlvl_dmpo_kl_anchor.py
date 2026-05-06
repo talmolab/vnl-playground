@@ -317,6 +317,7 @@ def main(hydra_cfg: DictConfig):
                 rng=k_eval,
                 episode_length=eval_episode_length,
                 num_envs=cfg.num_envs,
+                normalizer_params=state.normalizer_params,
             )
             if rollout and _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
                 rm = compute_rollout_metrics(rollout)
