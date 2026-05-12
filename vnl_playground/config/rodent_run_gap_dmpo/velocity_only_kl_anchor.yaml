@@ -69,6 +69,8 @@ env_config:
     forward_velocity:
       weight: 1.0
       target_speed: 0.9
+    gap_crossing_bonus:
+      weight: 10
   termination_criteria:
     fallen:
       min_torso_z: 0.0325
@@ -98,6 +100,12 @@ kl_anchor:
   # The previous "alpha as env-reward weight" interpretation is gone.
   w_anchor: 0.5
   alpha_anchor: 1.0
+  # Linear-decay schedule for `w_anchor`. When `decay_sgd_steps > 0`, w is
+  # linearly interpolated from `w_anchor` (at SGD step 0) to `w_anchor_floor`
+  # (at step `decay_sgd_steps`) and clamped at the floor thereafter. Defaults
+  # of 0/0 keep w static at `w_anchor` for the entire run.
+  w_anchor_floor: 0.0
+  decay_sgd_steps: 0
   prior_lr_mult: 0.1
   decoder_lr_mult: 1.0
   policy_head_lr_mult: 1.0

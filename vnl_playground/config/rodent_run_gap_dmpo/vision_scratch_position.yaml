@@ -1,3 +1,4 @@
+# @package _global_
 # =============================================================================
 # DMPO from-scratch + binocular vision + POSITION actuators.
 #
@@ -8,7 +9,7 @@
 # ClaudeCode_PromptHistory/2026-05-03-dmpo-vision-from-scratch/future.md).
 # =============================================================================
 defaults:
-  - rodent-dmpo-base
+  - /rodent-dmpo-base
   - _self_
 
 env_name: RodentRunGapBinocularVision

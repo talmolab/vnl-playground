@@ -1,3 +1,4 @@
+# @package _global_
 # =============================================================================
 # DMPO config for RodentRunGapBinocularVision (Path 3 of the binocular
 # integration). High-level transfer with frozen SCAMPER prior + decoder.
@@ -10,7 +11,7 @@
 #   - train_config (smaller batch — vision env is heavier)
 # =============================================================================
 defaults:
-  - rodent-dmpo-base
+  - /rodent-dmpo-base
   - _self_
 
 env_name: RodentRunGapBinocularVision

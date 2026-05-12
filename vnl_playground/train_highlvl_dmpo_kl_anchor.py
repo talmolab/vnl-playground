@@ -137,6 +137,10 @@ def main(hydra_cfg: DictConfig):
     # picks them up. DMPOConfig is a dataclass; mutate in place.
     cfg.kl_anchor_alpha = float(hydra_cfg.kl_anchor.alpha_anchor)
     cfg.kl_anchor_w = float(hydra_cfg.kl_anchor.w_anchor)
+    cfg.kl_anchor_w_floor = float(hydra_cfg.kl_anchor.get("w_anchor_floor", 0.0))
+    cfg.kl_anchor_decay_sgd_steps = int(
+        hydra_cfg.kl_anchor.get("decay_sgd_steps", 0)
+    )
     iters_per_chunk = int(hydra_cfg.train_config.get("iters_per_chunk", 32))
     cfg_dict = OmegaConf.to_container(hydra_cfg, resolve=True)
     seed = int(hydra_cfg.get("seed", 0))
