@@ -363,6 +363,44 @@ def pair_vectors(S_x: np.ndarray, S_y: np.ndarray, animals: np.ndarray):
     return x, y, same
 
 
+def plot_global_distributions(S: dict[str, np.ndarray], animals: np.ndarray,
+                              out_path: Path):
+    """One histogram per modality of all off-diagonal cosines, split within/between."""
+    fig, axes = plt.subplots(2, 2, figsize=(10, 7))
+    axes = axes.ravel()
+    modalities = ["bio_kin", "bio_emg", "sim_kin", "sim_emg"]
+    for ax, modality in zip(axes, modalities):
+        Sm = S[modality]
+        N = Sm.shape[0]
+        same = animals[:, None] == animals[None, :]
+        eye = np.eye(N, dtype=bool)
+        within = Sm[same & ~eye]
+        between = Sm[~same]
+        lo = min(within.min(), between.min())
+        hi = max(within.max(), between.max())
+        bins = np.linspace(lo, hi, 80)
+        ax.hist(between, bins=bins, color="#888888", alpha=0.55, density=True,
+                label=f"between-animal (n={between.size})")
+        ax.hist(within, bins=bins, color="#d62728", alpha=0.55, density=True,
+                label=f"within-animal  (n={within.size})")
+        ax.axvline(np.median(within), color="#d62728", lw=1, ls="--")
+        ax.axvline(np.median(between), color="#888888", lw=1, ls="--")
+        ax.set_xlabel("cosine", fontsize=8)
+        ax.set_ylabel("density", fontsize=8)
+        ax.set_title(
+            f"{modality}\nmedians: within={np.median(within):+.3f}  "
+            f"between={np.median(between):+.3f}  "
+            f"gap={np.median(within) - np.median(between):+.3f}",
+            fontsize=8,
+        )
+        ax.legend(fontsize=7, loc="best")
+    fig.suptitle("Cosine distributions: within- vs between-animal", fontsize=10, y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_path.with_suffix(".pdf"))
+    fig.savefig(out_path.with_suffix(".png"))
+    plt.close(fig)
+
+
 def plot_cross_modal_scatter(S: dict[str, np.ndarray], animals: np.ndarray,
                              out_path: Path):
     """2x2 grid of pairwise-cosine scatters across the four modalities.
@@ -657,6 +695,9 @@ def main():
     for k, st in stats.items():
         print(f"  {k:<10s}  {st['within']:+.3f}  {st['between']:+.3f}  {st['gap']:+.3f}")
     plot_block_summary(stats, out_dir / "fig_sim_block_summary")
+
+    print("[similarity] global cosine distributions (within vs between) …")
+    plot_global_distributions(S, meta["animal"], out_dir / "fig_sim_distributions_global")
 
     print("[similarity] cross-modal scatter (Bernstein probe + bio-vs-sim) …")
     cross = plot_cross_modal_scatter(S, meta["animal"], out_dir / "fig_sim_cross_modal")
