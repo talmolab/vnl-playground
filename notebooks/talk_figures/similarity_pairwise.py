@@ -388,6 +388,95 @@ def select_muscle_features(X_flat: np.ndarray, muscle_idx: int) -> np.ndarray:
     return X[:, :, muscle_idx]  # (N, T)
 
 
+def linear_cka(X: np.ndarray, Y: np.ndarray) -> float:
+    """Linear Centered Kernel Alignment between (N, D_x) and (N, D_y).
+
+    CKA(X, Y) = ||X_c^T Y_c||_F^2 / (||X_c^T X_c||_F * ||Y_c^T Y_c||_F)
+    Invariant to orthogonal transforms and isotropic scaling. Range [0, 1].
+    """
+    Xc = X - X.mean(axis=0, keepdims=True)
+    Yc = Y - Y.mean(axis=0, keepdims=True)
+    cross = float((Xc.T @ Yc).reshape(-1) @ (Xc.T @ Yc).reshape(-1))
+    auto_x = float((Xc.T @ Xc).reshape(-1) @ (Xc.T @ Xc).reshape(-1))
+    auto_y = float((Yc.T @ Yc).reshape(-1) @ (Yc.T @ Yc).reshape(-1))
+    return cross / np.sqrt(auto_x * auto_y + 1e-30)
+
+
+def rsa_spearman(S_a: np.ndarray, S_b: np.ndarray, n_perm: int = 1000,
+                 seed: int = 0) -> tuple[float, float]:
+    """Spearman correlation of upper-triangle RDMs.
+
+    RDM = 1 - similarity. Permutation p-value by shuffling rows+cols of S_b.
+    Returns (rho, p_value).
+    """
+    from scipy.stats import spearmanr
+    rng = np.random.default_rng(seed)
+    N = S_a.shape[0]
+    iu, ju = np.triu_indices(N, k=1)
+    a = 1.0 - S_a[iu, ju]
+    b = 1.0 - S_b[iu, ju]
+    rho, _ = spearmanr(a, b)
+    if n_perm <= 0:
+        return float(rho), float("nan")
+    null = np.empty(n_perm, dtype=np.float64)
+    for k in range(n_perm):
+        perm = rng.permutation(N)
+        Sb_perm = S_b[perm][:, perm]
+        b_perm = 1.0 - Sb_perm[iu, ju]
+        null[k], _ = spearmanr(a, b_perm)
+    p = (np.sum(np.abs(null) >= abs(rho)) + 1) / (n_perm + 1)
+    return float(rho), float(p)
+
+
+def plot_cka_rsa_matrices(X: dict, S: dict, animals: np.ndarray, out_path: Path,
+                          n_perm: int = 500):
+    """Heatmap pair: linear CKA on raw features, RSA Spearman on cosine RDMs.
+
+    Both are 4x4 across {bio_kin, bio_emg, sim_kin, sim_emg}. The CKA panel
+    is symmetric and uses centered raw features; the RSA panel uses 1-cosine
+    RDMs (the same matrices we plot as heatmaps). Permutation p-values are
+    annotated under each RSA cell.
+    """
+    keys = ["bio_kin", "bio_emg", "sim_kin", "sim_emg"]
+    K = len(keys)
+    cka = np.full((K, K), np.nan)
+    rsa = np.full((K, K), np.nan)
+    rsa_p = np.full((K, K), np.nan)
+    for i, a in enumerate(keys):
+        for j, b in enumerate(keys):
+            cka[i, j] = linear_cka(X[a], X[b])
+            if i <= j:
+                rho, p = rsa_spearman(S[a], S[b], n_perm=n_perm)
+                rsa[i, j] = rho
+                rsa[j, i] = rho
+                rsa_p[i, j] = p
+                rsa_p[j, i] = p
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+    for ax, M, P, name, vmax in [
+        (axes[0], cka, None, "Linear CKA (centered features)", 1.0),
+        (axes[1], rsa, rsa_p, "RSA Spearman ρ (1 − cos RDMs)", 1.0),
+    ]:
+        im = ax.imshow(M, vmin=0.0, vmax=vmax, cmap="viridis")
+        ax.set_xticks(range(K))
+        ax.set_xticklabels(keys, rotation=30, ha="right", fontsize=8)
+        ax.set_yticks(range(K))
+        ax.set_yticklabels(keys, fontsize=8)
+        ax.set_title(name, fontsize=9)
+        for i in range(K):
+            for j in range(K):
+                cell = f"{M[i, j]:.3f}"
+                if P is not None:
+                    cell += f"\np={P[i, j]:.2g}"
+                ax.text(j, i, cell, ha="center", va="center",
+                        fontsize=7, color="white" if M[i, j] < 0.5 else "black")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    fig.savefig(out_path.with_suffix(".pdf"))
+    fig.savefig(out_path.with_suffix(".png"))
+    plt.close(fig)
+    return cka, rsa, rsa_p, keys
+
+
 def per_muscle_matrices(X_bio_emg: np.ndarray, X_sim_emg: np.ndarray) -> dict:
     """Return cosine matrices per (bio/sim, muscle)."""
     out = {}
@@ -844,6 +933,15 @@ def main():
     ap.add_argument("--network", default=PHYSICS_RUN)
     ap.add_argument("--out-dir", default=str(Path(__file__).resolve().parent / "figs"))
     ap.add_argument("--var-target", type=float, default=0.85)
+    ap.add_argument(
+        "--group-detrend", action="store_true",
+        help="Subtract the cohort-mean feature vector from each row before cosine. "
+             "Emphasizes residual differences instead of the shared template.",
+    )
+    ap.add_argument(
+        "--no-cka", action="store_true",
+        help="Skip the CKA/RSA matrix panel (the only slow step in the script).",
+    )
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -854,6 +952,10 @@ def main():
     X, meta = build_feature_matrices(args.network)
     N = X["bio_kin"].shape[0]
     print(f"[similarity] N = {N}; per-animal counts: {meta['animal_counts']}")
+    if args.group_detrend:
+        print("[similarity] subtracting cohort-mean feature vector from each row …")
+        for k in list(X.keys()):
+            X[k] = X[k] - X[k].mean(axis=0, keepdims=True)
     for k, M in X.items():
         print(f"  X[{k}].shape = {M.shape}")
 
@@ -892,6 +994,25 @@ def main():
 
     print("[similarity] global cosine distributions (within vs between) …")
     plot_global_distributions(S, meta["animal"], out_dir / "fig_sim_distributions_global")
+
+    if not args.no_cka:
+        print("[similarity] CKA + RSA matrices …")
+        cka, rsa, rsa_p, keys = plot_cka_rsa_matrices(
+            X, S, meta["animal"], out_dir / "fig_sim_cka_rsa", n_perm=500,
+        )
+        print("  Linear CKA matrix:")
+        print("            " + "  ".join(f"{k:>10s}" for k in keys))
+        for i, k in enumerate(keys):
+            print(f"  {k:<10s}" + "  ".join(f"{cka[i,j]:>10.3f}" for j in range(len(keys))))
+        print("  RSA Spearman ρ (with permutation p):")
+        for i, k in enumerate(keys):
+            cells = []
+            for j in range(len(keys)):
+                if i == j:
+                    cells.append("        —")
+                else:
+                    cells.append(f"{rsa[i,j]:+.3f} (p={rsa_p[i,j]:.2g})")
+            print(f"  {k:<10s} " + "  ".join(cells))
 
     print("[similarity] per-body-part decomposition …")
     S_part = per_body_part_matrices(X["bio_kin"], X["sim_kin"])
