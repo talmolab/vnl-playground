@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="sungaya_mesh_fast">
+  <!-- Disable automatic collision generation; only the explicit claw_collide_*
+       spheres (contype=1 conaffinity=1) and the runtime-added floor pairs
+       compute contacts. Mirrors stick_fast.xml's pattern for the box model. -->
+  <default>
+    <geom contype="0" conaffinity="0"/>
+  </default>
+
+  <include file="sungaya_inexpectata_mesh.xml"/>
+</mujoco>
