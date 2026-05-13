@@ -353,6 +353,76 @@ def block_stats(S: np.ndarray, animals: np.ndarray) -> dict:
     return {"within": float(within), "between": float(between), "gap": float(within - between)}
 
 
+def per_animal_distributions(S: np.ndarray, animals: np.ndarray) -> dict:
+    """For each animal A, collect within-A and between-A off-diagonal cosines."""
+    N = S.shape[0]
+    eye = np.eye(N, dtype=bool)
+    out = {}
+    for a in ANIMALS:
+        m = animals == a
+        in_block = S[np.ix_(m, m)]                       # (n_a, n_a)
+        in_off = in_block[~np.eye(in_block.shape[0], dtype=bool)]
+        out_block = S[np.ix_(m, ~m)]                     # (n_a, N - n_a)
+        out[a] = {"within": in_off.ravel(), "between": out_block.ravel()}
+    return out
+
+
+def plot_per_animal_distributions(S_dict: dict[str, np.ndarray], animals: np.ndarray,
+                                  out_path: Path):
+    """One subplot per modality: violin of within/between cosines per animal."""
+    modalities = ["bio_kin", "bio_emg", "sim_kin", "sim_emg"]
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5), sharey=False)
+    axes = axes.ravel()
+
+    for ax, modality in zip(axes, modalities):
+        dists = per_animal_distributions(S_dict[modality], animals)
+        positions, data, colors, labels = [], [], [], []
+        for ai, a in enumerate(ANIMALS):
+            within = dists[a]["within"]
+            between = dists[a]["between"]
+            positions.extend([ai * 3, ai * 3 + 1])
+            data.extend([within, between])
+            colors.extend([ANIMAL_COLORS[a], "#bbbbbb"])
+            labels.extend([f"{a}\nwithin", f"{a}\nbetween"])
+        parts = ax.violinplot(data, positions=positions, widths=0.85,
+                              showmedians=True, showextrema=False)
+        for pc, c in zip(parts["bodies"], colors):
+            pc.set_facecolor(c)
+            pc.set_edgecolor("black")
+            pc.set_linewidth(0.4)
+            pc.set_alpha(0.75)
+        if "cmedians" in parts:
+            parts["cmedians"].set_color("black")
+            parts["cmedians"].set_linewidth(0.8)
+        ax.set_xticks([ai * 3 + 0.5 for ai in range(len(ANIMALS))])
+        ax.set_xticklabels(ANIMALS, fontsize=8)
+        ax.set_ylabel("cosine", fontsize=8)
+        ax.set_title(modality, fontsize=9)
+        ax.axhline(0, color="black", lw=0.3)
+        for ai in range(1, len(ANIMALS)):
+            ax.axvline(ai * 3 - 0.5, color="#dddddd", lw=0.5)
+        # Per-animal medians as a line annotation.
+        within_medians = [np.median(dists[a]["within"]) for a in ANIMALS]
+        between_medians = [np.median(dists[a]["between"]) for a in ANIMALS]
+        anchor = [ai * 3 for ai in range(len(ANIMALS))]
+        ax.plot(anchor, within_medians, "k-", lw=0.6, alpha=0.5)
+        ax.plot([ai * 3 + 1 for ai in range(len(ANIMALS))], between_medians,
+                color="#666666", lw=0.6, ls="--", alpha=0.5)
+
+    from matplotlib.patches import Patch
+    legend_handles = [
+        Patch(facecolor="lightgray", edgecolor="black", label="within-animal (colored)"),
+        Patch(facecolor="#bbbbbb", edgecolor="black", label="between-animal (gray)"),
+    ]
+    fig.suptitle("Per-animal cosine similarity (within vs between)", fontsize=11, y=0.995)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.96])
+    fig.legend(handles=legend_handles, loc="lower center", ncol=2, fontsize=8,
+               bbox_to_anchor=(0.5, 0.0), frameon=False)
+    fig.savefig(out_path.with_suffix(".pdf"))
+    fig.savefig(out_path.with_suffix(".png"))
+    plt.close(fig)
+
+
 def plot_block_summary(stats: dict[str, dict], out_path: Path):
     modalities = ["bio_kin", "bio_emg", "sim_kin", "sim_emg"]
     fig, ax = plt.subplots(figsize=(6.0, 3.5))
@@ -523,6 +593,17 @@ def main():
     for k, st in stats.items():
         print(f"  {k:<10s}  {st['within']:+.3f}  {st['between']:+.3f}  {st['gap']:+.3f}")
     plot_block_summary(stats, out_dir / "fig_sim_block_summary")
+
+    print("[similarity] per-animal distributions …")
+    plot_per_animal_distributions(S, meta["animal"], out_dir / "fig_sim_distributions_per_animal")
+    # Per-animal medians table.
+    print(f"  {'modality':<10s}  {'animal':<6s}  within_med  between_med  gap")
+    for modality in ("bio_kin", "bio_emg", "sim_kin", "sim_emg"):
+        dists = per_animal_distributions(S[modality], meta["animal"])
+        for a in ANIMALS:
+            wm = float(np.median(dists[a]["within"]))
+            bm = float(np.median(dists[a]["between"]))
+            print(f"  {modality:<10s}  {a:<6s}  {wm:+.3f}      {bm:+.3f}       {wm - bm:+.3f}")
 
     print("[similarity] fPCA (bio EMG vs sim EMG) …")
     V_bio, k_bio, mean_bio, cum_bio = fit_fpca(X["bio_emg"], var_target=args.var_target)
