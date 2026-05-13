@@ -249,6 +249,11 @@ class ReferenceClips:
         for k in self._LEGACY_ARRAYS:
             if k in fid:
                 arr = fid[k][()]
+                if arr.shape[0] == 0:
+                    # Skip empty arrays (e.g. qvel stored as shape (0,) in
+                    # some STAC fits that omit velocities).
+                    logging.debug(f"{k}: empty array, skipping")
+                    continue
                 n_clips = arr.shape[0] // n_frames_per_clip
                 arr = arr.reshape(n_clips, n_frames_per_clip, *arr.shape[1:])
                 self._data_arrays[k] = jp.array(arr)
@@ -464,6 +469,13 @@ class ReferenceClips:
     def qvel(self) -> jp.ndarray:
         """Joint velocities array."""
         if self._is_legacy_format:
+            if "qvel" not in self._data_arrays:
+                # STAC fits sometimes omit qvel (stored as empty array).
+                # Fall back to zeros with shape derived from qpos: nv = nq - 1
+                # for a floating-base system with a free joint (7 qpos, 6 qvel).
+                qpos_arr = self._data_arrays["qpos"]
+                nv = qpos_arr.shape[-1] - 1
+                return jp.zeros((*qpos_arr.shape[:-1], nv), dtype=qpos_arr.dtype)
             return self._data_arrays["qvel"]
         return jp.concatenate(
             [self.velocity, self.angular_velocity, self.joints_velocity], axis=-1

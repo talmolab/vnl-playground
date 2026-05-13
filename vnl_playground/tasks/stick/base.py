@@ -150,6 +150,16 @@ class StickBugEnv(mjx_env.MjxEnv):
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
+            # Add a small armature (1e-6 kg·m²) to every DOF to regularise the
+            # mass matrix.  The stick-bug model has near-zero-armature joints
+            # whose mass matrix picks up a tiny negative eigenvalue (~-1.5e-8)
+            # from floating-point rounding, causing MJX's Cholesky factorisation
+            # to diverge on the very first step.  1e-6 is ~4 orders of magnitude
+            # below the smallest on-diagonal entry (~0.008) so it has no
+            # observable effect on physics but keeps M positive-definite.
+            self._mj_model.dof_armature[:] = np.maximum(
+                self._mj_model.dof_armature, 1e-6
+            )
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self._config.mujoco_impl
             )
