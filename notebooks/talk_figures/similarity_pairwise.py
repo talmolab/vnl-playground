@@ -353,6 +353,70 @@ def block_stats(S: np.ndarray, animals: np.ndarray) -> dict:
     return {"within": float(within), "between": float(between), "gap": float(within - between)}
 
 
+def pair_vectors(S_x: np.ndarray, S_y: np.ndarray, animals: np.ndarray):
+    """Return (x, y, same_animal) over the upper triangle i<j of the matrices."""
+    N = S_x.shape[0]
+    iu, ju = np.triu_indices(N, k=1)
+    x = S_x[iu, ju]
+    y = S_y[iu, ju]
+    same = animals[iu] == animals[ju]
+    return x, y, same
+
+
+def plot_cross_modal_scatter(S: dict[str, np.ndarray], animals: np.ndarray,
+                             out_path: Path):
+    """2x2 grid of pairwise-cosine scatters across the four modalities.
+
+    Panel A: bio_kin x bio_emg  — Bernstein redundancy: do similar bio kinematics
+                                   imply similar bio EMG?
+    Panel B: sim_kin x sim_emg  — Same question inside the physics-aware net.
+    Panel C: bio_kin x sim_kin  — Does the net agree with biology on kin similarity?
+    Panel D: bio_emg x sim_emg  — Does the net agree with biology on EMG similarity?
+    """
+    from scipy.stats import spearmanr, pearsonr
+
+    panels = [
+        ("bio_kin", "bio_emg", "Bernstein bio: kin -> EMG"),
+        ("sim_kin", "sim_emg", "Bernstein sim: kin -> EMG"),
+        ("bio_kin", "sim_kin", "kin: bio vs sim"),
+        ("bio_emg", "sim_emg", "EMG: bio vs sim"),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(10, 9))
+    axes = axes.ravel()
+    for ax, (xk, yk, title) in zip(axes, panels):
+        x, y, same = pair_vectors(S[xk], S[yk], animals)
+        rho_s, p_s = spearmanr(x, y)
+        rho_p, p_p = pearsonr(x, y)
+        ax.scatter(x[~same], y[~same], s=4, alpha=0.18, color="#888888",
+                   linewidths=0, label=f"between-animal (n={(~same).sum()})")
+        ax.scatter(x[same], y[same], s=6, alpha=0.45, color="#d62728",
+                   linewidths=0, label=f"within-animal (n={same.sum()})")
+        ax.set_xlabel(f"{xk} cosine", fontsize=8)
+        ax.set_ylabel(f"{yk} cosine", fontsize=8)
+        ax.set_title(
+            f"{title}\nSpearman r={rho_s:.3f} (p={p_s:.1e})  "
+            f"Pearson r={rho_p:.3f} (p={p_p:.1e})",
+            fontsize=8,
+        )
+        ax.axhline(0, color="black", lw=0.3)
+        ax.axvline(0, color="black", lw=0.3)
+        ax.legend(fontsize=7, loc="best", framealpha=0.9)
+    fig.suptitle("Cross-modal pairwise similarity (each dot = one reach-pair)",
+                 fontsize=10, y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_path.with_suffix(".pdf"))
+    fig.savefig(out_path.with_suffix(".png"))
+    plt.close(fig)
+
+    return {
+        f"{xk}_x_{yk}": {
+            "spearman": float(spearmanr(*pair_vectors(S[xk], S[yk], animals)[:2])[0]),
+            "pearson": float(pearsonr(*pair_vectors(S[xk], S[yk], animals)[:2])[0]),
+        }
+        for xk, yk, _ in panels
+    }
+
+
 def per_animal_distributions(S: np.ndarray, animals: np.ndarray) -> dict:
     """For each animal A, collect within-A and between-A off-diagonal cosines."""
     N = S.shape[0]
@@ -593,6 +657,11 @@ def main():
     for k, st in stats.items():
         print(f"  {k:<10s}  {st['within']:+.3f}  {st['between']:+.3f}  {st['gap']:+.3f}")
     plot_block_summary(stats, out_dir / "fig_sim_block_summary")
+
+    print("[similarity] cross-modal scatter (Bernstein probe + bio-vs-sim) …")
+    cross = plot_cross_modal_scatter(S, meta["animal"], out_dir / "fig_sim_cross_modal")
+    for k, v in cross.items():
+        print(f"  {k}: Spearman={v['spearman']:+.3f}, Pearson={v['pearson']:+.3f}")
 
     print("[similarity] per-animal distributions …")
     plot_per_animal_distributions(S, meta["animal"], out_dir / "fig_sim_distributions_per_animal")
