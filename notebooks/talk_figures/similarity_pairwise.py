@@ -363,6 +363,107 @@ def pair_vectors(S_x: np.ndarray, S_y: np.ndarray, animals: np.ndarray):
     return x, y, same
 
 
+def select_marker_features(X_flat: np.ndarray, marker_idx: int) -> np.ndarray:
+    """Reshape (N, 540) back to (N, T, n_markers, n_coords) and pick one marker.
+
+    Order of axes when flattening:  T=60, n_markers=3 (Shoulder, Elbow, Wrist),
+    n_coords=3. Returns (N, T*n_coords) = (N, 180).
+    """
+    X = X_flat.reshape(-1, TARGET_T, 3, 3)
+    return X[:, :, marker_idx, :].reshape(-1, TARGET_T * 3)
+
+
+def per_body_part_matrices(X_bio_full: np.ndarray, X_sim_full: np.ndarray) -> dict:
+    """Return cosine matrices per (bio/sim, body_part)."""
+    out = {}
+    for mi, name in enumerate(KP_NAMES):
+        out[("bio_kin", name)] = cosine_matrix(select_marker_features(X_bio_full, mi))
+        out[("sim_kin", name)] = cosine_matrix(select_marker_features(X_sim_full, mi))
+    return out
+
+
+def plot_body_part_distributions(S_part: dict, animals: np.ndarray, out_path: Path):
+    """2 rows (bio, sim) x 3 cols (Shoulder, Elbow, Wrist).
+
+    Each panel: histogram of within-animal vs between-animal cosines for that
+    (modality, body-part) pair.
+    """
+    fig, axes = plt.subplots(2, 3, figsize=(13, 7), sharex=True, sharey=False)
+    for ri, modality in enumerate(["bio_kin", "sim_kin"]):
+        for ci, name in enumerate(KP_NAMES):
+            ax = axes[ri, ci]
+            Sm = S_part[(modality, name)]
+            N = Sm.shape[0]
+            same = animals[:, None] == animals[None, :]
+            eye = np.eye(N, dtype=bool)
+            within = Sm[same & ~eye]
+            between = Sm[~same]
+            lo = min(within.min(), between.min())
+            hi = max(within.max(), between.max())
+            bins = np.linspace(lo, hi, 60)
+            ax.hist(between, bins=bins, color="#888888", alpha=0.55, density=True,
+                    label=f"between (n={between.size})")
+            ax.hist(within, bins=bins, color="#d62728", alpha=0.55, density=True,
+                    label=f"within  (n={within.size})")
+            ax.axvline(np.median(within), color="#d62728", lw=1, ls="--")
+            ax.axvline(np.median(between), color="#888888", lw=1, ls="--")
+            ax.set_title(
+                f"{modality} — {name}\n"
+                f"within={np.median(within):+.3f}  between={np.median(between):+.3f}  "
+                f"gap={np.median(within) - np.median(between):+.3f}",
+                fontsize=8,
+            )
+            if ri == 1:
+                ax.set_xlabel("cosine", fontsize=8)
+            if ci == 0:
+                ax.set_ylabel("density", fontsize=8)
+            ax.legend(fontsize=6, loc="best")
+    fig.suptitle("Per-body-part cosine distributions", fontsize=10, y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_path.with_suffix(".pdf"))
+    fig.savefig(out_path.with_suffix(".png"))
+    plt.close(fig)
+
+
+def plot_body_part_per_animal(S_part: dict, animals: np.ndarray, out_path: Path):
+    """Per-animal violins of within/between cosines, one row per body part, two cols per modality."""
+    fig, axes = plt.subplots(3, 2, figsize=(11, 10), sharey=False)
+    for ri, name in enumerate(KP_NAMES):
+        for ci, modality in enumerate(["bio_kin", "sim_kin"]):
+            ax = axes[ri, ci]
+            dists = per_animal_distributions(S_part[(modality, name)], animals)
+            positions, data, colors = [], [], []
+            for ai, a in enumerate(ANIMALS):
+                within = dists[a]["within"]
+                between = dists[a]["between"]
+                positions.extend([ai * 3, ai * 3 + 1])
+                data.extend([within, between])
+                colors.extend([ANIMAL_COLORS[a], "#bbbbbb"])
+            parts = ax.violinplot(data, positions=positions, widths=0.85,
+                                  showmedians=True, showextrema=False)
+            for pc, c in zip(parts["bodies"], colors):
+                pc.set_facecolor(c)
+                pc.set_edgecolor("black")
+                pc.set_linewidth(0.4)
+                pc.set_alpha(0.75)
+            if "cmedians" in parts:
+                parts["cmedians"].set_color("black")
+                parts["cmedians"].set_linewidth(0.8)
+            ax.set_xticks([ai * 3 + 0.5 for ai in range(len(ANIMALS))])
+            ax.set_xticklabels(ANIMALS, fontsize=7)
+            ax.set_ylabel("cosine", fontsize=8)
+            ax.set_title(f"{modality} — {name}", fontsize=9)
+            ax.axhline(0, color="black", lw=0.3)
+            for ai in range(1, len(ANIMALS)):
+                ax.axvline(ai * 3 - 0.5, color="#dddddd", lw=0.5)
+    fig.suptitle("Per-animal cosine by body part (within = colored, between = gray)",
+                 fontsize=10, y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_path.with_suffix(".pdf"))
+    fig.savefig(out_path.with_suffix(".png"))
+    plt.close(fig)
+
+
 def plot_global_distributions(S: dict[str, np.ndarray], animals: np.ndarray,
                               out_path: Path):
     """One histogram per modality of all off-diagonal cosines, split within/between."""
@@ -698,6 +799,17 @@ def main():
 
     print("[similarity] global cosine distributions (within vs between) …")
     plot_global_distributions(S, meta["animal"], out_dir / "fig_sim_distributions_global")
+
+    print("[similarity] per-body-part decomposition …")
+    S_part = per_body_part_matrices(X["bio_kin"], X["sim_kin"])
+    plot_body_part_distributions(S_part, meta["animal"], out_dir / "fig_sim_body_part_hist")
+    plot_body_part_per_animal(S_part, meta["animal"], out_dir / "fig_sim_body_part_per_animal")
+    print(f"  {'modality':<10s} {'body':<9s} within   between  gap")
+    for modality in ["bio_kin", "sim_kin"]:
+        for name in KP_NAMES:
+            st = block_stats(S_part[(modality, name)], meta["animal"])
+            print(f"  {modality:<10s} {name:<9s} {st['within']:+.3f}  "
+                  f"{st['between']:+.3f}  {st['gap']:+.3f}")
 
     print("[similarity] cross-modal scatter (Bernstein probe + bio-vs-sim) …")
     cross = plot_cross_modal_scatter(S, meta["animal"], out_dir / "fig_sim_cross_modal")
