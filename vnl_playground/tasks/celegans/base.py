@@ -917,3 +917,12 @@ class CelegansEnv(mjx_env.MjxEnv):
             Number of end effector bodies.
         """
         return len(self.config.end_effectors)
+
+    @property
+    def camera_names(self) -> List[str]:
+        """Get the list of camera names in the configuration.
+
+        Returns:
+            List of camera names.
+        """
+        return [c.name for c in self.spec.cameras]

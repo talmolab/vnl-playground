@@ -238,9 +238,9 @@ class Imitation(worm_base.CelegansEnv):
             - self.config.reference_length
         ) * (1 / (self.mocap_hz * self.ctrl_dt))
         self._default_render_camera = f"{self._config.render_camera}-worm"
-        if self._default_render_camera not in self.spec.cameras:
+        if self._default_render_camera not in self.camera_names:
             warnings.warn(
-                f"Camera {self._default_render_camera} not found in available cameras: {self.spec.cameras}! (Hint: did you forget the suffix?)"
+                f"Camera {self._default_render_camera} not found in available cameras: {self.spec.camera_names}! (Hint: did you forget the suffix?)"
             )
             warnings.warn("Defaulting to camera: 'track-worm'")
             self._default_render_camera = "track-worm"
@@ -1252,11 +1252,11 @@ class Imitation(worm_base.CelegansEnv):
         Args:
             default_render_camera: Default render camera.
         """
-        self._default_render_camera = default_render_camera
-        if self._default_render_camera not in self.spec.cameras:
+        if self._default_render_camera not in self.camera_names:
             raise ValueError(
-                f"Camera {self._default_render_camera} not found in available cameras: {self.spec.cameras}! (Hint: did you forget the suffix?)"
+                f"Camera {self._default_render_camera} not found in available cameras: {self.camera_names}! (Hint: did you forget the suffix?)"
             )
+        self._default_render_camera = default_render_camera
 
     def _clip_length(self) -> int:
         """Get the length of each clip.
@@ -1333,7 +1333,7 @@ class Imitation(worm_base.CelegansEnv):
 
         renderer = mujoco.Renderer(mj_model_with_ghost, height=height, width=width)
 
-        available_cameras = [c.name for c in spec.cameras]
+        available_cameras = self.camera_names
         if camera is None:
             camera = -1
         elif camera not in available_cameras:
