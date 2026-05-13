@@ -96,6 +96,13 @@ ROLLOUT_CACHE = Path(__file__).resolve().parent / "figs" / "rollout_activations"
 KP_NAMES = ["Shoulder", "Elbow", "Wrist"]
 KP_BODY = {"Shoulder": "humerus", "Elbow": "ulna", "Wrist": "wrist"}
 
+# names_xpos in the h5: world, ground, shoulder_base, clavicle, scapula, humerus, ulna, wrist
+XPOS_BODIES = ["world", "ground", "shoulder_base", "clavicle", "scapula", "humerus", "ulna", "wrist"]
+# Drop world/ground (static) and use the 6 moving body positions for xpos pose.
+XPOS_MOVING_IDX = [2, 3, 4, 5, 6, 7]  # shoulder_base..wrist
+N_XPOS = len(XPOS_MOVING_IDX)  # 6
+N_QPOS = 7
+
 TARGET_T = 60          # canonical post-onset grid, matches EMG cache
 MUSCLES = ("AD", "Triceps", "Biceps")
 N_CLIPS_CACHE = 46     # bayes_emg_build_cache.py default (--n-clips)
@@ -191,6 +198,21 @@ def load_bio_kin(clip_path: Path) -> np.ndarray:
     return resample_time(kp, TARGET_T)
 
 
+def load_bio_kin_xpos(clip_path: Path) -> np.ndarray:
+    """Load xpos (50, 8, 3), drop static bodies, resample to (60, N_XPOS, 3)."""
+    with h5py.File(clip_path, "r") as f:
+        xpos = np.array(f["xpos"][:])            # (50, 8, 3)
+    xpos_moving = xpos[:, XPOS_MOVING_IDX, :]    # (50, N_XPOS, 3)
+    return resample_time(xpos_moving, TARGET_T)
+
+
+def load_bio_kin_qpos(clip_path: Path) -> np.ndarray:
+    """Load qpos (50, 7) and resample to (60, 7)."""
+    with h5py.File(clip_path, "r") as f:
+        qpos = np.array(f["qpos"][:])            # (50, 7)
+    return resample_time(qpos, TARGET_T)
+
+
 def load_offsets(clip_path: Path) -> np.ndarray:
     with h5py.File(clip_path, "r") as f:
         return np.array(f["offsets"][:])          # (3, 3)
@@ -219,13 +241,30 @@ def make_fk_model():
         kp: mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, body)
         for kp, body in KP_BODY.items()
     }
-    return m, d, body_ids
+    # Body ids for the xpos pose representation. Names_xpos from the h5 are
+    # matched against the XML; missing bodies are skipped.
+    all_body_ids = []
+    for name in [XPOS_BODIES[i] for i in XPOS_MOVING_IDX]:
+        bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, name)
+        if bid < 0:
+            raise RuntimeError(f"Body {name!r} not present in FK XML")
+        all_body_ids.append(bid)
+    return m, d, body_ids, all_body_ids
 
 
-def fk_markers_from_qpos(model, data, qpos_seq, offsets, body_ids):
-    """qpos_seq (T, 7) -> (T, 3 kp, 3 dims)."""
+def fk_markers_from_qpos(model, data, qpos_seq, offsets, body_ids, all_body_ids=None):
+    """qpos_seq (T, 7) -> markers (T, 3 kp, 3 dims), optional xpos (T, N_xpos, 3).
+
+    If all_body_ids is given (list of mujoco body indices), also returns the
+    xpos for those bodies — used for the body-pose representation alongside
+    the marker representation.
+    """
     T = qpos_seq.shape[0]
     out = np.zeros((T, 3, 3), dtype=np.float32)
+    xpos_out = (
+        np.zeros((T, len(all_body_ids), 3), dtype=np.float32)
+        if all_body_ids is not None else None
+    )
     for t in range(T):
         data.qpos[:] = qpos_seq[t]
         mujoco.mj_kinematics(model, data)
@@ -235,7 +274,10 @@ def fk_markers_from_qpos(model, data, qpos_seq, offsets, body_ids):
             xpos = data.xpos[bid]
             xmat = data.xmat[bid].reshape(3, 3)
             out[t, ki] = xpos + xmat @ offsets[ki]
-    return out
+        if xpos_out is not None:
+            for bi, bid in enumerate(all_body_ids):
+                xpos_out[t, bi] = data.xpos[bid]
+    return out, xpos_out
 
 
 # ── Assembly ─────────────────────────────────────────────────────────────
@@ -261,10 +303,12 @@ def build_feature_matrices(network: str):
       meta = dict with 'animal' (N,), 'trial_num' (N,), 'rollout_row' (N,), 'animal_counts'.
     """
     qposes, clip_paths = load_rollout_qpos(network)
-    model, data, body_ids = make_fk_model()
+    model, data, body_ids, all_body_ids = make_fk_model()
 
     rows_bio_kin, rows_bio_emg = [], []
     rows_sim_kin, rows_sim_emg = [], []
+    rows_bio_xpos, rows_sim_xpos = [], []
+    rows_bio_qpos, rows_sim_qpos = [], []
     meta_animal, meta_trial, meta_rollout = [], [], []
 
     counts = {}
@@ -278,13 +322,26 @@ def build_feature_matrices(network: str):
             offsets = load_offsets(clip_paths[r])
             qpos_100 = qposes[r]                       # (100, 7)
             qpos_60 = resample_time(qpos_100, TARGET_T)  # (60, 7)
-            sim_markers = fk_markers_from_qpos(model, data, qpos_60, offsets, body_ids)  # (60, 3, 3)
-            bio_kin = load_bio_kin(clip_paths[r])      # (60, 9)
+            sim_markers, sim_xpos = fk_markers_from_qpos(
+                model, data, qpos_60, offsets, body_ids, all_body_ids=all_body_ids
+            )  # markers (60, 3, 3), xpos (60, N_XPOS, 3)
+            bio_kin = load_bio_kin(clip_paths[r])         # (60, 9)
+            bio_xpos = load_bio_kin_xpos(clip_paths[r])   # (60, N_XPOS, 3)
+            bio_qpos = load_bio_kin_qpos(clip_paths[r])   # (60, 7)
 
-            bio_kin_dt = detrend_per_trial(bio_kin)             # (60, 9)
-            sim_kin_dt = detrend_per_trial(sim_markers.reshape(TARGET_T, -1))  # (60, 9)
+            bio_kin_dt = detrend_per_trial(bio_kin)                                # (60, 9)
+            sim_kin_dt = detrend_per_trial(sim_markers.reshape(TARGET_T, -1))      # (60, 9)
+            bio_xpos_dt = detrend_per_trial(bio_xpos.reshape(TARGET_T, -1))        # (60, N_XPOS*3)
+            sim_xpos_dt = detrend_per_trial(sim_xpos.reshape(TARGET_T, -1))        # (60, N_XPOS*3)
+            bio_qpos_dt = detrend_per_trial(bio_qpos)                              # (60, 7)
+            sim_qpos_dt = detrend_per_trial(qpos_60)                               # (60, 7)
+
             rows_bio_kin.append(bio_kin_dt.reshape(-1).astype(np.float32))
             rows_sim_kin.append(sim_kin_dt.reshape(-1).astype(np.float32))
+            rows_bio_xpos.append(bio_xpos_dt.reshape(-1).astype(np.float32))
+            rows_sim_xpos.append(sim_xpos_dt.reshape(-1).astype(np.float32))
+            rows_bio_qpos.append(bio_qpos_dt.reshape(-1).astype(np.float32))
+            rows_sim_qpos.append(sim_qpos_dt.reshape(-1).astype(np.float32))
             rows_bio_emg.append(emp_env[i].reshape(-1).astype(np.float32))
             rows_sim_emg.append(sim_env[i].reshape(-1).astype(np.float32))
             meta_animal.append(animal)
@@ -292,10 +349,14 @@ def build_feature_matrices(network: str):
             meta_rollout.append(int(r))
 
     X = {
-        "bio_kin": np.stack(rows_bio_kin),     # (N, 540)
-        "bio_emg": np.stack(rows_bio_emg),     # (N, 180)
-        "sim_kin": np.stack(rows_sim_kin),     # (N, 540)
-        "sim_emg": np.stack(rows_sim_emg),     # (N, 180)
+        "bio_kin": np.stack(rows_bio_kin),       # (N, 540)   markers (3 kp × 3 coords × T)
+        "bio_emg": np.stack(rows_bio_emg),       # (N, 180)
+        "sim_kin": np.stack(rows_sim_kin),       # (N, 540)
+        "sim_emg": np.stack(rows_sim_emg),       # (N, 180)
+        "bio_xpos": np.stack(rows_bio_xpos),     # (N, N_XPOS*3*T = 1080)
+        "sim_xpos": np.stack(rows_sim_xpos),     # (N, 1080)
+        "bio_qpos": np.stack(rows_bio_qpos),     # (N, 7*T = 420)   joint angles
+        "sim_qpos": np.stack(rows_sim_qpos),     # (N, 420)
     }
     meta = {
         "animal": np.array(meta_animal),
@@ -437,7 +498,7 @@ def plot_cka_rsa_matrices(X: dict, S: dict, animals: np.ndarray, out_path: Path,
     RDMs (the same matrices we plot as heatmaps). Permutation p-values are
     annotated under each RSA cell.
     """
-    keys = ["bio_kin", "bio_emg", "sim_kin", "sim_emg"]
+    keys = list(X.keys())
     K = len(keys)
     cka = np.full((K, K), np.nan)
     rsa = np.full((K, K), np.nan)
@@ -451,24 +512,25 @@ def plot_cka_rsa_matrices(X: dict, S: dict, animals: np.ndarray, out_path: Path,
                 rsa[j, i] = rho
                 rsa_p[i, j] = p
                 rsa_p[j, i] = p
-    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+    cell_size = max(0.7, 4.5 / K)
+    fig, axes = plt.subplots(1, 2, figsize=(2 * cell_size * (K + 2), cell_size * (K + 1)))
     for ax, M, P, name, vmax in [
         (axes[0], cka, None, "Linear CKA (centered features)", 1.0),
         (axes[1], rsa, rsa_p, "RSA Spearman ρ (1 − cos RDMs)", 1.0),
     ]:
         im = ax.imshow(M, vmin=0.0, vmax=vmax, cmap="viridis")
         ax.set_xticks(range(K))
-        ax.set_xticklabels(keys, rotation=30, ha="right", fontsize=8)
+        ax.set_xticklabels(keys, rotation=45, ha="right", fontsize=7)
         ax.set_yticks(range(K))
-        ax.set_yticklabels(keys, fontsize=8)
+        ax.set_yticklabels(keys, fontsize=7)
         ax.set_title(name, fontsize=9)
         for i in range(K):
             for j in range(K):
-                cell = f"{M[i, j]:.3f}"
+                cell = f"{M[i, j]:.2f}"
                 if P is not None:
                     cell += f"\np={P[i, j]:.2g}"
                 ax.text(j, i, cell, ha="center", va="center",
-                        fontsize=7, color="white" if M[i, j] < 0.5 else "black")
+                        fontsize=6, color="white" if M[i, j] < 0.5 else "black")
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.tight_layout()
     fig.savefig(out_path.with_suffix(".pdf"))
@@ -649,9 +711,11 @@ def plot_body_part_per_animal(S_part: dict, animals: np.ndarray, out_path: Path)
 def plot_global_distributions(S: dict[str, np.ndarray], animals: np.ndarray,
                               out_path: Path):
     """One histogram per modality of all off-diagonal cosines, split within/between."""
-    fig, axes = plt.subplots(2, 2, figsize=(10, 7))
-    axes = axes.ravel()
-    modalities = ["bio_kin", "bio_emg", "sim_kin", "sim_emg"]
+    modalities = list(S.keys())
+    ncols = 4
+    nrows = int(np.ceil(len(modalities) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3.2 * nrows))
+    axes = np.atleast_2d(axes).ravel()
     for ax, modality in zip(axes, modalities):
         Sm = S[modality]
         N = Sm.shape[0]
@@ -677,6 +741,8 @@ def plot_global_distributions(S: dict[str, np.ndarray], animals: np.ndarray,
             fontsize=8,
         )
         ax.legend(fontsize=7, loc="best")
+    for ax in axes[len(modalities):]:
+        ax.axis("off")
     fig.suptitle("Cosine distributions: within- vs between-animal", fontsize=10, y=0.995)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path.with_suffix(".pdf"))
@@ -697,12 +763,14 @@ def plot_cross_modal_scatter(S: dict[str, np.ndarray], animals: np.ndarray,
     from scipy.stats import spearmanr, pearsonr
 
     panels = [
-        ("bio_kin", "bio_emg", "Bernstein bio: kin -> EMG"),
-        ("sim_kin", "sim_emg", "Bernstein sim: kin -> EMG"),
-        ("bio_kin", "sim_kin", "kin: bio vs sim"),
-        ("bio_emg", "sim_emg", "EMG: bio vs sim"),
+        ("bio_kin",  "bio_emg", "Bernstein bio: markers -> EMG"),
+        ("bio_xpos", "bio_emg", "Bernstein bio: xpos pose -> EMG"),
+        ("bio_qpos", "bio_emg", "Bernstein bio: joint angles -> EMG"),
+        ("sim_kin",  "sim_emg", "Bernstein sim: markers -> EMG"),
+        ("bio_kin",  "sim_kin", "markers: bio vs sim"),
+        ("bio_emg",  "sim_emg", "EMG: bio vs sim"),
     ]
-    fig, axes = plt.subplots(2, 2, figsize=(10, 9))
+    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
     axes = axes.ravel()
     for ax, (xk, yk, title) in zip(axes, panels):
         x, y, same = pair_vectors(S[xk], S[yk], animals)
@@ -809,7 +877,7 @@ def plot_per_animal_distributions(S_dict: dict[str, np.ndarray], animals: np.nda
 
 
 def plot_block_summary(stats: dict[str, dict], out_path: Path):
-    modalities = ["bio_kin", "bio_emg", "sim_kin", "sim_emg"]
+    modalities = list(stats.keys())
     fig, ax = plt.subplots(figsize=(6.0, 3.5))
     x = np.arange(len(modalities))
     w = 0.28
@@ -821,7 +889,7 @@ def plot_block_summary(stats: dict[str, dict], out_path: Path):
     ax.bar(x + w, gap_v, w, label="gap (within − between)", color="#ff7f0e")
     ax.axhline(0, color="black", lw=0.5)
     ax.set_xticks(x)
-    ax.set_xticklabels(modalities, fontsize=8)
+    ax.set_xticklabels(modalities, fontsize=7, rotation=30, ha="right")
     ax.set_ylabel("mean cosine", fontsize=8)
     ax.set_title("Within- vs between-animal similarity", fontsize=9)
     ax.legend(fontsize=7, loc="best")
@@ -970,12 +1038,17 @@ def main():
 
     print("[similarity] heatmaps …")
     titles = {
-        "bio_kin": "Bio kinematics (STAC kp_data)",
-        "bio_emg": "Bio EMG envelopes",
-        "sim_kin": "Sim kinematics (FK rollout)",
-        "sim_emg": "Sim muscle activations",
+        "bio_kin":  "Bio kinematics (STAC kp_data)",
+        "bio_emg":  "Bio EMG envelopes",
+        "sim_kin":  "Sim kinematics (FK rollout)",
+        "sim_emg":  "Sim muscle activations",
+        "bio_xpos": "Bio body pose (xpos, 6 bodies)",
+        "sim_xpos": "Sim body pose (FK rollout xpos)",
+        "bio_qpos": "Bio joint angles (STAC qpos)",
+        "sim_qpos": "Sim joint angles (rollout qpos)",
     }
-    for k in ("bio_kin", "bio_emg", "sim_kin", "sim_emg"):
+    for k in ("bio_kin", "bio_emg", "sim_kin", "sim_emg",
+              "bio_xpos", "sim_xpos", "bio_qpos", "sim_qpos"):
         # Kinematics rows can have negative entries (positions span signs);
         # EMG envelopes are non-negative so cosines live in [0, 1].
         vmin = 0.0 if k.endswith("emg") else -1.0
