@@ -36,3 +36,16 @@ def test_bodies_unchanged_count():
     from vnl_playground.tasks.stick import consts
     # 1 ref base + 3 thorax + 8 abdomen + 30 leg = 42
     assert len(consts.BODIES) == 42
+
+
+def test_get_assets_includes_mesh_obj_and_png():
+    """The stick base.get_assets() must bundle OBJ + texture under
+    stick_insect_urdf/meshes/obj/ so the mesh XML can be loaded from bytes."""
+    from vnl_playground.tasks.stick.base import get_assets
+    assets = get_assets()
+    obj_names = [k for k in assets if k.endswith(".obj")]
+    png_names = [k for k in assets if k.endswith(".png")]
+    mtl_names = [k for k in assets if k.endswith(".mtl")]
+    assert len(obj_names) >= 86, f"expected >= 86 OBJ assets, got {len(obj_names)}"
+    assert len(png_names) >= 1, f"expected a texture PNG, got {png_names}"
+    assert len(mtl_names) >= 1, f"expected an MTL file, got {mtl_names}"
