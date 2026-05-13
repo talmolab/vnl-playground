@@ -4,17 +4,24 @@ from etils import epath
 
 STICK_PATH = epath.Path(__file__).parent
 
-STICK_XML_PATH = STICK_PATH / "xmls" / "stick_fast.xml"
+# Default walker is the 41-DoF mesh model; the box variant is kept available
+# at STICK_BOX_XML_PATH for users who want to use the older model.
+STICK_XML_PATH = STICK_PATH / "xmls" / "stick_mesh_fast.xml"
+STICK_BOX_XML_PATH = STICK_PATH / "xmls" / "stick_fast.xml"
 ARENA_XML_PATH = STICK_PATH / "xmls" / "arena.xml"
 
-# Reference data path for imitation learning
+# Reference data path for imitation learning (legacy STAC-fit format)
 IMITATION_REFERENCE_PATH = STICK_PATH / "reference_data" / "full_stick.h5"
 
-# 38 joints (8 thorax + 30 leg)
-# Thorax joints: 07-a2 through 14-a9 (abdominal segments)
-# Leg joints: 5 per leg (coxa, femur, tibia, tarsus, claws) x 6 legs
+# 41 joints (3 thorax + 8 abdomen + 30 leg).
+# Thorax joints 04-t1-l/05-t2-l/06-t3-l are now active in the mesh model
+# (they were commented out in sungaya_inexpectata_box.xml).
 JOINTS = [
-    # Thorax/abdomen
+    # Thorax (newly enabled in the mesh model)
+    "04-t1-l",
+    "05-t2-l",
+    "06-t3-l",
+    # Abdomen
     "07-a2-l",
     "08-a3-l",
     "09-a4-l",
@@ -61,7 +68,7 @@ JOINTS = [
     "36-f-r-claws-l",
 ]
 
-# Body names (excluding "world" and "floor")
+# Body names (excluding "world" and "floor"). Same tree as the box model.
 BODIES = [
     "reference_base",
     "04-t1-l",
@@ -113,7 +120,7 @@ BODIES = [
     "36-f-r-claws-l",
 ]
 
-# 6 end effectors (claw tips, one per leg)
+# 6 end effectors (claw bodies, one per leg)
 END_EFFECTORS = [
     "20-f-l-claws-l",
     "36-f-r-claws-l",
@@ -123,19 +130,15 @@ END_EFFECTORS = [
     "46-h-r-claws-l",
 ]
 
-# Foot geom names for explicit floor contact pairs
-# Each leg has tarsus + claws geoms that contact the floor
+# Six explicit floor-contact geoms (one sphere primitive per claw body).
+# base.py.add_stick() loops over FOOT_GEOMS and adds a pair
+# (floor, <geom_name>-stick) for each entry, so the names below must match
+# the geom names in sungaya_inexpectata_mesh.xml exactly.
 FOOT_GEOMS = [
-    "19-f-l-tarsus",
-    "20-f-l-claws",
-    "24-m-l-tarsus",
-    "25-m-l-claws",
-    "29-h-l-tarsus",
-    "30-h-l-claws",
-    "35-f-r-tarsus",
-    "36-f-r-claws",
-    "40-m-r-tarsus",
-    "41-m-r-claws",
-    "45-h-r-tarsus",
-    "46-h-r-claws",
+    "claw_collide_fl",
+    "claw_collide_ml",
+    "claw_collide_hl",
+    "claw_collide_fr",
+    "claw_collide_mr",
+    "claw_collide_hr",
 ]
