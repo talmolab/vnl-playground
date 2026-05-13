@@ -19,8 +19,14 @@ from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_s
 
 
 def get_assets() -> Dict[str, bytes]:
+    """Bundle XML + mesh OBJ + texture so MjSpec can load from bytes."""
     assets = {}
     mjx_env.update_assets(assets, consts.STICK_PATH / "xmls", "*.xml")
+    mesh_dir = consts.STICK_PATH / "xmls" / "stick_insect_urdf" / "meshes" / "obj"
+    if mesh_dir.is_dir():
+        mjx_env.update_assets(assets, mesh_dir, "*.obj")
+        mjx_env.update_assets(assets, mesh_dir, "*.mtl")
+        mjx_env.update_assets(assets, mesh_dir, "*.png")
     return assets
 
 
