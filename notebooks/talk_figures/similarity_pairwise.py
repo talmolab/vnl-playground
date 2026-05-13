@@ -382,6 +382,21 @@ def per_body_part_matrices(X_bio_full: np.ndarray, X_sim_full: np.ndarray) -> di
     return out
 
 
+def select_muscle_features(X_flat: np.ndarray, muscle_idx: int) -> np.ndarray:
+    """X_flat: (N, 180) packed as (T=60, M=3). Returns (N, T) for one muscle."""
+    X = X_flat.reshape(-1, TARGET_T, len(MUSCLES))
+    return X[:, :, muscle_idx]  # (N, T)
+
+
+def per_muscle_matrices(X_bio_emg: np.ndarray, X_sim_emg: np.ndarray) -> dict:
+    """Return cosine matrices per (bio/sim, muscle)."""
+    out = {}
+    for mi, name in enumerate(MUSCLES):
+        out[("bio_emg", name)] = cosine_matrix(select_muscle_features(X_bio_emg, mi))
+        out[("sim_emg", name)] = cosine_matrix(select_muscle_features(X_sim_emg, mi))
+    return out
+
+
 def plot_body_part_distributions(S_part: dict, animals: np.ndarray, out_path: Path):
     """2 rows (bio, sim) x 3 cols (Shoulder, Elbow, Wrist).
 
@@ -419,6 +434,84 @@ def plot_body_part_distributions(S_part: dict, animals: np.ndarray, out_path: Pa
                 ax.set_ylabel("density", fontsize=8)
             ax.legend(fontsize=6, loc="best")
     fig.suptitle("Per-body-part cosine distributions", fontsize=10, y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_path.with_suffix(".pdf"))
+    fig.savefig(out_path.with_suffix(".png"))
+    plt.close(fig)
+
+
+def plot_per_muscle_distributions(S_mu: dict, animals: np.ndarray, out_path: Path):
+    """2 rows (bio_emg, sim_emg) x 3 cols (AD, Triceps, Biceps): histogram of cosines."""
+    fig, axes = plt.subplots(2, 3, figsize=(13, 7), sharex=False, sharey=False)
+    for ri, modality in enumerate(["bio_emg", "sim_emg"]):
+        for ci, name in enumerate(MUSCLES):
+            ax = axes[ri, ci]
+            Sm = S_mu[(modality, name)]
+            N = Sm.shape[0]
+            same = animals[:, None] == animals[None, :]
+            eye = np.eye(N, dtype=bool)
+            within = Sm[same & ~eye]
+            between = Sm[~same]
+            lo = min(within.min(), between.min())
+            hi = max(within.max(), between.max())
+            bins = np.linspace(lo, hi, 60)
+            ax.hist(between, bins=bins, color="#888888", alpha=0.55, density=True,
+                    label=f"between (n={between.size})")
+            ax.hist(within, bins=bins, color="#d62728", alpha=0.55, density=True,
+                    label=f"within  (n={within.size})")
+            ax.axvline(np.median(within), color="#d62728", lw=1, ls="--")
+            ax.axvline(np.median(between), color="#888888", lw=1, ls="--")
+            ax.set_title(
+                f"{modality} — {name}\n"
+                f"within={np.median(within):+.3f}  between={np.median(between):+.3f}  "
+                f"gap={np.median(within) - np.median(between):+.3f}",
+                fontsize=8,
+            )
+            if ri == 1:
+                ax.set_xlabel("cosine", fontsize=8)
+            if ci == 0:
+                ax.set_ylabel("density", fontsize=8)
+            ax.legend(fontsize=6, loc="best")
+    fig.suptitle("Per-muscle EMG cosine distributions", fontsize=10, y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_path.with_suffix(".pdf"))
+    fig.savefig(out_path.with_suffix(".png"))
+    plt.close(fig)
+
+
+def plot_per_muscle_per_animal(S_mu: dict, animals: np.ndarray, out_path: Path):
+    """Per-animal violins, one row per muscle, two cols per modality."""
+    fig, axes = plt.subplots(3, 2, figsize=(11, 10), sharey=False)
+    for ri, name in enumerate(MUSCLES):
+        for ci, modality in enumerate(["bio_emg", "sim_emg"]):
+            ax = axes[ri, ci]
+            dists = per_animal_distributions(S_mu[(modality, name)], animals)
+            positions, data, colors = [], [], []
+            for ai, a in enumerate(ANIMALS):
+                within = dists[a]["within"]
+                between = dists[a]["between"]
+                positions.extend([ai * 3, ai * 3 + 1])
+                data.extend([within, between])
+                colors.extend([ANIMAL_COLORS[a], "#bbbbbb"])
+            parts = ax.violinplot(data, positions=positions, widths=0.85,
+                                  showmedians=True, showextrema=False)
+            for pc, c in zip(parts["bodies"], colors):
+                pc.set_facecolor(c)
+                pc.set_edgecolor("black")
+                pc.set_linewidth(0.4)
+                pc.set_alpha(0.75)
+            if "cmedians" in parts:
+                parts["cmedians"].set_color("black")
+                parts["cmedians"].set_linewidth(0.8)
+            ax.set_xticks([ai * 3 + 0.5 for ai in range(len(ANIMALS))])
+            ax.set_xticklabels(ANIMALS, fontsize=7)
+            ax.set_ylabel("cosine", fontsize=8)
+            ax.set_title(f"{modality} — {name}", fontsize=9)
+            ax.axhline(0, color="black", lw=0.3)
+            for ai in range(1, len(ANIMALS)):
+                ax.axvline(ai * 3 - 0.5, color="#dddddd", lw=0.5)
+    fig.suptitle("Per-animal EMG cosine by muscle (within = colored, between = gray)",
+                 fontsize=10, y=0.995)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path.with_suffix(".pdf"))
     fig.savefig(out_path.with_suffix(".png"))
@@ -808,6 +901,17 @@ def main():
     for modality in ["bio_kin", "sim_kin"]:
         for name in KP_NAMES:
             st = block_stats(S_part[(modality, name)], meta["animal"])
+            print(f"  {modality:<10s} {name:<9s} {st['within']:+.3f}  "
+                  f"{st['between']:+.3f}  {st['gap']:+.3f}")
+
+    print("[similarity] per-muscle decomposition …")
+    S_mu = per_muscle_matrices(X["bio_emg"], X["sim_emg"])
+    plot_per_muscle_distributions(S_mu, meta["animal"], out_dir / "fig_sim_muscle_hist")
+    plot_per_muscle_per_animal(S_mu, meta["animal"], out_dir / "fig_sim_muscle_per_animal")
+    print(f"  {'modality':<10s} {'muscle':<9s} within   between  gap")
+    for modality in ["bio_emg", "sim_emg"]:
+        for name in MUSCLES:
+            st = block_stats(S_mu[(modality, name)], meta["animal"])
             print(f"  {modality:<10s} {name:<9s} {st['within']:+.3f}  "
                   f"{st['between']:+.3f}  {st['gap']:+.3f}")
 
