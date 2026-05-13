@@ -10,8 +10,8 @@ from etils import epath
 
 CELEGANS_PATH: epath.Path = epath.Path(__file__).parent
 
-CELEGANS_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "celegans_cgs.xml"
-ARENA_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "arena_cgs.xml"
+CELEGANS_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "celegans.xml"
+ARENA_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "arena.xml"
 WHITE_ARENA_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "white_arena.xml"
 REFERENCE_H5_PATH: epath.Path = CELEGANS_PATH / "reference_data" / "reference2d.h5"
 
