@@ -40,35 +40,35 @@ def default_config() -> config_dict.ConfigDict:
         touch_sensors=consts.TOUCH_SENSORS,
         sensors=consts.SENSORS,
         mujoco_impl="jax",
-        sim_dt=0.002,
-        ctrl_dt=0.01,
-        integrator="euler",
+        sim_dt=0.01,
+        ctrl_dt=0.1,
+        integrator="RK4",
         solver="cg",
-        iterations=5,
-        ls_iterations=5,
+        iterations=4,
+        ls_iterations=4,
         noslip_iterations=0,
-        impratio=1.0,
+        impratio=0.1,
         naconmax=16 * 8192,
         njmax=256,
         ccd_iterations=35,
-        init_pos={"x": 0.0, "y": 0.0, "z": 0.05},
+        init_pos={"x": 0.0, "y": 0.0, "z": 0.005},
         torque_actuators=False,
-        rescale_factor=1.0,
+        rescale_factor=1.001,
         dim=2,
         trans_joint="slide",
         friction={
-            "tan_floor": 1,
-            "tan_body": 1,
+            "tan_floor": 0.2,
+            "tan_body": 0.9,
             "tor": 0.005,
             "roll_floor": 0.0001,
             "roll_body": 0.0001,
         },
-        solimp={"d0": 0.9, "dwidth": 0.95, "width": 0.001, "midpoint": 0.5, "power": 2},
+        solimp={"d0": 0.0, "dwidth": 0.95, "width": 0.001, "midpoint": 0.5, "power": 2},
         solref={"timeconst": 0.02, "dampratio": 1},
         solreffriction={"timeconst": 0, "dampratio": 0},
         muscle_config=None,
         joint_config=None,
-        contact_geom="sphere",
+        contact_geom="capsule",
         mocap_hz=20,
         reference_data_path=consts.REFERENCE_H5_PATH,
         clip_length=250,
@@ -82,33 +82,33 @@ def default_config() -> config_dict.ConfigDict:
         proprioceptive_filter=[],
         reward_terms={
             # Imitation rewards
-            "root_pos": {"exp_scale": 0.05, "weight": 1.0},  # Meters
-            "root_quat": {"exp_scale": 0.0625, "weight": 1.0},  # Degrees
-            "joints": {"exp_scale": 16, "weight": 1.0},  # Joint-space L2 distance
+            "root_pos": {"exp_scale": 0.01, "weight": 1.0},  # Meters
+            "root_quat": {"exp_scale": 30, "weight": 1.0},  # Degrees
+            "joints": {"exp_scale": 1, "weight": 2.0},  # Joint-space L2 distance
             "joints_vel": {
-                "exp_scale": 0.02,
-                "weight": 1.0,
+                "exp_scale": 1.0,
+                "weight": 0.0,
             },  # Joint velocity-space L2 distance
             "bodies_pos": {
-                "exp_scale": 0.125,
-                "weight": 1.0,
+                "exp_scale": 0.05,
+                "weight": 0.0,
             },  # Distance in concatenated euclidean space
             "end_eff": {
-                "exp_scale": 0.002,
+                "exp_scale": 0.01,
                 "weight": 1.0,
             },  # Distance in concatenated euclidean space
-            "upright": {"healthy_z_range": (0.0, 1.0), "weight": 0.0},
+            "upright": {"healthy_z_range": (-1.0, 1.0), "weight": 0.0},
         },
         # Costs / regularizers
         cost_terms={
             "control": {"weight": 0.02},
-            "control_diff": {"weight": 0.02},
+            "control_diff": {"weight": 1.0},
             "energy": {"max_value": 50.0, "weight": 0.0},
             "jerk": {"weight": 0.0},
             "var": {"weight": 0.0},
         },
         termination_criteria={
-            "fall": {"healthy_z_range": (0.0, 1.0)},
+            "fall": {"healthy_z_range": (-1.0, 1.0)},
             "root_too_far": {"max_distance": 0.01},  # Meters
             "root_too_rotated": {"max_degrees": 60.0},  # Degrees
             "pose_error": {"max_l2_error": 4.5},  # Joint-space L2 distance
@@ -170,8 +170,8 @@ class Imitation(worm_base.CelegansEnv):
             self.config.solreffriction["timeconst"],
             self.config.solreffriction["dampratio"],
         ]
-        pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.05})
-        pos = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.05)]
+        pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.005})
+        pos = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.005)]
 
         if self.config.contact_geom.lower() == "mesh":
             contact_geom = mujoco.mjtGeom.mjGEOM_MESH
