@@ -6,6 +6,7 @@ loaded via the unified ReferenceClips class.
 """
 
 import collections
+import tqdm
 import warnings
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 
@@ -40,12 +41,13 @@ def default_config() -> config_dict.ConfigDict:
         njmax=600,
         noslip_iterations=0,
         torque_actuators=False,
-        rescale_factor=1.5,  # Match H5 SCALE_FACTOR
+        rescale_factor=1.0,  # Mesh STAC fit was done with SCALE_FACTOR=1.
         reference_data_path=consts.IMITATION_REFERENCE_PATH,
         mocap_hz=50,
-        clip_length=225,
+        clip_length=100,
         clip_set="all",
         reference_length=5,
+        reference_stride=1,
         start_frame_range=[0, 44],
         qvel_init="zeros",
         keep_clips_idx=None,
@@ -140,8 +142,7 @@ class Imitation(stick_base.StickBugEnv):
             "start_frame": start_frame,
             "reference_clip": clip_idx,
         }
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        truncated = self._get_cur_frame(data, info) > last_valid_frame
+        truncated = self._get_cur_frame(data, info) > self._last_valid_frame()
         info["truncated"] = jp.astype(truncated, float)
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
@@ -164,8 +165,7 @@ class Imitation(stick_base.StickBugEnv):
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        truncated = self._get_cur_frame(data, info) > last_valid_frame
+        truncated = self._get_cur_frame(data, info) > self._last_valid_frame()
         info["truncated"] = jp.astype(truncated, float)
         info["prev_action"] = state.info["action"]
         info["action"] = action
@@ -224,6 +224,13 @@ class Imitation(stick_base.StickBugEnv):
     def _clip_length(self):
         return self.reference_clips.qpos.shape[1]
 
+    def _last_valid_frame(self):
+        return (
+            self._clip_length()
+            - (self._config.reference_length - 1) * self._config.reference_stride
+            - 2
+        )
+
     def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
         time_in_frames = data.time * self._config.mocap_hz
         return jp.floor(time_in_frames + info["start_frame"]).astype(int)
@@ -242,6 +249,7 @@ class Imitation(stick_base.StickBugEnv):
             clip=info["reference_clip"],
             start_frame=self._get_cur_frame(data, info) + 1,
             length=self._config.reference_length,
+            stride=self._config.reference_stride,
         )
 
     def _get_imitation_target(
@@ -353,9 +361,9 @@ class Imitation(stick_base.StickBugEnv):
     def _torso_z_range_reward(
         self, data, info, metrics, weight, healthy_z_range
     ) -> float:
-        metrics["body_z"] = body_z = self._get_body_height(data)
+        metrics["torso_z"] = torso_z = self._get_body_height(data)
         min_z, max_z = healthy_z_range
-        in_range = jp.logical_and(body_z >= min_z, body_z <= max_z)
+        in_range = jp.logical_and(torso_z >= min_z, torso_z <= max_z)
         metrics["in_range"] = in_range.astype(float)
         reward = weight * in_range
         metrics["rewards/torso_z_range"] = reward
@@ -412,6 +420,28 @@ class Imitation(stick_base.StickBugEnv):
     def _nan_termination(self, data, info) -> bool:
         return jp.any(jp.isnan(data.qpos))
 
+    def _compile_with_ghost(self) -> mujoco.MjModel:
+        """Compile a new MjModel with an attached transparent ghost stick."""
+        spec = self._spec.copy()
+        ghost_stick = mujoco.MjSpec.from_file(self._walker_xml_path)
+        ghost_rescale = self._config.rescale_factor
+        if (
+            self.reference_clips._config is not None
+            and "model" in self.reference_clips._config
+        ):
+            ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
+        if ghost_rescale != 1.0:
+            ghost_stick = utils.scale_spec(
+                ghost_stick, ghost_rescale, root_body="reference_base"
+            )
+        for body in ghost_stick.worldbody.bodies:
+            utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
+        spawn_frame = spec.worldbody.add_frame(pos=(0, 0, 0), quat=(1, 0, 0, 0))
+        spawn_frame.attach_body(
+            ghost_stick.body("reference_base"), "", suffix="-ghost"
+        )
+        return spec.compile()
+
     def render(
         self,
         trajectory: List[mjx_env.State],
@@ -426,25 +456,7 @@ class Imitation(stick_base.StickBugEnv):
     ) -> Sequence[np.ndarray]:
         """Renders a sequence of states with optional ghost stick bug."""
         if render_ghost:
-            spec = self._spec.copy()
-            ghost_stick = mujoco.MjSpec.from_file(self._walker_xml_path)
-            ghost_rescale = self._config.rescale_factor
-            if (
-                self.reference_clips._config is not None
-                and "model" in self.reference_clips._config
-            ):
-                ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
-            if ghost_rescale != 1.0:
-                ghost_stick = utils.scale_spec(
-                    ghost_stick, ghost_rescale, root_body="reference_base"
-                )
-            for body in ghost_stick.worldbody.bodies:
-                utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
-            spawn_frame = spec.worldbody.add_frame(pos=(0, 0, 0), quat=(1, 0, 0, 0))
-            spawn_frame.attach_body(
-                ghost_stick.body("reference_base"), "", suffix="-ghost"
-            )
-            mj_model = spec.compile()
+            mj_model = self._compile_with_ghost()
         else:
             mj_model = self.mj_model
         mj_model.vis.global_.offwidth = width
@@ -481,6 +493,126 @@ class Imitation(stick_base.StickBugEnv):
                     faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
                     rendered_frames.append(faded_frame)
         return rendered_frames
+
+    def render_optimized(
+        self,
+        rollout_source: Any,
+        height: int = 480,
+        width: int = 640,
+        camera: Optional[str] = None,
+        scene_option: Optional[mujoco.MjvOption] = None,
+        render_ghost: bool = True,
+    ) -> List[np.ndarray]:
+        """Render from precomputed qposes (track-mjx eval path)."""
+        if isinstance(rollout_source, Mapping) and "qposes_rollout" in rollout_source:
+            qposes_rollout = np.asarray(rollout_source["qposes_rollout"])
+            qposes_ref = (
+                np.asarray(rollout_source["qposes_ref"])
+                if render_ghost and "qposes_ref" in rollout_source
+                else None
+            )
+        else:
+            qposes_rollout = np.asarray(rollout_source.data.qpos)
+            qposes_ref = None
+            if render_ghost:
+                clip_idx = int(
+                    np.asarray(rollout_source.info["reference_clip"]).reshape(-1)[0]
+                )
+                start_frame = np.asarray(rollout_source.info["start_frame"])
+                times = np.asarray(rollout_source.data.time)
+                frame_indices = np.floor(
+                    times * float(self._config.mocap_hz) + start_frame
+                ).astype(np.int32)
+                ref_qpos = np.asarray(self.reference_clips.qpos[clip_idx])
+                qposes_ref = ref_qpos[frame_indices]
+
+        if render_ghost:
+            mj_model = self._compile_with_ghost()
+            qpos_list = [
+                np.concatenate((qroll, qref))
+                for qroll, qref in zip(qposes_rollout, qposes_ref, strict=False)
+            ]
+        else:
+            mj_model = self.mj_model
+            qpos_list = qposes_rollout
+
+        mj_data = mujoco.MjData(mj_model)
+        renderer = mujoco.Renderer(mj_model, height=height, width=width)
+
+        if camera is None:
+            camera = self._default_render_camera
+        if scene_option is None:
+            scene_option = mujoco.MjvOption()
+            scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
+
+        frames = []
+        for qpos in tqdm.tqdm(qpos_list, desc="Rendering"):
+            mj_data.qpos = qpos
+            mujoco.mj_forward(mj_model, mj_data)
+            renderer.update_scene(mj_data, camera=camera, scene_option=scene_option)
+            frames.append(renderer.render())
+
+        renderer.close()
+        return frames
+
+    def verify_reference_data(self, atol: float = 5e-3) -> bool:
+        """Check that env-from-qpos reproduces the reference body positions."""
+        def test_frame(clip_idx: int, frame: int) -> dict[str, bool]:
+            data = self._reset_data(clip_idx, frame)
+            reference = self.reference_clips.at(clip=clip_idx, frame=frame)
+            checks = collections.OrderedDict()
+            checks["root_pos"] = jp.allclose(
+                self.root_body(data).xpos, reference.root_position, atol=atol
+            )
+            checks["root_quat"] = jp.allclose(
+                self.root_body(data).xquat, reference.root_quaternion, atol=atol
+            )
+            checks["joints"] = jp.allclose(
+                self._get_joint_angles(data), reference.joints, atol=atol
+            )
+            body_pos = self._get_bodies_pos(data, flatten=False)
+            for body_name, bp in body_pos.items():
+                checks[f"body_xpos/{body_name}"] = jp.allclose(
+                    bp, reference.body_xpos(body_name), atol=atol
+                )
+            return checks
+
+        @jax.jit
+        def test_clip(clip_idx: int):
+            return jax.vmap(test_frame, in_axes=(None, 0))(
+                clip_idx, jp.arange(self._clip_length())
+            )
+
+        _assert_all_are_prefix(
+            self.reference_clips.joint_names,
+            self.get_joint_names(),
+            "reference joints",
+            "model joints",
+        )
+        if isinstance(self._clip_set, int):
+            clip_idxs = jp.arange(self._clip_set)
+        else:
+            clip_idxs = self._clip_set
+
+        any_failed = False
+        for clip in clip_idxs:
+            if clip < 0 or clip >= self.reference_clips.qpos.shape[0]:
+                raise ValueError(
+                    f"Clip index {clip} is out of range. Reference"
+                    f"data has {self.reference_clips.qpos.shape[0]} clips."
+                )
+            test_result = test_clip(clip)
+            for name, result in test_result.items():
+                n_failed = jp.sum(np.logical_not(result))
+                if n_failed > 0:
+                    first_failed_frame = jp.argmax(np.logical_not(result))
+                    warnings.warn(
+                        f"Reference data verification failed for {n_failed}"
+                        f" frames for check '{name}' for clip {clip}."
+                        f" First failure at frame {first_failed_frame}."
+                    )
+                    any_failed = True
+        return not any_failed
 
 
 def _assert_all_are_prefix(a, b, a_name="a", b_name="b"):
