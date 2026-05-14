@@ -64,7 +64,12 @@
         <body name="reference_base" pos="0 0 0">
             <joint armature="0" damping="0" limited="false" margin="0.01" name="root" pos="0 0 0" type="free"/>
             <site name="head" size="0.0001"/>
-            <camera name="close_profile" mode="trackcom" pos=".03 -.03 0.01" xyaxes="1 1 0 -1 1 4"/>
+            <!-- Follow camera: ~10 cm back and up, auto-pans with the body
+                 (mode=trackcom). The original 3 cm offset was so close it
+                 left the floor barely visible and zoomed the texture so far
+                 in that the grid blurred. -->
+            <camera name="close_profile" mode="trackcom" pos=".10 -.10 .05" xyaxes="1 1 0 -1 1 2"/>
+            <camera name="extreme_closeup" mode="trackcom" pos=".03 -.03 0.01" xyaxes="1 1 0 -1 1 4"/>
             <geom name="03-caput" type="mesh" mesh="03-caput" pos="-4.93919e-06 0.0008534044 -0.00056868081" material="sungaya_mat"/>
             <geom name="04-t1" type="mesh" mesh="04-t1" pos="5.17067e-06 -0.00071373116 -0.00015030356" material="sungaya_mat"/>
             <body name="04-t1-l" pos="4.212954e-05 -0.00142994616 -0.00024617367">
@@ -139,7 +144,7 @@
                                             <inertial pos="0 0 0" mass="0.01" diaginertia="0.001 0.001 0.001"/>
                                             <joint type="hinge" name="30-h-l-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-1.570796 0.000000"/>
                                             <geom name="30-h-l-claws" type="mesh" mesh="30-h-l-claws" pos="-0.00094383769 -1.53131e-05 -0.00026759366" material="sungaya_mat"/>
-                                            <geom name="claw_collide_hl" type="sphere" size="0.0003" pos="-0.00094383769 -1.53131e-05 -0.00026759366" contype="1" conaffinity="1" condim="3" rgba="1 0 0 0.6"/>
+                                            <geom name="claw_collide_hl" type="sphere" size="0.0001" pos="-0.00094383769 -1.53131e-05 -0.00026759366" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                         </body>
                                     </body>
                                 </body>
@@ -165,7 +170,7 @@
                                             <inertial pos="0 0 0" mass="0.01" diaginertia="0.001 0.001 0.001"/>
                                             <joint type="hinge" name="46-h-r-claws-l" pos="0 0 0" axis="-1.907e-08 -1 -4.371e-08" range="0.000000 1.570796"/>
                                             <geom name="46-h-r-claws" type="mesh" mesh="46-h-r-claws" pos="0.00094436482 -3.42238e-06 -0.00026615011" material="sungaya_mat"/>
-                                            <geom name="claw_collide_hr" type="sphere" size="0.0003" pos="0.00094436482 -3.42238e-06 -0.00026615011" contype="1" conaffinity="1" condim="3" rgba="1 0 0 0.6"/>
+                                            <geom name="claw_collide_hr" type="sphere" size="0.0001" pos="0.00094436482 -3.42238e-06 -0.00026615011" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                         </body>
                                     </body>
                                 </body>
@@ -192,7 +197,7 @@
                                         <inertial pos="0 0 0" mass="0.01" diaginertia="0.001 0.001 0.001"/>
                                         <joint type="hinge" name="25-m-l-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-1.570796 0.000000"/>
                                         <geom name="25-m-l-claws" type="mesh" mesh="25-m-l-claws" pos="-0.00065638963 -3.338582e-05 -0.00020578038" material="sungaya_mat"/>
-                                        <geom name="claw_collide_ml" type="sphere" size="0.0003" pos="-0.00065638963 -3.338582e-05 -0.00020578038" contype="1" conaffinity="1" condim="3" rgba="1 0 0 0.6"/>
+                                        <geom name="claw_collide_ml" type="sphere" size="0.0001" pos="-0.00065638963 -3.338582e-05 -0.00020578038" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                     </body>
                                 </body>
                             </body>
@@ -218,7 +223,7 @@
                                         <inertial pos="0 0 0" mass="0.01" diaginertia="0.001 0.001 0.001"/>
                                         <joint type="hinge" name="41-m-r-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="0.000000 1.570796"/>
                                         <geom name="41-m-r-claws" type="mesh" mesh="41-m-r-claws" pos="0.00065707322 -2.511451e-05 -0.00020477572" material="sungaya_mat"/>
-                                        <geom name="claw_collide_mr" type="sphere" size="0.0003" pos="0.00065707322 -2.511451e-05 -0.00020477572" contype="1" conaffinity="1" condim="3" rgba="1 0 0 0.6"/>
+                                        <geom name="claw_collide_mr" type="sphere" size="0.0001" pos="0.00065707322 -2.511451e-05 -0.00020477572" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                     </body>
                                 </body>
                             </body>
@@ -245,7 +250,7 @@
                                     <inertial pos="0 0 0" mass="0.01" diaginertia="0.001 0.001 0.001"/>
                                     <joint type="hinge" name="20-f-l-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-1.570796 0.000000"/>
                                     <geom name="20-f-l-claws" type="mesh" mesh="20-f-l-claws" pos="-0.00063120201 1.842389e-05 -0.00010398612" material="sungaya_mat"/>
-                                    <geom name="claw_collide_fl" type="sphere" size="0.0003" pos="-0.00063120201 1.842389e-05 -0.00010398612" contype="1" conaffinity="1" condim="3" rgba="1 0 0 0.6"/>
+                                    <geom name="claw_collide_fl" type="sphere" size="0.0001" pos="-0.00063120201 1.842389e-05 -0.00010398612" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                 </body>
                             </body>
                         </body>
@@ -271,7 +276,7 @@
                                     <inertial pos="0 0 0" mass="0.01" diaginertia="0.001 0.001 0.001"/>
                                     <joint type="hinge" name="36-f-r-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="0.000000 1.570796"/>
                                     <geom name="36-f-r-claws" type="mesh" mesh="36-f-r-claws" pos="0.00063108001 2.637226e-05 -0.00010302081" material="sungaya_mat"/>
-                                    <geom name="claw_collide_fr" type="sphere" size="0.0003" pos="0.00063108001 2.637226e-05 -0.00010302081" contype="1" conaffinity="1" condim="3" rgba="1 0 0 0.6"/>
+                                    <geom name="claw_collide_fr" type="sphere" size="0.0001" pos="0.00063108001 2.637226e-05 -0.00010302081" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                 </body>
                             </body>
                         </body>
