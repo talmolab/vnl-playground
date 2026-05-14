@@ -150,26 +150,40 @@ class StickBugEnv(mjx_env.MjxEnv):
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
-            # Stabilise the joint dynamics for the 41-DoF mesh model.
+            # Rescale to biologically-realistic adult Sungaya inexpectata
+            # values (♀ ~5 g, 8 cm body) in SI units.
             #
-            # Body inertias are 0.001 kg·m². With armature=1e-6 (mass matrix
-            # regularisation only 0.1%), RK4 oscillates and qvel explodes
-            # within ~10 control steps under typical RL random-init actions,
-            # producing NaN qpos and an all-black rendered video.
+            # The dataset XML inherited rodent-style "inflated" masses:
+            # 0.01 kg per body × 43 bodies = 0.43 kg total — 86× too heavy
+            # for a real adult. We scale per-body mass by 1e-2 so the model
+            # weighs ~4.3 g (close to the real 5 g), and apply the same
+            # factor to the inertias so the I/m ratio stays consistent with
+            # what the original XML implied (we don't recompute true geometry
+            # inertias here because that would require mesh-density volumes).
             #
-            # Empirically (see /tmp/stick_damping_probe.log):
-            #   armature=1e-6, damping=any   → NaN at step 2-23
-            #   armature=1e-5, damping=0.003 → stable, max|qvel|≈230
-            #   armature=1e-4, damping=0.003 → stable, max|qvel|≈75
+            # Actuator torques are scaled by 1e-4 so peak motor force drops
+            # from 10 N·m (absurd for a 5 g insect) to ~1×10⁻³ N·m, which
+            # is in the right order of magnitude for arthropod muscle.
             #
-            # So we use armature=1e-5 (1% of body inertia) and a light
-            # damping=0.003 (≈3× ctrl_dt time constant) — the joint dofs
-            # only (skip the 6 root-freejoint dofs).
+            # Joint damping (3e-5) and armature (1e-7) are tuned to:
+            #   - damping/inertia ≈ 3 (time constant ~0.3 s, ~30× ctrl_dt,
+            #     gentle but non-trivial)
+            #   - armature/inertia ≈ 1% (RK4 mass-matrix regularisation)
+            #
+            # Verified stable for all probed action scales in
+            # /tmp/stick_realistic_si_probe.log: max|qvel|≤2.1 rad/s at
+            # action_scale=1.0 (saturating tanh), no NaN over 30 steps.
+            mass_scale = 1e-2
+            inertia_scale = 1e-2
+            gear_scale = 1e-4
+            self._mj_model.body_mass[:] *= mass_scale
+            self._mj_model.body_inertia[:] *= inertia_scale
+            self._mj_model.actuator_gear[:, 0] *= gear_scale
             self._mj_model.dof_armature[:] = np.maximum(
-                self._mj_model.dof_armature, 1e-5
+                self._mj_model.dof_armature, 1e-7
             )
             self._mj_model.dof_damping[6:] = np.maximum(
-                self._mj_model.dof_damping[6:], 0.003
+                self._mj_model.dof_damping[6:], 3e-5
             )
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self._config.mujoco_impl
