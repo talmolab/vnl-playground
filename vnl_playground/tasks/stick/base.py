@@ -150,15 +150,26 @@ class StickBugEnv(mjx_env.MjxEnv):
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
-            # Add a small armature (1e-6 kg·m²) to every DOF to regularise the
-            # mass matrix.  The stick-bug model has near-zero-armature joints
-            # whose mass matrix picks up a tiny negative eigenvalue (~-1.5e-8)
-            # from floating-point rounding, causing MJX's Cholesky factorisation
-            # to diverge on the very first step.  1e-6 is ~4 orders of magnitude
-            # below the smallest on-diagonal entry (~0.008) so it has no
-            # observable effect on physics but keeps M positive-definite.
+            # Stabilise the joint dynamics for the 41-DoF mesh model.
+            #
+            # Body inertias are 0.001 kg·m². With armature=1e-6 (mass matrix
+            # regularisation only 0.1%), RK4 oscillates and qvel explodes
+            # within ~10 control steps under typical RL random-init actions,
+            # producing NaN qpos and an all-black rendered video.
+            #
+            # Empirically (see /tmp/stick_damping_probe.log):
+            #   armature=1e-6, damping=any   → NaN at step 2-23
+            #   armature=1e-5, damping=0.003 → stable, max|qvel|≈230
+            #   armature=1e-4, damping=0.003 → stable, max|qvel|≈75
+            #
+            # So we use armature=1e-5 (1% of body inertia) and a light
+            # damping=0.003 (≈3× ctrl_dt time constant) — the joint dofs
+            # only (skip the 6 root-freejoint dofs).
             self._mj_model.dof_armature[:] = np.maximum(
-                self._mj_model.dof_armature, 1e-6
+                self._mj_model.dof_armature, 1e-5
+            )
+            self._mj_model.dof_damping[6:] = np.maximum(
+                self._mj_model.dof_damping[6:], 0.003
             )
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self._config.mujoco_impl
