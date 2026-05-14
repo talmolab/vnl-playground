@@ -184,6 +184,20 @@ class StickBugEnv(mjx_env.MjxEnv):
             self._mj_model.body_mass[:] *= mass_scale
             self._mj_model.body_inertia[:] *= inertia_scale
             self._mj_model.actuator_gear[:, 0] *= gear_scale
+            # body_subtreemass is precomputed by mj_setConst when the model
+            # is first compiled, so it lags behind our scaled body_mass.
+            # The stale value makes mj_kinematics compute the wrong
+            # subtree_com (off by 1/mass_scale), which in turn breaks
+            # trackcom-mode cameras (they barely follow the body — saw
+            # ~1% of true translation in the rollouts).
+            # MuJoCo stores bodies in topological order (parent index <
+            # child index), so a reverse pass accumulates subtree mass
+            # correctly.
+            subtreemass = self._mj_model.body_mass.copy()
+            for i in range(self._mj_model.nbody - 1, 0, -1):
+                parent = self._mj_model.body_parentid[i]
+                subtreemass[parent] += subtreemass[i]
+            self._mj_model.body_subtreemass[:] = subtreemass
             self._mj_model.dof_armature[:] = np.maximum(
                 self._mj_model.dof_armature, 1e-7
             )
