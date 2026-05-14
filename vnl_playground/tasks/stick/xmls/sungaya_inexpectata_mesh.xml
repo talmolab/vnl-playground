@@ -65,10 +65,12 @@
             <joint armature="0" damping="0" limited="false" margin="0.01" name="root" pos="0 0 0" type="free"/>
             <site name="head" size="0.0001"/>
             <!-- Follow camera: ~10 cm back and up, auto-pans with the body
-                 (mode=trackcom). The original 3 cm offset was so close it
-                 left the floor barely visible and zoomed the texture so far
-                 in that the grid blurred. -->
-            <camera name="close_profile" mode="trackcom" pos=".10 -.10 .05" xyaxes="1 1 0 -1 1 2"/>
+                 (mode=trackcom). xyaxes is chosen so the camera aims at
+                 the subtree COM (≈ origin in body frame) — camera -z must
+                 point from (0.10,-0.10,0.05) toward (0,0,0), i.e.
+                 (-1, 1, -0.5)/‖·‖. Setting x=(1,1,0) ⊥ that gives
+                 y = z × x = (-0.5, 0.5, 2). -->
+            <camera name="close_profile" mode="trackcom" pos=".10 -.10 .05" xyaxes="1 1 0 -0.5 0.5 2"/>
             <camera name="extreme_closeup" mode="trackcom" pos=".03 -.03 0.01" xyaxes="1 1 0 -1 1 4"/>
             <geom name="03-caput" type="mesh" mesh="03-caput" pos="-4.93919e-06 0.0008534044 -0.00056868081" material="sungaya_mat"/>
             <geom name="04-t1" type="mesh" mesh="04-t1" pos="5.17067e-06 -0.00071373116 -0.00015030356" material="sungaya_mat"/>
