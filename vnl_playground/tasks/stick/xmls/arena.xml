@@ -1,19 +1,37 @@
 <mujoco>
   <visual>
-    <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
+    <!-- Brighter scene lighting; ambient term lifts dark side; specular for
+         a sheen on the chitin meshes. -->
+    <headlight diffuse=".5 .5 .5" specular=".3 .3 .3" ambient=".4 .4 .4"/>
     <global offwidth="3840" offheight="2160" elevation="-20" azimuth="120"/>
     <quality shadowsize="2048"/>
+    <rgba haze=".15 .25 .35 1"/>
   </visual>
 
   <asset>
-    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
-    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+    <!-- Coarser checker so cells are visibly resolved when the camera is
+         8-10 cm from a 6 cm insect. Each cell is ~1 cm on a 4× repeat across
+         a 1 m floor. -->
+    <texture name="grid" type="2d" builtin="checker" width="256" height="256"
+             rgb1=".35 .4 .45" rgb2=".5 .55 .6"
+             mark="cross" markrgb=".25 .3 .35"/>
+    <material name="grid" texture="grid" texrepeat="40 40" texuniform="true"
+              reflectance=".1"/>
   </asset>
 
   <worldbody>
-    <light pos="0 0 0.1" dir="0 0 -1"/>
+    <!-- Three-point lighting: overhead diffuse + warm key + cool fill -->
+    <light name="overhead" pos="0 0 .3" dir="0 0 -1"
+           diffuse=".5 .5 .5" specular=".2 .2 .2" castshadow="false"/>
+    <light name="key"      pos=".15 .15 .25" dir="-1 -1 -1.5"
+           diffuse=".5 .45 .4" specular=".3 .3 .3"/>
+    <light name="fill"     pos="-.1 -.1 .15" dir="1 1 -1"
+           diffuse=".25 .3 .35" castshadow="false"/>
+
     <body name="floor">
-      <geom name="floor" pos="0 0 -0.008" size="0.2 0.2 0.01" type="plane" material="grid"/>
+      <!-- 1 m × 1 m floor, plenty for any episode-length excursion -->
+      <geom name="floor" pos="0 0 -0.008" size=".5 .5 .01"
+            type="plane" material="grid"/>
     </body>
   </worldbody>
 </mujoco>
