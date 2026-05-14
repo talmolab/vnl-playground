@@ -163,6 +163,9 @@ class ReferenceClips:
         self._config: Optional[dict] = None
         self.clip_names: Optional[np.ndarray] = None
 
+        if keep_clips_idx is not None:
+            keep_clips_idx = np.atleast_1d(np.asarray(keep_clips_idx, dtype=int))
+
         self._load_from_disk(
             data_path, n_frames_per_clip, keep_clips_idx, joint_names, body_names
         )

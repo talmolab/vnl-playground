@@ -70,10 +70,7 @@ def default_config() -> config_dict.ConfigDict:
             "energy_cost": {"max_value": 50.0, "weight": 0.01},
         },
         termination_criteria={
-            "root_too_far": {"max_distance": 0.1},  # Meters
-            "root_too_rotated": {"max_degrees": 60.0},  # Degrees
-            "pose_error": {"max_l2_error": 4.5},  # Joint-space L2 distance
-            "nan_termination": {},
+            "paper_tracking_error": {"tau": 0.3},
         },
     )
 
@@ -442,6 +439,50 @@ class Imitation(rodent_base.RodentEnv):
         raise NotImplementedError("jerk_cost is not implemented")
 
     # Termination
+    @_registry.termination("paper_tracking_error")
+    def _paper_tracking_error(self, data, info, tau) -> bool:
+        target = self._get_current_target(data, info)
+        body_error = jp.linalg.norm(
+            (
+                self._get_reference_ordered_body_positions(data, target)
+                - target.body_positions
+            ).reshape(-1),
+            ord=1,
+        )
+        qpos_error = jp.linalg.norm(
+            (self._get_joint_angles(data) - target.joints).reshape(-1), ord=1
+        )
+        return 1.0 - (body_error + qpos_error) / tau < 0.0
+
+    def _get_reference_ordered_body_positions(
+        self, data: mjx.Data, reference: ReferenceClips
+    ) -> jp.ndarray:
+        body_positions = []
+        unresolved_body_names = []
+        for body_name in reference.body_names:
+            body = self._spec.body(body_name) or self._spec.body(
+                f"{body_name}{self._suffix}"
+            )
+            if body is None:
+                unresolved_body_names.append(body_name)
+            else:
+                body_positions.append(data.bind(self.mjx_model, body).xpos)
+
+        if body_positions and not unresolved_body_names:
+            return jp.stack(body_positions)
+
+        n_reference_bodies = reference.body_positions.shape[-2]
+        if n_reference_bodies == data.xpos.shape[0]:
+            return data.xpos
+        if n_reference_bodies == data.xpos.shape[0] - 2:
+            return data.xpos[2:]
+        raise ValueError(
+            "Could not align reference body positions to the model. "
+            f"Unresolved reference body names: {unresolved_body_names}. "
+            f"Reference has {n_reference_bodies} bodies; model has "
+            f"{data.xpos.shape[0]} bodies."
+        )
+
     @_registry.termination("root_too_far")
     def _root_too_far(self, data, info, max_distance) -> bool:
         target = self._get_current_target(data, info)
