@@ -175,15 +175,24 @@ class StickBugEnv(mjx_env.MjxEnv):
             # action_scale=1.0 (saturating tanh), no NaN over 30 steps.
             mass_scale = 1e-2
             inertia_scale = 1e-2
-            gear_scale = 1e-4
+            # Peak motor torque: gear × ctrlrange = 1e-3 N·m, in line with
+            # the high end of arthropod-leg muscle output. With damping=1e-5,
+            # equilibrium velocity at peak torque is 100 rad/s — well above
+            # the ~15 rad/s peak that stick-insect locomotion reaches at
+            # ~5 Hz, so a policy has plenty of headroom.
+            gear_scale = 1e-3
             self._mj_model.body_mass[:] *= mass_scale
             self._mj_model.body_inertia[:] *= inertia_scale
             self._mj_model.actuator_gear[:, 0] *= gear_scale
             self._mj_model.dof_armature[:] = np.maximum(
                 self._mj_model.dof_armature, 1e-7
             )
+            # damping=1e-5 N·m·s gives time constant I/d = 1 s, so joints
+            # coast freely between control inputs — needed for cyclic gait.
+            # Higher damping (3e-5 → time constant 0.33 s) overdamped fast
+            # locomotion: actuators couldn't drive joints past ~3 rad/s.
             self._mj_model.dof_damping[6:] = np.maximum(
-                self._mj_model.dof_damping[6:], 3e-5
+                self._mj_model.dof_damping[6:], 1e-5
             )
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self._config.mujoco_impl
