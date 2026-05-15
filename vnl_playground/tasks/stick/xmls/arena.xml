@@ -35,8 +35,14 @@
            diffuse=".25 .22 .18" castshadow="false"/>
 
     <body name="floor">
-      <!-- 1 m × 1 m floor, plenty for any episode-length excursion -->
-      <geom name="floor" pos="0 0 -0.008" size=".5 .5 .01"
+      <!-- 1 m × 1 m floor. Lowered from -0.008 m to -0.009 m on 2026-05-14
+           because the STAC-fit reference clip's deepest claw mesh extent
+           reaches z = -8.63 mm (front-right claws). With the old floor at
+           -8.0 mm, 5 of 6 claw meshes visually clipped into the floor in
+           4-33% of frames, creating an impossible-to-reach target that
+           caused the policy to jitter. Lowering the floor by 1 mm keeps
+           the deepest reference mesh point ~0.37 mm above the surface. -->
+      <geom name="floor" pos="0 0 -0.009" size=".5 .5 .01"
             type="plane" material="grid"/>
     </body>
   </worldbody>
