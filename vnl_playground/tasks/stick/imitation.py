@@ -111,18 +111,38 @@ class Imitation(stick_base.StickBugEnv):
         # model now lives in CGS centimeters (see base.py _apply_cgs_rescaling).
         # Scale every length field × 100. qvel is empty (qvel_init="zeros").
         _CGS_L = 100.0
+        _FLOOR_Z_CGS = -0.9  # cm, matches arena.xml floor pos × CGS rescale
         clips_data = self.reference_clips._data_arrays
+
+        # Scale xpos first so we can compute the z-shift from it.
+        if "xpos" in clips_data:
+            xpos = np.array(clips_data["xpos"], copy=True) * _CGS_L
+        else:
+            xpos = None
+
+        # Z-shift: the STAC fit produced a reference clip where every claw
+        # floats 1.5-2.4 mm above the floor across all frames. Under gravity
+        # the policy can't physically realize that trajectory — it has to
+        # fall to make ground contact. Shift the whole reference DOWN so the
+        # lowest claw across the clip just touches the floor. This grounds
+        # the imitation target so feet-on-ground is the natural attractor.
+        if xpos is not None:
+            min_body_z = float(xpos[..., 2].min())
+            z_shift = _FLOOR_Z_CGS - min_body_z   # negative → shifts down
+            xpos[..., 2] += z_shift
+            clips_data["xpos"] = jp.array(xpos)
+        else:
+            z_shift = 0.0
+
         if "qpos" in clips_data:
             qpos = np.array(clips_data["qpos"], copy=True)
-            qpos[..., 0:3] *= _CGS_L  # free-joint xyz (rest is quat + joint angles)
+            qpos[..., 0:3] *= _CGS_L
+            qpos[..., 2] += z_shift  # apply same z-shift to the free-joint root
             clips_data["qpos"] = jp.array(qpos)
-        if "xpos" in clips_data:
-            clips_data["xpos"] = jp.array(
-                np.array(clips_data["xpos"], copy=True) * _CGS_L
-            )
+
         if "qvel" in clips_data and clips_data["qvel"].size > 0:
             qvel = np.array(clips_data["qvel"], copy=True)
-            qvel[..., 0:3] *= _CGS_L  # free-joint linear velocity (rest is angular)
+            qvel[..., 0:3] *= _CGS_L
             clips_data["qvel"] = jp.array(qvel)
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
