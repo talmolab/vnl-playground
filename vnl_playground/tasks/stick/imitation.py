@@ -51,23 +51,24 @@ def default_config() -> config_dict.ConfigDict:
         start_frame_range=[0, 44],
         qvel_init="zeros",
         keep_clips_idx=None,
+        # CGS units (cm/g/s) — see base.py _apply_cgs_rescaling.
         reward_terms={
-            "root_pos": {"exp_scale": 0.035, "weight": 1.0},
+            "root_pos": {"exp_scale": 3.5, "weight": 1.0},      # 0.035 m → 3.5 cm
             "root_quat": {"exp_scale": 20.0, "weight": 1.0},
             "joints": {"exp_scale": 1.4, "weight": 1.0},
             "joints_vel": {"exp_scale": 1.0, "weight": 1.0},
-            "bodies_pos": {"exp_scale": 0.25, "weight": 1.0},
-            "end_eff": {"exp_scale": 0.032, "weight": 1.0},
-            "leg_joints": {"exp_scale": 0.05, "weight": 1.0},
-            "torso_z_range": {"healthy_z_range": (0.0, 0.1), "weight": 1.0},
+            "bodies_pos": {"exp_scale": 25.0, "weight": 1.0},   # 0.25 m → 25 cm
+            "end_eff": {"exp_scale": 3.2, "weight": 1.0},       # 0.032 m → 3.2 cm
+            "leg_joints": {"exp_scale": 5.0, "weight": 1.0},    # 0.05 m → 5 cm
+            "torso_z_range": {"healthy_z_range": (0.0, 10.0), "weight": 1.0},  # [0, 0.1] m → [0, 10] cm
             "control_cost": {"weight": 0.02},
             "control_diff_cost": {"weight": 0.02},
             "energy_cost": {"max_value": 50.0, "weight": 0.01},
         },
         termination_criteria={
-            "root_too_far": {"max_distance": 0.05},
+            "root_too_far": {"max_distance": 5.0},     # 0.05 m → 5 cm
             "root_too_rotated": {"max_degrees": 60.0},
-            "pose_error": {"max_l2_error": 4.5},
+            "pose_error": {"max_l2_error": 450.0},     # ×100 from SI
             "nan_termination": {},
         },
     )
