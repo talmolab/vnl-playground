@@ -51,24 +51,24 @@ def default_config() -> config_dict.ConfigDict:
         start_frame_range=[0, 44],
         qvel_init="zeros",
         keep_clips_idx=None,
-        # CGS units (cm/g/s) — see base.py _apply_cgs_rescaling.
+        # CGS units (cm/g/s), v3 algebra-derived scales — see stick-ppo-imitation.yaml.
         reward_terms={
-            "root_pos": {"exp_scale": 3.5, "weight": 1.0},      # 0.035 m → 3.5 cm
-            "root_quat": {"exp_scale": 20.0, "weight": 1.0},
-            "joints": {"exp_scale": 1.4, "weight": 1.0},
-            "joints_vel": {"exp_scale": 1.0, "weight": 1.0},
-            "bodies_pos": {"exp_scale": 25.0, "weight": 1.0},   # 0.25 m → 25 cm
-            "end_eff": {"exp_scale": 3.2, "weight": 1.0},       # 0.032 m → 3.2 cm
-            "leg_joints": {"exp_scale": 5.0, "weight": 1.0},    # 0.05 m → 5 cm
-            "torso_z_range": {"healthy_z_range": (0.0, 10.0), "weight": 1.0},  # [0, 0.1] m → [0, 10] cm
-            "control_cost": {"weight": 0.02},
-            "control_diff_cost": {"weight": 0.02},
-            "energy_cost": {"max_value": 50.0, "weight": 0.01},
+            "root_pos": {"exp_scale": 0.31, "weight": 1.0},
+            "root_quat": {"exp_scale": 5.0, "weight": 1.0},
+            "joints": {"exp_scale": 1.4, "weight": 2.0},
+            "joints_vel": {"exp_scale": 1.0, "weight": 0.0},
+            "bodies_pos": {"exp_scale": 2.2, "weight": 0.0},
+            "end_eff": {"exp_scale": 4.4, "weight": 3.0},
+            "leg_joints": {"exp_scale": 8.8, "weight": 3.0},
+            "torso_z_range": {"healthy_z_range": (0.0, 10.0), "weight": 0.3},
+            "control_cost": {"weight": 0.05},
+            "control_diff_cost": {"weight": 0.1},
+            "energy_cost": {"max_value": 50.0, "weight": 0.005},
         },
         termination_criteria={
-            "root_too_far": {"max_distance": 5.0},     # 0.05 m → 5 cm
-            "root_too_rotated": {"max_degrees": 60.0},
-            "pose_error": {"max_l2_error": 450.0},     # ×100 from SI
+            "root_too_far": {"max_distance": 1.0},
+            "root_too_rotated": {"max_degrees": 15.0},
+            "pose_error": {"max_l2_error": 15.0},
             "nan_termination": {},
         },
     )
