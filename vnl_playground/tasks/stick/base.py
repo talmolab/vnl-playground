@@ -137,37 +137,105 @@ class StickBugEnv(mjx_env.MjxEnv):
         spawn_frame.attach_body(stick_spec.body("reference_base"), "", suffix=suffix)
 
     @staticmethod
-    def _apply_si_rescaling(mj_model: mujoco.MjModel) -> None:
-        """Tune actuator gear, damping, and armature for the mesh-derived
-        nymph-scale model (in-place).
+    def _apply_cgs_rescaling(mj_model: mujoco.MjModel) -> None:
+        """Convert the compiled model from SI (m / kg / s) to CGS (cm / g / s)
+        in-place. The mesh XML still uses SI numbers; this rescales every
+        length / mass / inertia / actuator / damping field so the solver
+        operates at the float32 sweet spot the fly model uses.
 
-        The mesh XML now uses density=1000 kg/m³ on the visual mesh geoms
-        so MuJoCo integrates real per-segment inertia from mesh volume —
-        no mass/inertia rescaling is needed. We do still:
-          - scale actuator_gear to peak ~1e-5 N·m per ctrl-unit, which is
-            the right torque for a ~50 mg insect leg-muscle (arthropod
-            muscle scales linearly with cross-section, ~10× mass);
-          - clamp dof_damping/armature to small non-zero values to keep
-            the RK4 mass-matrix well-conditioned at sub-mg leaf inertias.
-          - recompute body_subtreemass so trackcom cameras follow the
-            body correctly in eval videos.
+        Why: at SI scale (50 mg, 22 mm bug, 489 µN body weight) the default
+        MuJoCo contact stabilization is too soft — the bug penetrates the
+        floor by 1-7 mm at equilibrium under gravity alone. CGS makes the
+        numerical values 6-7 orders of magnitude larger, so default contact
+        params behave like a rigid surface (see fly model precedent).
+
+        Conversion factors:
+          length    × 100    (m → cm)
+          mass      × 1000   (kg → g)
+          inertia   × 1e7    (kg·m² → g·cm²)
+          force     × 1e5    (N → dyne)
+          torque    × 1e7    (N·m → dyne·cm)
+          damping   × 1e7    (N·m·s → dyne·cm·s)
+          armature  × 1e7    (kg·m² → g·cm²)
+          gravity   × 100    (m/s² → cm/s²; magnitude 9.81 → 981)
+
+        Final actuator gear ≈ 100 dyne·cm peak torque per ctrl-unit
+        (= 1e-5 N·m, matches a 50 mg insect leg muscle).
         """
-        gear_scale = 1e-5
-        mj_model.actuator_gear[:, 0] *= gear_scale
-        # MuJoCo stores bodies in topological order (parent index < child
-        # index), so a leaves-to-root pass accumulates subtree mass correctly.
+        L = 100.0       # length: m → cm
+        M = 1000.0      # mass:   kg → g
+        I = 1.0e7       # inertia, torque, damping
+        F = 1.0e5       # force:  N → dyne
+
+        # --- Lengths ---
+        mj_model.body_pos[:] *= L
+        mj_model.body_ipos[:] *= L
+        mj_model.geom_pos[:] *= L
+        mj_model.geom_size[:] *= L
+        mj_model.geom_rbound[:] *= L
+        mj_model.jnt_pos[:] *= L
+        mj_model.jnt_margin[:] *= L
+        mj_model.site_pos[:] *= L
+        mj_model.site_size[:] *= L
+        if mj_model.nmesh > 0 and mj_model.nmeshvert > 0:
+            mj_model.mesh_vert[:] *= L
+            mj_model.mesh_pos[:] *= L
+            mj_model.mesh_normal[:] *= 1.0  # unit vectors, unchanged
+        if mj_model.ncam > 0:
+            mj_model.cam_pos[:] *= L
+            mj_model.cam_pos0[:] *= L
+            mj_model.cam_poscom0[:] *= L
+        if mj_model.nlight > 0:
+            mj_model.light_pos[:] *= L
+            mj_model.light_pos0[:] *= L
+        # Initial qpos for free joints: first 3 components are world xyz (m → cm).
+        # Joint angles (radians) and quaternions unchanged.
+        for j in range(mj_model.njnt):
+            if mj_model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE:
+                addr = mj_model.jnt_qposadr[j]
+                mj_model.qpos0[addr : addr + 3] *= L
+                mj_model.qpos_spring[addr : addr + 3] *= L
+
+        # --- Mass and inertia ---
+        mj_model.body_mass[:] *= M
+        mj_model.body_inertia[:] *= I
+        # body_subtreemass: recompute by walking leaves → root in topological order.
         subtreemass = mj_model.body_mass.copy()
         for i in range(mj_model.nbody - 1, 0, -1):
             parent = mj_model.body_parentid[i]
             subtreemass[parent] += subtreemass[i]
         mj_model.body_subtreemass[:] = subtreemass
-        mj_model.dof_armature[:] = np.maximum(mj_model.dof_armature, 1e-9)
-        # damping floor 5e-7 → joint terminal velocity ≈ peak_torque/damping
-        # = 1e-5 / 5e-7 = 20 rad/s, just above the ~10-15 rad/s biological
-        # peak of stick-insect leg motion. Earlier 1e-7 floor gave 100 rad/s
-        # terminal velocity, letting the policy "whip" joints around — the
-        # observed jitter in eval videos.
-        mj_model.dof_damping[6:] = np.maximum(mj_model.dof_damping[6:], 5e-7)
+
+        # --- Actuators / forces ---
+        # gear is N·m → dyne·cm. XML has gear=1, so this brings it to 1e7.
+        # Then apply biological torque scale (peak ~100 dyne·cm = 1e-5 N·m).
+        mj_model.actuator_gear[:, 0] *= I  # SI → CGS unit conversion
+        mj_model.actuator_gear[:, 0] *= 1.0e-5  # biological scale for 50 mg insect
+        # final gear ≈ 100 dyne·cm
+        mj_model.actuator_forcerange[:] *= I  # N·m bounds → dyne·cm bounds
+
+        # --- Damping / armature floors in CGS units ---
+        # Old SI floors: armature 1e-9 kg·m², damping 5e-7 N·m·s.
+        # CGS equivalents: 1e-2 g·cm² and 5 dyne·cm·s.
+        mj_model.dof_armature[:] *= I
+        mj_model.dof_damping[:] *= I
+        mj_model.dof_armature[:] = np.maximum(mj_model.dof_armature, 1.0e-2)
+        # damping floor 5 dyne·cm·s → joint terminal velocity ≈
+        # peak_torque/damping = 100 / 5 = 20 rad/s (same as SI value).
+        mj_model.dof_damping[6:] = np.maximum(mj_model.dof_damping[6:], 5.0)
+
+        # --- Gravity ---
+        mj_model.opt.gravity[:] = np.array([0.0, 0.0, -981.0])
+
+        # --- Per-body invweight (must be recomputed for compile-time consts).
+        # MuJoCo derives body_invweight0 etc. at compile from a "neutral pose"
+        # forward pass — these are no longer correct after our scaling. Force
+        # a recompute via mj_setConst which re-runs the compile-time pass on
+        # the current model.
+        mujoco.mj_setConst(mj_model, mujoco.MjData(mj_model))
+
+    # Backwards-compatible alias so existing callers keep working.
+    _apply_si_rescaling = _apply_cgs_rescaling
 
     def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and puts models to mjx."""

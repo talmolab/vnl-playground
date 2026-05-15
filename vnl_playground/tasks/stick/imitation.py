@@ -105,6 +105,23 @@ class Imitation(stick_base.StickBugEnv):
                 self._config.clip_length,
                 self._config.keep_clips_idx,
             )
+        # CGS conversion: H5 stores positions in SI meters, but the compiled
+        # model now lives in CGS centimeters (see base.py _apply_cgs_rescaling).
+        # Scale every length field × 100. qvel is empty (qvel_init="zeros").
+        _CGS_L = 100.0
+        clips_data = self.reference_clips._data_arrays
+        if "qpos" in clips_data:
+            qpos = np.array(clips_data["qpos"], copy=True)
+            qpos[..., 0:3] *= _CGS_L  # free-joint xyz (rest is quat + joint angles)
+            clips_data["qpos"] = jp.array(qpos)
+        if "xpos" in clips_data:
+            clips_data["xpos"] = jp.array(
+                np.array(clips_data["xpos"], copy=True) * _CGS_L
+            )
+        if "qvel" in clips_data and clips_data["qvel"].size > 0:
+            qvel = np.array(clips_data["qvel"], copy=True)
+            qvel[..., 0:3] *= _CGS_L  # free-joint linear velocity (rest is angular)
+            clips_data["qvel"] = jp.array(qvel)
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
