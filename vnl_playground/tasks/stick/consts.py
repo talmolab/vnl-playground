@@ -130,6 +130,26 @@ END_EFFECTORS = [
     "46-h-r-claws-l",
 ]
 
+# 24 leg-segment bodies (coxa, femur, tibia, tarsus for each of 6 legs).
+# These correspond to the 4 non-claw joints per leg — "hip", "knee",
+# "ankle", and tarsal joint. Tracking these augments the end-effector
+# reward by also requiring the policy to match the full leg pose, not
+# just the tip placement.
+LEG_JOINTS = [
+    # Hind left
+    "26-h-l-coxa-l", "27-h-l-femur-l", "28-h-l-tibia-l", "29-h-l-tarsus-l",
+    # Hind right
+    "42-h-r-coxa-l", "43-h-r-femur-l", "44-h-r-tibia-l", "45-h-r-tarsus-l",
+    # Middle left
+    "21-m-l-coxa-l", "22-m-l-femur-l", "23-m-l-tibia-l", "24-m-l-tarsus-l",
+    # Middle right
+    "37-m-r-coxa-l", "38-m-r-femur-l", "39-m-r-tibia-l", "40-m-r-tarsus-l",
+    # Front left
+    "16-f-l-coxa-l", "17-f-l-femur-l", "18-f-l-tibia-l", "19-f-l-tarsus-l",
+    # Front right
+    "31-f-r-coxa-l", "32-f-r-femur-l", "33-f-r-tibia-l", "35-f-r-tarsus-l",
+]
+
 # Six explicit floor-contact geoms (one sphere primitive per claw body).
 # base.py.add_stick() loops over FOOT_GEOMS and adds a pair
 # (floor, <geom_name>-stick) for each entry, so the names below must match

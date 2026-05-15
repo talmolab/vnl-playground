@@ -58,6 +58,7 @@ def default_config() -> config_dict.ConfigDict:
             "joints_vel": {"exp_scale": 1.0, "weight": 1.0},
             "bodies_pos": {"exp_scale": 0.25, "weight": 1.0},
             "end_eff": {"exp_scale": 0.032, "weight": 1.0},
+            "leg_joints": {"exp_scale": 0.05, "weight": 1.0},
             "torso_z_range": {"healthy_z_range": (0.0, 0.1), "weight": 1.0},
             "control_cost": {"weight": 0.02},
             "control_diff_cost": {"weight": 0.02},
@@ -87,10 +88,13 @@ class Imitation(stick_base.StickBugEnv):
         clips: Optional[ReferenceClips] = None,
     ) -> None:
         super().__init__(config, config_overrides)
+        # rgba=None → keep the native chitin texture from sungaya_mat (set
+        # in sungaya_inexpectata_mesh.xml). Recoloring would flatten the
+        # mesh material to a solid color and lose the texture detail.
         self.add_stick(
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
-            rgba=(0, 0.5, 0.5, 1),
+            rgba=None,
         )
         self.compile()
         if clips is not None:
@@ -357,6 +361,18 @@ class Imitation(stick_base.StickBugEnv):
         metrics["rewards/end_eff"] = reward
         return reward
 
+    @_registry.reward("leg_joints")
+    def _leg_joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
+        """Tracks the 24 non-claw leg segment bodies — the joints of the
+        six legs (hip, knee, ankle, tarsal). Complements `end_eff`, which
+        only tracks the 6 claw tips, by also requiring the full leg pose
+        to match the reference (not just the foot placement)."""
+        total_dist = self._get_bodies_dist(data, info, metrics, consts.LEG_JOINTS)
+        metrics["body_errors/leg_joints_total"] = total_dist
+        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        metrics["rewards/leg_joints"] = reward
+        return reward
+
     @_registry.reward("torso_z_range")
     def _torso_z_range_reward(
         self, data, info, metrics, weight, healthy_z_range
@@ -440,7 +456,12 @@ class Imitation(stick_base.StickBugEnv):
         spawn_frame.attach_body(
             ghost_stick.body("reference_base"), "", suffix="-ghost"
         )
-        return spec.compile()
+        ghost_model = spec.compile()
+        # Mirror the SI rescaling applied in base.compile() so eval videos
+        # use the same physics — without this, the trackcom camera sees
+        # stale subtree_com and fails to follow the bug across frames.
+        self._apply_si_rescaling(ghost_model)
+        return ghost_model
 
     def render(
         self,

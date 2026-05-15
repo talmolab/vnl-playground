@@ -1,32 +1,38 @@
 <mujoco>
   <visual>
-    <!-- Brighter scene lighting; ambient term lifts dark side; specular for
-         a sheen on the chitin meshes. -->
-    <headlight diffuse=".5 .5 .5" specular=".3 .3 .3" ambient=".4 .4 .4"/>
+    <!-- Bright headlight + lifted ambient so the dark side of the body
+         isn't lost in shadow at the tight close-up framing. -->
+    <headlight diffuse=".7 .7 .7" specular=".4 .4 .4" ambient=".55 .55 .55"/>
     <global offwidth="3840" offheight="2160" elevation="-20" azimuth="120"/>
-    <quality shadowsize="2048"/>
+    <quality shadowsize="4096"/>
     <rgba haze=".15 .25 .35 1"/>
   </visual>
 
   <asset>
-    <!-- Coarser checker so cells are visibly resolved when the camera is
-         8-10 cm from a 6 cm insect. Each cell is ~1 cm on a 4× repeat across
-         a 1 m floor. -->
-    <texture name="grid" type="2d" builtin="checker" width="256" height="256"
-             rgb1=".35 .4 .45" rgb2=".5 .55 .6"
+    <!-- Finer checker because the camera is ~4 cm from a 2 cm bug; cells
+         resolve to ~0.5 mm at 1 m / 80 repeat. -->
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512"
+             rgb1=".40 .45 .50" rgb2=".55 .60 .65"
              mark="cross" markrgb=".25 .3 .35"/>
-    <material name="grid" texture="grid" texrepeat="40 40" texuniform="true"
-              reflectance=".1"/>
+    <material name="grid" texture="grid" texrepeat="80 80" texuniform="true"
+              reflectance=".15"/>
   </asset>
 
   <worldbody>
-    <!-- Three-point lighting: overhead diffuse + warm key + cool fill -->
+    <!-- 5-light setup tuned for close-up insect rendering. Lights are at
+         the global arena scale (~15-30 cm) so they behave like distant
+         sources regardless of where the bug walks. Increased intensities
+         compensate for the tighter camera framing and small subject. -->
     <light name="overhead" pos="0 0 .3" dir="0 0 -1"
-           diffuse=".5 .5 .5" specular=".2 .2 .2" castshadow="false"/>
+           diffuse=".7 .7 .7" specular=".3 .3 .3" castshadow="false"/>
     <light name="key"      pos=".15 .15 .25" dir="-1 -1 -1.5"
-           diffuse=".5 .45 .4" specular=".3 .3 .3"/>
-    <light name="fill"     pos="-.1 -.1 .15" dir="1 1 -1"
-           diffuse=".25 .3 .35" castshadow="false"/>
+           diffuse=".8 .72 .6" specular=".4 .4 .4"/>
+    <light name="fill"     pos="-.15 -.10 .15" dir="1 1 -1"
+           diffuse=".45 .50 .55" castshadow="false"/>
+    <light name="back"     pos="-.15 .15 .12" dir="1 -1 -1"
+           diffuse=".35 .35 .40" specular=".25 .25 .25" castshadow="false"/>
+    <light name="ground_bounce" pos="0 -.05 .04" dir="0 1 0.5"
+           diffuse=".25 .22 .18" castshadow="false"/>
 
     <body name="floor">
       <!-- 1 m × 1 m floor, plenty for any episode-length excursion -->

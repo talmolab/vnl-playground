@@ -136,6 +136,39 @@ class StickBugEnv(mjx_env.MjxEnv):
         spawn_frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         spawn_frame.attach_body(stick_spec.body("reference_base"), "", suffix=suffix)
 
+    @staticmethod
+    def _apply_si_rescaling(mj_model: mujoco.MjModel) -> None:
+        """Tune actuator gear, damping, and armature for the mesh-derived
+        nymph-scale model (in-place).
+
+        The mesh XML now uses density=1000 kg/m³ on the visual mesh geoms
+        so MuJoCo integrates real per-segment inertia from mesh volume —
+        no mass/inertia rescaling is needed. We do still:
+          - scale actuator_gear to peak ~1e-5 N·m per ctrl-unit, which is
+            the right torque for a ~50 mg insect leg-muscle (arthropod
+            muscle scales linearly with cross-section, ~10× mass);
+          - clamp dof_damping/armature to small non-zero values to keep
+            the RK4 mass-matrix well-conditioned at sub-mg leaf inertias.
+          - recompute body_subtreemass so trackcom cameras follow the
+            body correctly in eval videos.
+        """
+        gear_scale = 1e-5
+        mj_model.actuator_gear[:, 0] *= gear_scale
+        # MuJoCo stores bodies in topological order (parent index < child
+        # index), so a leaves-to-root pass accumulates subtree mass correctly.
+        subtreemass = mj_model.body_mass.copy()
+        for i in range(mj_model.nbody - 1, 0, -1):
+            parent = mj_model.body_parentid[i]
+            subtreemass[parent] += subtreemass[i]
+        mj_model.body_subtreemass[:] = subtreemass
+        mj_model.dof_armature[:] = np.maximum(mj_model.dof_armature, 1e-9)
+        # damping floor 5e-7 → joint terminal velocity ≈ peak_torque/damping
+        # = 1e-5 / 5e-7 = 20 rad/s, just above the ~10-15 rad/s biological
+        # peak of stick-insect leg motion. Earlier 1e-7 floor gave 100 rad/s
+        # terminal velocity, letting the policy "whip" joints around — the
+        # observed jitter in eval videos.
+        mj_model.dof_damping[6:] = np.maximum(mj_model.dof_damping[6:], 5e-7)
+
     def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and puts models to mjx."""
         if not self._compiled or forced:
@@ -150,64 +183,7 @@ class StickBugEnv(mjx_env.MjxEnv):
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
-            # Rescale to biologically-realistic adult Sungaya inexpectata
-            # values (♀ ~5 g, 8 cm body) in SI units.
-            #
-            # The dataset XML inherited rodent-style "inflated" masses:
-            # 0.01 kg per body × 43 bodies = 0.43 kg total — 86× too heavy
-            # for a real adult. We scale per-body mass by 1e-2 so the model
-            # weighs ~4.3 g (close to the real 5 g), and apply the same
-            # factor to the inertias so the I/m ratio stays consistent with
-            # what the original XML implied (we don't recompute true geometry
-            # inertias here because that would require mesh-density volumes).
-            #
-            # Actuator torques are scaled by 1e-4 so peak motor force drops
-            # from 10 N·m (absurd for a 5 g insect) to ~1×10⁻³ N·m, which
-            # is in the right order of magnitude for arthropod muscle.
-            #
-            # Joint damping (3e-5) and armature (1e-7) are tuned to:
-            #   - damping/inertia ≈ 3 (time constant ~0.3 s, ~30× ctrl_dt,
-            #     gentle but non-trivial)
-            #   - armature/inertia ≈ 1% (RK4 mass-matrix regularisation)
-            #
-            # Verified stable for all probed action scales in
-            # /tmp/stick_realistic_si_probe.log: max|qvel|≤2.1 rad/s at
-            # action_scale=1.0 (saturating tanh), no NaN over 30 steps.
-            mass_scale = 1e-2
-            inertia_scale = 1e-2
-            # Peak motor torque: gear × ctrlrange = 1e-3 N·m, in line with
-            # the high end of arthropod-leg muscle output. With damping=1e-5,
-            # equilibrium velocity at peak torque is 100 rad/s — well above
-            # the ~15 rad/s peak that stick-insect locomotion reaches at
-            # ~5 Hz, so a policy has plenty of headroom.
-            gear_scale = 1e-3
-            self._mj_model.body_mass[:] *= mass_scale
-            self._mj_model.body_inertia[:] *= inertia_scale
-            self._mj_model.actuator_gear[:, 0] *= gear_scale
-            # body_subtreemass is precomputed by mj_setConst when the model
-            # is first compiled, so it lags behind our scaled body_mass.
-            # The stale value makes mj_kinematics compute the wrong
-            # subtree_com (off by 1/mass_scale), which in turn breaks
-            # trackcom-mode cameras (they barely follow the body — saw
-            # ~1% of true translation in the rollouts).
-            # MuJoCo stores bodies in topological order (parent index <
-            # child index), so a reverse pass accumulates subtree mass
-            # correctly.
-            subtreemass = self._mj_model.body_mass.copy()
-            for i in range(self._mj_model.nbody - 1, 0, -1):
-                parent = self._mj_model.body_parentid[i]
-                subtreemass[parent] += subtreemass[i]
-            self._mj_model.body_subtreemass[:] = subtreemass
-            self._mj_model.dof_armature[:] = np.maximum(
-                self._mj_model.dof_armature, 1e-7
-            )
-            # damping=1e-5 N·m·s gives time constant I/d = 1 s, so joints
-            # coast freely between control inputs — needed for cyclic gait.
-            # Higher damping (3e-5 → time constant 0.33 s) overdamped fast
-            # locomotion: actuators couldn't drive joints past ~3 rad/s.
-            self._mj_model.dof_damping[6:] = np.maximum(
-                self._mj_model.dof_damping[6:], 1e-5
-            )
+            self._apply_si_rescaling(self._mj_model)
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self._config.mujoco_impl
             )
