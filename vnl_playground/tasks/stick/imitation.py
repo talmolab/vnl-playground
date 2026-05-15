@@ -66,8 +66,9 @@ def default_config() -> config_dict.ConfigDict:
             "energy_cost": {"max_value": 50.0, "weight": 0.005},
         },
         termination_criteria={
-            "root_too_far": {"max_distance": 1.0},
-            "root_too_rotated": {"max_degrees": 15.0},
+            # root_too_far now uses xy-only distance (see _root_too_far)
+            "root_too_far": {"max_distance": 5.0},
+            "root_too_rotated": {"max_degrees": 90.0},
             "pose_error": {"max_l2_error": 15.0},
             "nan_termination": {},
         },
@@ -430,9 +431,17 @@ class Imitation(stick_base.StickBugEnv):
     # Termination
     @_registry.termination("root_too_far")
     def _root_too_far(self, data, info, max_distance) -> bool:
+        """Horizontal (xy) root drift from reference. We deliberately
+        ignore z because under early-training policies the bug can't
+        support its weight, falls under gravity, and the z-component
+        dominates the 3D distance — causing every episode to terminate
+        in ~2 control steps before PPO can learn anything. Horizontal
+        drift is the actually-meaningful signal for "policy lost track
+        of the reference location"."""
         target = self._get_current_target(data, info)
         root_pos = self.root_body(data).xpos
-        distance = jp.linalg.norm(target.root_position - root_pos)
+        # x, y components only — z drift (falling) is allowed.
+        distance = jp.linalg.norm((target.root_position - root_pos)[:2])
         return distance > max_distance
 
     @_registry.termination("root_too_rotated")
