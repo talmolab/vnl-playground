@@ -133,7 +133,7 @@
                                             <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
                                             <joint type="hinge" name="30-h-l-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-1.570796 0.000000"/>
                                             <geom name="30-h-l-claws" type="mesh" mesh="30-h-l-claws" pos="-0.00094383769 -1.53131e-05 -0.00026759366" material="sungaya_mat" density="1000"/>
-                                            <geom name="claw_collide_hl" type="ellipsoid" size="0.0009015 0.00026 0.000399" pos="-0.0008663377 -2.73131e-05 -0.0003125937" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                            <geom name="claw_collide_hl" type="ellipsoid" size="0.000901551 0.000259963 8.37348e-05" pos="-0.000866338 -2.77746e-05 -0.000312802" quat="0.985773 0 -0.168084 0" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                         </body>
                                     </body>
                                 </body>
@@ -157,7 +157,7 @@
                                             <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
                                             <joint type="hinge" name="46-h-r-claws-l" pos="0 0 0" axis="-1.907e-08 -1 -4.371e-08" range="0.000000 1.570796"/>
                                             <geom name="46-h-r-claws" type="mesh" mesh="46-h-r-claws" pos="0.00094436482 -3.42238e-06 -0.00026615011" material="sungaya_mat" density="1000"/>
-                                            <geom name="claw_collide_hr" type="ellipsoid" size="0.000902 0.0002595 0.0003975" pos="0.0008673648 -5.92238e-06 -0.0003116501" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                            <geom name="claw_collide_hr" type="ellipsoid" size="0.000901932 0.000259661 8.35e-05" pos="0.000867407 -6.23643e-06 -0.000311472" quat="0.988071 0 0.154001 0" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                         </body>
                                     </body>
                                 </body>
@@ -182,7 +182,7 @@
                                         <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
                                         <joint type="hinge" name="25-m-l-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-1.570796 0.000000"/>
                                         <geom name="25-m-l-claws" type="mesh" mesh="25-m-l-claws" pos="-0.00065638963 -3.338582e-05 -0.00020578038" material="sungaya_mat" density="1000"/>
-                                        <geom name="claw_collide_ml" type="ellipsoid" size="0.0005965 0.0002115 0.000329" pos="-0.0005628896 -9.388582e-05 -0.0002487804" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                        <geom name="claw_collide_ml" type="ellipsoid" size="0.000596539 0.000211304 8.35e-05" pos="-0.000562719 -9.41032e-05 -0.00024871" quat="0.98995 0 -0.141415 0" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                     </body>
                                 </body>
                             </body>
@@ -206,7 +206,7 @@
                                         <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
                                         <joint type="hinge" name="41-m-r-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="0.000000 1.570796"/>
                                         <geom name="41-m-r-claws" type="mesh" mesh="41-m-r-claws" pos="0.00065707322 -2.511451e-05 -0.00020477572" material="sungaya_mat" density="1000"/>
-                                        <geom name="claw_collide_mr" type="ellipsoid" size="0.000597 0.0002115 0.000328" pos="0.0005630732 -7.961451e-05 -0.0002477757" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                        <geom name="claw_collide_mr" type="ellipsoid" size="0.00059705 0.000211357 8.35e-05" pos="0.000563421 -7.98677e-05 -0.000247802" quat="0.989456 0 0.144837 0" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                     </body>
                                 </body>
                             </body>
@@ -231,7 +231,7 @@
                                     <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
                                     <joint type="hinge" name="20-f-l-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-1.570796 0.000000"/>
                                     <geom name="20-f-l-claws" type="mesh" mesh="20-f-l-claws" pos="-0.00063120201 1.842389e-05 -0.00010398612" material="sungaya_mat" density="1000"/>
-                                    <geom name="claw_collide_fl" type="ellipsoid" size="0.000707 0.0002265 0.0002035" pos="-0.000678202 4.992389e-05 -0.0001094861" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                    <geom name="claw_collide_fl" type="ellipsoid" size="0.00070677 0.000226513 8.35e-05" pos="-0.000678042 5.03608e-05 -0.000109415" quat="0.995466 0 -0.0951176 0" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                 </body>
                             </body>
                         </body>
@@ -255,7 +255,7 @@
                                     <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
                                     <joint type="hinge" name="36-f-r-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="0.000000 1.570796"/>
                                     <geom name="36-f-r-claws" type="mesh" mesh="36-f-r-claws" pos="0.00063108001 2.637226e-05 -0.00010302081" material="sungaya_mat" density="1000"/>
-                                    <geom name="claw_collide_fr" type="ellipsoid" size="0.0007065 0.0002265 0.0002025" pos="0.00067858 6.687226e-05 -0.0001085208" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                    <geom name="claw_collide_fr" type="ellipsoid" size="0.000706716 0.000226432 8.35e-05" pos="0.000678616 6.72541e-05 -0.000108414" quat="0.996539 0 0.0831212 0" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
                                 </body>
                             </body>
                         </body>
