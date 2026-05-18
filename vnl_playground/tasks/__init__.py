@@ -26,9 +26,6 @@ from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_veloc
 from vnl_playground.tasks.stick import imitation as stick_imitation
 
 from vnl_playground.tasks.celegans import imitation as worm_imitation
-from vnl_playground.tasks.celegans.reference_clips import (
-    ReferenceClips as WormReferenceClips,
-)
 
 # Unified wrappers and reference clips
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
@@ -76,8 +73,8 @@ _reference_clips_classes = {
     "FruitflyImitation": ReferenceClips,
     "MouseImitation": MouseReferenceClips,
     "StickImitation": ReferenceClips,
-    "WormImitation": WormReferenceClips,
-    "CelegansImitation": WormReferenceClips,
+    "WormImitation": ReferenceClips,
+    "CelegansImitation": ReferenceClips,
 }
 
 
