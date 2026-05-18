@@ -59,8 +59,6 @@ import yaml
 import logging
 import warnings
 
-from vnl_playground.tasks.fruitfly.consts import JOINTS
-
 
 class ReferenceClips:
     """Reference clips loader for motion capture data.
@@ -545,7 +543,7 @@ class ReferenceClips:
     def angular_velocity(self) -> jp.ndarray:
         """Root angular velocity (named format) or computed from qvel (legacy)."""
         if self._is_legacy_format:
-            start_idx = self.qvel.shape[-1] - len(JOINTS)
+            start_idx = self.qvel.shape[-1] - len(self._joint_names_list)
             return self.qvel[..., start_idx:]
         return self._data_arrays["angular_velocity"]
 
