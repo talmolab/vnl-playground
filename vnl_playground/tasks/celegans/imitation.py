@@ -18,7 +18,7 @@ import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
-from vnl_playground.tasks.celegans.reference_clips import ReferenceClips
+from vnl_playground.tasks.reference_clips import ReferenceClips
 
 from . import base as worm_base
 from . import consts
@@ -217,6 +217,8 @@ class Imitation(worm_base.CelegansEnv):
             self.reference_clips = ReferenceClips(
                 self._config.reference_data_path,
                 self._config.clip_length,
+                joint_names=self.joint_names,
+                body_names=self.body_names,
             )
         max_n_clips = self.reference_clips.n_clips
         if self._config.clip_set == "all":
