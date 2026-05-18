@@ -110,12 +110,25 @@ class StickBugEnv(mjx_env.MjxEnv):
         self._suffix = suffix
 
         # Add explicit floor-foot contact pairs.
-        # The stick_fast.xml disables automatic contact generation
+        # The stick_fast.xml disables automatic collision generation
         # (contype="0" conaffinity="0") and relies on explicit pairs.
+        #
+        # Pair-level solref=(0.0002, 1) gives a 200 µs critically-damped
+        # contact spring (1/10 of sim_dt=2 ms). At default solref=0.02 a
+        # 50 mg bug at SI scale settles 1.7 mm into the floor at equilibrium
+        # — claws visibly clip the floor in eval renders. With the pair-
+        # level override, drop-test penetration is 0.09 mm (verified in
+        # both CPU MuJoCo and MJX). Per-geom solref overrides are silently
+        # ignored by MuJoCo's contact mixing at this geometry scale; the
+        # <option o_solref> override works in CPU MuJoCo but is not
+        # supported by MJX. <pair>-level solref/solimp is the only fix
+        # that works in MJX.
         for geom_name in consts.FOOT_GEOMS:
             self._spec.add_pair(
                 geomname1="floor",
                 geomname2=f"{geom_name}{self._suffix}",
+                solref=(0.0002, 1.0),
+                solimp=(0.95, 0.99, 0.01, 0.5, 2.0),
             )
 
     def add_ghost_stick(
