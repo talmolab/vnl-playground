@@ -9,15 +9,12 @@
   </visual>
 
   <asset>
-    <!-- Floor checker tuned for CGS model (floor 100×100 cm, bug ~2 cm).
-         texrepeat=25 → 25 repeats × 2 checker cells = 50 cells across 100 cm
-         → 2 cm per cell ≈ 1 bug-length per cell. Camera at ~6 cm sees
-         ~3 cm of floor → ~1.5 cells in view, big enough to read as a grid
-         rather than a pile of tiny boxes. -->
+    <!-- Finer checker because the camera is ~4 cm from a 2 cm bug; cells
+         resolve to ~0.5 mm at 1 m / 80 repeat. -->
     <texture name="grid" type="2d" builtin="checker" width="512" height="512"
              rgb1=".40 .45 .50" rgb2=".55 .60 .65"
              mark="cross" markrgb=".25 .3 .35"/>
-    <material name="grid" texture="grid" texrepeat="25 25" texuniform="true"
+    <material name="grid" texture="grid" texrepeat="80 80" texuniform="true"
               reflectance=".15"/>
   </asset>
 
