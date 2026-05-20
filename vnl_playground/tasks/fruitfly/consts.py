@@ -132,3 +132,23 @@ END_EFFECTORS = [
     "claw_T3_left",
     "claw_T3_right",
 ]
+
+# Per-claw touch sensors (scalar each → 6 dims).
+TOUCH_SENSORS = [
+    "touch_claw_T1_left",
+    "touch_claw_T1_right",
+    "touch_claw_T2_left",
+    "touch_claw_T2_right",
+    "touch_claw_T3_left",
+    "touch_claw_T3_right",
+]
+
+# Per-claw force sensors (3D each → 18 dims).
+FORCE_SENSORS = [
+    "force_tarsus_T1_left",
+    "force_tarsus_T1_right",
+    "force_tarsus_T2_left",
+    "force_tarsus_T2_right",
+    "force_tarsus_T3_left",
+    "force_tarsus_T3_right",
+]

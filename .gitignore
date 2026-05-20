@@ -185,3 +185,4 @@ outputs/
 *.mp4
 *.png
 vnl_playground/_version.py
+highlvl_checkpoints/

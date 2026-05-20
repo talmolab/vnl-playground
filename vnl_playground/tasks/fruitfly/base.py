@@ -228,6 +228,8 @@ class FruitflyEnv(mjx_env.MjxEnv):
             world_zaxis=self._get_world_zaxis(data),
             appendages_pos=self._get_appendages_pos(data, flatten=flatten),
             kinematic_sensors=self._get_kinematic_sensors(data, flatten=flatten),
+            touch_sensors=self._get_touch_sensors(data, flatten=flatten),
+            force_sensors=self._get_force_sensors(data, flatten=flatten),
             prev_action=info["prev_action"],
         )
         if flatten:
@@ -256,14 +258,31 @@ class FruitflyEnv(mjx_env.MjxEnv):
             sensors, _ = jax.flatten_util.ravel_pytree(sensors)
         return sensors
 
-    def _get_touch_sensors(self, data: mjx.Data) -> jp.ndarray:
-        """Get touch sensors data from the environment.
+    def _get_touch_sensors(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
+        """Get per-claw touch sensor scalars (6 dims when active)."""
+        sensors = collections.OrderedDict()
+        for sensor_name in consts.TOUCH_SENSORS:
+            sensors[sensor_name] = data.bind(
+                self.mjx_model, self._spec.sensor(f"{sensor_name}{self._suffix}")
+            ).sensordata
+        if flatten:
+            sensors, _ = jax.flatten_util.ravel_pytree(sensors)
+        return sensors
 
-        Note: Touch sensors are currently commented out in fruitfly XMLs,
-        so this returns an empty array. Enable touch sensors in the XML
-        to get actual touch data.
-        """
-        return jp.array([])
+    def _get_force_sensors(
+        self, data: mjx.Data, flatten: bool = True
+    ) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
+        """Get per-claw 3D interaction force vectors (18 dims when active)."""
+        sensors = collections.OrderedDict()
+        for sensor_name in consts.FORCE_SENSORS:
+            sensors[sensor_name] = data.bind(
+                self.mjx_model, self._spec.sensor(f"{sensor_name}{self._suffix}")
+            ).sensordata
+        if flatten:
+            sensors, _ = jax.flatten_util.ravel_pytree(sensors)
+        return sensors
 
     def get_joint_names(self):
         """Get joint names from the model specification."""
