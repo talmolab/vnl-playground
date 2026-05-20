@@ -151,39 +151,36 @@ class StickBugEnv(mjx_env.MjxEnv):
 
     @staticmethod
     def _apply_si_rescaling(mj_model: mujoco.MjModel) -> None:
-        """Rescale the SI-unit compiled model to biologically-realistic
-        adult Sungaya inexpectata values (♀ ~5 g, 8 cm body). Stays in SI
-        (m / kg / s) throughout — this is a biological rescale, not a unit
-        conversion. Collision rigidity is handled at the XML level via
-        solref/solimp on the claw ellipsoids; no unit-system change is
-        needed for the contact solver.
+        """Tune actuator gear, damping, and armature for the mesh-derived
+        nymph-scale model (in-place).
 
-        The dataset XML inherited rodent-style inflated per-body masses
-        (~0.01 kg). Per-body mass and inertia are scaled by 1e-2 so the
-        model weighs ~4.3 g, and actuator gear by 1e-3 so peak torque is
-        ~1e-3 N·m (high end of arthropod-leg muscle). Damping and armature
-        are floored at SI-stable values.
-
-        Matches commit e87103f, the last fully-trained baseline
-        (wandb stick-mesh-ppo_260514_195032_181930, episode_reward=675).
+        The mesh XML now uses density=1000 kg/m³ on the visual mesh geoms
+        so MuJoCo integrates real per-segment inertia from mesh volume —
+        no mass/inertia rescaling is needed. We do still:
+          - scale actuator_gear to peak ~1e-5 N·m per ctrl-unit, which is
+            the right torque for a ~50 mg insect leg-muscle (arthropod
+            muscle scales linearly with cross-section, ~10× mass);
+          - clamp dof_damping/armature to small non-zero values to keep
+            the RK4 mass-matrix well-conditioned at sub-mg leaf inertias.
+          - recompute body_subtreemass so trackcom cameras follow the
+            body correctly in eval videos.
         """
-        mass_scale = 1e-2
-        inertia_scale = 1e-2
-        gear_scale = 1e-3
-        mj_model.body_mass[:] *= mass_scale
-        mj_model.body_inertia[:] *= inertia_scale
+        gear_scale = 1e-5
         mj_model.actuator_gear[:, 0] *= gear_scale
-        # body_subtreemass is precomputed by the compile-time forward pass,
-        # so it lags the rescaled body_mass. Recompute via a reverse pass:
-        # MuJoCo stores bodies in topological order so child indices > parent.
+        # MuJoCo stores bodies in topological order (parent index < child
+        # index), so a leaves-to-root pass accumulates subtree mass correctly.
         subtreemass = mj_model.body_mass.copy()
         for i in range(mj_model.nbody - 1, 0, -1):
             parent = mj_model.body_parentid[i]
             subtreemass[parent] += subtreemass[i]
         mj_model.body_subtreemass[:] = subtreemass
-        mj_model.dof_armature[:] = np.maximum(mj_model.dof_armature, 1e-7)
-        # damping=1e-5 N·m·s → I/d ≈ 1 s, joints coast freely between ctrl steps.
-        mj_model.dof_damping[6:] = np.maximum(mj_model.dof_damping[6:], 1e-5)
+        mj_model.dof_armature[:] = np.maximum(mj_model.dof_armature, 1e-9)
+        # damping floor 5e-7 → joint terminal velocity ≈ peak_torque/damping
+        # = 1e-5 / 5e-7 = 20 rad/s, just above the ~10-15 rad/s biological
+        # peak of stick-insect leg motion. Earlier 1e-7 floor gave 100 rad/s
+        # terminal velocity, letting the policy "whip" joints around — the
+        # observed jitter in eval videos.
+        mj_model.dof_damping[6:] = np.maximum(mj_model.dof_damping[6:], 5e-7)
 
     def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and puts models to mjx."""
