@@ -358,7 +358,9 @@ class Imitation(stick_base.StickBugEnv):
 
     @_registry.reward("end_eff")
     def _end_eff_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        total_dist = self._get_bodies_dist(data, info, metrics, consts.END_EFFECTORS)
+        total_dist = self._get_bodies_dist(
+            data, info, metrics, consts.END_EFFECTORS + consts.LEG_JOINTS
+        )
         metrics["body_errors/end_eff_total"] = total_dist
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
         metrics["rewards/end_eff"] = reward
