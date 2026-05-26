@@ -1,44 +1,33 @@
-"""Unified reference clips loader for motion capture data.
+"""Reference clips loader for motion capture data.
 
 This module provides a single `ReferenceClips` class that loads motion capture
-reference data from HDF5 files. It automatically detects the H5 format and
-provides a consistent API regardless of the underlying data structure.
+reference data from HDF5 files in the legacy flat-array format used by all
+imitation walkers (rodent, stick, fly).
 
-Supported H5 Formats
---------------------
-1. **Named-array format** (preferred, used by fruitfly):
-   - Root state: `position`, `velocity`, `quaternion`, `angular_velocity`
-   - Joint state: `joints`, `joints_velocity`
-   - Body state: `body_positions`, `body_quaternions`
-   - Data may be under `/all_clips/` group or at root level
-
-2. **Legacy flat-array format** (used by rodent):
-   - State vectors: `qpos`, `qvel` (flat arrays containing root + joints)
-   - Body state: `xpos`, `xquat`
-   - Metadata: `names_qpos`, `names_xpos`, `config`
-   - Data requires reshaping from (n_total_frames, ...) to (n_clips, n_frames, ...)
+On-disk H5 schema
+-----------------
+State vectors (flat — reshaped to (n_clips, n_frames, ...) at load time):
+    qpos        (n_total_frames, n_qpos)   - Joint positions (root + joints)
+    qvel        (n_total_frames, n_qvel)   - Joint velocities
+    xpos        (n_total_frames, n_b, 3)   - Body world positions
+    xquat       (n_total_frames, n_b, 4)   - Body world orientations [w,x,y,z]
+Metadata:
+    names_qpos  (n_qpos,)                  - DOF names (7 'root' entries first
+                                              for freejoint, then joint names)
+    names_xpos  (n_b,)                     - Body names (incl. 'world' at 0)
+    config      YAML string                - Metadata including clip names
+                                              (model.snips_order)
 
 Usage
 -----
 >>> from vnl_playground.tasks.reference_clips import ReferenceClips
->>>
->>> # Load reference clips (format auto-detected)
->>> clips = ReferenceClips(
-...     data_path="path/to/reference_clips.h5",
-...     n_frames_per_clip=250,
-... )
->>>
->>> # Access data using consistent API
->>> clips.qpos.shape        # (n_clips, n_frames, n_dof)
+>>> clips = ReferenceClips("data.h5", n_frames_per_clip=250)
+>>> clips.qpos.shape        # (n_clips, n_frames, n_qpos)
 >>> clips.joints.shape      # (n_clips, n_frames, n_joints)
 >>> clips.root_position     # (n_clips, n_frames, 3)
->>>
->>> # Slice operations
->>> frame = clips.at(clip=0, frame=10)      # Single frame
->>> seq = clips.slice(clip=0, start_frame=0, length=50)  # Frame sequence
->>>
->>> # Train/test split
->>> train_clips, test_clips = clips.split(train_ratio=0.8, seed=42)
+>>> frame = clips.at(clip=0, frame=10)
+>>> seq = clips.slice(clip=0, start_frame=0, length=50)
+>>> train, test = clips.split(train_ratio=0.8, seed=42)
 
 See Also
 --------
@@ -63,40 +52,14 @@ import warnings
 class ReferenceClips:
     """Reference clips loader for motion capture data.
 
-    This class loads motion capture reference data from HDF5 files and provides
-    a unified API for accessing the data regardless of the underlying format.
-    The format is auto-detected during loading.
-
-    The class supports two H5 formats:
-
-    1. **Named-array format** (preferred):
-       Data stored as separate semantic arrays, optionally under `/all_clips/` group::
-
-           position          (n_clips, n_frames, 3)     - Root XYZ position
-           velocity          (n_clips, n_frames, 3)     - Root velocity
-           quaternion        (n_clips, n_frames, 4)     - Root orientation
-           angular_velocity  (n_clips, n_frames, 3)     - Root angular velocity
-           joints            (n_clips, n_frames, n_j)   - Joint angles
-           joints_velocity   (n_clips, n_frames, n_j)   - Joint velocities
-           body_positions    (n_clips, n_frames, n_b, 3) - Body positions
-           body_quaternions  (n_clips, n_frames, n_b, 4) - Body orientations
-
-    2. **Legacy flat-array format**:
-       Data stored as flat state vectors that need reshaping::
-
-           qpos        (n_total_frames, n_dof)   - Joint positions (root + joints)
-           qvel        (n_total_frames, n_dof-1) - Joint velocities
-           xpos        (n_total_frames, n_b, 3)  - Body world positions
-           xquat       (n_total_frames, n_b, 4)  - Body world orientations
-           names_qpos  (n_dof,)                  - DOF names
-           names_xpos  (n_b,)                    - Body names
-           config      YAML string               - Metadata including clip names
+    Loads motion capture reference data from HDF5 files in the legacy
+    flat-array format. See the module docstring for the on-disk schema.
 
     Attributes
     ----------
     clip_names : np.ndarray or None
-        Behavior names for each clip (e.g., "Walk", "Run"). Only available
-        for legacy format files that include config metadata.
+        Behavior names for each clip (e.g., "Walk", "Run"). Populated from
+        ``config["model"]["snips_order"]`` when present; None otherwise.
 
     Examples
     --------
