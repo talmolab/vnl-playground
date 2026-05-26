@@ -16,7 +16,7 @@ IMITATION_REFERENCE_PATH = (
     / "track-mjx"
     / "data"
     / "fruitfly"
-    / "fly_reference_clip.h5"
+    / "fly_reference_clip.legacy.h5"
 )
 
 # 36 joints (6 per leg × 3 legs × 2 sides)
