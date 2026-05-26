@@ -105,18 +105,6 @@ class ReferenceClips:
     >>> train, test = clips.split(train_ratio=0.8)
     """
 
-    # Named-array format keys
-    _NAMED_ARRAYS = [
-        "position",
-        "velocity",
-        "quaternion",
-        "angular_velocity",
-        "joints",
-        "joints_velocity",
-        "body_positions",
-        "body_quaternions",
-    ]
-
     # Legacy flat-array format keys
     _LEGACY_ARRAYS = ["qpos", "qvel", "xpos", "xquat"]
 
@@ -175,59 +163,11 @@ class ReferenceClips:
         joint_names: Optional[list[str]],
         body_names: Optional[list[str]],
     ) -> None:
-        """Load data from H5 file, auto-detecting format."""
+        """Load data from H5 file (legacy flat-array format)."""
         with h5py.File(data_path, "r") as fid:
-            # Detect format by checking for named arrays
-            group = fid["all_clips"] if "all_clips" in fid else fid
-
-            if "joints" in group or "position" in group:
-                self._load_named_format(
-                    fid, group, keep_clips_idx, joint_names, body_names
-                )
-            else:
-                self._load_legacy_format(
-                    fid, n_frames_per_clip, keep_clips_idx, joint_names, body_names
-                )
-
-    def _load_named_format(
-        self,
-        fid: h5py.File,
-        group: h5py.Group,
-        keep_clips_idx: Optional[Array[int]],
-        joint_names: Optional[list[str]],
-        body_names: Optional[list[str]],
-    ) -> None:
-        """Load named-array format (fruitfly-style)."""
-        self._is_legacy_format = False
-
-        for k in self._NAMED_ARRAYS:
-            if k in group:
-                arr = group[k][()]
-                self._data_arrays[k] = jp.array(arr)
-                if keep_clips_idx is not None:
-                    logging.info(f"{k}: Keeping {len(keep_clips_idx)} clips")
-                    self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
-
-        # Load joint names
-        if joint_names is not None:
-            self._joint_names_list = list(joint_names)
-        elif "metadata" in fid and "joint_names" in fid["metadata"]:
-            self._joint_names_list = list(
-                fid["metadata"]["joint_names"][()].astype(str)
+            self._load_legacy_format(
+                fid, n_frames_per_clip, keep_clips_idx, joint_names, body_names
             )
-        else:
-            n_joints = self._data_arrays["joints"].shape[-1]
-            self._joint_names_list = [f"joint_{i}" for i in range(n_joints)]
-
-        # Load body names
-        if body_names is not None:
-            self._body_names_map = {name: i for i, name in enumerate(body_names)}
-        elif "metadata" in fid and "body_names" in fid["metadata"]:
-            names = list(fid["metadata"]["body_names"][()].astype(str))
-            self._body_names_map = {name: i for i, name in enumerate(names)}
-        else:
-            n_bodies = self._data_arrays["body_positions"].shape[-2]
-            self._body_names_map = {f"body_{i}": i for i in range(n_bodies)}
 
     def _load_legacy_format(
         self,
@@ -308,7 +248,7 @@ class ReferenceClips:
     @property
     def _data_array_keys(self) -> list[str]:
         """List of data array keys based on format."""
-        return self._LEGACY_ARRAYS if self._is_legacy_format else self._NAMED_ARRAYS
+        return self._LEGACY_ARRAYS
 
     # -------------------------------------------------------------------------
     # Slicing and splitting operations
