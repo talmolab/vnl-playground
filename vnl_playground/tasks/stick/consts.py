@@ -120,7 +120,9 @@ BODIES = [
     "36-f-r-claws-l",
 ]
 
-# 6 end effectors (claw bodies, one per leg)
+# 6 claw end-effectors (Step 20 baseline). Reverted from the 30-body set on
+# 2026-05-25 to match the Step 20 reward calibration exactly for Exp 3.
+# Backup of the 30-body version at consts.py.30bodies_bak.
 END_EFFECTORS = [
     "20-f-l-claws-l",
     "36-f-r-claws-l",

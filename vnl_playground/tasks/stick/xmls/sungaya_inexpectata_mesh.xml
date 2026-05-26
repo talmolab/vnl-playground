@@ -84,28 +84,28 @@
                         <joint type="hinge" name="06-t3-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.087266 0.087266" />
                         <geom name="07-a2" type="mesh" mesh="07-a2" pos="2.221604e-05 -0.00044320215 3.139261e-05" material="sungaya_mat" density="1000"/>
                         <body name="07-a2-l" pos="2.542162e-05 -0.00090925378 0.00010091614">
-                            <joint type="hinge" name="07-a2-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.349066 0.349066"/>
+                            <joint type="hinge" name="07-a2-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
                             <geom name="08-a3" type="mesh" mesh="08-a3" pos="3.80757e-06 -0.0006355982 2.586899e-05" material="sungaya_mat" density="1000"/>
                             <body name="08-a3-l" pos="8.07024e-06 -0.00129344233 5.316696e-05">
-                                <joint type="hinge" name="08-a3-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.349066 0.349066"/>
+                                <joint type="hinge" name="08-a3-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
                                 <geom name="09-a4" type="mesh" mesh="09-a4" pos="4.23251e-06 -0.00064921647 -4.324162e-05" material="sungaya_mat" density="1000"/>
                                 <body name="09-a4-l" pos="8.11249e-06 -0.00134961947 4.000925e-05">
-                                    <joint type="hinge" name="09-a4-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.349066 0.349066"/>
+                                    <joint type="hinge" name="09-a4-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
                                     <geom name="10-a5" type="mesh" mesh="10-a5" pos="3.93223e-06 -0.00062264595 -3.370976e-05" material="sungaya_mat" density="1000"/>
                                     <body name="10-a5-l" pos="8.62755e-06 -0.00131172151 -2.10435e-05">
-                                        <joint type="hinge" name="10-a5-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.349066 0.349066"/>
+                                        <joint type="hinge" name="10-a5-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
                                         <geom name="11-a6" type="mesh" mesh="11-a6" pos="3.77219e-06 -0.00064754183 2.410548e-05" material="sungaya_mat" density="1000"/>
                                         <body name="11-a6-l" pos="8.04149e-06 -0.00126429298 5.285629e-05">
-                                            <joint type="hinge" name="11-a6-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.349066 0.349066"/>
+                                            <joint type="hinge" name="11-a6-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
                                             <geom name="12-a7" type="mesh" mesh="12-a7" pos="4.16505e-06 -0.00067832135 3.601049e-05" material="sungaya_mat" density="1000"/>
                                             <body name="12-a7-l" pos="2.355316e-05 -0.00140457414 -1.607895e-05">
-                                                <joint type="hinge" name="12-a7-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.349066 0.349066"/>
+                                                <joint type="hinge" name="12-a7-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
                                                 <geom name="13-a8" type="mesh" mesh="13-a8" pos="-1.192655e-05 -0.00055250432 2.861764e-05" material="sungaya_mat" density="1000"/>
                                                 <body name="13-a8-l" pos="-7.70643e-06 -0.00113178045 0.00013272798">
-                                                    <joint type="hinge" name="13-a8-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.349066 0.349066"/>
+                                                    <joint type="hinge" name="13-a8-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
                                                     <geom name="14-a9" type="mesh" mesh="14-a9" pos="2.90333e-06 -0.00050837733 -9.902848e-05" material="sungaya_mat" density="1000"/>
                                                     <body name="14-a9-l" pos="6.80901e-06 -0.00109023508 -9.047122e-05">
-                                                        <joint type="hinge" name="14-a9-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.349066 0.349066"/>
+                                                        <joint type="hinge" name="14-a9-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
                                                         <geom name="15-a10" type="mesh" mesh="15-a10" pos="4.78492e-06 -0.0007736003 6.360079e-05" material="sungaya_mat" density="1000"/>
                                                     </body>
                                                 </body>
