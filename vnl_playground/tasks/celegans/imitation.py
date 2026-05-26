@@ -19,6 +19,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from . import base as worm_base
 from . import consts
@@ -118,9 +119,7 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
-_REWARD_FCN_REGISTRY: Dict[str, Callable] = {}
-_TERMINATION_FCN_REGISTRY: Dict[str, Callable] = {}
-_COST_FCN_REGISTRY: Dict[str, Callable] = {}
+_registry = RewardRegistry()
 
 
 class Imitation(worm_base.CelegansEnv):
@@ -130,6 +129,8 @@ class Imitation(worm_base.CelegansEnv):
     by providing rewards based on how closely the agent's motion matches the
     reference data.
     """
+
+    _registry = _registry
 
     def __init__(
         self,
@@ -446,70 +447,6 @@ class Imitation(worm_base.CelegansEnv):
                 magnitude
             )
 
-    def _get_reward(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Mapping[str, Any]
-    ) -> Mapping[str, float]:
-        """Compute all reward terms for the current state.
-
-        Args:
-            data: MuJoCo simulation data.
-            info: Environment info dictionary.
-
-        Returns:
-            Tuple of (reward_dict, distance_dict) where reward_dict contains
-            computed rewards and distance_dict contains the corresponding distances.
-        """
-        total_reward = 0.0
-        for name, kwargs in self.reward_terms.items():
-            total_reward += _REWARD_FCN_REGISTRY[name](
-                self, data, info, metrics, **kwargs
-            )
-        metrics["rewards/total"] = metrics["rewards/per_step/total"] = total_reward
-        metrics["reward/per_step/normalized"] = total_reward / self.max_reward
-        return total_reward
-
-    def _is_done(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Mapping[str, Any]
-    ) -> Mapping[str, bool]:
-        """Check all termination conditions for the current state.
-
-        Args:
-            data: MuJoCo simulation data.
-            info: Environment info dictionary.
-
-        Returns:
-            Dictionary mapping termination condition names to boolean values.
-        """
-        any_terminated = False
-        for name, kwargs in self._config.termination_criteria.items():
-            termination_fcn = _TERMINATION_FCN_REGISTRY[name]
-            terminated = termination_fcn(self, data, info, **kwargs)
-            any_terminated = jp.logical_or(any_terminated, terminated)
-            # Also log terminations as floats so averaging -> hazard rate
-            metrics["terminations/" + name] = jp.astype(terminated, float)
-        metrics["terminations/terminated"] = jp.astype(any_terminated, float)
-
-        return jp.logical_or(any_terminated, info["truncated"])
-
-    def _get_cost(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: Mapping[str, Any]
-    ) -> Tuple[Mapping[str, float], Mapping[str, float]]:
-        """Compute all cost terms for the current state.
-
-        Args:
-            data: MuJoCo simulation data.
-            info: Environment info dictionary.
-
-        Returns:
-            Tuple of (cost_dict, magnitude_dict) where cost_dict contains
-            computed costs and magnitude_dict contains the underlying magnitudes.
-        """
-        total_cost = 0.0
-        for name, kwargs in self.cost_terms.items():
-            total_cost += _COST_FCN_REGISTRY[name](self, data, info, metrics, **kwargs)
-        metrics["costs/total"] = metrics["costs/per_step/total"] = total_cost
-        return total_cost
-
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         """Reset simulation data to a specific clip and frame.
 
@@ -661,24 +598,7 @@ class Imitation(worm_base.CelegansEnv):
             body=body_targets,
         )
 
-    # Rewards
-    def _named_reward(name: str):
-        """Decorator to register reward functions.
-
-        Args:
-            name: Name to register the reward function under.
-
-        Returns:
-            Decorator function that registers the reward function.
-        """
-
-        def decorator(reward_fcn: Callable):
-            _REWARD_FCN_REGISTRY[name] = reward_fcn
-            return reward_fcn
-
-        return decorator
-
-    @_named_reward("root_pos")
+    @_registry.reward("root_pos")
     def _root_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching root position to reference.
 
@@ -702,7 +622,7 @@ class Imitation(worm_base.CelegansEnv):
         self._insert_metric(metrics, info, "root_pos", reward=reward, distance=distance)
         return reward
 
-    @_named_reward("root_quat")
+    @_registry.reward("root_quat")
     def _root_quat_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching root orientation to reference.
 
@@ -731,7 +651,7 @@ class Imitation(worm_base.CelegansEnv):
         )
         return reward
 
-    @_named_reward("joints")
+    @_registry.reward("joints")
     def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching joint angles to reference.
 
@@ -759,7 +679,7 @@ class Imitation(worm_base.CelegansEnv):
             ] = jp.abs(joint_dist)
         return reward
 
-    @_named_reward("joints_vel")
+    @_registry.reward("joints_vel")
     def _joint_vels_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching joint velocities to reference.
 
@@ -814,7 +734,8 @@ class Imitation(worm_base.CelegansEnv):
             total_dist_sqr += dist_sqr
         return jp.sqrt(total_dist_sqr)
 
-    @_named_reward("bodies_pos")
+    # Rewards
+    @_registry.reward("bodies_pos")
     def _body_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching body positions to reference.
 
@@ -835,7 +756,7 @@ class Imitation(worm_base.CelegansEnv):
         )
         return reward
 
-    @_named_reward("end_eff")
+    @_registry.reward("end_eff")
     def _end_eff_reward(self, data, info, metrics, weight, exp_scale) -> float:
         """Reward for matching end effector positions to reference.
 
@@ -858,7 +779,7 @@ class Imitation(worm_base.CelegansEnv):
         )
         return reward
 
-    @_named_reward("upright")
+    @_registry.reward("upright")
     def _upright_reward(self, data, info, metrics, weight, healthy_z_range) -> float:
         """Reward for staying upright within a healthy height range.
 
@@ -879,23 +800,7 @@ class Imitation(worm_base.CelegansEnv):
         return reward
 
     # Costs
-    def _named_cost(name: str):
-        """Decorator to register cost functions.
-
-        Args:
-            name: Name to register the cost function under.
-
-        Returns:
-            Decorator function that registers the cost function.
-        """
-
-        def decorator(cost_fcn: Callable):
-            _COST_FCN_REGISTRY[name] = cost_fcn
-            return cost_fcn
-
-        return decorator
-
-    @_named_cost("control")
+    @_registry.cost("control")
     def _control_cost(self, data, info, metrics, weight) -> float:
         """Cost for control effort (action magnitude).
 
@@ -914,7 +819,7 @@ class Imitation(worm_base.CelegansEnv):
         )
         return cost
 
-    @_named_cost("control_diff")
+    @_registry.cost("control_diff")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
         """Cost for control smoothness (action differences).
 
@@ -933,7 +838,7 @@ class Imitation(worm_base.CelegansEnv):
         )
         return cost
 
-    @_named_cost("energy")
+    @_registry.cost("energy")
     def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
         """Cost for energy consumption.
 
@@ -953,7 +858,7 @@ class Imitation(worm_base.CelegansEnv):
         self._insert_metric(metrics, info, "energy", cost=cost, magnitude=energy)
         return cost
 
-    @_named_cost("var")
+    @_registry.cost("var")
     def _var_cost(self, data, info, metrics, weight) -> float:
         """Cost for action variance.
 
@@ -974,7 +879,7 @@ class Imitation(worm_base.CelegansEnv):
         self._insert_metric(metrics, info, "var", cost=cost, magnitude=var)
         return cost
 
-    @_named_cost("jerk")
+    @_registry.cost("jerk")
     def _jerk_cost(self, data, info, metrics, weight) -> float:
         """Cost for jerk (third derivative of position).
 
@@ -1001,23 +906,7 @@ class Imitation(worm_base.CelegansEnv):
         return cost
 
     # Termination
-    def _named_termination_criterion(name: str):
-        """Decorator to register termination criteria functions.
-
-        Args:
-            name: Name to register the termination criterion under.
-
-        Returns:
-            Decorator function that registers the termination function.
-        """
-
-        def decorator(termination_fcn: Callable):
-            _TERMINATION_FCN_REGISTRY[name] = termination_fcn
-            return termination_fcn
-
-        return decorator
-
-    @_named_termination_criterion("fall")
+    @_registry.termination("fall")
     def _fall(self, data, info, healthy_z_range) -> float:
         """Termination criterion for falling outside healthy height range.
 
@@ -1033,7 +922,7 @@ class Imitation(worm_base.CelegansEnv):
         min_z, max_z = healthy_z_range
         return jp.logical_or(torso_z < min_z, torso_z > max_z)
 
-    @_named_termination_criterion("root_too_far")
+    @_registry.termination("root_too_far")
     def _root_too_far(self, data, info, max_distance) -> bool:
         """Termination criterion for root position deviation.
 
@@ -1051,7 +940,7 @@ class Imitation(worm_base.CelegansEnv):
         distance = jp.linalg.norm(target_pos - root_pos)
         return distance > max_distance
 
-    @_named_termination_criterion("root_too_rotated")
+    @_registry.termination("root_too_rotated")
     def _root_too_rotated(self, data, info, max_degrees) -> bool:
         """Termination criterion for root orientation deviation.
 
@@ -1070,7 +959,7 @@ class Imitation(worm_base.CelegansEnv):
         ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
         return ang_dist > jp.deg2rad(max_degrees)
 
-    @_named_termination_criterion("pose_error")
+    @_registry.termination("pose_error")
     def _bad_pose(self, data, info, max_l2_error) -> bool:
         """Termination criterion for joint pose error.
 
@@ -1087,7 +976,7 @@ class Imitation(worm_base.CelegansEnv):
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
 
-    @_named_termination_criterion("nan")
+    @_registry.termination("nan")
     def _nan(self, data, info, **kwargs) -> bool:
         """Termination criterion for nan values in simulation.
 

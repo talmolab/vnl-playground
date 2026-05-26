@@ -20,6 +20,7 @@ from mujoco import mjx
 from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.celegans import consts
 from vnl_playground.tasks.utils import _recolour_tree, scale_spec
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -64,8 +65,15 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
+BASE_CONFIG = default_config()
+
+
 class CelegansEnv(mjx_env.MjxEnv):
     """Base class for C. Elegans environments."""
+
+    # Subclasses should set this to their RewardRegistry instance
+    _registry: RewardRegistry = None
+    _default_render_camera: str = "track"
 
     def __init__(
         self,
@@ -79,8 +87,8 @@ class CelegansEnv(mjx_env.MjxEnv):
             config_overrides: Optional overrides for the configuration.
         """
         super().__init__(config, config_overrides)
-        self._walker_xml_path = str(config.walker_xml_path)
-        self._arena_xml_path = str(config.arena_xml_path)
+        self._walker_xml_path = str(self.get_param("walker_xml_path"))
+        self._arena_xml_path = str(self.get_param("arena_xml_path"))
         self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
         self._compiled = False
         self._n_worms = 0
@@ -104,17 +112,20 @@ class CelegansEnv(mjx_env.MjxEnv):
         )
         sim_config = pformat(
             {
-                "dt": {"sim": self.sim_dt, "ctrl": self.ctrl_dt},
-                "physics_iterations": self.config.iterations,
-                "solver_config": {
-                    "integrator": self.config.integrator,
-                    "solver": self.config.solver,
-                    "ls_iterations": self.config.ls_iterations,
-                    "noslip_iterations": self.config.noslip_iterations,
-                    "naconmax": self.config.naconmax,
-                    "njmax": self.config.njmax,
+                "dt": {
+                    "sim": self.get_param("sim_dt"),
+                    "ctrl": self.get_param("ctrl_dt"),
                 },
-                "mujoco_impl": self.config.mujoco_impl,
+                "physics_iterations": self.get_param("iterations"),
+                "solver_config": {
+                    "integrator": self.get_param("integrator"),
+                    "solver": self.get_param("solver"),
+                    "ls_iterations": self.get_param("ls_iterations"),
+                    "noslip_iterations": self.get_param("noslip_iterations"),
+                    "naconmax": self.get_param("naconmax"),
+                    "njmax": self.get_param("njmax"),
+                },
+                "mujoco_impl": self.get_param("mujoco_impl"),
             }
         )
         return (
@@ -130,7 +141,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         self,
         torque_actuators: bool,
         rescale_factor: float = 1.0,
-        trans_joint: str = "free",
+        trans_joint: str = "slide",
         pos: Tuple[float, float, float] = (0, 0, 0.05),
         quat: Tuple[float, float, float, float] = (1, 0, 0, 0),
         friction: Tuple[float, ...] = (0.2, 0.9, 0.005, 0.0001, 0.0001),
@@ -385,29 +396,116 @@ class CelegansEnv(mjx_env.MjxEnv):
             forced: Whether to force recompilation even if already compiled.
         """
         if not self._compiled or forced:
-            self._spec.option.noslip_iterations = self.config.noslip_iterations
-            self._spec.option.timestep = self.config.sim_dt
+            self._spec.option.noslip_iterations = self.get_param("noslip_iterations")
+            self._spec.option.timestep = self.get_param("sim_dt")
             # Increase offscreen framebuffer size to render at higher resolutions.
             self._spec.visual.global_.offwidth = 3840
             self._spec.visual.global_.offheight = 2160
-            self._spec.option.iterations = self.config.iterations
-            self._spec.option.ls_iterations = self.config.ls_iterations
-            self._spec.option.noslip_iterations = self.config.noslip_iterations
-            self._spec.option.ccd_iterations = self.config.ccd_iterations
-            self._spec.option.impratio = self.config.impratio
+            self._spec.option.iterations = self.get_param("iterations")
+            self._spec.option.ls_iterations = self.get_param("ls_iterations")
+            self._spec.option.noslip_iterations = self.get_param("noslip_iterations")
+            self._spec.option.ccd_iterations = self.get_param("ccd_iterations")
+            self._spec.option.impratio = self.get_param("impratio")
             self._spec.option.integrator = {
                 "euler": mujoco.mjtIntegrator.mjINT_EULER,
                 "rk4": mujoco.mjtIntegrator.mjINT_RK4,
-            }[self._config.integrator.lower()]
+            }[self.get_param("integrator").lower()]
             self._spec.option.solver = {
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
-            }[self._config.solver.lower()]
+            }[self.get_param("solver").lower()]
             self._mj_model = self._spec.compile()
             self._mjx_model = mjx.put_model(
-                self._mj_model, impl=self.config.mujoco_impl
+                self._mj_model,
+                impl=self.get_param("mujoco_impl"),
             )
             self._compiled = True
+
+    def _get_reward(
+        self, data: mjx.Data, info: Mapping[str, Any], metrics: dict
+    ) -> float:
+        """Compute total reward from registered reward functions.
+
+        Args:
+            data: Simulation data.
+            info: State info dictionary.
+            metrics: Metrics dictionary for logging.
+
+        Returns:
+            Total reward value.
+        """
+        if self.registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no RewardRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
+        total_reward = 0.0
+        for name, kwargs in self.config.reward_terms.items():
+            if name not in self.rewards:
+                raise KeyError(
+                    f"Reward '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self.rewards.keys())}"
+                )
+            total_reward += self.rewards[name](self, data, info, metrics, **kwargs)
+        metrics["rewards/total"] = metrics["rewards/per_step/total"] = total_reward
+        metrics["reward/per_step/normalized"] = total_reward / self.max_reward
+        return total_reward
+
+    def _get_cost(
+        self, data: mjx.Data, info: Mapping[str, Any], metrics: dict
+    ) -> float:
+        """Compute total cost from registered cost functions.
+
+        Args:
+            data: Simulation data.
+            info: State info dictionary.
+            metrics: Metrics dictionary for logging.
+        """
+        if self._registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no RewardRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
+        total_cost = 0.0
+        for name, kwargs in self.config.cost_terms.items():
+            if name not in self.costs:
+                raise KeyError(
+                    f"Cost '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self.costs.keys())}"
+                )
+            total_cost += self.costs[name](self, data, info, metrics, **kwargs)
+        metrics["costs/total"] = metrics["costs/per_step/total"] = total_cost
+        metrics["cost/per_step/normalized"] = total_cost / self.max_cost
+        return total_cost
+
+    def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: dict) -> bool:
+        """Check if episode should terminate based on registered criteria.
+
+        Args:
+            data: Simulation data.
+            info: State info dictionary.
+            metrics: Metrics dictionary for logging.
+
+        Returns:
+            Boolean indicating if episode should terminate.
+        """
+        if self.registry is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no RewardRegistry assigned. "
+                "Subclasses must set `_registry` as a class attribute."
+            )
+        any_terminated = False
+        for name, kwargs in self.config.termination_criteria.items():
+            if name not in self.terminations:
+                raise KeyError(
+                    f"Termination '{name}' not found in {type(self).__name__}'s registry. "
+                    f"Available: {list(self.terminations.keys())}"
+                )
+            terminated = self.terminations[name](self, data, info, **kwargs)
+            any_terminated = jp.logical_or(any_terminated, terminated)
+            metrics["terminations/" + name] = jp.astype(terminated, float)
+        metrics["terminations/any"] = jp.astype(any_terminated, float)
+        return any_terminated
 
     def _get_root_pos(self, data: mjx.Data) -> jp.ndarray:
         """Get root position from the environment.
@@ -652,7 +750,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             data.bind(
                 self.mjx_model, self._spec.sensor(f"{name}{self._suffix}")
             ).sensordata
-            for name in self.config.touch_sensors
+            for name in self.touch_sensor_names
         ]
         return jp.array(touches)
 
@@ -665,7 +763,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             Origin position relative to the torso coordinate frame.
         """
-        torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
+        torso = self.root_body(data)
         torso_frame = torso.xmat
         torso_pos = torso.xpos
         return jp.dot(-torso_pos, torso_frame)
@@ -716,6 +814,69 @@ class CelegansEnv(mjx_env.MjxEnv):
             return xml_str
         else:
             return None
+
+    @property
+    def default_render_camera(self) -> str:
+        """Get the default render camera.
+
+        Returns:
+            Default render camera name.
+        """
+        return self._default_render_camera
+
+    @default_render_camera.setter
+    def default_render_camera(self, default_render_camera: str) -> None:
+        """Set the default render camera.
+
+        Args:
+            default_render_camera: Default render camera name.
+        """
+        self._default_render_camera = default_render_camera
+
+    @property
+    def registry(self) -> RewardRegistry:
+        """Get the reward registry.
+
+        Returns:
+            Reward registry.
+        """
+        return self._registry
+
+    @registry.setter
+    def registry(self, registry: RewardRegistry) -> None:
+        """Set the reward registry.
+
+        Args:
+            registry: Reward registry.
+        """
+        self._registry = registry
+
+    @property
+    def rewards(self) -> Dict[str, Any]:
+        """Get the reward terms.
+
+        Returns:
+            Reward terms.
+        """
+        return self.registry.rewards
+
+    @property
+    def costs(self) -> Dict[str, Any]:
+        """Get the cost terms.
+
+        Returns:
+            Cost terms.
+        """
+        return self.registry.costs
+
+    @property
+    def terminations(self) -> Dict[str, Any]:
+        """Get the termination terms.
+
+        Returns:
+            Termination terms.
+        """
+        return self.registry.terminations
 
     @property
     def action_size(self) -> int:
@@ -841,7 +1002,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             Name of the root body.
         """
-        return self.config.root_body
+        return self.config.get("root_body", consts.ROOT)
 
     @property
     def joint_names(self) -> List[str]:
@@ -850,7 +1011,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             List of joint names.
         """
-        return self.config.joints
+        return self.config.get("joints", consts.JOINTS)
 
     @property
     def body_names(self) -> List[str]:
@@ -859,7 +1020,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             List of body names.
         """
-        return self.config.bodies
+        return self.config.get("bodies", consts.BODIES)
 
     @property
     def end_eff_names(self) -> List[str]:
@@ -868,7 +1029,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             List of end effector names.
         """
-        return self.config.end_effectors
+        return self.config.get("end_effectors", consts.END_EFFECTORS)
 
     @property
     def touch_sensor_names(self) -> List[str]:
@@ -877,7 +1038,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             List of touch sensor names.
         """
-        return self.config.touch_sensors
+        return self.config.get("touch_sensors", consts.TOUCH_SENSORS)
 
     @property
     def sensor_names(self) -> List[str]:
@@ -886,7 +1047,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             List of sensor names.
         """
-        return self.config.sensors
+        return self.config.get("sensors", consts.SENSORS)
 
     @property
     def n_bodies(self) -> int:
@@ -895,7 +1056,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             Number of body parts.
         """
-        return len(self.config.bodies)
+        return len(self.body_names)
 
     @property
     def n_joints(self) -> int:
@@ -904,7 +1065,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             Number of joints.
         """
-        return len(self.config.joints)
+        return len(self.joint_names)
 
     @property
     def n_end_effectors(self) -> int:
@@ -913,7 +1074,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         Returns:
             Number of end effector bodies.
         """
-        return len(self.config.end_effectors)
+        return len(self.end_eff_names)
 
     @property
     def camera_names(self) -> List[str]:
@@ -923,3 +1084,14 @@ class CelegansEnv(mjx_env.MjxEnv):
             List of camera names.
         """
         return [c.name for c in self.spec.cameras]
+
+    def get_param(self, key: str) -> Any:
+        """Get a configuration parameter by key.
+
+        Args:
+            key: The name of the configuration parameter.
+
+        Returns:
+            The value of the configuration parameter.
+        """
+        return self.config.get(key, BASE_CONFIG.get(key))
