@@ -183,9 +183,12 @@ class ReferenceClips:
     def _extract_clip_names(self, config: Mapping[str, Any]) -> Optional[np.ndarray]:
         """Extract behavior names from legacy config metadata.
 
-        If the regex collapses to duplicate labels (e.g. synthetic clip_0000,
-        clip_0001 names all match to 'clip'), fall back to using the raw
-        snips_order strings verbatim so clip identity is preserved.
+        Falls back to raw ``snips_order`` strings only when the regex would
+        collapse *every* entry to a single prefix (e.g. synthetic
+        ``clip_0000``…``clip_NNNN`` all extract to ``"clip"``). Multi-behavior
+        cases like rodent ``["Walk_001.p", "Walk_002.p", "Run_001.p"]`` —
+        where duplicates are expected and the labels carry meaning — keep
+        the extracted form (``["Walk", "Walk", "Run"]``).
         """
         if "model" not in config or "snips_order" not in config.get("model", {}):
             return None
@@ -197,12 +200,7 @@ class ReferenceClips:
             if m is None:
                 raise ValueError(f"Clip name {fn} does not match pattern {pattern}.")
             clip_names.append(m.group(1))
-        # Fallback: if the regex collapsed all entries to the same prefix(es)
-        # and we'd lose clip identity, return the raw filenames instead.
-        if (
-            len(set(clip_names)) < len(original_filenames)
-            and len(original_filenames) > 1
-        ):
+        if len(set(clip_names)) == 1 and len(original_filenames) > 1:
             return np.array(list(original_filenames))
         return np.array(clip_names)
 
