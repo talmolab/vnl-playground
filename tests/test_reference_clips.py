@@ -7,7 +7,7 @@ import pytest
 
 from vnl_playground.tasks.reference_clips import ReferenceClips
 
-FLY_LEGACY_PATH = "/home/talmolab/Desktop/SalkResearch/track-mjx/data/fly/fly_reference_clip.legacy.h5"
+FLY_LEGACY_PATH = "/home/talmolab/Desktop/SalkResearch/track-mjx/data/fly/fly_reference_clip.h5"
 
 
 def _extract(snips_order):
