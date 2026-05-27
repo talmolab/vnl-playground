@@ -93,12 +93,10 @@ class ReferenceClips:
             Useful for loading a subset of data for debugging.
         joint_names : list of str, optional
             Override joint names. If None, names are read from H5 metadata
-            (legacy: `names_qpos[7:]`, named: `/metadata/joint_names`)
-            or generated as `joint_0`, `joint_1`, etc.
+            (``names_qpos[7:]``) or generated as ``joint_0``, ``joint_1``, etc.
         body_names : list of str, optional
             Override body names. If None, names are read from H5 metadata
-            (legacy: `names_xpos`, named: `/metadata/body_names`)
-            or generated as `body_0`, `body_1`, etc.
+            (``names_xpos``) or generated as ``body_0``, ``body_1``, etc.
 
         Raises
         ------
@@ -110,7 +108,6 @@ class ReferenceClips:
         self._data_arrays: dict[str, jp.ndarray] = {}
         self._joint_names_list: list[str] = []
         self._body_names_map: dict[str, int] = {}
-        self._is_legacy_format = False
         self._config: Optional[dict] = None
         self.clip_names: Optional[np.ndarray] = None
 
@@ -141,8 +138,6 @@ class ReferenceClips:
         body_names: Optional[list[str]],
     ) -> None:
         """Load legacy flat-array format (rodent-style)."""
-        self._is_legacy_format = True
-
         # Load config if available
         if "config" in fid:
             self._config = yaml.safe_load(fid["config"][()])
@@ -207,11 +202,11 @@ class ReferenceClips:
     @property
     def _shape_check_key(self) -> str:
         """Key to use for shape checks."""
-        return "qpos" if self._is_legacy_format else "joints"
+        return "qpos"
 
     @property
     def _data_array_keys(self) -> list[str]:
-        """List of data array keys based on format."""
+        """List of on-disk data array keys."""
         return self._LEGACY_ARRAYS
 
     # -------------------------------------------------------------------------
@@ -368,100 +363,53 @@ class ReferenceClips:
 
     @property
     def qpos(self) -> jp.ndarray:
-        """Joint positions array."""
-        if self._is_legacy_format:
-            return self._data_arrays["qpos"]
-        return jp.concatenate([self.position, self.quaternion, self.joints], axis=-1)
+        """Joint positions array (root + joints, flat shape ``(n_clips, n_frames, n_qpos)``)."""
+        return self._data_arrays["qpos"]
 
     @property
     def qvel(self) -> jp.ndarray:
-        """Joint velocities array."""
-        if self._is_legacy_format:
-            return self._data_arrays["qvel"]
-        return jp.concatenate(
-            [self.velocity, self.angular_velocity, self.joints_velocity], axis=-1
-        )
+        """Joint velocities array (root + joints, flat shape ``(n_clips, n_frames, n_qvel)``)."""
+        return self._data_arrays["qvel"]
 
     @property
     def root_position(self) -> jp.ndarray:
-        """Root XYZ position."""
-        if self._is_legacy_format:
-            return self.qpos[..., :3]
-        return self._data_arrays["position"]
+        """Root XYZ position (``qpos[..., :3]``)."""
+        return self.qpos[..., :3]
 
     @property
     def root_quaternion(self) -> jp.ndarray:
-        """Root orientation quaternion."""
-        if self._is_legacy_format:
-            return self.qpos[..., 3:7]
-        return self._data_arrays["quaternion"]
+        """Root orientation quaternion (``qpos[..., 3:7]``, scalar-first ``[w,x,y,z]``)."""
+        return self.qpos[..., 3:7]
 
     @property
     def joints(self) -> jp.ndarray:
-        """Joint angles (excluding root)."""
-        if self._is_legacy_format:
-            return self.qpos[..., 7:]
-        return self._data_arrays["joints"]
+        """Joint angles, root excluded (``qpos[..., 7:]``)."""
+        return self.qpos[..., 7:]
 
     @property
     def joints_velocity(self) -> jp.ndarray:
-        """Joint velocities (excluding root)."""
-        if self._is_legacy_format:
-            return self.qvel[..., 6:]
-        return self._data_arrays["joints_velocity"]
-
-    # Named-array format specific properties
-    @property
-    def position(self) -> jp.ndarray:
-        """Root position (named format) or computed from qpos (legacy)."""
-        if self._is_legacy_format:
-            return self.qpos[..., :3]
-        return self._data_arrays["position"]
-
-    @property
-    def velocity(self) -> jp.ndarray:
-        """Root velocity (named format) or computed from qvel (legacy)."""
-        if self._is_legacy_format:
-            return self.qvel[..., :3]
-        return self._data_arrays["velocity"]
-
-    @property
-    def quaternion(self) -> jp.ndarray:
-        """Root quaternion (named format) or computed from qpos (legacy)."""
-        if self._is_legacy_format:
-            return self.qpos[..., 3:7]
-        return self._data_arrays["quaternion"]
-
-    @property
-    def angular_velocity(self) -> jp.ndarray:
-        """Root angular velocity (named format) or computed from qvel (legacy)."""
-        if self._is_legacy_format:
-            return self.qvel[..., 3:6]
-        return self._data_arrays["angular_velocity"]
+        """Joint velocities, root excluded (``qvel[..., 6:]``)."""
+        return self.qvel[..., 6:]
 
     @property
     def body_positions(self) -> jp.ndarray:
-        """Body positions array."""
-        if self._is_legacy_format:
-            return self._data_arrays["xpos"]
-        return self._data_arrays["body_positions"]
+        """Body world positions (``xpos`` on disk)."""
+        return self._data_arrays["xpos"]
 
     @property
     def body_quaternions(self) -> jp.ndarray:
-        """Body quaternions array."""
-        if self._is_legacy_format:
-            return self._data_arrays["xquat"]
-        return self._data_arrays["body_quaternions"]
+        """Body world orientations (``xquat`` on disk, scalar-first ``[w,x,y,z]``)."""
+        return self._data_arrays["xquat"]
 
-    # Legacy format specific properties
+    # Disk-name aliases
     @property
     def xpos(self) -> jp.ndarray:
-        """Body positions (legacy name)."""
+        """Alias for ``body_positions`` (matches the on-disk H5 key)."""
         return self.body_positions
 
     @property
     def xquat(self) -> jp.ndarray:
-        """Body quaternions (legacy name)."""
+        """Alias for ``body_quaternions`` (matches the on-disk H5 key)."""
         return self.body_quaternions
 
     # -------------------------------------------------------------------------
