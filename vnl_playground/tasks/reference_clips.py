@@ -199,7 +199,10 @@ class ReferenceClips:
             clip_names.append(m.group(1))
         # Fallback: if the regex collapsed all entries to the same prefix(es)
         # and we'd lose clip identity, return the raw filenames instead.
-        if len(set(clip_names)) < len(original_filenames) and len(original_filenames) > 1:
+        if (
+            len(set(clip_names)) < len(original_filenames)
+            and len(original_filenames) > 1
+        ):
             return np.array(list(original_filenames))
         return np.array(clip_names)
 
