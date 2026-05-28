@@ -92,6 +92,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
         self._compiled = False
         self._n_worms = 0
+        self._max_reward = -jp.inf
 
     def __repr__(self) -> str:
         xml_paths = pformat(
@@ -419,6 +420,7 @@ class CelegansEnv(mjx_env.MjxEnv):
                 self._mj_model,
                 impl=self.get_param("mujoco_impl"),
             )
+            self.default_render_camera = f"{self.default_render_camera}{self._suffix}"
             self._compiled = True
 
     def _get_reward(
@@ -439,44 +441,20 @@ class CelegansEnv(mjx_env.MjxEnv):
                 f"{type(self).__name__} has no RewardRegistry assigned. "
                 "Subclasses must set `_registry` as a class attribute."
             )
-        total_reward = 0.0
+        net_reward = 0.0
         for name, kwargs in self.config.reward_terms.items():
             if name not in self.rewards:
                 raise KeyError(
                     f"Reward '{name}' not found in {type(self).__name__}'s registry. "
                     f"Available: {list(self.rewards.keys())}"
                 )
-            total_reward += self.rewards[name](self, data, info, metrics, **kwargs)
-        metrics["rewards/total"] = metrics["rewards/per_step/total"] = total_reward
-        metrics["reward/per_step/normalized"] = total_reward / self.max_reward
-        return total_reward
-
-    def _get_cost(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics: dict
-    ) -> float:
-        """Compute total cost from registered cost functions.
-
-        Args:
-            data: Simulation data.
-            info: State info dictionary.
-            metrics: Metrics dictionary for logging.
-        """
-        if self._registry is None:
-            raise RuntimeError(
-                f"{type(self).__name__} has no RewardRegistry assigned. "
-                "Subclasses must set `_registry` as a class attribute."
+            net_reward += self.rewards[name](self, data, info, metrics, **kwargs)
+        metrics["rewards/net"] = metrics["rewards/net/per_step"] = net_reward
+        if self.max_reward > 0:
+            metrics["rewards/normalized"] = metrics["rewards/normalized/per_step"] = (
+                net_reward / self.max_reward
             )
-        total_cost = 0.0
-        for name, kwargs in self.config.cost_terms.items():
-            if name not in self.costs:
-                raise KeyError(
-                    f"Cost '{name}' not found in {type(self).__name__}'s registry. "
-                    f"Available: {list(self.costs.keys())}"
-                )
-            total_cost += self.costs[name](self, data, info, metrics, **kwargs)
-        metrics["costs/total"] = metrics["costs/per_step/total"] = total_cost
-        metrics["cost/per_step/normalized"] = total_cost / self.max_cost
-        return total_cost
+        return net_reward
 
     def _is_done(self, data: mjx.Data, info: Mapping[str, Any], metrics: dict) -> bool:
         """Check if episode should terminate based on registered criteria.
@@ -715,15 +693,9 @@ class CelegansEnv(mjx_env.MjxEnv):
             If flatten=False, returns dict mapping sensor names to data.
         """
         try:
-            accelerometer = data.bind(
-                self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")
-            ).sensordata
-            velocimeter = data.bind(
-                self.mjx_model, self._spec.sensor(f"velocimeter{self._suffix}")
-            ).sensordata
-            gyro = data.bind(
-                self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")
-            ).sensordata
+            accelerometer = self.accelerometer(data)
+            velocimeter = self.velocimeter(data)
+            gyro = self.gyro(data)
         except TypeError as e:
             print(f"Kinematic sensors not found for {self._suffix}")
             print(f"Available sensors: {[s.name for s in self._spec.sensors]}")
@@ -795,6 +767,63 @@ class CelegansEnv(mjx_env.MjxEnv):
             self.mjx_model, self._spec.body(f"{self.root_name}{self._suffix}")
         )
 
+    def gyro(self, data: mjx.Data) -> jp.ndarray:
+        """Get the gyro sensor data.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Gyro sensor data.
+        """
+        return data.bind(
+            self.mjx_model, self._spec.sensor(f"gyro{self._suffix}")
+        ).sensordata
+
+    def accelerometer(self, data: mjx.Data) -> jp.ndarray:
+        """Get the accelerometer sensor data.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Accelerometer sensor data.
+        """
+        return data.bind(
+            self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")
+        ).sensordata
+
+    def velocimeter(self, data: mjx.Data) -> jp.ndarray:
+        """Get the velocimeter sensor data.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Velocimeter sensor data.
+        """
+        return data.bind(
+            self.mjx_model, self._spec.sensor(f"velocimeter{self._suffix}")
+        ).sensordata
+
+    def subtree_linvel(self, data: mjx.Data, body_name: str = None) -> jp.ndarray:
+        """Get the subtree linear velocity sensor data.
+
+        Args:
+            data: MuJoCo simulation data.
+
+        Returns:
+            Subtree linear velocity sensor data.
+        """
+        if body_name is not None:
+            return data.bind(
+                self.mjx_model, self._spec.body(f"{body_name}{self._suffix}")
+            ).subtree_linvel
+
+        return data.bind(
+            self.mjx_model, self._spec.sensor(f"subtreelinvel{self._suffix}")
+        ).sensordata
+
     def save_spec(self, path: str, return_str: bool = False) -> Optional[str]:
         """Save the spec to a file.
 
@@ -831,6 +860,10 @@ class CelegansEnv(mjx_env.MjxEnv):
         Args:
             default_render_camera: Default render camera name.
         """
+        if default_render_camera not in self.camera_names:
+            raise ValueError(
+                f"Camera {default_render_camera} not found in available cameras: {self.camera_names}! (Hint: did you forget the suffix?)"
+            )
         self._default_render_camera = default_render_camera
 
     @property
@@ -850,6 +883,24 @@ class CelegansEnv(mjx_env.MjxEnv):
             registry: Reward registry.
         """
         self._registry = registry
+
+    @property
+    def max_reward(self) -> float:
+        """Get the maximum reward.
+
+        Returns:
+            Maximum reward.
+        """
+        return self._max_reward
+
+    @max_reward.setter
+    def max_reward(self, max_reward: float) -> None:
+        """Set the maximum reward.
+
+        Args:
+            max_reward: Maximum reward.
+        """
+        self._max_reward = max_reward
 
     @property
     def rewards(self) -> Dict[str, Any]:

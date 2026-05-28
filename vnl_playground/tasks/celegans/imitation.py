@@ -99,9 +99,6 @@ def default_config() -> config_dict.ConfigDict:
                 "weight": 1.0,
             },  # Distance in concatenated euclidean space
             "upright": {"healthy_z_range": (-1.0, 1.0), "weight": 0.0},
-        },
-        # Costs / regularizers
-        cost_terms={
             "control": {"weight": 0.02},
             "control_diff": {"weight": 1.0},
             "energy": {"max_value": 50.0, "weight": 0.0},
@@ -215,6 +212,8 @@ class Imitation(worm_base.CelegansEnv):
         if clips is not None:
             self.reference_clips = clips
         else:
+            print(self.joint_names)
+            print(self.body_names)
             self.reference_clips = ReferenceClips(
                 self._config.reference_data_path,
                 self._config.clip_length,
@@ -274,7 +273,6 @@ class Imitation(worm_base.CelegansEnv):
             f"walker_config={walker_config}, "
             f"reference_config={reference_config}, "
             f"reward_terms={self._config.reward_terms}, "
-            f"cost_terms={self._config.cost_terms}, "
             f"termination_criteria={self._config.termination_criteria})"
         )
 
@@ -324,9 +322,7 @@ class Imitation(worm_base.CelegansEnv):
 
         metrics = {"current_frame": jp.astype(self._get_cur_frame(data, info), float)}
 
-        reward = self._get_reward(data, info, metrics)
-        cost = self._get_cost(data, info, metrics)
-        net_reward = reward - cost
+        net_reward = self._get_reward(data, info, metrics)
         net_reward = jp.nan_to_num(net_reward)
 
         done = self._is_done(data, info, metrics)
@@ -371,9 +367,7 @@ class Imitation(worm_base.CelegansEnv):
 
         done = self._is_done(data, info, state.metrics)
 
-        reward = self._get_reward(data, info, state.metrics)
-        cost = self._get_cost(data, info, state.metrics)
-        net_reward = reward - cost
+        net_reward = self._get_reward(data, info, state.metrics)
         net_reward = jp.nan_to_num(net_reward)
 
         state = state.replace(
@@ -800,7 +794,7 @@ class Imitation(worm_base.CelegansEnv):
         return reward
 
     # Costs
-    @_registry.cost("control")
+    @_registry.reward("control")
     def _control_cost(self, data, info, metrics, weight) -> float:
         """Cost for control effort (action magnitude).
 
@@ -813,13 +807,13 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (cost_value, control_magnitude).
         """
         ctrl_magnitude = jp.sum(jp.square(info["action"]))
-        cost = weight * ctrl_magnitude
+        cost = -weight * ctrl_magnitude
         self._insert_metric(
             metrics, info, "control", cost=cost, magnitude=ctrl_magnitude
         )
         return cost
 
-    @_registry.cost("control_diff")
+    @_registry.reward("control_diff")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
         """Cost for control smoothness (action differences).
 
@@ -832,13 +826,13 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (cost_value, control_difference).
         """
         ctrl_diff = jp.sum(jp.square(info["action"] - info["prev_action"]))
-        cost = weight * ctrl_diff
+        cost = -weight * ctrl_diff
         self._insert_metric(
             metrics, info, "control_diff", cost=cost, magnitude=ctrl_diff
         )
         return cost
 
-    @_registry.cost("energy")
+    @_registry.reward("energy")
     def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
         """Cost for energy consumption.
 
@@ -854,11 +848,11 @@ class Imitation(worm_base.CelegansEnv):
         energy = jp.minimum(
             jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator)), max_value
         )
-        cost = weight * energy
+        cost = -weight * energy
         self._insert_metric(metrics, info, "energy", cost=cost, magnitude=energy)
         return cost
 
-    @_registry.cost("var")
+    @_registry.reward("var")
     def _var_cost(self, data, info, metrics, weight) -> float:
         """Cost for action variance.
 
@@ -874,12 +868,12 @@ class Imitation(worm_base.CelegansEnv):
         mean_act = jp.mean(buffer, axis=0)
         var_act = jp.mean((buffer - mean_act) ** 2, axis=0)
         var = jp.sum(var_act)
-        cost = weight * var
+        cost = -weight * var
 
         self._insert_metric(metrics, info, "var", cost=cost, magnitude=var)
         return cost
 
-    @_registry.cost("jerk")
+    @_registry.reward("jerk")
     def _jerk_cost(self, data, info, metrics, weight) -> float:
         """Cost for jerk (third derivative of position).
 
@@ -900,7 +894,7 @@ class Imitation(worm_base.CelegansEnv):
         )
         jerks = ordered[2:] - 2 * ordered[1:-1] + ordered[:-2]
         jerk = jp.sum(jerks**2)
-        cost = weight * jerk
+        cost = -weight * jerk
 
         self._insert_metric(metrics, info, "jerk", cost=cost, magnitude=jerk)
         return cost
@@ -1017,7 +1011,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Number of frames per clip.
         """
-        return self.reference_clips.n_frames_per_clip
+        return self.reference_clips.n_frames
 
     @property
     def num_clips(self) -> int:
@@ -1127,35 +1121,13 @@ class Imitation(worm_base.CelegansEnv):
         """
         self._reference_clips = reference_clips
 
-    @property
-    def default_render_camera(self) -> str:
-        """Get the default render camera.
-
-        Returns:
-            Default render camera.
-        """
-        return self._default_render_camera
-
-    @default_render_camera.setter
-    def default_render_camera(self, default_render_camera: str) -> None:
-        """Set the default render camera.
-
-        Args:
-            default_render_camera: Default render camera.
-        """
-        if self._default_render_camera not in self.camera_names:
-            raise ValueError(
-                f"Camera {self._default_render_camera} not found in available cameras: {self.camera_names}! (Hint: did you forget the suffix?)"
-            )
-        self._default_render_camera = default_render_camera
-
     def _clip_length(self) -> int:
         """Get the length of each clip.
 
         Returns:
             Number of frames per clip.
         """
-        return self.reference_clips.n_frames_per_clip
+        return self.reference_clips.n_frames
 
     def render(
         self,
