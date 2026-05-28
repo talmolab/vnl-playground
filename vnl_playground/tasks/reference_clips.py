@@ -172,8 +172,11 @@ class ReferenceClips:
             "ReferenceClips("
             f"data_path={self._data_path}, "
             f"n_clips={self.n_clips},"
-            f"n_frames_per_clip={self._n_frames_per_clip})"
+            f"n_frames_per_clip={self.n_frames})"
         )
+
+    def __len__(self) -> int:
+        return self.n_clips
 
     def _load_from_disk(
         self,
@@ -285,7 +288,6 @@ class ReferenceClips:
                 self._joint_names_list = list(joint_names)
             else:
                 self._joint_names_list = list(names_qpos)
-
         if "names_xpos" in fid:
             names_xpos = fid["names_xpos"][()].astype(str)
             self._xpos_names = {n: i for (i, n) in enumerate(names_xpos)}
@@ -506,7 +508,9 @@ class ReferenceClips:
     def joints(self) -> jp.ndarray:
         """Joint angles (excluding root)."""
         if self._is_legacy_format:
-            return self.qpos[..., 7:]
+            return self.qpos[
+                ..., [self._qpos_names[name] for name in self._joint_names_list]
+            ]
         return self._data_arrays["joints"]
 
     @property
@@ -592,20 +596,20 @@ class ReferenceClips:
 
     def body_xpos(self, name: str) -> jp.ndarray:
         """Get the global position of a body by name."""
-        if name not in self._body_names_map:
+        if name not in self._xpos_names:
             raise KeyError(
-                f"Body '{name}' not found. Available: {list(self._body_names_map.keys())}"
+                f"Body '{name}' not found. Available: {list(self._xpos_names.keys())}"
             )
-        idx = self._body_names_map[name]
+        idx = self._xpos_names[name]
         return self.body_positions[..., idx, :]
 
     def body_xquat(self, name: str) -> jp.ndarray:
         """Get the global orientation of a body by name."""
-        if name not in self._body_names_map:
+        if name not in self._xpos_names:
             raise KeyError(
-                f"Body '{name}' not found. Available: {list(self._body_names_map.keys())}"
+                f"Body '{name}' not found. Available: {list(self._xpos_names.keys())}"
             )
-        idx = self._body_names_map[name]
+        idx = self._xpos_names[name]
         return self.body_quaternions[..., idx, :]
 
     @property
