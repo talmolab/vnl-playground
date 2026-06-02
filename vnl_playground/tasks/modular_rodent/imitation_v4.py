@@ -1,6 +1,4 @@
-"""Version 2 of modular imitation task for the rodent.
-
-"""
+"""Version 4 of modular imitation task for the rodent."""
 
 import collections
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union, override
