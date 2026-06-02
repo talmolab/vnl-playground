@@ -23,7 +23,7 @@ from vnl_playground.tasks.mouse import mouse_reach
 from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
 from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_velocity
 from vnl_playground.tasks.stick import imitation as stick_imitation
-from vnl_playground.tasks.modular_rodent import imitation as modular_rodent_imitation
+from vnl_playground.tasks.modular_rodent import imitation_v4 as modular_rodent_imitation
 
 # Unified wrappers and reference clips
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
@@ -43,7 +43,7 @@ _envs = {
     "MouseImitation": mouse_imitation.MouseImitation,
     "StickMaintainVelocity": stick_maintain_velocity.MaintainVelocity,
     "StickImitation": stick_imitation.Imitation,
-    "ModularRodentImitation": modular_rodent_imitation.ModularImitation,
+    "ModularRodentImitation": modular_rodent_imitation.ModularImitation_v4,
 }
 
 _cfgs = {
