@@ -15,17 +15,9 @@ ARENA_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "arena.xml"
 WHITE_ARENA_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "white_arena.xml"
 REFERENCE_H5_PATH: epath.Path = CELEGANS_PATH / "reference_data" / "reference.h5"
 
-ROOT: str = "torso1_body"
+ROOT: str = "torso13_body"
 END_EFFECTORS: List[str] = [
     "torso1_body",
-    "torso2_body",
-    "torso3_body",
-    "torso4_body",
-    "torso5_body",
-    "torso21_body",
-    "torso22_body",
-    "torso23_body",
-    "torso24_body",
     "torso25_body",
 ]
 TOUCH_SENSORS: List[str] = []
