@@ -43,13 +43,34 @@ def default_config() -> config_dict.ConfigDict:
     """
     return config_dict.create(
         walker_xml_path=consts.CELEGANS_XML_PATH,
-        arena_xml_path=consts.WHITE_ARENA_XML_PATH,
+        arena_xml_path=consts.ARENA_XML_PATH,
         root_body=consts.ROOT,
         joints=consts.JOINTS,
         bodies=consts.BODIES,
         end_effectors=consts.END_EFFECTORS,
         touch_sensors=consts.TOUCH_SENSORS,
         sensors=consts.SENSORS,
+        torque_actuators=False,
+        rescale_factor=1.001,
+        dim=2,
+        trans_joint="slide",
+        friction={
+            "tan_floor": 0.2,
+            "tan_body": 0.9,
+            "tor": 0.005,
+            "roll_floor": 0.0001,
+            "roll_body": 0.0001,
+        },
+        solimp={"d0": 0.0, "dwidth": 0.95, "width": 0.001, "midpoint": 0.5, "power": 2},
+        solref={"timeconst": 0.02, "dampratio": 1},
+        solreffriction={"timeconst": 0, "dampratio": 0},
+        muscle_config={
+            "gear": 1.01,
+            "dynprm": {"tausmooth": 0.4},
+            "gainprm": {"force": -1},
+        },
+        joint_config={"hinge": {"damping": 1e-5, "armature": 1e-6}},
+        contact_geom="capsule",
         sim_dt=0.01,
         ctrl_dt=0.1,
         integrator="RK4",
@@ -145,12 +166,12 @@ class CelegansEnv(mjx_env.MjxEnv):
         trans_joint: str = "slide",
         pos: Tuple[float, float, float] = (0, 0, 0.05),
         quat: Tuple[float, float, float, float] = (1, 0, 0, 0),
-        friction: Tuple[float, ...] = (0.2, 0.9, 0.005, 0.0001, 0.0001),
-        solimp: Tuple[float, ...] = (0.0, 0.95, 0.001, 0.5, 2),
-        solref: Tuple[float, ...] = (0.02, 1),
-        solreffriction: Tuple[float, ...] = (0, 0),
-        muscle_config: Optional[Dict[str, Any]] = None,
-        joint_config: Optional[Dict[str, Any]] = None,
+        friction: Tuple[float, ...] = BASE_CONFIG.friction,
+        solimp: Tuple[float, ...] = BASE_CONFIG.solimp,
+        solref: Tuple[float, ...] = BASE_CONFIG.solref,
+        solreffriction: Tuple[float, ...] = BASE_CONFIG.solreffriction,
+        muscle_config: Optional[Dict[str, Any]] = BASE_CONFIG.muscle_config,
+        joint_config: Optional[Dict[str, Any]] = BASE_CONFIG.joint_config,
         contact_geom: Optional[mujoco.mjtGeom] = mujoco.mjtGeom.mjGEOM_CAPSULE,
         rgba: Optional[Tuple[float, float, float, float]] = None,
         suffix: str = "-worm",
@@ -243,6 +264,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             body = worm.body(f"{body_name}{suffix}")
             for geom in body.geoms:
                 if geom.type == contact_geom:
+                    print(f"Adding contacts between floor and {geom.name}")
                     self._spec.add_pair(
                         name=f"{body_name}_floor",
                         geomname1=geom.name,
@@ -253,6 +275,8 @@ class CelegansEnv(mjx_env.MjxEnv):
                         solref=solref,
                         solreffriction=solreffriction,
                     )
+                else:
+                    print(f"{geom.name} is a {geom.type} not a {contact_geom}")
         if muscle_config is not None:
             for muscle in worm.actuators:
                 for key, value in muscle_config.items():
@@ -843,6 +867,28 @@ class CelegansEnv(mjx_env.MjxEnv):
             return xml_str
         else:
             return None
+
+    @property
+    def proprioceptive_obs_size(self) -> int:
+        obs_size = self.non_flattened_observation_size
+        return jp.sum(
+            jax.flatten_util.ravel_pytree(obs_size["state"]["proprioception"])[0]
+        )
+
+    @property
+    def non_proprioceptive_obs_size(self) -> int:
+        return self.observation_size - self.proprioceptive_obs_size
+
+    @property
+    def observation_size(self):
+        obs = self.non_flattened_observation_size
+        return jp.sum(jax.flatten_util.ravel_pytree(obs)[0])
+
+    @property
+    def non_flattened_observation_size(self):
+        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+        obs = abstract_state.obs
+        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     @property
     def default_render_camera(self) -> str:

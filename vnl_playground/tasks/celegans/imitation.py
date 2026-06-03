@@ -32,44 +32,7 @@ def default_config() -> config_dict.ConfigDict:
         Configuration dictionary with default parameters for imitation learning.
     """
     return config_dict.create(
-        walker_xml_path=str(consts.CELEGANS_XML_PATH),
-        arena_xml_path=str(consts.ARENA_XML_PATH),
-        root_body=consts.ROOT,
-        joints=consts.JOINTS,
-        bodies=consts.BODIES,
-        end_effectors=consts.END_EFFECTORS,
-        touch_sensors=consts.TOUCH_SENSORS,
-        sensors=consts.SENSORS,
-        mujoco_impl="jax",
-        sim_dt=0.01,
-        ctrl_dt=0.1,
-        integrator="RK4",
-        solver="cg",
-        iterations=4,
-        ls_iterations=4,
-        noslip_iterations=0,
-        impratio=0.1,
-        naconmax=16 * 8192,
-        njmax=256,
-        ccd_iterations=35,
         init_pos={"x": 0.0, "y": 0.0, "z": 0.005},
-        torque_actuators=False,
-        rescale_factor=1.001,
-        dim=2,
-        trans_joint="slide",
-        friction={
-            "tan_floor": 0.2,
-            "tan_body": 0.9,
-            "tor": 0.005,
-            "roll_floor": 0.0001,
-            "roll_body": 0.0001,
-        },
-        solimp={"d0": 0.0, "dwidth": 0.95, "width": 0.001, "midpoint": 0.5, "power": 2},
-        solref={"timeconst": 0.02, "dampratio": 1},
-        solreffriction={"timeconst": 0, "dampratio": 0},
-        muscle_config=None,
-        joint_config=None,
-        contact_geom="capsule",
         mocap_hz=20,
         reference_data_path=consts.REFERENCE_H5_PATH,
         clip_length=250,
@@ -113,6 +76,7 @@ def default_config() -> config_dict.ConfigDict:
             "nan": {},
         },
         render_camera="track",
+        **worm_base.default_config(),
     )
 
 
@@ -212,8 +176,6 @@ class Imitation(worm_base.CelegansEnv):
         if clips is not None:
             self.reference_clips = clips
         else:
-            print(self.joint_names)
-            print(self.body_names)
             self.reference_clips = ReferenceClips(
                 self._config.reference_data_path,
                 self._config.clip_length,
@@ -982,27 +944,6 @@ class Imitation(worm_base.CelegansEnv):
         flattened_vals, _ = jax.flatten_util.ravel_pytree(data)
         num_nans = jp.sum(jp.isnan(flattened_vals))
         return num_nans > 0
-
-    # Properties for cleaner access
-    @property
-    def proprioceptive_obs_size(self) -> int:
-        obs_size = self.non_flattened_observation_size
-        return jp.sum(jax.flatten_util.ravel_pytree(obs_size["proprioception"])[0])
-
-    @property
-    def non_proprioceptive_obs_size(self) -> int:
-        return self.observation_size - self.proprioceptive_obs_size
-
-    @property
-    def observation_size(self) -> mjx_env.ObservationSize:
-        obs = self.non_flattened_observation_size
-        return jp.sum(jax.flatten_util.ravel_pytree(obs)[0])
-
-    @property
-    def non_flattened_observation_size(self) -> mjx_env.ObservationSize:
-        abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
-        obs = abstract_state.obs
-        return jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)
 
     @property
     def clip_length(self) -> int:
