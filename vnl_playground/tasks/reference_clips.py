@@ -1,44 +1,33 @@
-"""Unified reference clips loader for motion capture data.
+"""Reference clips loader for motion capture data.
 
 This module provides a single `ReferenceClips` class that loads motion capture
-reference data from HDF5 files. It automatically detects the H5 format and
-provides a consistent API regardless of the underlying data structure.
+reference data from HDF5 files in the legacy flat-array format used by all
+imitation walkers (rodent, stick, fly).
 
-Supported H5 Formats
---------------------
-1. **Named-array format** (preferred, used by fruitfly):
-   - Root state: `position`, `velocity`, `quaternion`, `angular_velocity`
-   - Joint state: `joints`, `joints_velocity`
-   - Body state: `body_positions`, `body_quaternions`
-   - Data may be under `/all_clips/` group or at root level
-
-2. **Legacy flat-array format** (used by rodent):
-   - State vectors: `qpos`, `qvel` (flat arrays containing root + joints)
-   - Body state: `xpos`, `xquat`
-   - Metadata: `names_qpos`, `names_xpos`, `config`
-   - Data requires reshaping from (n_total_frames, ...) to (n_clips, n_frames, ...)
+On-disk H5 schema
+-----------------
+State vectors (flat — reshaped to (n_clips, n_frames, ...) at load time):
+    qpos        (n_total_frames, n_qpos)   - Joint positions (root + joints)
+    qvel        (n_total_frames, n_qvel)   - Joint velocities
+    xpos        (n_total_frames, n_b, 3)   - Body world positions
+    xquat       (n_total_frames, n_b, 4)   - Body world orientations [w,x,y,z]
+Metadata:
+    names_qpos  (n_qpos,)                  - DOF names (7 'root' entries first
+                                              for freejoint, then joint names)
+    names_xpos  (n_b,)                     - Body names (incl. 'world' at 0)
+    config      YAML string                - Metadata including clip names
+                                              (model.snips_order)
 
 Usage
 -----
 >>> from vnl_playground.tasks.reference_clips import ReferenceClips
->>>
->>> # Load reference clips (format auto-detected)
->>> clips = ReferenceClips(
-...     data_path="path/to/reference_clips.h5",
-...     n_frames_per_clip=250,
-... )
->>>
->>> # Access data using consistent API
->>> clips.qpos.shape        # (n_clips, n_frames, n_dof)
+>>> clips = ReferenceClips("data.h5", n_frames_per_clip=250)
+>>> clips.qpos.shape        # (n_clips, n_frames, n_qpos)
 >>> clips.joints.shape      # (n_clips, n_frames, n_joints)
 >>> clips.root_position     # (n_clips, n_frames, 3)
->>>
->>> # Slice operations
->>> frame = clips.at(clip=0, frame=10)      # Single frame
->>> seq = clips.slice(clip=0, start_frame=0, length=50)  # Frame sequence
->>>
->>> # Train/test split
->>> train_clips, test_clips = clips.split(train_ratio=0.8, seed=42)
+>>> frame = clips.at(clip=0, frame=10)
+>>> seq = clips.slice(clip=0, start_frame=0, length=50)
+>>> train, test = clips.split(train_ratio=0.8, seed=42)
 
 See Also
 --------
@@ -63,40 +52,14 @@ import warnings
 class ReferenceClips:
     """Reference clips loader for motion capture data.
 
-    This class loads motion capture reference data from HDF5 files and provides
-    a unified API for accessing the data regardless of the underlying format.
-    The format is auto-detected during loading.
-
-    The class supports two H5 formats:
-
-    1. **Named-array format** (preferred):
-       Data stored as separate semantic arrays, optionally under `/all_clips/` group::
-
-           position          (n_clips, n_frames, 3)     - Root XYZ position
-           velocity          (n_clips, n_frames, 3)     - Root velocity
-           quaternion        (n_clips, n_frames, 4)     - Root orientation
-           angular_velocity  (n_clips, n_frames, 3)     - Root angular velocity
-           joints            (n_clips, n_frames, n_j)   - Joint angles
-           joints_velocity   (n_clips, n_frames, n_j)   - Joint velocities
-           body_positions    (n_clips, n_frames, n_b, 3) - Body positions
-           body_quaternions  (n_clips, n_frames, n_b, 4) - Body orientations
-
-    2. **Legacy flat-array format**:
-       Data stored as flat state vectors that need reshaping::
-
-           qpos        (n_total_frames, n_dof)   - Joint positions (root + joints)
-           qvel        (n_total_frames, n_dof-1) - Joint velocities
-           xpos        (n_total_frames, n_b, 3)  - Body world positions
-           xquat       (n_total_frames, n_b, 4)  - Body world orientations
-           names_qpos  (n_dof,)                  - DOF names
-           names_xpos  (n_b,)                    - Body names
-           config      YAML string               - Metadata including clip names
+    Loads motion capture reference data from HDF5 files in the legacy
+    flat-array format. See the module docstring for the on-disk schema.
 
     Attributes
     ----------
     clip_names : np.ndarray or None
-        Behavior names for each clip (e.g., "Walk", "Run"). Only available
-        for legacy format files that include config metadata.
+        Behavior names for each clip (e.g., "Walk", "Run"). Populated from
+        ``config["model"]["snips_order"]`` when present; None otherwise.
 
     Examples
     --------
@@ -104,18 +67,6 @@ class ReferenceClips:
     >>> print(f"Loaded {clips.qpos.shape[0]} clips")
     >>> train, test = clips.split(train_ratio=0.8)
     """
-
-    # Named-array format keys
-    _NAMED_ARRAYS = [
-        "position",
-        "velocity",
-        "quaternion",
-        "angular_velocity",
-        "joints",
-        "joints_velocity",
-        "body_positions",
-        "body_quaternions",
-    ]
 
     # Legacy flat-array format keys
     _LEGACY_ARRAYS = ["qpos", "qvel", "xpos", "xquat"]
@@ -142,12 +93,10 @@ class ReferenceClips:
             Useful for loading a subset of data for debugging.
         joint_names : list of str, optional
             Override joint names. If None, names are read from H5 metadata
-            (legacy: `names_qpos[7:]`, named: `/metadata/joint_names`)
-            or generated as `joint_0`, `joint_1`, etc.
+            (``names_qpos[7:]``) or generated as ``joint_0``, ``joint_1``, etc.
         body_names : list of str, optional
             Override body names. If None, names are read from H5 metadata
-            (legacy: `names_xpos`, named: `/metadata/body_names`)
-            or generated as `body_0`, `body_1`, etc.
+            (``names_xpos``) or generated as ``body_0``, ``body_1``, etc.
 
         Raises
         ------
@@ -159,7 +108,6 @@ class ReferenceClips:
         self._data_arrays: dict[str, jp.ndarray] = {}
         self._joint_names_list: list[str] = []
         self._body_names_map: dict[str, int] = {}
-        self._is_legacy_format = False
         self._config: Optional[dict] = None
         self.clip_names: Optional[np.ndarray] = None
 
@@ -175,59 +123,11 @@ class ReferenceClips:
         joint_names: Optional[list[str]],
         body_names: Optional[list[str]],
     ) -> None:
-        """Load data from H5 file, auto-detecting format."""
+        """Load data from H5 file (legacy flat-array format)."""
         with h5py.File(data_path, "r") as fid:
-            # Detect format by checking for named arrays
-            group = fid["all_clips"] if "all_clips" in fid else fid
-
-            if "joints" in group or "position" in group:
-                self._load_named_format(
-                    fid, group, keep_clips_idx, joint_names, body_names
-                )
-            else:
-                self._load_legacy_format(
-                    fid, n_frames_per_clip, keep_clips_idx, joint_names, body_names
-                )
-
-    def _load_named_format(
-        self,
-        fid: h5py.File,
-        group: h5py.Group,
-        keep_clips_idx: Optional[Array[int]],
-        joint_names: Optional[list[str]],
-        body_names: Optional[list[str]],
-    ) -> None:
-        """Load named-array format (fruitfly-style)."""
-        self._is_legacy_format = False
-
-        for k in self._NAMED_ARRAYS:
-            if k in group:
-                arr = group[k][()]
-                self._data_arrays[k] = jp.array(arr)
-                if keep_clips_idx is not None:
-                    logging.info(f"{k}: Keeping {len(keep_clips_idx)} clips")
-                    self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
-
-        # Load joint names
-        if joint_names is not None:
-            self._joint_names_list = list(joint_names)
-        elif "metadata" in fid and "joint_names" in fid["metadata"]:
-            self._joint_names_list = list(
-                fid["metadata"]["joint_names"][()].astype(str)
+            self._load_legacy_format(
+                fid, n_frames_per_clip, keep_clips_idx, joint_names, body_names
             )
-        else:
-            n_joints = self._data_arrays["joints"].shape[-1]
-            self._joint_names_list = [f"joint_{i}" for i in range(n_joints)]
-
-        # Load body names
-        if body_names is not None:
-            self._body_names_map = {name: i for i, name in enumerate(body_names)}
-        elif "metadata" in fid and "body_names" in fid["metadata"]:
-            names = list(fid["metadata"]["body_names"][()].astype(str))
-            self._body_names_map = {name: i for i, name in enumerate(names)}
-        else:
-            n_bodies = self._data_arrays["body_positions"].shape[-2]
-            self._body_names_map = {f"body_{i}": i for i in range(n_bodies)}
 
     def _load_legacy_format(
         self,
@@ -238,8 +138,6 @@ class ReferenceClips:
         body_names: Optional[list[str]],
     ) -> None:
         """Load legacy flat-array format (rodent-style)."""
-        self._is_legacy_format = True
-
         # Load config if available
         if "config" in fid:
             self._config = yaml.safe_load(fid["config"][()])
@@ -278,7 +176,15 @@ class ReferenceClips:
                 self._body_names_map = {n: i for (i, n) in enumerate(names_xpos)}
 
     def _extract_clip_names(self, config: Mapping[str, Any]) -> Optional[np.ndarray]:
-        """Extract behavior names from legacy config metadata."""
+        """Extract behavior names from legacy config metadata.
+
+        Falls back to raw ``snips_order`` strings only when the regex would
+        collapse *every* entry to a single prefix (e.g. synthetic
+        ``clip_0000``…``clip_NNNN`` all extract to ``"clip"``). Multi-behavior
+        cases like rodent ``["Walk_001.p", "Walk_002.p", "Run_001.p"]`` —
+        where duplicates are expected and the labels carry meaning — keep
+        the extracted form (``["Walk", "Walk", "Run"]``).
+        """
         if "model" not in config or "snips_order" not in config.get("model", {}):
             return None
         original_filenames = config["model"]["snips_order"]
@@ -289,17 +195,19 @@ class ReferenceClips:
             if m is None:
                 raise ValueError(f"Clip name {fn} does not match pattern {pattern}.")
             clip_names.append(m.group(1))
+        if len(set(clip_names)) == 1 and len(original_filenames) > 1:
+            return np.array(list(original_filenames))
         return np.array(clip_names)
 
     @property
     def _shape_check_key(self) -> str:
         """Key to use for shape checks."""
-        return "qpos" if self._is_legacy_format else "joints"
+        return "qpos"
 
     @property
     def _data_array_keys(self) -> list[str]:
-        """List of data array keys based on format."""
-        return self._LEGACY_ARRAYS if self._is_legacy_format else self._NAMED_ARRAYS
+        """List of on-disk data array keys."""
+        return self._LEGACY_ARRAYS
 
     # -------------------------------------------------------------------------
     # Slicing and splitting operations
@@ -455,100 +363,53 @@ class ReferenceClips:
 
     @property
     def qpos(self) -> jp.ndarray:
-        """Joint positions array."""
-        if self._is_legacy_format:
-            return self._data_arrays["qpos"]
-        return jp.concatenate([self.position, self.quaternion, self.joints], axis=-1)
+        """Joint positions array (root + joints, flat shape ``(n_clips, n_frames, n_qpos)``)."""
+        return self._data_arrays["qpos"]
 
     @property
     def qvel(self) -> jp.ndarray:
-        """Joint velocities array."""
-        if self._is_legacy_format:
-            return self._data_arrays["qvel"]
-        return jp.concatenate(
-            [self.velocity, self.angular_velocity, self.joints_velocity], axis=-1
-        )
+        """Joint velocities array (root + joints, flat shape ``(n_clips, n_frames, n_qvel)``)."""
+        return self._data_arrays["qvel"]
 
     @property
     def root_position(self) -> jp.ndarray:
-        """Root XYZ position."""
-        if self._is_legacy_format:
-            return self.qpos[..., :3]
-        return self._data_arrays["position"]
+        """Root XYZ position (``qpos[..., :3]``)."""
+        return self.qpos[..., :3]
 
     @property
     def root_quaternion(self) -> jp.ndarray:
-        """Root orientation quaternion."""
-        if self._is_legacy_format:
-            return self.qpos[..., 3:7]
-        return self._data_arrays["quaternion"]
+        """Root orientation quaternion (``qpos[..., 3:7]``, scalar-first ``[w,x,y,z]``)."""
+        return self.qpos[..., 3:7]
 
     @property
     def joints(self) -> jp.ndarray:
-        """Joint angles (excluding root)."""
-        if self._is_legacy_format:
-            return self.qpos[..., 7:]
-        return self._data_arrays["joints"]
+        """Joint angles, root excluded (``qpos[..., 7:]``)."""
+        return self.qpos[..., 7:]
 
     @property
     def joints_velocity(self) -> jp.ndarray:
-        """Joint velocities (excluding root)."""
-        if self._is_legacy_format:
-            return self.qvel[..., 6:]
-        return self._data_arrays["joints_velocity"]
-
-    # Named-array format specific properties
-    @property
-    def position(self) -> jp.ndarray:
-        """Root position (named format) or computed from qpos (legacy)."""
-        if self._is_legacy_format:
-            return self.qpos[..., :3]
-        return self._data_arrays["position"]
-
-    @property
-    def velocity(self) -> jp.ndarray:
-        """Root velocity (named format) or computed from qvel (legacy)."""
-        if self._is_legacy_format:
-            return self.qvel[..., :3]
-        return self._data_arrays["velocity"]
-
-    @property
-    def quaternion(self) -> jp.ndarray:
-        """Root quaternion (named format) or computed from qpos (legacy)."""
-        if self._is_legacy_format:
-            return self.qpos[..., 3:7]
-        return self._data_arrays["quaternion"]
-
-    @property
-    def angular_velocity(self) -> jp.ndarray:
-        """Root angular velocity (named format) or computed from qvel (legacy)."""
-        if self._is_legacy_format:
-            return self.qvel[..., 3:6]
-        return self._data_arrays["angular_velocity"]
+        """Joint velocities, root excluded (``qvel[..., 6:]``)."""
+        return self.qvel[..., 6:]
 
     @property
     def body_positions(self) -> jp.ndarray:
-        """Body positions array."""
-        if self._is_legacy_format:
-            return self._data_arrays["xpos"]
-        return self._data_arrays["body_positions"]
+        """Body world positions (``xpos`` on disk)."""
+        return self._data_arrays["xpos"]
 
     @property
     def body_quaternions(self) -> jp.ndarray:
-        """Body quaternions array."""
-        if self._is_legacy_format:
-            return self._data_arrays["xquat"]
-        return self._data_arrays["body_quaternions"]
+        """Body world orientations (``xquat`` on disk, scalar-first ``[w,x,y,z]``)."""
+        return self._data_arrays["xquat"]
 
-    # Legacy format specific properties
+    # Disk-name aliases
     @property
     def xpos(self) -> jp.ndarray:
-        """Body positions (legacy name)."""
+        """Alias for ``body_positions`` (matches the on-disk H5 key)."""
         return self.body_positions
 
     @property
     def xquat(self) -> jp.ndarray:
-        """Body quaternions (legacy name)."""
+        """Alias for ``body_quaternions`` (matches the on-disk H5 key)."""
         return self.body_quaternions
 
     # -------------------------------------------------------------------------
