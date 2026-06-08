@@ -118,6 +118,8 @@ class Imitation(rodent_base.RodentEnv):
                 self._config.reference_data_path,
                 self._config.clip_length,
                 self._config.keep_clips_idx,
+                joint_names=self._config.joints,
+                body_names=self._config.bodies,
             )
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":

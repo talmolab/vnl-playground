@@ -30,6 +30,8 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.STICK_XML_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
+        joints=consts.JOINTS,
+        bodies=consts.BODIES,
         mujoco_impl="jax",
         sim_dt=0.002,
         ctrl_dt=0.01,
@@ -98,6 +100,8 @@ class Imitation(stick_base.StickBugEnv):
                 self._config.reference_data_path,
                 self._config.clip_length,
                 self._config.keep_clips_idx,
+                joint_names=self._config.joints,
+                body_names=self._config.bodies,
             )
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
