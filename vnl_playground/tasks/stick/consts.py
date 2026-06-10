@@ -10,8 +10,11 @@ STICK_XML_PATH = STICK_PATH / "xmls" / "stick_mesh_fast.xml"
 STICK_BOX_XML_PATH = STICK_PATH / "xmls" / "stick_fast.xml"
 ARENA_XML_PATH = STICK_PATH / "xmls" / "arena.xml"
 
-# Reference data path for imitation learning (legacy STAC-fit format)
-IMITATION_REFERENCE_PATH = STICK_PATH / "reference_data" / "full_stick.h5"
+# Reference data path for imitation learning (legacy STAC-fit format).
+# The H5 is not vendored in-repo — download it from the MIMIC-MJX HuggingFace
+# dataset into reference_data/ (see reference_data/README.md). The mesh model
+# uses stick_mesh_reference.h5 (75 clips x 225 frames; run with clip_length=225).
+IMITATION_REFERENCE_PATH = STICK_PATH / "reference_data" / "stick_mesh_reference.h5"
 
 # 41 joints (3 thorax + 8 abdomen + 30 leg).
 # Thorax joints 04-t1-l/05-t2-l/06-t3-l are now active in the mesh model
