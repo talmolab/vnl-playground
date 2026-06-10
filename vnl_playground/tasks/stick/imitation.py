@@ -368,10 +368,13 @@ class Imitation(stick_base.StickBugEnv):
 
     @_registry.reward("leg_joints")
     def _leg_joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Tracks the 24 non-claw leg segment bodies — the joints of the
-        six legs (hip, knee, ankle, tarsal). Complements `end_eff`, which
-        only tracks the 6 claw tips, by also requiring the full leg pose
-        to match the reference (not just the foot placement)."""
+        """Tracks the 24 non-claw leg-segment bodies (coxa/femur/tibia/tarsus
+        of all six legs). NOTE: these 24 bodies are ALSO scored by ``end_eff``,
+        which tracks END_EFFECTORS + LEG_JOINTS (30 bodies) — so the leg
+        segments are currently weighted by both terms (``end_eff`` with a tight
+        exp_scale, ``leg_joints`` with a looser one). This double-weighting
+        reflects the trained baseline; whether to de-duplicate it is deferred
+        (see _implementation_log/2026-06-10-stick-reward-double-tracking)."""
         total_dist = self._get_bodies_dist(data, info, metrics, consts.LEG_JOINTS)
         metrics["body_errors/leg_joints_total"] = total_dist
         reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
@@ -557,6 +560,14 @@ class Imitation(stick_base.StickBugEnv):
                 ).astype(np.int32)
                 ref_qpos = np.asarray(self.reference_clips.qpos[clip_idx])
                 qposes_ref = ref_qpos[frame_indices]
+
+        if render_ghost and qposes_ref is None:
+            warnings.warn(
+                "render_optimized(render_ghost=True) but no reference qposes "
+                "were available (the rollout Mapping has no 'qposes_ref'); "
+                "rendering the rollout without the ghost overlay."
+            )
+            render_ghost = False
 
         if render_ghost:
             mj_model = self._compile_with_ghost()
