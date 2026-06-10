@@ -466,9 +466,7 @@ class Imitation(stick_base.StickBugEnv):
         for body in ghost_stick.worldbody.bodies:
             utils._recolour_tree(body, rgba=[1.0, 1.0, 1.0, 0.2])
         spawn_frame = spec.worldbody.add_frame(pos=(0, 0, 0), quat=(1, 0, 0, 0))
-        spawn_frame.attach_body(
-            ghost_stick.body("reference_base"), "", suffix="-ghost"
-        )
+        spawn_frame.attach_body(ghost_stick.body("reference_base"), "", suffix="-ghost")
         ghost_model = spec.compile()
         # Mirror the SI rescaling applied in base.compile() so eval videos
         # use the same physics — without this, the trackcom camera sees
@@ -591,6 +589,7 @@ class Imitation(stick_base.StickBugEnv):
 
     def verify_reference_data(self, atol: float = 5e-3) -> bool:
         """Check that env-from-qpos reproduces the reference body positions."""
+
         def test_frame(clip_idx: int, frame: int) -> dict[str, bool]:
             data = self._reset_data(clip_idx, frame)
             reference = self.reference_clips.at(clip=clip_idx, frame=frame)
