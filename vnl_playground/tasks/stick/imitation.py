@@ -43,6 +43,7 @@ def default_config() -> config_dict.ConfigDict:
         torque_actuators=False,
         rescale_factor=1.0,  # Mesh STAC fit was done with SCALE_FACTOR=1.
         reference_data_path=consts.IMITATION_REFERENCE_PATH,
+        auto_download=False,  # if set, fetch reference_data_path from HF when missing
         mocap_hz=50,
         clip_length=225,  # stick_mesh_reference.h5 is 75 clips x 225 frames
         clip_set="all",
@@ -103,8 +104,24 @@ class Imitation(stick_base.StickBugEnv):
         if clips is not None:
             self.reference_clips = clips
         else:
+            ref_path = self._config.reference_data_path
+            if not ref_path.exists():
+                which = {v: k for k, v in stick_base._HF_REFERENCE_FILES.items()}.get(
+                    ref_path.name
+                )
+                if self._config.get("auto_download", False) and which is not None:
+                    ref_path = stick_base.StickBugEnv.download_reference_data(
+                        which=which, dest=ref_path
+                    )
+                else:
+                    raise FileNotFoundError(
+                        f"Stick reference data not found at {ref_path}. Fetch it "
+                        "with `StickImitation.download_reference_data()` (~35 MB from "
+                        "talmolab/MIMIC-MJX), set config `auto_download=True`, or pass "
+                        "`clips=`. See reference_data/README.md."
+                    )
             self.reference_clips = ReferenceClips(
-                self._config.reference_data_path,
+                ref_path,
                 self._config.clip_length,
                 self._config.keep_clips_idx,
             )

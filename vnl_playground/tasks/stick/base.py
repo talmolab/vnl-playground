@@ -1,6 +1,7 @@
 """Base classes for stick bug (Sungaya inexpectata)."""
 
 import collections
+import shutil
 from typing import Any, Dict, Mapping, Optional, Union
 
 from etils import epath
@@ -16,6 +17,13 @@ from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.stick import consts
 from vnl_playground.tasks.reward_registry import RewardRegistry
 from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
+
+# Reference-clip datasets published on the MIMIC-MJX HuggingFace dataset
+# (data/stick/). See StickBugEnv.download_reference_data + reference_data/README.md.
+_HF_REFERENCE_FILES = {
+    "mesh": "stick_mesh_reference.h5",  # 48-qpos mesh model (default)
+    "box": "stick_box_model_reference.h5",  # 45-qpos legacy box model
+}
 
 
 def get_assets() -> Dict[str, bytes]:
@@ -148,6 +156,50 @@ class StickBugEnv(mjx_env.MjxEnv):
             _recolour_tree(body, rgba=ghost_rgba)
         spawn_frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         spawn_frame.attach_body(stick_spec.body("reference_base"), "", suffix=suffix)
+
+    @staticmethod
+    def download_reference_data(
+        which: str = "mesh",
+        dest: Optional[epath.Path] = None,
+        repo_id: str = "talmolab/MIMIC-MJX",
+        force: bool = False,
+    ) -> epath.Path:
+        """Download a stick reference-clip H5 from the MIMIC-MJX HF dataset.
+
+        Args:
+            which: "mesh" (48-qpos, default) or "box" (45-qpos legacy) fit.
+            dest: where to write the file. Defaults to reference_data/<name>
+                next to the stick package (the path StickImitation loads by
+                default).
+            repo_id: HuggingFace dataset repo id.
+            force: re-download even if dest already exists.
+
+        Returns:
+            Local path to the downloaded H5.
+        """
+        if which not in _HF_REFERENCE_FILES:
+            raise ValueError(
+                f"`which` must be one of {sorted(_HF_REFERENCE_FILES)}, got {which!r}."
+            )
+        name = _HF_REFERENCE_FILES[which]
+        if dest is None:
+            dest = consts.STICK_PATH / "reference_data" / name
+        else:
+            dest = epath.Path(dest)
+        if dest.exists() and not force:
+            return dest
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as e:
+            raise ImportError(
+                "Downloading stick reference data requires `huggingface_hub`. "
+                "Install it with `pip install huggingface_hub`."
+            ) from e
+        cached = hf_hub_download(repo_id, f"data/stick/{name}", repo_type="dataset")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(cached, str(dest))
+        logging.info("Downloaded %s -> %s", name, dest)
+        return dest
 
     @staticmethod
     def _apply_si_rescaling(mj_model: mujoco.MjModel) -> None:
