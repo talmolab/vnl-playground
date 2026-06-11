@@ -44,7 +44,7 @@ def default_config() -> config_dict.ConfigDict:
         rescale_factor=1.0,  # Mesh STAC fit was done with SCALE_FACTOR=1.
         reference_data_path=consts.IMITATION_REFERENCE_PATH,
         mocap_hz=50,
-        clip_length=100,
+        clip_length=225,  # stick_mesh_reference.h5 is 75 clips x 225 frames
         clip_set="all",
         reference_length=5,
         reference_stride=1,
