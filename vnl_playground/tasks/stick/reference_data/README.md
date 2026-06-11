@@ -10,6 +10,7 @@ HuggingFace dataset.
 |------|-------|--------|-------|
 | `stick_mesh_reference.h5` | **mesh** (default) | 75 clips × 225 frames, **48 qpos** | matches the mesh walker; 39 markers |
 | `stick_box_model_reference.h5` | box (legacy) | 16,875 frames, **45 qpos** | older box model (3 thorax joints disabled); 50 markers |
+| `stick_insect_mocap.h5` | raw source | 16,875 frames, **88 landmarks** (mm) | pre-STAC source mocap (SLEAP `tracks`); for re-deriving markers / re-fitting STAC — not needed to run imitation |
 
 ## Download
 
