@@ -9,6 +9,10 @@ STICK_PATH = epath.Path(__file__).parent
 STICK_XML_PATH = STICK_PATH / "xmls" / "stick_mesh_fast.xml"
 STICK_BOX_XML_PATH = STICK_PATH / "xmls" / "stick_fast.xml"
 ARENA_XML_PATH = STICK_PATH / "xmls" / "arena.xml"
+# Floor-less pure-white arena for rendering motion sequences with an overlaid
+# reference ghost (see tasks.stick.visualize.StickRender). Render-only; the
+# training/eval envs keep the checkerboard-floor ARENA_XML_PATH above.
+WHITE_ARENA_XML_PATH = STICK_PATH / "xmls" / "white_arena.xml"
 
 # Reference data path for imitation learning (legacy STAC-fit format).
 # The H5 is not vendored in-repo — download it from the MIMIC-MJX HuggingFace
