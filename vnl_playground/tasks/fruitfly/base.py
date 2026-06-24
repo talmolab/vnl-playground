@@ -29,6 +29,9 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.FRUITFLY_XML_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
+        joints=consts.JOINTS,
+        bodies=consts.BODIES,
+        end_effectors=consts.END_EFFECTORS,
         sim_dt=0.001,
         ctrl_dt=0.002,
         solver="newton",

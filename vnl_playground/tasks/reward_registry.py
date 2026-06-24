@@ -7,12 +7,13 @@ class RewardRegistry:
     """Registry for reward and termination functions.
 
     This class provides a decorator-based pattern for registering
-    reward and termination functions that can be looked up by name.
+    reward, cost, and termination functions that can be looked up by name.
     """
 
     def __init__(self):
         self.rewards: dict[str, Callable] = {}
         self.terminations: dict[str, Callable] = {}
+        # TODO: add costs to registry and support in envs
 
     def reward(self, name: str):
         """Decorator to register a reward function.

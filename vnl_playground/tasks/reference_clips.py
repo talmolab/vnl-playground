@@ -49,7 +49,7 @@ See Also
 import copy
 import re
 from ctypes import Array
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, List, Tuple
 
 import h5py
 import jax
@@ -167,6 +167,17 @@ class ReferenceClips:
             data_path, n_frames_per_clip, keep_clips_idx, joint_names, body_names
         )
 
+    def __repr__(self) -> str:
+        return (
+            "ReferenceClips("
+            f"data_path={self._data_path}, "
+            f"n_clips={self.n_clips},"
+            f"n_frames_per_clip={self.n_frames})"
+        )
+
+    def __len__(self) -> int:
+        return self.n_clips
+
     def _load_from_disk(
         self,
         data_path: str,
@@ -175,7 +186,16 @@ class ReferenceClips:
         joint_names: Optional[list[str]],
         body_names: Optional[list[str]],
     ) -> None:
-        """Load data from H5 file, auto-detecting format."""
+        """Load data from H5 file, auto-detecting format.
+
+        Args:
+            data_path: Path to the HDF5 file.
+            n_frames_per_clip: Number of frames per clip.
+            keep_clips_idx: Optional array of clip indices to keep.
+            joint_names: Optional list of joint names to override.
+            body_names: Optional list of body names to override.
+        """
+        self._data_path = data_path
         with h5py.File(data_path, "r") as fid:
             # Detect format by checking for named arrays
             group = fid["all_clips"] if "all_clips" in fid else fid
@@ -203,11 +223,12 @@ class ReferenceClips:
         for k in self._NAMED_ARRAYS:
             if k in group:
                 arr = group[k][()]
+                self._clip_idx = jp.arange(arr.shape[0])
                 self._data_arrays[k] = jp.array(arr)
                 if keep_clips_idx is not None:
                     logging.info(f"{k}: Keeping {len(keep_clips_idx)} clips")
                     self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
-
+                    self._clip_idx = jp.array(keep_clips_idx)
         # Load joint names
         if joint_names is not None:
             self._joint_names_list = list(joint_names)
@@ -250,6 +271,7 @@ class ReferenceClips:
             if k in fid:
                 arr = fid[k][()]
                 n_clips = arr.shape[0] // n_frames_per_clip
+                self._clip_idx = jp.arange(n_clips)
                 arr = arr.reshape(n_clips, n_frames_per_clip, *arr.shape[1:])
                 self._data_arrays[k] = jp.array(arr)
                 if keep_clips_idx is not None:
@@ -267,8 +289,7 @@ class ReferenceClips:
             if joint_names is not None:
                 self._joint_names_list = list(joint_names)
             else:
-                self._joint_names_list = list(names_qpos[7:])
-
+                self._joint_names_list = list(names_qpos)
         if "names_xpos" in fid:
             names_xpos = fid["names_xpos"][()].astype(str)
             self._xpos_names = {n: i for (i, n) in enumerate(names_xpos)}
@@ -435,6 +456,7 @@ class ReferenceClips:
             for k in self._data_array_keys
             if k in self._data_arrays
         }
+        train_clips._clip_idx = self._clip_idx[train_indices]
         if self.clip_names is not None:
             train_clips.clip_names = self.clip_names[train_indices]
 
@@ -444,6 +466,7 @@ class ReferenceClips:
             for k in self._data_array_keys
             if k in self._data_arrays
         }
+        test_clips._clip_idx = self._clip_idx[test_indices]
         if self.clip_names is not None:
             test_clips.clip_names = self.clip_names[test_indices]
 
@@ -480,21 +503,24 @@ class ReferenceClips:
     def root_quaternion(self) -> jp.ndarray:
         """Root orientation quaternion."""
         if self._is_legacy_format:
-            return self.qpos[..., 3:7]
+            return self.xquat[..., 1, :]  # Can't assume freejoint
         return self._data_arrays["quaternion"]
 
     @property
     def joints(self) -> jp.ndarray:
         """Joint angles (excluding root)."""
         if self._is_legacy_format:
-            return self.qpos[..., 7:]
+            return self.qpos[
+                ..., [self._qpos_names[name] for name in self._joint_names_list]
+            ]
         return self._data_arrays["joints"]
 
     @property
     def joints_velocity(self) -> jp.ndarray:
         """Joint velocities (excluding root)."""
         if self._is_legacy_format:
-            return self.qvel[..., 6:]
+            start_idx = self.qvel.shape[-1] - len(self._joint_names_list)
+            return self.qvel[..., start_idx:]
         return self._data_arrays["joints_velocity"]
 
     # Named-array format specific properties
@@ -516,14 +542,15 @@ class ReferenceClips:
     def quaternion(self) -> jp.ndarray:
         """Root quaternion (named format) or computed from qpos (legacy)."""
         if self._is_legacy_format:
-            return self.qpos[..., 3:7]
+            return self.xquat[..., 1, :]  # Can't assume freejoint
         return self._data_arrays["quaternion"]
 
     @property
     def angular_velocity(self) -> jp.ndarray:
         """Root angular velocity (named format) or computed from qvel (legacy)."""
         if self._is_legacy_format:
-            return self.qvel[..., 3:6]
+            start_idx = self.qvel.shape[-1] - len(self._joint_names_list)
+            return self.qvel[..., start_idx:]
         return self._data_arrays["angular_velocity"]
 
     @property
@@ -571,18 +598,81 @@ class ReferenceClips:
 
     def body_xpos(self, name: str) -> jp.ndarray:
         """Get the global position of a body by name."""
-        if name not in self._body_names_map:
+        if name not in self._xpos_names:
             raise KeyError(
-                f"Body '{name}' not found. Available: {list(self._body_names_map.keys())}"
+                f"Body '{name}' not found. Available: {list(self._xpos_names.keys())}"
             )
-        idx = self._body_names_map[name]
+        idx = self._xpos_names[name]
         return self.body_positions[..., idx, :]
 
     def body_xquat(self, name: str) -> jp.ndarray:
         """Get the global orientation of a body by name."""
-        if name not in self._body_names_map:
+        if name not in self._xpos_names:
             raise KeyError(
-                f"Body '{name}' not found. Available: {list(self._body_names_map.keys())}"
+                f"Body '{name}' not found. Available: {list(self._xpos_names.keys())}"
             )
-        idx = self._body_names_map[name]
+        idx = self._xpos_names[name]
         return self.body_quaternions[..., idx, :]
+
+    @property
+    def n_frames(self) -> int:
+        """Get number of frames in the clips.
+
+        Returns:
+            Number of frames per clip.
+        """
+        return self.qpos.shape[1]
+
+    @property
+    def n_clips(self) -> int:
+        """Get number of clips in the dataset.
+
+        Returns:
+            Number of clips available.
+        """
+        return self.qpos.shape[0] if self.qpos.ndim >= 3 else 1
+
+    @property
+    def data_path(self) -> str:
+        """Get the path to the data file.
+
+        Returns:
+            Path to the HDF5 file containing the motion data.
+        """
+        return self._data_path
+
+    @property
+    def clip_indices(self) -> jp.ndarray:
+        """Get the indices of clips in this dataset.
+
+        Returns:
+            Array of clip indices.
+        """
+        return self._clip_idx
+
+    @property
+    def shape(self) -> Tuple[int, ...]:
+        """Get the shape of the motion data.
+
+        Returns:
+            Shape tuple of (n_clips, n_frames, ...) or (n_frames, ...) for sliced data.
+        """
+        return self.qpos.shape
+
+    @property
+    def is_sliced(self) -> bool:
+        """Check if this is a sliced reference clips object.
+
+        Returns:
+            True if this object represents a single clip/frame slice.
+        """
+        return self.qpos.ndim < 3
+
+    @property
+    def joint_indices(self) -> List[int]:
+        """Get indices of joints.
+
+        Returns:
+            List of indices for joints.
+        """
+        return list(self._qpos_names.values())

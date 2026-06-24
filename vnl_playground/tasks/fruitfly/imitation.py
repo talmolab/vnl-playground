@@ -27,6 +27,9 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.FRUITFLY_XML_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
+        joints=consts.JOINTS,
+        bodies=consts.BODIES,
+        end_effectors=consts.END_EFFECTORS,
         mujoco_impl="warp",  # Use warp backend for faster testing
         naconmax=1024 * 10,
         sim_dt=0.0002,  # 5000 Hz physics
@@ -112,6 +115,8 @@ class Imitation(fruitfly_base.FruitflyEnv):
                 str(self._config.reference_data_path),
                 self._config.clip_length,
                 self._config.keep_clips_idx,
+                joint_names=self._config.joints,
+                body_names=self._config.bodies,
             )
 
         max_n_clips = self.reference_clips.joints.shape[0]

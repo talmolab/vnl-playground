@@ -96,6 +96,11 @@ def scale_spec(spec, scale, root_body: str = "walker"):
             scale_bodies(body, scale)
             body = parent.next_body(body)
 
+    # if scale_actuators:
+    # # scale gear
+    for mesh in scaled_spec.meshes:
+        mesh.scale = mesh.scale * scale
+
     for actuator in scaled_spec.actuators:
         # scale the actuator gear by (scale ** 2),
         # this is because muscle force-generating capacity
@@ -108,5 +113,5 @@ def scale_spec(spec, scale, root_body: str = "walker"):
         qpos[2] = qpos[2] * scale
         keypoint.qpos = qpos
 
-    scale_bodies(scaled_spec.body(root_body), scale)
+    scale_bodies(scaled_spec.worldbody.first_body(), scale)
     return scaled_spec

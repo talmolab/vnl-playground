@@ -18,11 +18,14 @@ from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
 from vnl_playground.tasks.fruitfly import (
     maintain_velocity as fruitfly_maintain_velocity,
 )
+
 from vnl_playground.tasks.mouse import imitation as mouse_imitation
 from vnl_playground.tasks.mouse import mouse_reach
 from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
 from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_velocity
 from vnl_playground.tasks.stick import imitation as stick_imitation
+
+from vnl_playground.tasks.celegans import imitation as worm_imitation
 
 # Unified wrappers and reference clips
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
@@ -42,6 +45,8 @@ _envs = {
     "MouseImitation": mouse_imitation.MouseImitation,
     "StickMaintainVelocity": stick_maintain_velocity.MaintainVelocity,
     "StickImitation": stick_imitation.Imitation,
+    "WormImitation": worm_imitation.Imitation,
+    "CelegansImitation": worm_imitation.Imitation,
 }
 
 _cfgs = {
@@ -57,6 +62,7 @@ _cfgs = {
     "MouseImitation": mouse_imitation.default_config,
     "StickMaintainVelocity": stick_maintain_velocity.default_config,
     "StickImitation": stick_imitation.default_config,
+    "WormImitation": worm_imitation.default_config,
 }
 
 # ReferenceClips class for imitation environments (not all envs use clips)
@@ -66,6 +72,7 @@ _reference_clips_classes = {
     "FruitflyImitation": ReferenceClips,
     "MouseImitation": MouseReferenceClips,
     "StickImitation": ReferenceClips,
+    "WormImitation": ReferenceClips,
 }
 
 
