@@ -72,6 +72,20 @@
                  a bit further so the body dominates over the floor. -->
             <camera name="close_profile" mode="trackcom" pos=".04 -.04 .02" xyaxes="1 1 0 -0.5 0.5 2" fovy="35"/>
             <camera name="extreme_closeup" mode="trackcom" pos=".02 -.02 0.008" xyaxes="1 1 0 -1 1 4" fovy="30"/>
+            <!-- COM-tracking world-fixed surround ring (turntable). Orientation is
+                 fixed in world space like close_profile; azimuth is measured CCW from
+                 +x, elevation 25 deg above horizontal, distance 7 cm, so the
+                 anatomical aspect seen depends on the bug's heading in the pose. -->
+            <camera name="orbit_000" mode="trackcom" pos="0.0634 0.0000 0.0296" xyaxes="0.0000 1.0000 0.0000 -0.4226 0.0000 0.9063" fovy="40"/>
+            <camera name="orbit_045" mode="trackcom" pos="0.0449 0.0449 0.0296" xyaxes="-0.7071 0.7071 0.0000 -0.2988 -0.2988 0.9063" fovy="40"/>
+            <camera name="orbit_090" mode="trackcom" pos="0.0000 0.0634 0.0296" xyaxes="-1.0000 0.0000 0.0000 -0.0000 -0.4226 0.9063" fovy="40"/>
+            <camera name="orbit_135" mode="trackcom" pos="-0.0449 0.0449 0.0296" xyaxes="-0.7071 -0.7071 0.0000 0.2988 -0.2988 0.9063" fovy="40"/>
+            <camera name="orbit_180" mode="trackcom" pos="-0.0634 0.0000 0.0296" xyaxes="-0.0000 -1.0000 0.0000 0.4226 -0.0000 0.9063" fovy="40"/>
+            <camera name="orbit_225" mode="trackcom" pos="-0.0449 -0.0449 0.0296" xyaxes="0.7071 -0.7071 0.0000 0.2988 0.2988 0.9063" fovy="40"/>
+            <camera name="orbit_270" mode="trackcom" pos="-0.0000 -0.0634 0.0296" xyaxes="1.0000 -0.0000 0.0000 0.0000 0.4226 0.9063" fovy="40"/>
+            <camera name="orbit_315" mode="trackcom" pos="0.0449 -0.0449 0.0296" xyaxes="0.7071 0.7071 -0.0000 -0.2988 0.2988 0.9063" fovy="40"/>
+            <!-- Overhead, looking straight down (image right = world +x, up = +y). -->
+            <camera name="top_down" mode="trackcom" pos="0 0 0.11" xyaxes="1 0 0 0 1 0" fovy="40"/>
             <geom name="03-caput" type="mesh" mesh="03-caput" pos="-4.93919e-06 0.0008534044 -0.00056868081" material="sungaya_mat" density="1000"/>
             <geom name="04-t1" type="mesh" mesh="04-t1" pos="5.17067e-06 -0.00071373116 -0.00015030356" material="sungaya_mat" density="1000"/>
             <body name="04-t1-l" pos="4.212954e-05 -0.00142994616 -0.00024617367">
