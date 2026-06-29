@@ -35,12 +35,22 @@ PHASE_HOLD = 0
 PHASE_DECISION = 1
 PHASE_JUMP = 2
 
-# Trial outcome codes
+# Trial outcome codes (PHYSICAL / execution axis: did the body land or fall)
 OUTCOME_ONGOING = 0
 OUTCOME_SUCCESS = 1
 OUTCOME_FAILURE = 2
 OUTCOME_ABORT = 3
 OUTCOME_TIMEOUT = 4
+
+# Signal-detection outcome codes (DECISION axis: jump vs withhold, scored against
+# the gap's ground-truth reachability). INDEPENDENT of the physical axis above --
+# a reachable gap that is jumped is a Hit here even if the body later mis-lands
+# (that is the W3 execution/calibration axis). W2 go/no-go + d'/criterion use these.
+SDT_ONGOING = 0
+SDT_HIT = 1             # reachable gap + jumped
+SDT_MISS = 2            # reachable gap + withheld
+SDT_FALSE_ALARM = 3     # un-reachable gap + jumped
+SDT_CORRECT_REJECT = 4  # un-reachable gap + withheld
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -66,9 +76,32 @@ def default_config() -> config_dict.ConfigDict:
         landing_platform_depth=0.3,
         landing_platform_max_width=0.3,
         landing_height_offset=0.02,
+        # Safe-landing margin (metres): shrinks the safe zone inward from the
+        # landing platform's far edge. 0.0 = the whole platform top is safe;
+        # larger values force the rat to touch down closer to the near edge,
+        # i.e. demand more accurate distance estimation. Touching down past
+        # (far_edge - margin) counts as an overjump and fails the trial.
+        landing_safe_margin=0.0,
         use_mesh_platforms=False,
         # Trial parameters
+        # Default = easy, all-reachable gaps (Scott's Phase-0 "basic single jump"
+        # baseline). W2 go/no-go needs un-reachable (> max_reachable_gap) gaps too,
+        # but those are supplied per-run via config override (the eval harness sets
+        # gap_distances=tuple(eval_grid); W2 training sets its own mix) -- NOT baked
+        # into the code default. Keeps "config, not code" (Scott's guardrail).
         gap_distances=(0.06, 0.08, 0.10, 0.12, 0.14),
+        # SDT ground-truth reachability label: a gap is "reachable" (signal
+        # present) iff its distance <= this. Drives Hit/Miss vs FA/CR scoring.
+        # Provisional 0.16 m (middle of the 14-18 cm ambiguous band); recalibrate
+        # from the trained rat's measured max reach.
+        max_reachable_gap=0.16,
+        # Eval-only knob: force the gap to a specific INDEX into gap_distances
+        # (-1 = random sampling, the training default). The W2 eval driver builds
+        # the env with gap_distances=tuple(eval_grid) and sweeps this index, so the
+        # psychometric x-axis is the REAL gap that ran. (The old eval runner
+        # recorded a requested width while reset() independently sampled a random
+        # gap -- making the x-axis fiction.)
+        eval_fixed_gap_idx=-1,
         hold_duration=50,
         max_decision_steps=300,
         spawn_x=0.0,
@@ -98,6 +131,7 @@ def default_config() -> config_dict.ConfigDict:
         termination_criteria={
             "fallen": {"min_torso_z": -0.1},
             "trial_success": {},
+            "trial_failure": {},
             "abort_dismount": {},
             "trial_timeout": {"max_steps": 500},
             "nan_termination": {},
@@ -387,9 +421,17 @@ class GapJumpTrial(rodent_base.RodentEnv):
         """
         rng, gap_rng = jax.random.split(rng)
 
-        # Sample gap distance uniformly from the configured set
+        # Gap distance: random over the configured set (training default), or
+        # forced to a specific index for controlled W2 eval. The branch is on a
+        # STATIC config value (read at trace time), so it is trace-safe.
         n_distances = len(self._config.gap_distances)
-        gap_idx = jax.random.randint(gap_rng, shape=(), minval=0, maxval=n_distances)
+        fixed_idx = int(self._config.get("eval_fixed_gap_idx", -1))
+        if fixed_idx >= 0:
+            gap_idx = jp.array(fixed_idx % n_distances, dtype=jp.int32)
+        else:
+            gap_idx = jax.random.randint(
+                gap_rng, shape=(), minval=0, maxval=n_distances
+            )
         gap_distance = self._gap_distances_array[gap_idx]
 
         # Compute slide joint offset: 0 -> max gap, negative -> smaller gap
@@ -442,6 +484,10 @@ class GapJumpTrial(rodent_base.RodentEnv):
             "jump_initiated": jp.array(False),
             "trial_success": jp.array(False),
             "trial_outcome": jp.array(OUTCOME_ONGOING, dtype=jp.int32),
+            # SDT decision-axis tracking (independent of the physical outcome above)
+            "gap_reachable": gap_distance <= self._config.max_reachable_gap,
+            "sdt_outcome": jp.array(SDT_ONGOING, dtype=jp.int32),
+            "decision_time": jp.array(0, dtype=jp.int32),
             # Waypoint / target system
             "target_waypoints": waypoints,
             "num_waypoints": num_waypoints,
@@ -472,6 +518,12 @@ class GapJumpTrial(rodent_base.RodentEnv):
         metrics["trial/success"] = jp.float32(0.0)
         metrics["trial/failure"] = jp.float32(0.0)
         metrics["trial/abort"] = jp.float32(0.0)
+        metrics["sdt/hit"] = jp.float32(0.0)
+        metrics["sdt/miss"] = jp.float32(0.0)
+        metrics["sdt/false_alarm"] = jp.float32(0.0)
+        metrics["sdt/correct_reject"] = jp.float32(0.0)
+        metrics["sdt/gap_reachable"] = jp.float32(0.0)
+        metrics["sdt/decision_time"] = jp.float32(0.0)
 
         return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
 
@@ -533,11 +585,21 @@ class GapJumpTrial(rodent_base.RodentEnv):
 
         info["trial_phase"] = new_phase
 
-        # Detect landing success: torso past landing leading edge and not fallen
+        # Detect landing within the SAFE landing zone. Crossing the near
+        # (leading) edge alone is NOT success any more: the torso must touch
+        # down BETWEEN the near edge and the far edge (minus a safety margin).
+        # Overshooting past the far edge is an overjump (failed distance
+        # estimation) and is treated as a trial failure, which forces the rat
+        # to estimate the gap distance from vision rather than jumping maximally.
         landing_leading_x = self._takeoff_trailing_edge_x + info["gap_distance"]
-        landed = (
-            (torso_x > landing_leading_x) & (torso_z > -0.1) & info["jump_initiated"]
+        safe_margin = self._config.get("landing_safe_margin", 0.0)
+        landing_far_x = (
+            landing_leading_x + self._config.landing_platform_depth - safe_margin
         )
+        on_platform = torso_z > -0.1
+        in_safe_zone = (torso_x > landing_leading_x) & (torso_x < landing_far_x)
+        landed = in_safe_zone & on_platform & info["jump_initiated"]
+        overshot = (torso_x >= landing_far_x) & info["jump_initiated"]
         info["trial_success"] = jp.where(landed, True, info["trial_success"])
 
         # --- Trial outcome tracking ---
@@ -546,8 +608,12 @@ class GapJumpTrial(rodent_base.RodentEnv):
             is_ongoing & landed, OUTCOME_SUCCESS, info["trial_outcome"]
         )
         torso_fallen = torso_z < -0.1
+        # Failure = fell into the gap (underjump) OR overshot the far edge
+        # (overjump). Either way the rat misjudged the jump distance.
         info["trial_outcome"] = jp.where(
-            is_ongoing & torso_fallen & ~landed, OUTCOME_FAILURE, info["trial_outcome"]
+            is_ongoing & (torso_fallen | overshot) & ~landed,
+            OUTCOME_FAILURE,
+            info["trial_outcome"],
         )
         behind_platform = torso_x < -self._config.takeoff_platform_length / 2.0
         past_hold = new_phase >= PHASE_DECISION
@@ -555,6 +621,42 @@ class GapJumpTrial(rodent_base.RodentEnv):
             is_ongoing & behind_platform & past_hold,
             OUTCOME_ABORT,
             info["trial_outcome"],
+        )
+
+        # --- Signal-detection (DECISION axis) scoring ---
+        # Decision = jump vs withhold, scored against ground-truth reachability,
+        # INDEPENDENT of the physical land/fall outcome above. Logic verified in
+        # scratchpad/sdt_env_logic_prototype.py before porting.
+        reachable = info["gap_reachable"]
+        jumped = info["jump_initiated"]
+        decision_start = info["decision_start_step"]
+        # Deliberation time: accrues while in DECISION and not yet committed,
+        # frozen once the jump is initiated (raw data for T3 SPRT/dwell).
+        in_decision_window = (new_phase == PHASE_DECISION) & ~jumped
+        info["decision_time"] = jp.where(
+            in_decision_window & (decision_start >= 0),
+            step_count - decision_start,
+            info["decision_time"],
+        )
+        # A jump resolves the decision immediately; a withhold resolves once the
+        # decision window (max_decision_steps) has elapsed without a jump.
+        sdt_ongoing = info["sdt_outcome"] == SDT_ONGOING
+        withhold_resolved = step_count >= self._config.max_decision_steps
+        info["sdt_outcome"] = jp.where(
+            sdt_ongoing & jumped & reachable, SDT_HIT, info["sdt_outcome"]
+        )
+        info["sdt_outcome"] = jp.where(
+            sdt_ongoing & jumped & ~reachable, SDT_FALSE_ALARM, info["sdt_outcome"]
+        )
+        info["sdt_outcome"] = jp.where(
+            sdt_ongoing & ~jumped & withhold_resolved & reachable,
+            SDT_MISS,
+            info["sdt_outcome"],
+        )
+        info["sdt_outcome"] = jp.where(
+            sdt_ongoing & ~jumped & withhold_resolved & ~reachable,
+            SDT_CORRECT_REJECT,
+            info["sdt_outcome"],
         )
 
         obs = self._get_obs(data, info)
@@ -602,6 +704,16 @@ class GapJumpTrial(rodent_base.RodentEnv):
             float
         )
         metrics["trial/abort"] = (info["trial_outcome"] == OUTCOME_ABORT).astype(float)
+        metrics["sdt/hit"] = (info["sdt_outcome"] == SDT_HIT).astype(float)
+        metrics["sdt/miss"] = (info["sdt_outcome"] == SDT_MISS).astype(float)
+        metrics["sdt/false_alarm"] = (
+            info["sdt_outcome"] == SDT_FALSE_ALARM
+        ).astype(float)
+        metrics["sdt/correct_reject"] = (
+            info["sdt_outcome"] == SDT_CORRECT_REJECT
+        ).astype(float)
+        metrics["sdt/gap_reachable"] = info["gap_reachable"].astype(float)
+        metrics["sdt/decision_time"] = info["decision_time"].astype(float)
 
         state = state.replace(
             data=data,
@@ -894,6 +1006,18 @@ class GapJumpTrial(rodent_base.RodentEnv):
     def _trial_success_termination(self, data, info):
         """Terminate immediately when the rodent successfully lands."""
         return info.get("trial_success", jp.array(False))
+
+    @_registry.termination("trial_failure")
+    def _trial_failure_termination(self, data, info):
+        """Terminate immediately when the trial is marked a failure.
+
+        A failure is either an underjump (torso fell into the gap) or an
+        overjump (torso overshot past the landing platform's far edge). Both
+        are encoded as OUTCOME_FAILURE in step(); terminating here ends the
+        episode the moment the rat misjudges the jump distance.
+        """
+        outcome = info.get("trial_outcome", jp.array(OUTCOME_ONGOING, dtype=jp.int32))
+        return outcome == OUTCOME_FAILURE
 
     @_registry.termination("abort_dismount")
     def _abort_dismount_termination(self, data, info):
