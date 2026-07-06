@@ -16,6 +16,7 @@ from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_vel
 from vnl_playground.tasks.rodent import joystick as rodent_joystick
 from vnl_playground.tasks.rodent import run_gap as rodent_run_gap
 from vnl_playground.tasks.rodent import run_gap_vision as rodent_run_gap_vision
+from vnl_playground.tasks.rodent import jump_gap_trial as rodent_jump_gap_trial
 from vnl_playground.tasks.rodent import gap_jump_trial as rodent_gap_jump_trial
 from vnl_playground.tasks.rodent import gap_jump_trial_vision as rodent_gap_jump_trial_vision
 from vnl_playground.tasks.rodent import go_to_target as rodent_go_to_target
@@ -48,6 +49,7 @@ _envs = {
     "RodentRunGapVision": rodent_run_gap_vision.RunGapVision,
     "RodentRunGapBinocularVision": rodent_run_gap_vision.RunGapVision,
     "RodentRunGapActuableEyes": rodent_run_gap_vision.RunGapVision,
+    "RodentJumpGapTrial": rodent_jump_gap_trial.JumpGapTrial,
     "RodentGapJumpTrial": rodent_gap_jump_trial.GapJumpTrial,
     "RodentGapJumpTrialVision": rodent_gap_jump_trial_vision.GapJumpTrialVision,
     "RodentGoToTarget": rodent_go_to_target.GoToTarget,
@@ -91,6 +93,7 @@ _cfgs = {
     "RodentRunGapVision": rodent_run_gap_vision.default_config,
     "RodentRunGapBinocularVision": _binocular_default_config,
     "RodentRunGapActuableEyes": _actuable_eyes_default_config,
+    "RodentJumpGapTrial": rodent_jump_gap_trial.default_config,
     "RodentGapJumpTrial": rodent_gap_jump_trial.default_config,
     "RodentGapJumpTrialVision": rodent_gap_jump_trial_vision.default_config,
     "RodentGoToTarget": rodent_go_to_target.default_config,
