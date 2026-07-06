@@ -1,0 +1,330 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="sungaya">
+    <option integrator="RK4"/>
+    <visual>
+        <global offwidth="2048" offheight="2048"/>
+    </visual>
+    <compiler angle="radian" autolimits="true"/>
+    <custom>
+        <numeric name="qpos0" data="0 0 0.05 0.7 0 0 0.7 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"/>
+        <numeric name="dt" data="0.01"/>
+        <numeric name="substeps" data="15"/>
+        <numeric name="baumgarte_erp" data="0.1"/>
+    </custom>
+    <asset>
+        <texture name="sungaya_tex" type="2d" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.png"/>
+        <material name="sungaya_mat" texture="sungaya_tex" specular="0.1" shininess="0.1"/>
+        <mesh name="03-caput" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.051.obj"/>
+        <mesh name="04-t1" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.016.obj"/>
+        <mesh name="05-t2" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.018.obj"/>
+        <mesh name="06-t3" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.019.obj"/>
+        <mesh name="07-a2" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.020.obj"/>
+        <mesh name="08-a3" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.021.obj"/>
+        <mesh name="09-a4" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.022.obj"/>
+        <mesh name="10-a5" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.023.obj"/>
+        <mesh name="11-a6" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.024.obj"/>
+        <mesh name="12-a7" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.025.obj"/>
+        <mesh name="13-a8" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.026.obj"/>
+        <mesh name="14-a9" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.027.obj"/>
+        <mesh name="15-a10" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.028.obj"/>
+        <mesh name="16-f-l-coxa" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.004.obj"/>
+        <mesh name="17-f-l-femur" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.003.obj"/>
+        <mesh name="18-f-l-tibia" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.002.obj"/>
+        <mesh name="19-f-l-tarsus" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.001.obj"/>
+        <mesh name="20-f-l-claws" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.obj"/>
+        <mesh name="21-m-l-coxa" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.009.obj"/>
+        <mesh name="22-m-l-femur" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.008.obj"/>
+        <mesh name="23-m-l-tibia" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.007.obj"/>
+        <mesh name="24-m-l-tarsus" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.006.obj"/>
+        <mesh name="25-m-l-claws" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.005.obj"/>
+        <mesh name="26-h-l-coxa" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.014.obj"/>
+        <mesh name="27-h-l-femur" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.013.obj"/>
+        <mesh name="28-h-l-tibia" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.012.obj"/>
+        <mesh name="29-h-l-tarsus" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.011.obj"/>
+        <mesh name="30-h-l-claws" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.010.obj"/>
+        <mesh name="31-f-r-coxa" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.039.obj"/>
+        <mesh name="32-f-r-femur" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.038.obj"/>
+        <mesh name="33-f-r-tibia" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.037.obj"/>
+        <mesh name="35-f-r-tarsus" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.036.obj"/>
+        <mesh name="36-f-r-claws" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.035.obj"/>
+        <mesh name="37-m-r-coxa" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.044.obj"/>
+        <mesh name="38-m-r-femur" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.043.obj"/>
+        <mesh name="39-m-r-tibia" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.042.obj"/>
+        <mesh name="40-m-r-tarsus" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.041.obj"/>
+        <mesh name="41-m-r-claws" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.040.obj"/>
+        <mesh name="42-h-r-coxa" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.049.obj"/>
+        <mesh name="43-h-r-femur" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.048.obj"/>
+        <mesh name="44-h-r-tibia" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.047.obj"/>
+        <mesh name="45-h-r-tarsus" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.046.obj"/>
+        <mesh name="46-h-r-claws" file="stick_insect_urdf/meshes/obj/Sungaya_inexpectata_31mg.045.obj"/>
+    </asset>
+    <worldbody>
+        <light diffuse=".75 .75 .75" pos="0 0 0.5" dir="0 0 -1"/>
+        <!--<geom type="plane" size="0.1 0.1 0.0001" pos="0 0 -0.007" rgba=".7 .7 .6 1"/>-->
+        <body name="reference_base" pos="0 0 0">
+            <joint armature="0" damping="0" limited="false" margin="0.01" name="root" pos="0 0 0" type="free"/>
+            <site name="head" size="0.0001"/>
+            <!-- Follow camera, mode=trackcom. The bug is ~5 cm long, so a
+                 tight 6 cm camera distance fills ~⅔ of the frame at the
+                 default 45° FOV. xyaxes is scale-invariant — direction
+                 from pos→origin is (-1,1,-0.5), so x=(1,1,0)⊥z gives
+                 y = z × x = (-0.5, 0.5, 2). fovy=35 narrows the view
+                 a bit further so the body dominates over the floor. -->
+            <camera name="close_profile" mode="trackcom" pos=".04 -.04 .02" xyaxes="1 1 0 -0.5 0.5 2" fovy="35"/>
+            <camera name="extreme_closeup" mode="trackcom" pos=".02 -.02 0.008" xyaxes="1 1 0 -1 1 4" fovy="30"/>
+            <!-- COM-tracking world-fixed surround ring (turntable). Orientation is
+                 fixed in world space like close_profile; azimuth is measured CCW from
+                 +x, elevation 25 deg above horizontal, distance 7 cm, so the
+                 anatomical aspect seen depends on the bug's heading in the pose. -->
+            <camera name="orbit_000" mode="trackcom" pos="0.0634 0.0000 0.0296" xyaxes="0.0000 1.0000 0.0000 -0.4226 0.0000 0.9063" fovy="40"/>
+            <camera name="orbit_045" mode="trackcom" pos="0.0449 0.0449 0.0296" xyaxes="-0.7071 0.7071 0.0000 -0.2988 -0.2988 0.9063" fovy="40"/>
+            <camera name="orbit_090" mode="trackcom" pos="0.0000 0.0634 0.0296" xyaxes="-1.0000 0.0000 0.0000 -0.0000 -0.4226 0.9063" fovy="40"/>
+            <camera name="orbit_135" mode="trackcom" pos="-0.0449 0.0449 0.0296" xyaxes="-0.7071 -0.7071 0.0000 0.2988 -0.2988 0.9063" fovy="40"/>
+            <camera name="orbit_180" mode="trackcom" pos="-0.0634 0.0000 0.0296" xyaxes="-0.0000 -1.0000 0.0000 0.4226 -0.0000 0.9063" fovy="40"/>
+            <camera name="orbit_225" mode="trackcom" pos="-0.0449 -0.0449 0.0296" xyaxes="0.7071 -0.7071 0.0000 0.2988 0.2988 0.9063" fovy="40"/>
+            <camera name="orbit_270" mode="trackcom" pos="-0.0000 -0.0634 0.0296" xyaxes="1.0000 -0.0000 0.0000 0.0000 0.4226 0.9063" fovy="40"/>
+            <camera name="orbit_315" mode="trackcom" pos="0.0449 -0.0449 0.0296" xyaxes="0.7071 0.7071 -0.0000 -0.2988 0.2988 0.9063" fovy="40"/>
+            <!-- Overhead, looking straight down (image right = world +x, up = +y). -->
+            <camera name="top_down" mode="trackcom" pos="0 0 0.11" xyaxes="1 0 0 0 1 0" fovy="40"/>
+            <geom name="03-caput" type="mesh" mesh="03-caput" pos="-4.93919e-06 0.0008534044 -0.00056868081" material="sungaya_mat" density="1000"/>
+            <geom name="04-t1" type="mesh" mesh="04-t1" pos="5.17067e-06 -0.00071373116 -0.00015030356" material="sungaya_mat" density="1000"/>
+            <body name="04-t1-l" pos="4.212954e-05 -0.00142994616 -0.00024617367">
+                <joint type="hinge" name="04-t1-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.087266 0.087266" />
+                <geom name="05-t2" type="mesh" mesh="05-t2" pos="-1.168428e-05 -0.00229186984 -4.027273e-05" material="sungaya_mat" density="1000"/>
+                <body name="05-t2-l" pos="-1.4549e-06 -0.0043079881 -3.550776e-05">
+                    <joint type="hinge" name="05-t2-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.087266 0.087266" />
+                    <geom name="06-t3" type="mesh" mesh="06-t3" pos="5.37896e-06 -0.0006546122 -4.160991e-05" material="sungaya_mat" density="1000"/>
+                    <body name="06-t3-l" pos="-1.602613e-05 -0.00127102528 2.06451e-06">
+                        <joint type="hinge" name="06-t3-l" pos="0 0 0" axis="1 0 7.55e-08" range="-0.087266 0.087266" />
+                        <geom name="07-a2" type="mesh" mesh="07-a2" pos="2.221604e-05 -0.00044320215 3.139261e-05" material="sungaya_mat" density="1000"/>
+                        <body name="07-a2-l" pos="2.542162e-05 -0.00090925378 0.00010091614">
+                            <joint type="hinge" name="07-a2-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
+                            <geom name="08-a3" type="mesh" mesh="08-a3" pos="3.80757e-06 -0.0006355982 2.586899e-05" material="sungaya_mat" density="1000"/>
+                            <body name="08-a3-l" pos="8.07024e-06 -0.00129344233 5.316696e-05">
+                                <joint type="hinge" name="08-a3-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
+                                <geom name="09-a4" type="mesh" mesh="09-a4" pos="4.23251e-06 -0.00064921647 -4.324162e-05" material="sungaya_mat" density="1000"/>
+                                <body name="09-a4-l" pos="8.11249e-06 -0.00134961947 4.000925e-05">
+                                    <joint type="hinge" name="09-a4-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
+                                    <geom name="10-a5" type="mesh" mesh="10-a5" pos="3.93223e-06 -0.00062264595 -3.370976e-05" material="sungaya_mat" density="1000"/>
+                                    <body name="10-a5-l" pos="8.62755e-06 -0.00131172151 -2.10435e-05">
+                                        <joint type="hinge" name="10-a5-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
+                                        <geom name="11-a6" type="mesh" mesh="11-a6" pos="3.77219e-06 -0.00064754183 2.410548e-05" material="sungaya_mat" density="1000"/>
+                                        <body name="11-a6-l" pos="8.04149e-06 -0.00126429298 5.285629e-05">
+                                            <joint type="hinge" name="11-a6-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
+                                            <geom name="12-a7" type="mesh" mesh="12-a7" pos="4.16505e-06 -0.00067832135 3.601049e-05" material="sungaya_mat" density="1000"/>
+                                            <body name="12-a7-l" pos="2.355316e-05 -0.00140457414 -1.607895e-05">
+                                                <joint type="hinge" name="12-a7-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
+                                                <geom name="13-a8" type="mesh" mesh="13-a8" pos="-1.192655e-05 -0.00055250432 2.861764e-05" material="sungaya_mat" density="1000"/>
+                                                <body name="13-a8-l" pos="-7.70643e-06 -0.00113178045 0.00013272798">
+                                                    <joint type="hinge" name="13-a8-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
+                                                    <geom name="14-a9" type="mesh" mesh="14-a9" pos="2.90333e-06 -0.00050837733 -9.902848e-05" material="sungaya_mat" density="1000"/>
+                                                    <body name="14-a9-l" pos="6.80901e-06 -0.00109023508 -9.047122e-05">
+                                                        <joint type="hinge" name="14-a9-l" pos="0 0 0" axis="1 0 7.55e-08" range="-1.134464 1.134464"/>
+                                                        <geom name="15-a10" type="mesh" mesh="15-a10" pos="4.78492e-06 -0.0007736003 6.360079e-05" material="sungaya_mat" density="1000"/>
+                                                    </body>
+                                                </body>
+                                            </body>
+                                        </body>
+                                    </body>
+                                </body>
+                            </body>
+                        </body>
+                        <body name="26-h-l-coxa-l" pos="-0.00081721315 -0.00035620795 -0.00046644267">
+                            <joint type="hinge" name="26-h-l-coxa-l" pos="0 0 0" axis="0 0 1" range="-3.14159 3.14159"/>
+                            <geom name="26-h-l-coxa" type="mesh" mesh="26-h-l-coxa" pos="-0.00022547226 2.339086e-05 -0.00010656845" material="sungaya_mat" density="1000"/>
+                            <body name="27-h-l-femur-l" pos="-0.00042385235 4.569365e-05 -0.00030739477">
+                                <joint type="hinge" name="27-h-l-femur-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                                <geom name="27-h-l-femur" type="mesh" mesh="27-h-l-femur" pos="-0.00254038163 -6.491935e-05 -0.00075768569" material="sungaya_mat" density="1000"/>
+                                <body name="28-h-l-tibia-l" pos="-0.00447626784 -1.959066e-05 -0.00153649854">
+                                    <inertial pos="0 0 0" mass="1.200e-06" diaginertia="1.350e-14 4.067e-13 4.067e-13"/>
+                                    <joint type="hinge" name="28-h-l-tibia-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                                    <geom name="28-h-l-tibia" type="mesh" mesh="28-h-l-tibia" pos="-0.00199367991 -8.205551e-05 -0.00078430958" material="sungaya_mat" density="1000"/>
+                                    <body name="29-h-l-tarsus-l" pos="-0.00449651713 -3.206206e-05 -0.00141770416">
+                                        <inertial pos="0 0 0" mass="6.000e-07" diaginertia="6.750e-15 2.034e-13 2.034e-13"/>
+                                        <joint type="hinge" name="29-h-l-tarsus-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-0.349066 0.349066"/>
+                                        <geom name="29-h-l-tarsus" type="mesh" mesh="29-h-l-tarsus" pos="-0.00042561069 5.40953e-06 -0.00014981977" material="sungaya_mat" density="1000"/>
+                                        <body name="30-h-l-claws-l" pos="-0.00091560278 7.69488e-06 -0.00029699854">
+                                            <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
+                                            <joint type="hinge" name="30-h-l-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-1.570796 0.000000"/>
+                                            <geom name="30-h-l-claws" type="mesh" mesh="30-h-l-claws" pos="-0.00094383769 -1.53131e-05 -0.00026759366" material="sungaya_mat" density="1000"/>
+                                            <geom name="claw_collide_hl" type="sphere" size="0.0001" pos="-0.00176783769 -1.83131e-05 -0.00067259366" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                        </body>
+                                    </body>
+                                </body>
+                            </body>
+                        </body>
+                        <body name="42-h-r-coxa-l" pos="0.00086174608 -0.000345635 -0.00046515831">
+                            <joint type="hinge" name="42-h-r-coxa-l" pos="0 0 0" axis="0 0 1" range="-3.14159 3.14159"/>
+                            <geom name="42-h-r-coxa" type="mesh" mesh="42-h-r-coxa" pos="0.00022532267 2.622965e-05 -0.00010622357" material="sungaya_mat" density="1000"/>
+                            <body name="43-h-r-femur-l" pos="0.00042371207 5.103106e-05 -0.0003067471">
+                                <joint type="hinge" name="43-h-r-femur-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                                <geom name="43-h-r-femur" type="mesh" mesh="43-h-r-femur" pos="0.0025421537 -3.291393e-05 -0.00075379765" material="sungaya_mat" density="1000"/>
+                                <body name="44-h-r-tibia-l" pos="0.00447850488 3.679947e-05 -0.00152964774">
+                                    <inertial pos="0 0 0" mass="1.200e-06" diaginertia="1.350e-14 4.067e-13 4.067e-13"/>
+                                    <joint type="hinge" name="44-h-r-tibia-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                                    <geom name="44-h-r-tibia" type="mesh" mesh="44-h-r-tibia" pos="0.00199575583 -5.69335e-05 -0.0007812588" material="sungaya_mat" density="1000"/>
+                                    <body name="45-h-r-tarsus-l" pos="0.00449872622 2.45836e-05 -0.00141082448">
+                                        <inertial pos="0 0 0" mass="6.000e-07" diaginertia="6.750e-15 2.034e-13 2.034e-13"/>
+                                        <joint type="hinge" name="45-h-r-tarsus-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-0.349066 0.349066"/>
+                                        <geom name="45-h-r-tarsus" type="mesh" mesh="45-h-r-tarsus" pos="0.00042573921 1.077104e-05 -0.00014916877" material="sungaya_mat" density="1000"/>
+                                        <body name="46-h-r-claws-l" pos="0.0009158887 1.922884e-05 -0.00029559783">
+                                            <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
+                                            <joint type="hinge" name="46-h-r-claws-l" pos="0 0 0" axis="-1.907e-08 -1 -4.371e-08" range="0.000000 1.570796"/>
+                                            <geom name="46-h-r-claws" type="mesh" mesh="46-h-r-claws" pos="0.00094436482 -3.42238e-06 -0.00026615011" material="sungaya_mat" density="1000"/>
+                                            <geom name="claw_collide_hr" type="sphere" size="0.0001" pos="0.00176936482 3.57762e-06 -0.00067015011" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                        </body>
+                                    </body>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                    <body name="21-m-l-coxa-l" pos="-0.00071249704 0.00073767244 -0.00045217428">
+                        <joint type="hinge" name="21-m-l-coxa-l" pos="0 0 0" axis="0 0 1" range="-3.14159 3.14159"/>
+                        <geom name="21-m-l-coxa" type="mesh" mesh="21-m-l-coxa" pos="-0.00027025153 -4.02329e-05 -0.00012987666" material="sungaya_mat" density="1000"/>
+                        <body name="22-m-l-femur-l" pos="-0.00063080399 -3.517978e-05 -0.00031548744">
+                            <joint type="hinge" name="22-m-l-femur-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                            <geom name="22-m-l-femur" type="mesh" mesh="22-m-l-femur" pos="-0.00210535526 7.364876e-05 -0.00060791074" material="sungaya_mat" density="1000"/>
+                            <body name="23-m-l-tibia-l" pos="-0.00373081351 8.107792e-05 -0.00116356998">
+                                <inertial pos="0 0 0" mass="1.200e-06" diaginertia="1.350e-14 4.067e-13 4.067e-13"/>
+                                <joint type="hinge" name="23-m-l-tibia-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                                <geom name="23-m-l-tibia" type="mesh" mesh="23-m-l-tibia" pos="-0.0015941062 -3.561354e-05 -0.00056001171" material="sungaya_mat" density="1000"/>
+                                <body name="24-m-l-tarsus-l" pos="-0.00345331943 -7.4762e-07 -0.00104214554">
+                                    <inertial pos="0 0 0" mass="6.000e-07" diaginertia="6.750e-15 2.034e-13 2.034e-13"/>
+                                    <joint type="hinge" name="24-m-l-tarsus-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-0.349066 0.349066"/>
+                                    <geom name="24-m-l-tarsus" type="mesh" mesh="24-m-l-tarsus" pos="-0.00038003828 9.70718e-06 -0.00011728588" material="sungaya_mat" density="1000"/>
+                                    <body name="25-m-l-claws-l" pos="-0.00083134137 2.904632e-05 -0.00025122333">
+                                        <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
+                                        <joint type="hinge" name="25-m-l-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-1.570796 0.000000"/>
+                                        <geom name="25-m-l-claws" type="mesh" mesh="25-m-l-claws" pos="-0.00065638963 -3.338582e-05 -0.00020578038" material="sungaya_mat" density="1000"/>
+                                        <geom name="claw_collide_ml" type="sphere" size="0.0001" pos="-0.00115938963 -3.338582e-05 -0.00057778038" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                    </body>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                    <body name="37-m-r-coxa-l" pos="0.00069518527 0.000746537 -0.00045109761">
+                        <joint type="hinge" name="37-m-r-coxa-l" pos="0 0 0" axis="0 0 1" range="-3.14159 3.14159"/>
+                        <geom name="37-m-r-coxa" type="mesh" mesh="37-m-r-coxa" pos="0.00027093512 -3.682473e-05 -0.00012946269" material="sungaya_mat" density="1000"/>
+                        <body name="38-m-r-femur-l" pos="0.0006316778 -2.722791e-05 -0.00031452236">
+                            <joint type="hinge" name="38-m-r-femur-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                            <geom name="38-m-r-femur" type="mesh" mesh="38-m-r-femur" pos="0.00210518856 0.00010016328 -0.00060469005" material="sungaya_mat" density="1000"/>
+                            <body name="39-m-r-tibia-l" pos="0.00373127311 0.00012806733 -0.00115786097">
+                                <inertial pos="0 0 0" mass="1.200e-06" diaginertia="1.350e-14 4.067e-13 4.067e-13"/>
+                                <joint type="hinge" name="39-m-r-tibia-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                                <geom name="39-m-r-tibia" type="mesh" mesh="39-m-r-tibia" pos="0.00159528293 -1.552957e-05 -0.00055757165" material="sungaya_mat" density="1000"/>
+                                <body name="40-m-r-tarsus-l" pos="0.00345464516 4.275376e-05 -0.00103686168">
+                                    <inertial pos="0 0 0" mass="6.000e-07" diaginertia="6.750e-15 2.034e-13 2.034e-13"/>
+                                    <joint type="hinge" name="40-m-r-tarsus-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-0.349066 0.349066"/>
+                                    <geom name="40-m-r-tarsus" type="mesh" mesh="40-m-r-tarsus" pos="0.00038006436 1.449347e-05 -0.0001167038" material="sungaya_mat" density="1000"/>
+                                    <body name="41-m-r-claws-l" pos="0.00083129201 3.951602e-05 -0.00024995045">
+                                        <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
+                                        <joint type="hinge" name="41-m-r-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="0.000000 1.570796"/>
+                                        <geom name="41-m-r-claws" type="mesh" mesh="41-m-r-claws" pos="0.00065707322 -2.511451e-05 -0.00020477572" material="sungaya_mat" density="1000"/>
+                                        <geom name="claw_collide_mr" type="sphere" size="0.0001" pos="0.00116007322 -1.911451e-05 -0.00057577572" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                    </body>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                </body>
+                <body name="16-f-l-coxa-l" pos="-0.00058466167 0.0008655265 -0.00026834305">
+                    <joint type="hinge" name="16-f-l-coxa-l" pos="0 0 0" axis="0 0 1" range="-3.14159 3.14159"/>
+                    <geom name="16-f-l-coxa" type="mesh" mesh="16-f-l-coxa" pos="-0.0002788456 -3.884686e-05 -5.26107e-05" material="sungaya_mat" density="1000"/>
+                    <body name="17-f-l-femur-l" pos="-0.00062062964 -3.040908e-05 -0.00020541716">
+                        <joint type="hinge" name="17-f-l-femur-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                        <geom name="17-f-l-femur" type="mesh" mesh="17-f-l-femur" pos="-0.00236304384 -6.913254e-05 -0.00054229825" material="sungaya_mat" density="1000"/>
+                        <body name="18-f-l-tibia-l" pos="-0.00421774574 -8.422183e-05 -0.00099440338">
+                            <inertial pos="0 0 0" mass="1.200e-06" diaginertia="1.350e-14 4.067e-13 4.067e-13"/>
+                            <joint type="hinge" name="18-f-l-tibia-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                            <geom name="18-f-l-tibia" type="mesh" mesh="18-f-l-tibia" pos="-0.00163057772 2.05496e-06 -0.00038302678" material="sungaya_mat" density="1000"/>
+                            <body name="19-f-l-tarsus-l" pos="-0.00369065069 2.67429e-06 -0.00080730731">
+                                <inertial pos="0 0 0" mass="6.000e-07" diaginertia="6.750e-15 2.034e-13 2.034e-13"/>
+                                <joint type="hinge" name="19-f-l-tarsus-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-0.349066 0.349066"/>
+                                <geom name="19-f-l-tarsus" type="mesh" mesh="19-f-l-tarsus" pos="-0.00049544778 -4.03821e-06 -0.00014018174" material="sungaya_mat" density="1000"/>
+                                <body name="20-f-l-claws-l" pos="-0.00100061204 -2.044067e-05 -0.00028160657">
+                                    <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
+                                    <joint type="hinge" name="20-f-l-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-1.570796 0.000000"/>
+                                    <geom name="20-f-l-claws" type="mesh" mesh="20-f-l-claws" pos="-0.00063120201 1.842389e-05 -0.00010398612" material="sungaya_mat" density="1000"/>
+                                    <geom name="claw_collide_fl" type="sphere" size="0.0001" pos="-0.00138520201 -2.057611e-05 -0.00024198612" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                </body>
+                <body name="31-f-r-coxa-l" pos="0.00050825079 0.00087240804 -0.00026750666">
+                    <joint type="hinge" name="31-f-r-coxa-l" pos="0 0 0" axis="0 0 1" range="-3.14159 3.14159"/>
+                    <geom name="31-f-r-coxa" type="mesh" mesh="31-f-r-coxa" pos="0.00027939276 -3.533019e-05 -5.218346e-05" material="sungaya_mat" density="1000"/>
+                    <body name="32-f-r-femur-l" pos="0.00062127545 -2.25869e-05 -0.0002044678">
+                        <joint type="hinge" name="32-f-r-femur-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                        <geom name="32-f-r-femur" type="mesh" mesh="32-f-r-femur" pos="0.00236455328 -3.936188e-05 -0.00053868175" material="sungaya_mat" density="1000"/>
+                        <body name="33-f-r-tibia-l" pos="0.00421998743 -3.108755e-05 -0.00098794978">
+                            <inertial pos="0 0 0" mass="1.200e-06" diaginertia="1.350e-14 4.067e-13 4.067e-13"/>
+                            <joint type="hinge" name="33-f-r-tibia-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-3.14159 3.14159"/>
+                            <geom name="33-f-r-tibia" type="mesh" mesh="33-f-r-tibia" pos="0.001631008 2.259435e-05 -0.000380532" material="sungaya_mat" density="1000"/>
+                            <body name="35-f-r-tarsus-l" pos="0.0036915564 4.916172e-05 -0.00080165907">
+                                <inertial pos="0 0 0" mass="6.000e-07" diaginertia="6.750e-15 2.034e-13 2.034e-13"/>
+                                <joint type="hinge" name="35-f-r-tarsus-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="-0.349066 0.349066"/>
+                                <geom name="35-f-r-tarsus" type="mesh" mesh="35-f-r-tarsus" pos="0.00049567223 2.20397e-06 -0.00013942318" material="sungaya_mat" density="1000"/>
+                                <body name="36-f-r-claws-l" pos="0.0010012202 -7.83429e-06 -0.00028007594">
+                                    <inertial pos="0 0 0" mass="2.000e-07" diaginertia="2.250e-15 6.779e-14 6.779e-14"/>
+                                    <joint type="hinge" name="36-f-r-claws-l" pos="0 0 0" axis="0 -1 -4.371e-08" range="0.000000 1.570796"/>
+                                    <geom name="36-f-r-claws" type="mesh" mesh="36-f-r-claws" pos="0.00063108001 2.637226e-05 -0.00010302081" material="sungaya_mat" density="1000"/>
+                                    <geom name="claw_collide_fr" type="sphere" size="0.0001" pos="0.00138508001 -3.62774e-06 -0.00024002081" contype="1" conaffinity="1" condim="3" rgba="0.3 0.2 0.15 1"/>
+                                </body>
+                            </body>
+                        </body>
+                    </body>
+                </body>
+            </body>
+        </body>
+    </worldbody>
+    <actuator>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="04-t1-l" joint="04-t1-l" />
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="05-t2-l" joint="05-t2-l" />
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="06-t3-l" joint="06-t3-l" />
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="07-a2-l" joint="07-a2-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="08-a3-l" joint="08-a3-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="09-a4-l" joint="09-a4-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="10-a5-l" joint="10-a5-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="11-a6-l" joint="11-a6-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="12-a7-l" joint="12-a7-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="13-a8-l" joint="13-a8-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="14-a9-l" joint="14-a9-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="16-f-l-coxa-l" joint="16-f-l-coxa-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="17-f-l-femur-l" joint="17-f-l-femur-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="18-f-l-tibia-l" joint="18-f-l-tibia-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="19-f-l-tarsus-l" joint="19-f-l-tarsus-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="20-f-l-claws-l" joint="20-f-l-claws-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="21-m-l-coxa-l" joint="21-m-l-coxa-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="22-m-l-femur-l" joint="22-m-l-femur-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="23-m-l-tibia-l" joint="23-m-l-tibia-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="24-m-l-tarsus-l" joint="24-m-l-tarsus-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="25-m-l-claws-l" joint="25-m-l-claws-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="26-h-l-coxa-l" joint="26-h-l-coxa-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="27-h-l-femur-l" joint="27-h-l-femur-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="28-h-l-tibia-l" joint="28-h-l-tibia-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="29-h-l-tarsus-l" joint="29-h-l-tarsus-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="30-h-l-claws-l" joint="30-h-l-claws-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="31-f-r-coxa-l" joint="31-f-r-coxa-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="32-f-r-femur-l" joint="32-f-r-femur-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="33-f-r-tibia-l" joint="33-f-r-tibia-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="35-f-r-tarsus-l" joint="35-f-r-tarsus-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="36-f-r-claws-l" joint="36-f-r-claws-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="37-m-r-coxa-l" joint="37-m-r-coxa-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="38-m-r-femur-l" joint="38-m-r-femur-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="39-m-r-tibia-l" joint="39-m-r-tibia-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="40-m-r-tarsus-l" joint="40-m-r-tarsus-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="41-m-r-claws-l" joint="41-m-r-claws-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="42-h-r-coxa-l" joint="42-h-r-coxa-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="43-h-r-femur-l" joint="43-h-r-femur-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="44-h-r-tibia-l" joint="44-h-r-tibia-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="45-h-r-tarsus-l" joint="45-h-r-tarsus-l"/>
+        <motor forcelimited="true" forcerange="-10 10" ctrllimited="true" ctrlrange="-1.0 1.0" gear="1" name="46-h-r-claws-l" joint="46-h-r-claws-l"/>
+    </actuator>
+    <sensor>
+        <framepos name="04-t1-l" objtype="body" objname="04-t1-l"/>
+        <accelerometer name="accelerometer" site="head"/>
+        <velocimeter name="velocimeter" site="head"/>
+        <gyro name="gyro" site="head"/>
+    </sensor>
+</mujoco>

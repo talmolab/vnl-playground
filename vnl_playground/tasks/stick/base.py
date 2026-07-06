@@ -1,6 +1,7 @@
 """Base classes for stick bug (Sungaya inexpectata)."""
 
 import collections
+import shutil
 from typing import Any, Dict, Mapping, Optional, Union
 
 from etils import epath
@@ -17,10 +18,23 @@ from vnl_playground.tasks.stick import consts
 from vnl_playground.tasks.reward_registry import RewardRegistry
 from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
 
+# Reference-clip datasets published on the MIMIC-MJX HuggingFace dataset
+# (data/stick/). See StickBugEnv.download_reference_data + reference_data/README.md.
+_HF_REFERENCE_FILES = {
+    "mesh": "stick_mesh_reference.h5",  # 48-qpos mesh model (default)
+    "box": "stick_box_model_reference.h5",  # 45-qpos legacy box model
+}
+
 
 def get_assets() -> Dict[str, bytes]:
+    """Bundle XML + mesh OBJ + texture so MjSpec can load from bytes."""
     assets = {}
     mjx_env.update_assets(assets, consts.STICK_PATH / "xmls", "*.xml")
+    mesh_dir = consts.STICK_PATH / "xmls" / "stick_insect_urdf" / "meshes" / "obj"
+    if mesh_dir.is_dir():
+        mjx_env.update_assets(assets, mesh_dir, "*.obj")
+        mjx_env.update_assets(assets, mesh_dir, "*.mtl")
+        mjx_env.update_assets(assets, mesh_dir, "*.png")
     return assets
 
 
@@ -106,12 +120,25 @@ class StickBugEnv(mjx_env.MjxEnv):
         self._suffix = suffix
 
         # Add explicit floor-foot contact pairs.
-        # The stick_fast.xml disables automatic contact generation
+        # The stick_fast.xml disables automatic collision generation
         # (contype="0" conaffinity="0") and relies on explicit pairs.
+        #
+        # Pair-level solref=(0.0002, 1) gives a 200 µs critically-damped
+        # contact spring (1/10 of sim_dt=2 ms). At default solref=0.02 a
+        # 50 mg bug at SI scale settles 1.7 mm into the floor at equilibrium
+        # — claws visibly clip the floor in eval renders. With the pair-
+        # level override, drop-test penetration is 0.09 mm (verified in
+        # both CPU MuJoCo and MJX). Per-geom solref overrides are silently
+        # ignored by MuJoCo's contact mixing at this geometry scale; the
+        # <option o_solref> override works in CPU MuJoCo but is not
+        # supported by MJX. <pair>-level solref/solimp is the only fix
+        # that works in MJX.
         for geom_name in consts.FOOT_GEOMS:
             self._spec.add_pair(
                 geomname1="floor",
                 geomname2=f"{geom_name}{self._suffix}",
+                solref=(0.0002, 1.0),
+                solimp=(0.95, 0.99, 0.01, 0.5, 2.0),
             )
 
     def add_ghost_stick(
@@ -132,6 +159,83 @@ class StickBugEnv(mjx_env.MjxEnv):
         spawn_frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
         spawn_frame.attach_body(stick_spec.body("reference_base"), "", suffix=suffix)
 
+    @staticmethod
+    def download_reference_data(
+        which: str = "mesh",
+        dest: Optional[epath.Path] = None,
+        repo_id: str = "talmolab/MIMIC-MJX",
+        force: bool = False,
+    ) -> epath.Path:
+        """Download a stick reference-clip H5 from the MIMIC-MJX HF dataset.
+
+        Args:
+            which: "mesh" (48-qpos, default) or "box" (45-qpos legacy) fit.
+            dest: where to write the file. Defaults to reference_data/<name>
+                next to the stick package (the path StickImitation loads by
+                default).
+            repo_id: HuggingFace dataset repo id.
+            force: re-download even if dest already exists.
+
+        Returns:
+            Local path to the downloaded H5.
+        """
+        if which not in _HF_REFERENCE_FILES:
+            raise ValueError(
+                f"`which` must be one of {sorted(_HF_REFERENCE_FILES)}, got {which!r}."
+            )
+        name = _HF_REFERENCE_FILES[which]
+        if dest is None:
+            dest = consts.STICK_PATH / "reference_data" / name
+        else:
+            dest = epath.Path(dest)
+        if dest.exists() and not force:
+            return dest
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as e:
+            raise ImportError(
+                "Downloading stick reference data requires `huggingface_hub`. "
+                "Install it with `pip install huggingface_hub`."
+            ) from e
+        cached = hf_hub_download(repo_id, f"data/stick/{name}", repo_type="dataset")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(cached, str(dest))
+        logging.info("Downloaded %s -> %s", name, dest)
+        return dest
+
+    @staticmethod
+    def _apply_si_rescaling(mj_model: mujoco.MjModel) -> None:
+        """Tune actuator gear, damping, and armature for the mesh-derived
+        nymph-scale model (in-place).
+
+        The mesh XML now uses density=1000 kg/m³ on the visual mesh geoms
+        so MuJoCo integrates real per-segment inertia from mesh volume —
+        no mass/inertia rescaling is needed. We do still:
+          - scale actuator_gear to peak ~1e-5 N·m per ctrl-unit, which is
+            the right torque for a ~50 mg insect leg-muscle (arthropod
+            muscle scales linearly with cross-section, ~10× mass);
+          - clamp dof_damping/armature to small non-zero values to keep
+            the RK4 mass-matrix well-conditioned at sub-mg leaf inertias.
+          - recompute body_subtreemass so trackcom cameras follow the
+            body correctly in eval videos.
+        """
+        gear_scale = 1e-5
+        mj_model.actuator_gear[:, 0] *= gear_scale
+        # MuJoCo stores bodies in topological order (parent index < child
+        # index), so a leaves-to-root pass accumulates subtree mass correctly.
+        subtreemass = mj_model.body_mass.copy()
+        for i in range(mj_model.nbody - 1, 0, -1):
+            parent = mj_model.body_parentid[i]
+            subtreemass[parent] += subtreemass[i]
+        mj_model.body_subtreemass[:] = subtreemass
+        mj_model.dof_armature[:] = np.maximum(mj_model.dof_armature, 1e-9)
+        # damping floor 5e-7 → joint terminal velocity ≈ peak_torque/damping
+        # = 1e-5 / 5e-7 = 20 rad/s, just above the ~10-15 rad/s biological
+        # peak of stick-insect leg motion. Earlier 1e-7 floor gave 100 rad/s
+        # terminal velocity, letting the policy "whip" joints around — the
+        # observed jitter in eval videos.
+        mj_model.dof_damping[6:] = np.maximum(mj_model.dof_damping[6:], 5e-7)
+
     def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and puts models to mjx."""
         if not self._compiled or forced:
@@ -146,6 +250,7 @@ class StickBugEnv(mjx_env.MjxEnv):
                 "cg": mujoco.mjtSolver.mjSOL_CG,
                 "newton": mujoco.mjtSolver.mjSOL_NEWTON,
             }[self._config.solver.lower()]
+            self._apply_si_rescaling(self._mj_model)
             self._mjx_model = mjx.put_model(
                 self._mj_model, impl=self._config.mujoco_impl
             )

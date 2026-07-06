@@ -1,0 +1,32 @@
+<mujoco>
+  <!-- Floor-less pure-white arena for rendering stick-bug motion sequences
+       with an overlaid reference ghost. Same "white aesthetic" as the rodent
+       / fruitfly white_arena.xml, but with NO floor geom so the body floats
+       on white (cleanest for a montage strip). Lights are the close-up insect
+       rig from arena.xml (minus the floor-bounce light), since the camera sits
+       ~4 cm from a ~2 cm bug. Used only by tasks.stick.visualize.StickRender;
+       training/eval keep the checkerboard-floor arena.xml. -->
+  <visual>
+    <headlight diffuse=".6 .6 .6" specular=".3 .3 .3" ambient=".5 .5 .5"/>
+    <global offwidth="3840" offheight="2160" elevation="-20" azimuth="120"/>
+    <quality shadowsize="4096"/>
+    <!-- White haze so the body fades into the white background at depth. -->
+    <rgba haze="1 1 1 1"/>
+  </visual>
+
+  <asset>
+    <texture name="skybox" type="skybox" builtin="flat" rgb1="1 1 1" rgb2="1 1 1"
+             width="800" height="800"/>
+  </asset>
+
+  <worldbody>
+    <light name="overhead" pos="0 0 .3" dir="0 0 -1"
+           diffuse=".7 .7 .7" specular=".3 .3 .3" castshadow="false"/>
+    <light name="key"      pos=".15 .15 .25" dir="-1 -1 -1.5"
+           diffuse=".7 .7 .7" specular=".3 .3 .3" castshadow="false"/>
+    <light name="fill"     pos="-.15 -.10 .15" dir="1 1 -1"
+           diffuse=".45 .45 .45" castshadow="false"/>
+    <light name="back"     pos="-.15 .15 .12" dir="1 -1 -1"
+           diffuse=".35 .35 .35" specular=".25 .25 .25" castshadow="false"/>
+  </worldbody>
+</mujoco>

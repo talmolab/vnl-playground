@@ -4,17 +4,31 @@ from etils import epath
 
 STICK_PATH = epath.Path(__file__).parent
 
-STICK_XML_PATH = STICK_PATH / "xmls" / "stick_fast.xml"
+# Default walker is the 41-DoF mesh model; the box variant is kept available
+# at STICK_BOX_XML_PATH for users who want to use the older model.
+STICK_XML_PATH = STICK_PATH / "xmls" / "stick_mesh_fast.xml"
+STICK_BOX_XML_PATH = STICK_PATH / "xmls" / "stick_fast.xml"
 ARENA_XML_PATH = STICK_PATH / "xmls" / "arena.xml"
+# Floor-less pure-white arena for rendering motion sequences with an overlaid
+# reference ghost (see tasks.stick.visualize.StickRender). Render-only; the
+# training/eval envs keep the checkerboard-floor ARENA_XML_PATH above.
+WHITE_ARENA_XML_PATH = STICK_PATH / "xmls" / "white_arena.xml"
 
-# Reference data path for imitation learning
-IMITATION_REFERENCE_PATH = STICK_PATH / "reference_data" / "full_stick.h5"
+# Reference data path for imitation learning (legacy STAC-fit format).
+# The H5 is not vendored in-repo — download it from the MIMIC-MJX HuggingFace
+# dataset into reference_data/ (see reference_data/README.md). The mesh model
+# uses stick_mesh_reference.h5 (75 clips x 225 frames; run with clip_length=225).
+IMITATION_REFERENCE_PATH = STICK_PATH / "reference_data" / "stick_mesh_reference.h5"
 
-# 38 joints (8 thorax + 30 leg)
-# Thorax joints: 07-a2 through 14-a9 (abdominal segments)
-# Leg joints: 5 per leg (coxa, femur, tibia, tarsus, claws) x 6 legs
+# 41 joints (3 thorax + 8 abdomen + 30 leg).
+# Thorax joints 04-t1-l/05-t2-l/06-t3-l are now active in the mesh model
+# (they were commented out in sungaya_inexpectata_box.xml).
 JOINTS = [
-    # Thorax/abdomen
+    # Thorax (newly enabled in the mesh model)
+    "04-t1-l",
+    "05-t2-l",
+    "06-t3-l",
+    # Abdomen
     "07-a2-l",
     "08-a3-l",
     "09-a4-l",
@@ -61,7 +75,7 @@ JOINTS = [
     "36-f-r-claws-l",
 ]
 
-# Body names (excluding "world" and "floor")
+# Body names (excluding "world" and "floor"). Same tree as the box model.
 BODIES = [
     "reference_base",
     "04-t1-l",
@@ -113,7 +127,9 @@ BODIES = [
     "36-f-r-claws-l",
 ]
 
-# 6 end effectors (claw tips, one per leg)
+# 6 claw end-effectors (Step 20 baseline). Reverted from the 30-body set on
+# 2026-05-25 to match the Step 20 reward calibration exactly for Exp 3.
+# Backup of the 30-body version at consts.py.30bodies_bak.
 END_EFFECTORS = [
     "20-f-l-claws-l",
     "36-f-r-claws-l",
@@ -123,19 +139,53 @@ END_EFFECTORS = [
     "46-h-r-claws-l",
 ]
 
-# Foot geom names for explicit floor contact pairs
-# Each leg has tarsus + claws geoms that contact the floor
+# 24 leg-segment bodies (coxa, femur, tibia, tarsus for each of 6 legs).
+# These correspond to the 4 non-claw joints per leg — "hip", "knee",
+# "ankle", and tarsal joint. Tracking these augments the end-effector
+# reward by also requiring the policy to match the full leg pose, not
+# just the tip placement.
+LEG_JOINTS = [
+    # Hind left
+    "26-h-l-coxa-l",
+    "27-h-l-femur-l",
+    "28-h-l-tibia-l",
+    "29-h-l-tarsus-l",
+    # Hind right
+    "42-h-r-coxa-l",
+    "43-h-r-femur-l",
+    "44-h-r-tibia-l",
+    "45-h-r-tarsus-l",
+    # Middle left
+    "21-m-l-coxa-l",
+    "22-m-l-femur-l",
+    "23-m-l-tibia-l",
+    "24-m-l-tarsus-l",
+    # Middle right
+    "37-m-r-coxa-l",
+    "38-m-r-femur-l",
+    "39-m-r-tibia-l",
+    "40-m-r-tarsus-l",
+    # Front left
+    "16-f-l-coxa-l",
+    "17-f-l-femur-l",
+    "18-f-l-tibia-l",
+    "19-f-l-tarsus-l",
+    # Front right
+    "31-f-r-coxa-l",
+    "32-f-r-femur-l",
+    "33-f-r-tibia-l",
+    "35-f-r-tarsus-l",
+]
+
+# Six explicit floor-contact geoms (one sphere primitive per claw body).
+# base.py.add_stick() loops over FOOT_GEOMS and adds a pair
+# (floor, <geom_name>-stick) for each entry, so the names below must match
+# the geom names in sungaya_inexpectata_mesh.xml exactly.
 FOOT_GEOMS = [
-    "19-f-l-tarsus",
-    "20-f-l-claws",
-    "24-m-l-tarsus",
-    "25-m-l-claws",
-    "29-h-l-tarsus",
-    "30-h-l-claws",
-    "35-f-r-tarsus",
-    "36-f-r-claws",
-    "40-m-r-tarsus",
-    "41-m-r-claws",
-    "45-h-r-tarsus",
-    "46-h-r-claws",
+    "claw_collide_fl",
+    "claw_collide_ml",
+    "claw_collide_hl",
+    "claw_collide_fr",
+    "claw_collide_mr",
+    "claw_collide_hr",
 ]

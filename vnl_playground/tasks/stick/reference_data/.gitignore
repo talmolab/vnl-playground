@@ -1,0 +1,3 @@
+# Reference-clip datasets are large — download them from HuggingFace instead of
+# committing (see README.md / StickBugEnv.download_reference_data).
+*.h5
