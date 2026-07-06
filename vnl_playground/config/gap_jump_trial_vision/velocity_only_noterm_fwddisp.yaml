@@ -1,0 +1,123 @@
+# @package _global_
+# Single gap [0.06], 1B, crossing does NOT terminate -- SAME as
+# velocity_only_noterm.yaml with ONE change:
+#
+#   forward_displacement weight 0.0 -> 2.0   (add the forward gradient back).
+#
+# WHY: velocity_only_noterm collapsed to "rear up / reach up and don't commit
+# forward". Root cause = the only positive reward (approach_velocity, capped at
+# +1, instantaneous) is too weak to beat the fall_penalty (-5) risk of running
+# toward the gap, so standing reared (net reward ~0) out-pays running-and-maybe-
+# falling (net negative). approach_velocity rewards only instantaneous speed and
+# is capped, so standing still costs nothing -- there is no persistent forward
+# pull. forward_displacement rewards net forward PROGRESS, restoring that pull.
+# Everything else identical (single-variable change).
+
+env_config:
+  env_name: RodentGapJumpTrialVision
+  task_name: gap_jump_trial_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  use_textures: true
+  use_shadows: true
+  env_args:
+    gap_distances: [0.06]        # single gap (baked in; this is the single-gap run)
+    hold_duration: 0
+    max_decision_steps: 300
+    episode_length: 400
+    torque_actuators: true
+    takeoff_platform_length: 0.5
+    takeoff_platform_width: 0.4
+    landing_platform_depth: 0.5
+    landing_platform_max_width: 0.4
+    landing_height_offset: 0.0
+    use_mesh_platforms: true
+    reward_terms:
+      forward_displacement:
+        weight: 2.0        # ADDED BACK (was 0.0) -- restores the persistent forward gradient
+      approach_velocity:
+        weight: 1.0        # KEPT -- the velocity term
+      target_proximity:
+        weight: 0.0
+      jump_success:
+        weight: 0.0
+      landing_bonus:
+        weight: 0.0
+      fall_penalty:
+        weight: -5.0       # KEPT -- physics penalty
+      abort_penalty:
+        weight: 0.0
+      time_penalty:
+        weight: 0.0
+      decision_alive:
+        weight: 0.0
+    termination_criteria:
+      fallen:
+        min_torso_z: -0.1          # FALLING ends the episode (also catches overshoot->fall)
+      trial_timeout:
+        max_steps: 400             # safety cap
+      nan_termination: {}
+      # trial_success + abort_dismount REMOVED -- only fall / timeout / NaN terminate (v2)
+
+network_config:
+  arch_name: shared_vision_task_obs
+  vision_latent_size: 16
+  vision_feature_size: 32
+  decoder_hidden_layer_sizes: [512, 512]
+  value_hidden_layer_sizes: [512, 512]
+  vision_channels: [4, 8, 16, 32]
+  fusion_hidden_layer_sizes: [256]
+
+transfer:
+  mimic_run_id: "phase1"
+  mimic_checkpoint_dir: /home/scott/SalkResearch/data
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+  prior_checkpoint_path: /home/keming/SalkResearch/data/prior/combined_jump
+  mode: prior_decoder
+
+train_setup:
+  eval_every: 10_000_000
+  train_config:
+    episode_length: 400
+    num_envs: 1024
+    num_timesteps: 1_000_000_000
+    batch_size: 1024
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 3e-4
+    clipping_epsilon: 0.2
+    discounting: 0.97
+    entropy_cost: 1e-3
+    action_repeat: 1
+    unroll_length: 10
+    reward_scaling: 1.0
+    normalize_observations: true
+    seed: 0
+    num_eval_envs: 128
+    deterministic_eval: false
+    grad_clip_threshold: 20.0
+    vf_loss_coefficient: 0.5
+    vision_lr_multiplier: 3.0
+    prior_residual_start_weight: 0.1
+    prior_residual_end_weight: 0.1
+    prior_residual_decay_frac: 1.0
+
+logging_config:
+  project_name: vnl-gapjump
+  group_name: gap-jump-velocity-only
+  model_path: ../runs/0705_gjvel_fwddisp
+  notes: "velocity-only + forward_displacement=2.0, single gap 0.06, crossing does NOT terminate"
+  exp_name: 0705_gjvel_fwddisp
+
+render_config:
+  render_fps: 50
+  render_height: 480
+  render_width: 640
+  render_interval: 5             # video every 5th eval (~20 over 1B)
+  hud:
+    enabled: true                # HUD overlay: instantaneous reward breakdown + speed/cumulative/etc.
