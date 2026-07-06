@@ -21,6 +21,7 @@ Usage::
                                       **vision_config)
 """
 
+import jax.numpy as jp
 from ml_collections import config_dict
 
 from vnl_playground.tasks.rodent import run_gap_vision
@@ -54,3 +55,29 @@ class JumpGapTrial(run_gap_vision.RunGapVision):
     """
 
     _registry = _registry
+
+    @_registry.reward("gap_crossing_bonus_scaled")
+    def _gap_crossing_bonus_scaled(self, data, info, metrics, weight) -> float:
+        """Crossing bonus that scales with gap size -- larger gaps pay more.
+
+        Awarded once, on the step the agent actually crosses the (single) gap
+        far edge (``info['just_crossed_gap']``, set in RunGap.step()). The bonus
+        is ``weight * (gap_size / max_gap)``, so clearing a wider gap yields a
+        proportionally larger reward, pushing the policy toward its maximum
+        jump distance. Because it only fires on a real crossing, it cannot be
+        gamed by lunging out over the gap without landing.
+
+        Assumes the single-gap trial (``n_platforms=1``, ``randomize_gaps``):
+        gap size = landing-platform near edge - start-platform trailing edge,
+        read from the current platform geometry.
+        """
+        plat_centers = data.xpos[self._platform_body_ids, 0]
+        landing_near_edge = plat_centers[0] - self._platform_half_length
+        gap_size = landing_near_edge - self._start_platform_half_length
+        max_gap = self._config.gap_length_range[1]
+        gap_frac = jp.clip(gap_size / max_gap, 0.0, 1.0)
+        bonus = jp.where(
+            info.get("just_crossed_gap", False), weight * gap_frac, 0.0
+        )
+        metrics["rewards/gap_crossing_bonus_scaled"] = bonus
+        return bonus
