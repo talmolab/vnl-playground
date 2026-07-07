@@ -1,0 +1,130 @@
+# @package _global_
+# JumpGapTrial -- BASIC pipeline run (single-gap RunGapVision, n_platforms=1).
+#
+# This is the baseline: validate the jump_gap_trial pipeline end-to-end with only
+# the inherited PURE-SPEED reward (forward_velocity + fall penalty) -- NO custom
+# gap_crossing_bonus_scaled term yet. Once this trains cleanly, the gap-size-scaled
+# crossing reward is added on top (see 0706_jgt_scaled_3_22.yaml).
+#
+# Reward = forward_velocity (speed) + termination_penalty (fall).  [pure speed]
+# Gaps    = randomized per episode in [3cm, 22cm].
+# Substrate = prior_decoder + combined_jump, CONSTANT residual anchor 0.1.
+# render_interval = 10 -> a video every 10 evals (~100M steps). (1000 never rendered:
+# eval loop is it=1..99 and the initial it=0 eval doesn't call the render hook.)
+
+env_config:
+  env_name: RodentJumpGapTrial
+  task_name: run_gap_vision          # JumpGapTrial reuses RunGapVision's obs/machinery
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  render_depth: false
+  use_textures: true
+  use_shadows: true
+  env_args:
+    # -- Simulation (ctrl_dt=0.01 matches the combined_jump prior) --
+    ctrl_dt: 0.01
+    sim_dt: 0.002
+    solver: "newton"
+    mujoco_impl: "warp"
+    naconmax: 49152
+    njmax: 400
+    iterations: 5
+    ls_iterations: 5
+    noslip_iterations: 0
+    torque_actuators: true            # combined_jump decoder outputs torque actions
+    rescale_factor: 0.9
+    # -- Single-gap corridor: 1 start platform -> 1 gap -> 1 landing platform --
+    corridor_length: 4.0
+    corridor_width: 2.0
+    platform_length_range: [0.3, 0.6]
+    gap_length_range: [0.03, 0.22]    # gaps 3-22cm, randomized per episode
+    n_platforms: 1
+    spawn_x: 0.5
+    randomize_gaps: true
+    aesthetic: "default"
+    use_mesh_platforms: true
+    # -- Episode (~5s at ctrl_dt=0.01) --
+    episode_length: 500
+    action_repeat: 1
+    # -- Reward: PURE SPEED (no gap_crossing_bonus_scaled) --
+    reward_terms:
+      forward_velocity:
+        weight: 1.0
+        target_speed: 0.5
+      termination_penalty:
+        weight: 2.0                   # -> -2 on fall (reduced from 5: less balking, still discourages reckless fall-in)
+    # -- Termination: only falling / NaN (episode_length caps the trial) --
+    termination_criteria:
+      fallen:
+        min_torso_z: 0.01
+        max_torso_angle: 70
+      nan_termination: {}
+
+network_config:
+  arch_name: shared_vision_task_obs
+  vision_latent_size: 16
+  vision_feature_size: 32
+  decoder_hidden_layer_sizes: [512, 512]
+  value_hidden_layer_sizes: [512, 512]
+  vision_channels: [4, 8, 16, 32]
+  fusion_hidden_layer_sizes: [256]
+
+transfer:
+  mode: prior_decoder
+  prior_checkpoint_path: /home/keming/SalkResearch/data/prior/combined_jump
+  prior_checkpoint_step: null
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+train_setup:
+  eval_every: 10_000_000
+  train_config:
+    episode_length: 500
+    num_envs: 1024
+    num_timesteps: 1_000_000_000
+    batch_size: 1024
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 3e-4
+    clipping_epsilon: 0.2
+    discounting: 0.97
+    entropy_cost: 1e-3
+    action_repeat: 1
+    unroll_length: 10
+    reward_scaling: 1.0
+    normalize_observations: true
+    seed: 0
+    latent_kl_weight: 0.0
+    latent_ar1_weight: 0.0
+    use_kl_schedule: false
+    num_eval_envs: 128
+    deterministic_eval: false
+    grad_clip_threshold: 20.0
+    vf_loss_coefficient: 0.5
+    vision_lr_multiplier: 3.0
+    # Constant residual anchor (no decay) -> keeps latent on-manifold, rat-like gait
+    prior_residual_start_weight: 0.1
+    prior_residual_end_weight: 0.1
+    prior_residual_decay_frac: 1.0
+
+logging_config:
+  project_name: vnl-gapjump
+  group_name: jump-gap-trial
+  model_path: ../runs/0706_jgt_basic_3_22
+  notes: "JumpGapTrial BASIC single-gap 3-22cm, pure speed reward, prior_decoder combined_jump, 1B"
+  exp_name: 0706_jgt_basic_3_22
+
+render_config:
+  render_fps: 50
+  render_height: 480
+  render_width: 640
+  render_interval: 10                 # render a video every 10 evals (~100M steps).
+                                      # NOTE: eval loop runs it=1..99 (initial eval it=0 does NOT
+                                      # call the render hook), so 1000 => never rendered. Keep <= ~99.
+  hud:
+    enabled: true
