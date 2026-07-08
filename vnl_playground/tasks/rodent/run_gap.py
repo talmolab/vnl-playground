@@ -75,6 +75,7 @@ def default_config() -> config_dict.ConfigDict:
         nogo_stop_zone=0.15,           # how close (m) to the gap edge counts as "at the edge"
         nogo_v_stop=0.1,               # forward speed (m/s) below which counts as "stopped"
         nogo_hold_steps=1,             # steps it must STAY parked at the edge before success (1 == instant)
+        gap_gradient=False,            # spatial ramp: gaps grow down the corridor (see __init__/reset); False == i.i.d. sampling
         reward_terms={
             "forward_velocity": {"weight": 1.0, "target_speed": 0.3},
             "termination_penalty": {"weight": 10.0},
