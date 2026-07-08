@@ -74,6 +74,7 @@ def default_config() -> config_dict.ConfigDict:
         unjumpable_gap_range=(0.28, 0.35),
         nogo_stop_zone=0.15,           # how close (m) to the gap edge counts as "at the edge"
         nogo_v_stop=0.1,               # forward speed (m/s) below which counts as "stopped"
+        nogo_hold_steps=1,             # steps it must STAY parked at the edge before success (1 == instant)
         reward_terms={
             "forward_velocity": {"weight": 1.0, "target_speed": 0.3},
             "termination_penalty": {"weight": 10.0},
@@ -172,6 +173,11 @@ class RunGap(rodent_base.RodentEnv):
         )
         self._nogo_stop_zone = float(self._config.get("nogo_stop_zone", 0.15))
         self._nogo_v_stop = float(self._config.get("nogo_v_stop", 0.1))
+        self._nogo_hold_steps = int(self._config.get("nogo_hold_steps", 1))
+        # Spatial difficulty ramp: gaps grow monotonically down the corridor
+        # (early gaps jumpable -> later gaps un-jumpable). Overrides the i.i.d.
+        # bimodal sampling when True; go/no-go flags still read the actual widths.
+        self._gap_gradient = bool(self._config.get("gap_gradient", False))
 
         if self._config.randomize_gaps:
             # Store slide joint qpos indices and platform body IDs for reset
@@ -460,6 +466,8 @@ class RunGap(rodent_base.RodentEnv):
             "max_x_reached": jp.array(self._config.spawn_x, dtype=jp.float32),
             "at_unjumpable_edge": jp.array(False),
             "over_unjumpable_void": jp.array(False),
+            "nogo_hold": jp.array(0, dtype=jp.int32),
+            "nogo_hold_done": jp.array(False),
         }
 
         data = mjx.make_data(
@@ -476,7 +484,26 @@ class RunGap(rodent_base.RodentEnv):
             max_plat = self._config.platform_length_range[1]
 
             # Sample random gap lengths for this episode.
-            if self._unjumpable_prob > 0.0:
+            if self._gap_gradient:
+                # Spatial difficulty ramp: gaps increase monotonically from a
+                # jumpable first gap to an un-jumpable last gap. The ramp's start
+                # and end are randomised per episode (within the jumpable /
+                # un-jumpable ranges) so the platform where jumpable -> un-jumpable
+                # crosses varies -- the agent must PERCEIVE each gap, not count
+                # platforms to a fixed stop index.
+                gap_rng, lo_rng, hi_rng = jax.random.split(gap_rng, 3)
+                start = jax.random.uniform(
+                    lo_rng,
+                    minval=self._jumpable_gap_range[0],
+                    maxval=self._jumpable_gap_range[1],
+                )
+                end = jax.random.uniform(
+                    hi_rng,
+                    minval=self._unjumpable_gap_range[0],
+                    maxval=self._unjumpable_gap_range[1],
+                )
+                gap_lengths = jp.linspace(start, end, n)
+            elif self._unjumpable_prob > 0.0:
                 # Bimodal go/no-go layout: each gap is either jumpable or (with
                 # prob unjumpable_prob) drawn from the wide un-jumpable range.
                 # gap_length_range still bounds the geometry (its [1] must be
@@ -625,8 +652,14 @@ class RunGap(rodent_base.RodentEnv):
         fwd_vel = torso_body.subtree_linvel[0]
         at_edge = (dist_to_edge >= -0.02) & (dist_to_edge <= self._nogo_stop_zone)
         stopped = fwd_vel < self._nogo_v_stop
-        # Correct no-go: stopped at the edge of an un-jumpable gap.
-        info["at_unjumpable_edge"] = next_is_unj & at_edge & stopped
+        # Per-step: currently parked at the edge of an un-jumpable gap.
+        at_edge_now = next_is_unj & at_edge & stopped
+        info["at_unjumpable_edge"] = at_edge_now
+        # Dwell counter: accumulate while parked, reset the moment it moves off.
+        hold = jp.where(at_edge_now, info["nogo_hold"] + 1, 0).astype(jp.int32)
+        info["nogo_hold"] = hold
+        # Success once it has HELD at the edge for nogo_hold_steps (==1 -> instant, old behaviour).
+        info["nogo_hold_done"] = hold >= self._nogo_hold_steps
 
         done = self._is_done(data, info, state.metrics)
         reward = self._get_reward(data, info, state.metrics)
@@ -1147,22 +1180,25 @@ class RunGap(rodent_base.RodentEnv):
 
     @_registry.termination("reached_unjumpable_edge")
     def _reached_unjumpable_edge_termination(self, data, info) -> bool:
-        """Success termination: agent stopped at the edge of an un-jumpable gap.
+        """Success termination: agent HELD a stop at the edge of an un-jumpable gap.
 
-        The ``at_unjumpable_edge`` flag is computed in step() (next gap is wider
-        than ``jump_limit``, torso within ``nogo_stop_zone`` of its near edge,
-        and forward speed below ``nogo_v_stop``). Ending here — rather than on a
-        fall — is what makes "choose not to jump" a rewardable decision.
+        step() sets ``at_unjumpable_edge`` per step (next gap wider than
+        ``jump_limit``, torso within ``nogo_stop_zone`` of its near edge, forward
+        speed below ``nogo_v_stop``) and accumulates ``nogo_hold`` while parked;
+        ``nogo_hold_done`` becomes True after ``nogo_hold_steps`` consecutive
+        parked steps. With nogo_hold_steps==1 this fires instantly (the original
+        behaviour); larger values require the agent to DWELL at the edge (visible
+        deliberation) before the episode ends.
 
         Args:
             data: Simulation data (unused).
-            info: State info containing ``at_unjumpable_edge`` flag.
+            info: State info containing ``nogo_hold_done`` flag.
 
         Returns:
-            Boolean indicating a correct no-go stop.
+            Boolean indicating a held correct no-go stop.
         """
         del data
-        return info.get("at_unjumpable_edge", jp.array(False))
+        return info.get("nogo_hold_done", jp.array(False))
 
     @_registry.termination("stale_location")
     def _stale_location_termination(
