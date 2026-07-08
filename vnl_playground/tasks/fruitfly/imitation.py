@@ -317,7 +317,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
         quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        rot_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
+        rot_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
         ang_dist_degrees = jp.rad2deg(rot_dist)
         metrics["root_angular_error"] = ang_dist_degrees
         reward = weight * jp.exp(-((ang_dist_degrees / exp_scale) ** 2) / 2)
@@ -419,7 +419,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
         quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
+        ang_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
         return ang_dist > jp.deg2rad(max_degrees)
 
     @_registry.termination("pose_error")

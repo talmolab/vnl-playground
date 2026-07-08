@@ -597,7 +597,7 @@ class Imitation(worm_base.CelegansEnv):
         root_quat = self._get_root_quat(data)
 
         quat_dist = 2.0 * jp.dot(root_quat, target_quat) ** 2 - 1.0
-        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
+        ang_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
         ang_dist = jp.rad2deg(ang_dist)
 
         reward = weight * jp.exp(-((ang_dist / exp_scale) ** 2) / 2)
@@ -912,7 +912,7 @@ class Imitation(worm_base.CelegansEnv):
         target_quat = target.body_xquat(self.root_name)
         root_quat = self._get_root_quat(data)
         quat_dist = 2.0 * jp.dot(root_quat, target_quat) ** 2 - 1.0
-        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
+        ang_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
         return ang_dist > jp.deg2rad(max_degrees)
 
     @_registry.termination("pose_error")
