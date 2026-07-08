@@ -256,7 +256,7 @@ class Imitation(stick_base.StickBugEnv):
         root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
         root_targets = jax.vmap(
-            lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat)
+            lambda ref_pos: brax.math.inv_rotate(ref_pos - root_pos, root_quat)
         )(reference.root_position)
         quat_targets = jax.vmap(
             lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat)
@@ -274,7 +274,7 @@ class Imitation(stick_base.StickBugEnv):
         body_rel_pos = jp.array(
             [reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos]
         )
-        to_egocentric = jax.vmap(lambda diff_vec: brax.math.rotate(diff_vec, root_quat))
+        to_egocentric = jax.vmap(lambda diff_vec: brax.math.inv_rotate(diff_vec, root_quat))
         body_targets = jax.vmap(to_egocentric)(body_rel_pos)
 
         return collections.OrderedDict(

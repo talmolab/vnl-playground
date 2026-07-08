@@ -522,7 +522,7 @@ class Imitation(worm_base.CelegansEnv):
         root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
         root_targets = jax.vmap(
-            lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat)[
+            lambda ref_pos: brax.math.inv_rotate(ref_pos - root_pos, root_quat)[
                 : self.config.dim
             ]
         )(reference.body_xpos(self.root_name))
@@ -543,7 +543,7 @@ class Imitation(worm_base.CelegansEnv):
             [reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos]
         )
         to_egocentric = jax.vmap(
-            lambda diff_vec: brax.math.rotate(diff_vec, root_quat)[: self._config.dim]
+            lambda diff_vec: brax.math.inv_rotate(diff_vec, root_quat)[: self._config.dim]
         )
         body_targets = jax.vmap(to_egocentric)(body_rel_pos)
 
