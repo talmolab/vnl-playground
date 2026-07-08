@@ -1,0 +1,138 @@
+# @package _global_
+# GO / NO-GO gap decision -- MINIMAL controlled experiment.
+#
+# Corridor mixes JUMPABLE gaps (5-18cm) with, at unjumpable_prob, UN-JUMPABLE
+# gaps (25-28cm, just past the ~22cm jump limit -- narrow margin, so the mouse
+# must actually judge, not just see a chasm). The mouse LOOKS (gap_lengths are
+# in task_obs) and DECIDES:
+#   - jumpable + jump                 -> forward reward           (correct GO)
+#   - un-jumpable + jump              -> torso over void -> fall  (wrong GO -> fall_penalty)
+#   - un-jumpable + STOP at the edge  -> reached_unjumpable_edge success + no_go_bonus (correct NO-GO)
+# fall_penalty reads terminations/fallen ONLY, so a correct no-go stop is NOT penalised.
+#
+# Single independent variable = no_go_bonus.weight, swept {0, 15, 40} via CLI:
+#   A (control) weight=0   -- wrong-jump punished, right-stop NOT rewarded
+#   B           weight=15
+#   C           weight=40
+# Everything else fixed. fall_penalty=25 makes a wrong jump clearly net-negative
+# (it outweighs the ~12 forward-reward the mouse earns by running the extra steps
+# into the gap before falling), so the sweep isolates the value of the stop bonus.
+#
+# Warm-starts from the step-74 corridor crosser (same obs/network) -- already
+# crosses reliably, only has to learn the STOP decision. Watch ONE signal:
+# reached_unjumpable_edge rate up / fallen rate down.
+
+env_config:
+  env_name: RodentRunGapVision
+  task_name: run_gap_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  binocular: false
+  render_depth: false
+  use_textures: true
+  use_shadows: true
+  env_args:
+    ctrl_dt: 0.01
+    sim_dt: 0.002
+    solver: "newton"
+    mujoco_impl: "warp"
+    naconmax: 49152
+    njmax: 400
+    iterations: 5
+    ls_iterations: 5
+    noslip_iterations: 0
+    torque_actuators: true
+    rescale_factor: 0.9
+    corridor_length: 4.0
+    corridor_width: 2.0
+    platform_length_range: [0.12, 0.12]   # NARROW 12cm platforms (matches 0707_corridor_narrow)
+    gap_length_range: [0.05, 0.28]         # geometry bound: [1] must cover unjumpable max
+    n_platforms: 12
+    spawn_x: 0.5
+    randomize_gaps: true
+    aesthetic: "default"
+    use_mesh_platforms: true
+    episode_length: 1000
+    action_repeat: 1
+    # -- Go/no-go layout (narrow un-jumpable margin) --
+    jump_limit: 0.22
+    unjumpable_prob: 0.2
+    jumpable_gap_range: [0.05, 0.18]
+    unjumpable_gap_range: [0.25, 0.28]     # just past the 22cm limit -- real judgement, not a chasm
+    nogo_stop_zone: 0.08                    # tight: within 8cm of the edge counts as "at the edge"
+    nogo_v_stop: 0.1
+    # -- Reward: clean. forward_velocity + fallen-only penalty + the swept no_go_bonus --
+    reward_terms:
+      forward_velocity:
+        weight: 1.0
+        target_speed: 0.5
+      fall_penalty:
+        weight: 25.0                       # fallen-ONLY; does NOT punish a correct no-go stop
+      no_go_bonus:
+        weight: 15.0                       # SWEPT variable -- override per run {0, 15, 40}
+    termination_criteria:
+      fallen:
+        min_torso_z: 0.01
+        max_torso_angle: 70
+      reached_unjumpable_edge: {}          # SUCCESS terminal on a correct no-go
+      nan_termination: {}
+
+network_config:
+  arch_name: shared_vision_task_obs
+  vision_latent_size: 16
+  vision_feature_size: 32
+  decoder_hidden_layer_sizes: [512, 512]
+  value_hidden_layer_sizes: [512, 512]
+  vision_channels: [4, 8, 16, 32]
+  fusion_hidden_layer_sizes: [256]
+
+transfer:
+  mode: prior_decoder
+  prior_checkpoint_path: /root/vast/keming/gapjump/prior/combined_jump
+  prior_checkpoint_step: null
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+train_setup:
+  eval_every: 10_000_000
+  # WARM START from the step-74 corridor crosser (same mono obs/network).
+  checkpoint_to_restore: /root/vast/keming/SalkResearch/runs/0707_corridor_narrow/260707_220434
+  train_config:
+    episode_length: 1000
+    num_envs: 1024
+    num_timesteps: 1_000_000_000
+    batch_size: 1024
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 3e-4
+    clipping_epsilon: 0.2
+    discounting: 0.97
+    entropy_cost: 1e-3
+    action_repeat: 1
+    unroll_length: 10
+    reward_scaling: 1.0
+    normalize_observations: true
+    seed: 0
+    latent_kl_weight: 0.0
+    latent_ar1_weight: 0.0
+    use_kl_schedule: false
+    num_eval_envs: 128
+    deterministic_eval: false
+    grad_clip_threshold: 20.0
+    vf_loss_coefficient: 0.5
+    vision_lr_multiplier: 3.0
+    prior_residual_start_weight: 0.1
+    prior_residual_end_weight: 0.1
+    prior_residual_decay_frac: 1.0
+
+logging_config:
+  project_name: vnl-gapjump
+  group_name: jump-gap-trial
+  model_path: ../runs/0708_gonogo
+  notes: "Go/no-go minimal: jumpable 5-18cm + un-jumpable 25-28cm, sweep no_go_bonus {0,15,40}, fall_penalty 25, warm-start step-74"
+  exp_name: 0708_gonogo
