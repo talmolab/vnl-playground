@@ -75,6 +75,13 @@ def default_config() -> config_dict.ConfigDict:
         nogo_stop_zone=0.15,           # how close (m) to the gap edge counts as "at the edge"
         nogo_v_stop=0.1,               # forward speed (m/s) below which counts as "stopped"
         nogo_hold_steps=1,             # steps it must STAY parked at the edge before success (1 == instant)
+        # -- speed_schedule shaping: ONE reward (replaces forward_velocity + approach_speed).
+        #    Target speed v* is a schedule of context: cruise between gaps, ramped launch
+        #    speed before a jumpable gap, 0 (brake) before an un-jumpable one. --
+        cruise_speed=0.5,              # target forward speed (m/s) when no gap is within approach_zone
+        approach_zone=0.25,            # distance (m) ahead of the next gap over which the gap-specific target applies (also the observation window)
+        approach_launch_speed=0.4,     # target approach speed (m/s) at a gap == jump_limit; scales down for narrower jumpable gaps, 0 for un-jumpable
+        approach_speed_tol=0.25,       # tolerance (m/s): reward = 1 - |v - v*| / tol, clipped to [0, 1]
         gap_gradient=False,            # spatial ramp: gaps grow down the corridor (see __init__/reset); False == i.i.d. sampling
         reward_terms={
             "forward_velocity": {"weight": 1.0, "target_speed": 0.3},
@@ -175,6 +182,11 @@ class RunGap(rodent_base.RodentEnv):
         self._nogo_stop_zone = float(self._config.get("nogo_stop_zone", 0.15))
         self._nogo_v_stop = float(self._config.get("nogo_v_stop", 0.1))
         self._nogo_hold_steps = int(self._config.get("nogo_hold_steps", 1))
+        # speed_schedule shaping: one reward whose target speed depends on the next gap.
+        self._cruise_speed = float(self._config.get("cruise_speed", 0.5))
+        self._approach_zone = float(self._config.get("approach_zone", 0.25))
+        self._approach_launch_speed = float(self._config.get("approach_launch_speed", 0.4))
+        self._approach_speed_tol = float(self._config.get("approach_speed_tol", 0.25))
         # Spatial difficulty ramp: gaps grow monotonically down the corridor
         # (early gaps jumpable -> later gaps un-jumpable). Overrides the i.i.d.
         # bimodal sampling when True; go/no-go flags still read the actual widths.
@@ -469,6 +481,11 @@ class RunGap(rodent_base.RodentEnv):
             "over_unjumpable_void": jp.array(False),
             "nogo_hold": jp.array(0, dtype=jp.int32),
             "nogo_hold_done": jp.array(False),
+            # next-gap signals for approach_speed shaping (set each step())
+            "next_gap_len": jp.array(0.0, dtype=jp.float32),
+            "dist_to_next_edge": jp.array(1e3, dtype=jp.float32),
+            "next_gap_valid": jp.array(False),
+            "fwd_vel_x": jp.array(0.0, dtype=jp.float32),
         }
 
         data = mjx.make_data(
@@ -651,6 +668,11 @@ class RunGap(rodent_base.RodentEnv):
         next_is_unj = valid & (gap_lengths_arr[nxt_c] > self._jump_limit)
         dist_to_edge = gap_starts_arr[nxt_c] - current_x
         fwd_vel = torso_body.subtree_linvel[0]
+        # next-gap signals consumed by the approach_speed reward
+        info["next_gap_len"] = gap_lengths_arr[nxt_c]
+        info["dist_to_next_edge"] = dist_to_edge
+        info["next_gap_valid"] = valid
+        info["fwd_vel_x"] = fwd_vel
         at_edge = (dist_to_edge >= -0.02) & (dist_to_edge <= self._nogo_stop_zone)
         stopped = fwd_vel < self._nogo_v_stop
         # Per-step: currently parked at the edge of an un-jumpable gap.
@@ -1098,6 +1120,55 @@ class RunGap(rodent_base.RodentEnv):
         bonus = jp.where(info.get("at_unjumpable_edge", False), weight, 0.0)
         metrics["rewards/no_go_bonus"] = bonus
         return bonus
+
+    @_registry.reward("speed_schedule")
+    def _speed_schedule(self, data, info, metrics, weight) -> float:
+        """Unified forward-speed reward: be at the context-appropriate speed.
+
+        REPLACES forward_velocity + approach_speed with a single term. The target
+        speed ``v*`` is a schedule of what is ahead (signals set in step()):
+          * cruising -- no gap within approach_zone   -> v* = cruise_speed
+          * approaching a jumpable gap  (in zone)      -> v* = launch_speed * (gap / jump_limit)
+              (ramps up: wider jumpable gaps need more run-up)
+          * approaching an un-jumpable gap (in zone)   -> v* = 0   (brake to a stop)
+        Reward = 1 - |fwd_vel - v*| / tol, clipped to [0, 1]. TWO-SIDED: going
+        faster OR slower than v* both lose reward, so speed stays controlled
+        (less overshoot at jumps; the mouse enters the decision zone at a
+        controlled cruise instead of sprinting in too hot to brake). The
+        approach_zone doubles as the observation window -- the gap-specific
+        target only applies once the gap is close enough to see; farther out the
+        target is just cruise_speed.
+
+        Because there is a single target (0 near un-jumpable, launch near jumpable,
+        cruise otherwise) there is NO conflict between "go" and "no-go" pulls the
+        way separate forward_velocity + approach_speed terms had.
+
+        Args:
+            data: Simulation data (unused; signals come from step() via info).
+            info: State info with next_gap_len / dist_to_next_edge / next_gap_valid / fwd_vel_x.
+            metrics: Metrics dict for logging.
+            weight: Reward weight multiplier.
+
+        Returns:
+            Weighted speed-match reward in [0, weight], every step.
+        """
+        del data
+        valid = info.get("next_gap_valid", jp.array(False))
+        gap = info.get("next_gap_len", jp.array(0.0))
+        dist = info.get("dist_to_next_edge", jp.array(1e3))
+        v = info.get("fwd_vel_x", jp.array(0.0))
+        in_zone = valid & (dist >= 0.0) & (dist <= self._approach_zone)
+        is_unj = gap > self._jump_limit
+        v_zone = jp.where(
+            is_unj,
+            0.0,
+            self._approach_launch_speed * jp.clip(gap / self._jump_limit, 0.0, 1.0),
+        )
+        v_target = jp.where(in_zone, v_zone, self._cruise_speed)
+        match = jp.clip(1.0 - jp.abs(v - v_target) / self._approach_speed_tol, 0.0, 1.0)
+        reward = weight * match
+        metrics["rewards/speed_schedule"] = reward
+        return reward
 
     @_registry.reward("false_jump_penalty")
     def _false_jump_penalty(self, data, info, metrics, weight) -> float:

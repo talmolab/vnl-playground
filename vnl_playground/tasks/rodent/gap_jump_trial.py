@@ -82,6 +82,29 @@ def default_config() -> config_dict.ConfigDict:
         # i.e. demand more accurate distance estimation. Touching down past
         # (far_edge - margin) counts as an overjump and fails the trial.
         landing_safe_margin=0.0,
+        # Success = a real four-paw touchdown ON the landing platform, not a torso
+        # fly-over. Requires all four paw touch sensors (palm_L/R, sole_L/R) in
+        # contact (force > landing_touch_eps) AND all four paws past the near edge
+        # (on the platform, not bridging the gap), held for landing_dwell_steps
+        # consecutive control steps. A paw off the platform side hangs over the
+        # void -> no contact -> fails, which also supplies lateral centering.
+        landing_touch_eps=1e-3,
+        landing_dwell_steps=3,
+        # How many paws must be down on the platform to count as a landing.
+        # 4 = a full four-paw touchdown; lower (e.g. 3) to relax the criterion.
+        landing_min_paws=4,
+        # Success = torso crosses onto the platform and STAYS UP this many
+        # consecutive control steps (300 = 3 s at ctrl_dt 0.01). The survival
+        # requirement filters out fly-overs / drape-and-fall / veer-off-the-side.
+        landing_survive_steps=300,
+        # Graded landing reward: extra reward (on top of paws_landed.weight) once
+        # ALL 4 paws are on the platform. paws_landed.weight fires at >=2 paws.
+        landing_paw_bonus=0.0,
+        # option-b terminate: end the episode once all 4 paws have been on the
+        # landing platform for this many consecutive control steps (a confirmed
+        # 4-paw landing). 30 = 0.3 s at ctrl_dt 0.01. Only active when the
+        # `paw_landed` termination criterion is enabled in the config.
+        landing_paw_dwell_steps=30,
         use_mesh_platforms=False,
         # Trial parameters
         # Default = easy, all-reachable gaps (Scott's Phase-0 "basic single jump"
@@ -483,6 +506,14 @@ class GapJumpTrial(rodent_base.RodentEnv):
             "gap_distance": gap_distance,
             "jump_initiated": jp.array(False),
             "trial_success": jp.array(False),
+            # Consecutive control steps with all four paws settled on the platform.
+            "landing_dwell": jp.array(0, dtype=jp.int32),
+            # DEBUG: how many paws are down on the landing platform this step.
+            "n_paws_down": jp.array(0, dtype=jp.int32),
+            # option-b terminate: consecutive steps with all 4 paws on the platform,
+            # and the latched "confirmed 4-paw landing" flag it drives.
+            "paw_dwell": jp.array(0, dtype=jp.int32),
+            "paw_landed": jp.array(False),
             "trial_outcome": jp.array(OUTCOME_ONGOING, dtype=jp.int32),
             # SDT decision-axis tracking (independent of the physical outcome above)
             "gap_reachable": gap_distance <= self._config.max_reachable_gap,
@@ -596,11 +627,58 @@ class GapJumpTrial(rodent_base.RodentEnv):
         landing_far_x = (
             landing_leading_x + self._config.landing_platform_depth - safe_margin
         )
+        # Four-paw touchdown: all four paw touch sensors in contact AND all four
+        # paws on the landing platform (x past the near edge -> not a gap-bridge),
+        # with a jump initiated. A paw veering off the 0.4 m platform side hangs
+        # over the void -> no contact -> fails (this also supplies the lateral /
+        # centering constraint the old torso-x band check lacked). Held for
+        # landing_dwell_steps so a single impact/bounce frame is not a "landing".
+        # Success = the torso fully crosses onto the landing platform and STAYS UP
+        # (does not fall) for landing_survive_steps consecutive control steps
+        # (300 = 3 s at ctrl_dt 0.01). A fly-over / drape-and-fall / veer-off-the-
+        # side cannot hold this for 3 s, so the survival requirement enforces a real
+        # landing on top of the natural torso-crossing motion -- no paw counting.
         on_platform = torso_z > -0.1
-        in_safe_zone = (torso_x > landing_leading_x) & (torso_x < landing_far_x)
-        landed = in_safe_zone & on_platform & info["jump_initiated"]
+        # In the safe landing band [near, far) -- same as fwdvel's success zone.
+        crossed = (
+            (torso_x > landing_leading_x)
+            & (torso_x < landing_far_x)
+            & info["jump_initiated"]
+        )
+        surviving = crossed & on_platform
+        dwell = jp.where(surviving, info["landing_dwell"] + 1, 0)
+        info["landing_dwell"] = dwell
+        # survive_steps=1 -> success/terminate the instant it crosses (= fwdvel);
+        # =100 -> must stay up 1 s (@ctrl_dt 0.01) before success/terminate.
+        survive_steps = int(self._config.get("landing_survive_steps", 1))
+        landed = dwell >= survive_steps
         overshot = (torso_x >= landing_far_x) & info["jump_initiated"]
         info["trial_success"] = jp.where(landed, True, info["trial_success"])
+
+        # Paw count ON the landing platform (for the graded landing reward): a paw
+        # counts if its touch sensor is in contact AND it is past the near edge (on
+        # the platform, not over the void). A paw that veers off the platform SIDE
+        # hangs over the void -> not counted -> so this also rewards lateral centering.
+        _touch = self._get_touch_sensors(data)  # [palm_L, palm_R, sole_L, sole_R]
+        _teps = self._config.get("landing_touch_eps", 1e-3)
+        _paw_x = jp.array(
+            [
+                data.bind(self.mjx_model, self._spec.body(f"{b}{self._suffix}")).xpos[0]
+                for b in ("hand_L", "hand_R", "foot_L", "foot_R")
+            ]
+        )
+        _paw_down = (_touch.reshape(-1) > _teps) & (_paw_x > landing_leading_x)
+        info["n_paws_down"] = jp.sum(_paw_down.astype(jp.int32))
+
+        # option-b terminate: count consecutive steps with all 4 paws on the
+        # platform; latch paw_landed once that dwell reaches landing_paw_dwell_steps
+        # (a confirmed 4-paw landing). Drives the `paw_landed` termination.
+        paw_dwell = jp.where(info["n_paws_down"] >= 4, info["paw_dwell"] + 1, 0)
+        info["paw_dwell"] = paw_dwell
+        paw_dwell_steps = int(self._config.get("landing_paw_dwell_steps", 30))
+        info["paw_landed"] = jp.where(
+            paw_dwell >= paw_dwell_steps, True, info["paw_landed"]
+        )
 
         # --- Trial outcome tracking ---
         is_ongoing = info["trial_outcome"] == OUTCOME_ONGOING
@@ -920,8 +998,10 @@ class GapJumpTrial(rodent_base.RodentEnv):
         dist = jp.abs(target_x - torso_x)
 
         # Exponential proximity: 1.0 at target, decays with distance
-        # length_scale controls how quickly reward drops off
-        length_scale = 0.3  # ~0.3m characteristic distance
+        # length_scale controls how quickly reward drops off. Larger scale = a
+        # broader, flatter pull that reaches the rat from farther back (and raises
+        # the cumulative value, so pair it with a lower weight). Config-overridable.
+        length_scale = self._config.get("target_proximity_length_scale", 0.3)
         proximity = jp.exp(-dist / length_scale)
 
         is_active = (info["trial_phase"] >= PHASE_DECISION).astype(jp.float32)
@@ -987,6 +1067,36 @@ class GapJumpTrial(rodent_base.RodentEnv):
         metrics["rewards/time_penalty"] = reward_val
         return reward_val
 
+    @_registry.reward("energy_cost")
+    def _energy_cost_reward(self, data, info, metrics, weight):
+        """Metabolic cost proxy = muscular effort = sum |actuator torque| over the
+        ACTUATED DOFs (skips the root free joint, so forward translation is NOT
+        penalised -- only effort). Uses torque magnitude (not mechanical work
+        tau*omega) ON PURPOSE: holding a static reared/reaching pose against gravity
+        costs sustained torque but ~0 work, so a work penalty would NOT discourage
+        it -- a torque penalty does. weight should be NEGATIVE. Shapes an efficient,
+        natural low-effort gait (cost-of-transport) and penalises effortful poses.
+        """
+        dof = self._rodent_root_dof
+        effort = jp.sum(jp.abs(data.qfrc_actuator[dof:]))
+        reward_val = weight * effort
+        metrics["rewards/energy_cost"] = reward_val
+        return reward_val
+
+    @_registry.reward("paws_landed")
+    def _paws_landed_reward(self, data, info, metrics, weight):
+        """Per-paw landing reward (Keming's design): give `weight` for EACH paw on
+        the landing platform, so more paws -> more reward
+        (0,1,2,3,4 paws -> 0,w,2w,3w,4w). A smooth monotonic gradient toward a full
+        four-paw landing. n_paws_down only counts paws on the platform, so a rat
+        veering off the SIDE loses paws -> this also pushes lateral centering.
+        Per step, so staying landed keeps paying (fights falling off).
+        """
+        n = info["n_paws_down"].astype(jp.float32)
+        reward_val = weight * n
+        metrics["rewards/paws_landed"] = reward_val
+        return reward_val
+
     # ------------------------------------------------------------------
     # Termination criteria
     # ------------------------------------------------------------------
@@ -1006,6 +1116,15 @@ class GapJumpTrial(rodent_base.RodentEnv):
     def _trial_success_termination(self, data, info):
         """Terminate immediately when the rodent successfully lands."""
         return info.get("trial_success", jp.array(False))
+
+    @_registry.termination("paw_landed")
+    def _paw_landed_termination(self, data, info):
+        """option-b terminate: end the episode once all 4 paws have been on the
+        landing platform for landing_paw_dwell_steps consecutive steps (a confirmed
+        4-paw landing). Unlike trial_success (which fires the instant the torso
+        crosses the near edge), this waits for a real settled touchdown, giving the
+        per-paw landing reward time to shape the final paws-down pose."""
+        return info.get("paw_landed", jp.array(False))
 
     @_registry.termination("trial_failure")
     def _trial_failure_termination(self, data, info):
