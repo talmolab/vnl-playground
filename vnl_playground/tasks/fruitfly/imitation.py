@@ -56,7 +56,7 @@ def default_config() -> config_dict.ConfigDict:
             # Imitation rewards
             "root_pos": {"exp_scale": 400.0, "weight": 1.0},  # Root position tolerance
             "root_quat": {
-                "exp_scale": 4.0,
+                "exp_scale": 8.0,
                 "weight": 1.0,
             },  # Root orientation tolerance (degrees)
             "joints": {
@@ -72,7 +72,7 @@ def default_config() -> config_dict.ConfigDict:
         },
         termination_criteria={
             "root_too_far": {"max_distance": 0.5},
-            "root_too_rotated": {"max_degrees": 15},
+            "root_too_rotated": {"max_degrees": 30},
             "pose_error": {"max_l2_error": 20},
             "nan_termination": {},
         },

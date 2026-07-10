@@ -53,7 +53,7 @@ def default_config() -> config_dict.ConfigDict:
         keep_clips_idx=None,
         reward_terms={
             "root_pos": {"exp_scale": 0.035, "weight": 1.0},
-            "root_quat": {"exp_scale": 20.0, "weight": 1.0},
+            "root_quat": {"exp_scale": 40.0, "weight": 1.0},
             "joints": {"exp_scale": 1.4, "weight": 1.0},
             "joints_vel": {"exp_scale": 1.0, "weight": 1.0},
             "bodies_pos": {"exp_scale": 0.25, "weight": 1.0},
@@ -65,7 +65,7 @@ def default_config() -> config_dict.ConfigDict:
         },
         termination_criteria={
             "root_too_far": {"max_distance": 0.05},
-            "root_too_rotated": {"max_degrees": 60.0},
+            "root_too_rotated": {"max_degrees": 120.0},
             "pose_error": {"max_l2_error": 4.5},
             "nan_termination": {},
         },

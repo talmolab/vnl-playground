@@ -47,7 +47,7 @@ def default_config() -> config_dict.ConfigDict:
         reward_terms={
             # Imitation rewards
             "root_pos": {"exp_scale": 0.01, "weight": 1.0},  # Meters
-            "root_quat": {"exp_scale": 30, "weight": 1.0},  # Degrees
+            "root_quat": {"exp_scale": 60, "weight": 1.0},  # Degrees
             "joints": {"exp_scale": 1, "weight": 2.0},  # Joint-space L2 distance
             "joints_vel": {
                 "exp_scale": 1.0,
@@ -71,7 +71,7 @@ def default_config() -> config_dict.ConfigDict:
         termination_criteria={
             "fall": {"healthy_z_range": (-1.0, 1.0)},
             "root_too_far": {"max_distance": 0.01},  # Meters
-            "root_too_rotated": {"max_degrees": 60.0},  # Degrees
+            "root_too_rotated": {"max_degrees": 120.0},  # Degrees
             "pose_error": {"max_l2_error": 4.5},  # Joint-space L2 distance
             "nan": {},
         },
