@@ -274,7 +274,9 @@ class Imitation(stick_base.StickBugEnv):
         body_rel_pos = jp.array(
             [reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos]
         )
-        to_egocentric = jax.vmap(lambda diff_vec: brax.math.inv_rotate(diff_vec, root_quat))
+        to_egocentric = jax.vmap(
+            lambda diff_vec: brax.math.inv_rotate(diff_vec, root_quat)
+        )
         body_targets = jax.vmap(to_egocentric)(body_rel_pos)
 
         return collections.OrderedDict(
