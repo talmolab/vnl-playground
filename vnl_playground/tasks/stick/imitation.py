@@ -53,7 +53,7 @@ def default_config() -> config_dict.ConfigDict:
         keep_clips_idx=None,
         reward_terms={
             "root_pos": {"exp_scale": 0.035, "weight": 1.0},
-            "root_quat": {"exp_scale": 20.0, "weight": 1.0},
+            "root_quat": {"exp_scale": 40.0, "weight": 1.0},
             "joints": {"exp_scale": 1.4, "weight": 1.0},
             "joints_vel": {"exp_scale": 1.0, "weight": 1.0},
             "bodies_pos": {"exp_scale": 0.25, "weight": 1.0},
@@ -65,7 +65,7 @@ def default_config() -> config_dict.ConfigDict:
         },
         termination_criteria={
             "root_too_far": {"max_distance": 0.05},
-            "root_too_rotated": {"max_degrees": 60.0},
+            "root_too_rotated": {"max_degrees": 120.0},
             "pose_error": {"max_l2_error": 4.5},
             "nan_termination": {},
         },
@@ -302,7 +302,7 @@ class Imitation(stick_base.StickBugEnv):
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
         quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        rot_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
+        rot_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
         ang_dist_degrees = jp.rad2deg(rot_dist)
         metrics["root_angular_error"] = ang_dist_degrees
         reward = weight * jp.exp(-((ang_dist_degrees / exp_scale) ** 2) / 2)
@@ -404,7 +404,7 @@ class Imitation(stick_base.StickBugEnv):
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
         quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
+        ang_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
         return ang_dist > jp.deg2rad(max_degrees)
 
     @_registry.termination("pose_error")
