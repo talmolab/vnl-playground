@@ -67,6 +67,9 @@ def default_config() -> config_dict.ConfigDict:
         randomize_gaps=True,
         aesthetic="default",
         use_mesh_platforms=False,
+        # Length (m) of the static starting platform; longer == more run-up to the
+        # first gap. Default 2.0 keeps legacy behaviour (read at _build_corridor).
+        start_platform_length=2.0,
         # -- Go/no-go decision params (all no-ops when unjumpable_prob == 0.0) --
         jump_limit=0.22,               # gaps wider than this are physically un-jumpable
         unjumpable_prob=0.0,           # per-gap prob of sampling from unjumpable_gap_range
@@ -304,8 +307,9 @@ class RunGap(rodent_base.RodentEnv):
         n_platforms = self._config.n_platforms
         randomize = self._config.randomize_gaps
 
-        # Starting platform (always static)
-        start_length = 2.0
+        # Starting platform (always static). Length configurable so the rat can be
+        # placed farther from the first gap (longer run-up); default 2.0 (unchanged).
+        start_length = float(self._config.get("start_platform_length", 2.0))
         x_cursor = 0.0
 
         body = self._spec.worldbody.add_body(
@@ -486,6 +490,13 @@ class RunGap(rodent_base.RodentEnv):
             "dist_to_next_edge": jp.array(1e3, dtype=jp.float32),
             "next_gap_valid": jp.array(False),
             "fwd_vel_x": jp.array(0.0, dtype=jp.float32),
+            # reward-weight-schedule: forward_velocity's weight is scaled by the training loop
+            # (the only place the GLOBAL training step is known; the env sees only the step
+            # within an episode). MUST be declared here even when unused -- the training scan's
+            # carry pytree must keep a stable structure, so the loop can only overwrite this
+            # key, never add it. reset() leaves it at 1.0, so EVAL envs -- which the train loop
+            # never touches -- always measure forward_velocity at the config weight.
+            "vel_kappa": jp.array(1.0, dtype=jp.float32),
         }
 
         data = mjx.make_data(
@@ -917,14 +928,33 @@ class RunGap(rodent_base.RodentEnv):
         Returns:
             Weighted forward velocity reward.
         """
-        del info
-
         body = data.bind(self.mjx_model, self._spec.body("torso-rodent"))
         forward_vel = body.subtree_linvel[0]
 
+        # ---- BEHAVIOUR DIAGNOSTICS (patch_diagnostics.py) ----
+        # The clip below maps backward motion to 0, making "turning around" and
+        # "standing still" indistinguishable in every downstream metric. Log the
+        # raw signed quantities so the two can be told apart from the logs alone.
+        #
+        # NOTE: brax reduces each metric to ONE scalar per episode (sum over
+        # steps, then mean over envs). So vx_signed alone is NOT enough:
+        # sum(vx) ~= net_displacement/dt, which is ~0 for BOTH a frozen rat and
+        # a rat that runs out and comes back. Sign alternation does not survive
+        # the reduction. vx_abs and backward_frac are what actually separate
+        # them -- they are non-negative, so they cannot cancel.
+        metrics["diag/vx_signed"] = forward_vel                    # signed, NOT clipped
+        metrics["diag/vx_abs"] = jp.abs(forward_vel)               # cannot cancel out
+        metrics["diag/backward_frac"] = (forward_vel < 0.0).astype(jp.float32)
+        metrics["diag/x_pos"] = body.xpos[0]
+        metrics["diag/max_x"] = info.get("max_x_reached", body.xpos[0])
+        metrics["diag/gaps_crossed"] = info.get("gaps_crossed", 0).astype(jp.float32) \
+            if hasattr(info.get("gaps_crossed", 0), "astype") else jp.float32(0.0)
+        # ------------------------------------------------------
+
         reward_value = jp.clip(forward_vel / target_speed, 0.0, 1.0)
 
-        weighted_reward = reward_value * weight
+        # reward-weight-schedule: 1.0 unless the training loop is ramping -> inert by default.
+        weighted_reward = reward_value * weight * info.get("vel_kappa", 1.0)
         metrics["rewards/forward_velocity"] = weighted_reward
 
         return weighted_reward
