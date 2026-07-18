@@ -87,6 +87,10 @@ def default_config() -> config_dict.ConfigDict:
         bowl_vsize=0.2,
         bowl_sigma=1.25,
         bowl_amplitude=-10,
+        # Metres past the rim (r = bowl_hsize) the torso must reach for FULL escape
+        # reward. >0 forces the agent to clear the rim onto the flat exterior instead
+        # of parking at the rim. See _escape_x_upright_reward.
+        escape_clearance=0.5,
         reward_terms={
             "escape_x_upright": {"weight": 1.0},
             "speed": {"weight": 0.0},
@@ -266,14 +270,22 @@ class BowlEscape(rodent_base.RodentEnv):
             float: Escape reward value.
         """
         del info
-        terrain_size = float(self._config.bowl_hsize)
         torso_xpos = data.bind(
             self.mjx_model, self._spec.body(f"torso{self._suffix}")
         ).xpos
+        # Horizontal (radial) distance from the bowl centre -- use x,y only. The
+        # previous code used the full 3D norm ||torso_xpos||, which let vertical
+        # position (rearing / climbing the wall) inflate the "escape" distance.
+        horiz_dist = jp.linalg.norm(torso_xpos[:2])
+        # Full escape reward requires clearing the rim onto the flat exterior, not
+        # merely reaching the rim. The rim sits at r = bowl_hsize; escape_radius =
+        # bowl_hsize + escape_clearance (>0) so the reward keeps rising past the rim
+        # and pulls the agent OUT of the bowl. Ramps linearly 0 (centre) -> 1.
+        escape_radius = float(self._config.bowl_hsize) + float(self._config.escape_clearance)
         escape_reward = reward_fns.tolerance(
-            jp.linalg.norm(torso_xpos),
-            bounds=(terrain_size, float("inf")),
-            margin=terrain_size,
+            horiz_dist,
+            bounds=(escape_radius, float("inf")),
+            margin=escape_radius,
             value_at_margin=0,
             sigmoid="linear",
         )
@@ -376,7 +388,15 @@ class BowlEscape(rodent_base.RodentEnv):
         col = jp.floor(u * (size - 1)).astype(jp.int32)
         row = jp.floor(v * (size - 1)).astype(jp.int32)
         height_norm = noise[row, col]
-        return height_norm * vsize
+        surf = height_norm * vsize
+        # Beyond the height-field extent (|x| or |y| > hsize) the terrain is the flat
+        # arena floor (z ~ 0), NOT the clamped rim height. Returning the clamped rim
+        # height there would make the 'fallen' termination spuriously fire on a rat
+        # that has escaped onto the exterior (its torso is well below the rim there),
+        # which would fight the escape reward once escape_clearance pushes the target
+        # past the rim.
+        inside = (jp.abs(x) <= hsize) & (jp.abs(y) <= hsize)
+        return jp.where(inside, surf, 0.0)
 
     def _compute_surface_normal(self, x: float, y: float) -> np.ndarray:
         """Compute the surface normal of the bowl heightfield at (x, y).

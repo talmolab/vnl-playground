@@ -12,6 +12,9 @@ env_config:
     bowl_amplitude: -20
     target_speed: 1
     iterations: 10
+    # metres past the rim (r = bowl_hsize = 2) the torso must reach for full escape
+    # reward, so the agent must clear the rim onto the exterior, not park at it. Tune this.
+    escape_clearance: 0.5
 
 network_config:
   arch_name: intention
