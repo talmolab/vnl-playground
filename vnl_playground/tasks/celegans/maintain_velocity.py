@@ -43,8 +43,6 @@ def default_config() -> config_dict.ConfigDict:
         action_repeat=1,
         reward_terms={
             "forward_velocity": {"weight": 1.0},
-        },
-        cost_terms={
             "lateral_velocity": {"weight": 0.0},
             "angular_velocity_z": {"weight": 0.0},
         },
@@ -80,7 +78,7 @@ class MaintainVelocity(celegans_base.CelegansEnv):
         """
         super().__init__(config, config_overrides)
         self._rng = rng
-        
+
         # ConfigDict annoyingly sorts dictionary by keys
         friction = [
             self.config.friction["tan_floor"],
@@ -104,7 +102,7 @@ class MaintainVelocity(celegans_base.CelegansEnv):
             self.config.solreffriction["timeconst"],
             self.config.solreffriction["dampratio"],
         ]
-    
+
         if self.config.contact_geom.lower() == "mesh":
             contact_geom = mujoco.mjtGeom.mjGEOM_MESH
         elif self.config.contact_geom.lower() == "capsule":
@@ -116,7 +114,7 @@ class MaintainVelocity(celegans_base.CelegansEnv):
         # quat (1, 0, 0, 0) = identity = facing +x by default
         init_x, init_y, init_z = 0.0, 0.0, self._config.init_z
         init_quat = (1, 0, 0, 0)
-        
+
         self.add_worm(
             torque_actuators=self._config.torque_actuators,
             rescale_factor=self._config.rescale_factor,
@@ -245,7 +243,7 @@ class MaintainVelocity(celegans_base.CelegansEnv):
         reward_value = reward_fns.tolerance(
             forward_vel,
             bounds=(target_speed, target_speed),
-            margin=target_speed,
+            margin=abs(target_speed),
             sigmoid="linear",
             value_at_margin=0.0,
         )
