@@ -591,6 +591,17 @@ def render_video(
                     )
                     hud_lines.append((f"Dist to gap: {dist_to_gap:.3f} m", gap_color))
 
+                # Width of the NEXT gap the rat must jump (the varying "how far is
+                # this jump" quantity; platforms are fixed-length so their size is
+                # constant). Sourced from env info["next_gap_len"] (meters -> cm).
+                if _hud_on("show_next_gap") and hasattr(state, "info") and "next_gap_len" in state.info:
+                    ng_valid = bool(np.asarray(state.info.get("next_gap_valid", True)))
+                    ng_len = float(np.asarray(state.info["next_gap_len"]))
+                    if ng_valid and ng_len > 0:
+                        ng_cm = ng_len * 100.0
+                        ng_color = RED if ng_cm >= 15 else YELLOW if ng_cm >= 10 else GREEN
+                        hud_lines.append((f"Next gap: {ng_cm:.1f} cm", ng_color))
+
                 if _hud_on("show_lateral_deviation") and lateral_y is not None:
                     lat_color = YELLOW if abs(lateral_y) > 0.3 else GRAY
                     hud_lines.append((f"Lateral: {lateral_y:.3f} m", lat_color))
@@ -2163,6 +2174,12 @@ def _train_binocular_shared_vision_task_obs_highlvl(
     use_shadows = cfg.env_config.get("use_shadows", False)
     eye_dropout_rate = cfg.env_config.get("eye_dropout_rate", 0.0)
     eval_eye_mode = cfg.env_config.get("eval_eye_mode", "binocular")
+    # .get() with a 0.0 default on purpose: NOT added to the existing
+    # rodent_run_gap YAMLs. Any new field in those files changes the resolved
+    # config md5, and autoresume keys run_state on that hash -- an old run
+    # would silently restart from iteration 0 in a fresh dir.
+    pixel_noise_sigma_max = cfg.env_config.get("pixel_noise_sigma_max", 0.0)
+    pixel_noise_dist = cfg.env_config.get("pixel_noise_dist", "quadratic")
 
     _video_left_renderer = JaxVisionRenderer(
         mj_model=_unwrapped.mj_model,
@@ -2528,12 +2545,15 @@ def _train_binocular_shared_vision_task_obs_highlvl(
             use_shadows=use_shadows,
             eye_dropout_rate=eye_dropout_rate,
             eval_eye_mode=eval_eye_mode,
+            pixel_noise_sigma_max=pixel_noise_sigma_max,
+            pixel_noise_dist=pixel_noise_dist,
         )
 
     logging.info(
         f"Binocular Shared-CNN Vision+TaskObs rendering: {vision_width}x{vision_height}, "
         f"grayscale={grayscale}, left_camera={left_camera}, right_camera={right_camera}, "
-        f"eye_dropout_rate={eye_dropout_rate}, eval_eye_mode={eval_eye_mode}"
+        f"eye_dropout_rate={eye_dropout_rate}, eval_eye_mode={eval_eye_mode}, "
+        f"pixel_noise_sigma_max={pixel_noise_sigma_max}, pixel_noise_dist={pixel_noise_dist}"
     )
 
     # Build and run ff_ppo train with custom shared loss
@@ -3404,6 +3424,12 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
     use_shadows = cfg.env_config.get("use_shadows", False)
     eye_dropout_rate = cfg.env_config.get("eye_dropout_rate", 0.0)
     eval_eye_mode = cfg.env_config.get("eval_eye_mode", "binocular")
+    # .get() with a 0.0 default on purpose: NOT added to the existing
+    # rodent_run_gap YAMLs. Any new field in those files changes the resolved
+    # config md5, and autoresume keys run_state on that hash -- an old run
+    # would silently restart from iteration 0 in a fresh dir.
+    pixel_noise_sigma_max = cfg.env_config.get("pixel_noise_sigma_max", 0.0)
+    pixel_noise_dist = cfg.env_config.get("pixel_noise_dist", "quadratic")
 
     _video_left_renderer = JaxVisionRenderer(
         mj_model=_unwrapped.mj_model,
@@ -3788,12 +3814,15 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
             use_shadows=use_shadows,
             eye_dropout_rate=eye_dropout_rate,
             eval_eye_mode=eval_eye_mode,
+            pixel_noise_sigma_max=pixel_noise_sigma_max,
+            pixel_noise_dist=pixel_noise_dist,
         )
 
     logging.info(
         f"Recurrent Binocular Vision+TaskObs rendering: {vision_width}x{vision_height}, "
         f"grayscale={grayscale}, left_camera={left_camera}, right_camera={right_camera}, "
-        f"eye_dropout_rate={eye_dropout_rate}, eval_eye_mode={eval_eye_mode}"
+        f"eye_dropout_rate={eye_dropout_rate}, eval_eye_mode={eval_eye_mode}, "
+        f"pixel_noise_sigma_max={pixel_noise_sigma_max}, pixel_noise_dist={pixel_noise_dist}"
     )
 
     # Build and run recurrent PPO train with custom shared loss
@@ -4091,10 +4120,46 @@ def main(cfg: DictConfig):
     )
     _log_memory("after wandb init")
 
+    # Focused eval whitelist (Keming): the evaluator emits ~64 eval/* metrics
+    # (every metric + a _std twin + latent diagnostics + redundant terminations).
+    # Keep only what we actually read; pass training/system metrics through.
+    _EVAL_KEEP = {
+        "eval/episode_trial/success",
+        "eval/episode_trial/failure",
+        "eval/episode_trial/abort",
+        "eval/episode_sdt/hit",
+        "eval/episode_sdt/miss",
+        "eval/episode_sdt/false_alarm",
+        "eval/episode_sdt/correct_reject",
+        "eval/episode_reward",
+        "eval/avg_episode_length",
+        "eval/episode_terminations/trial_timeout",
+        # Outcome distribution -- the core of the per-paw / option-b comparison:
+        # how often the episode ends in a real 4-paw landing (paw_landed), a
+        # torso-cross success (trial_success), a fall (fallen -- the side-fall bug),
+        # or an abort. Without these we cannot see whether #1 actually lands.
+        "eval/episode_terminations/paw_landed",
+        "eval/episode_terminations/trial_success",
+        "eval/episode_terminations/fallen",
+        "eval/episode_terminations/abort_dismount",
+        "eval/sps",
+    }
+
+    def _keep_metric(k):
+        if not k.startswith("eval/"):
+            return True  # training/system/curriculum metrics untouched
+        if k.endswith("_std"):
+            return False  # drop every std twin
+        if k.startswith("eval/episode_rewards/"):
+            return True  # keep per-term reward MEANS (collapse diagnosis)
+        return k in _EVAL_KEEP
+
     def wandb_progress(num_steps, metrics):
         # Convert JAX Arrays to Python floats to prevent wandb holding JAX references
         metrics = {
-            k: float(v) if hasattr(v, "dtype") else v for k, v in metrics.items()
+            k: float(v) if hasattr(v, "dtype") else v
+            for k, v in metrics.items()
+            if _keep_metric(k)
         }
         metrics["num_steps_thousands"] = num_steps
         proc = psutil.Process()

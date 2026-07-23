@@ -428,6 +428,8 @@ class BinocularVisionRenderWrapper:
         right_camera_name="eye_right-rodent",
         eye_dropout_rate=0.0,
         eval_eye_mode="binocular",
+        pixel_noise_sigma_max=0.0,
+        pixel_noise_dist="quadratic",
     ):
         self.env = env
         self._mj_model = mj_model
@@ -436,6 +438,13 @@ class BinocularVisionRenderWrapper:
         self._right_camera_name = right_camera_name
         self._eye_dropout_rate = eye_dropout_rate
         self._eval_eye_mode = eval_eye_mode
+        self._pixel_noise_sigma_max = float(pixel_noise_sigma_max)
+        self._pixel_noise_dist = pixel_noise_dist
+        if pixel_noise_dist not in ("uniform", "quadratic", "constant"):
+            raise ValueError(
+                f"Unknown pixel_noise_dist: {pixel_noise_dist!r}. "
+                "Expected 'uniform', 'quadratic', or 'constant'."
+            )
         self._renderer_kwargs = dict(
             width=width,
             height=height,
@@ -542,6 +551,56 @@ class BinocularVisionRenderWrapper:
         )
         return vision * mask
 
+    def _sample_sigma(self, rng, nworld):
+        """Draw one Gaussian-pixel-noise sigma per world, for a whole episode.
+
+        sigma is held CONSTANT within an episode (resampled only on reset /
+        auto-reset). If it were redrawn every step the policy would only ever
+        see a time-averaged blur and could not condition on "this episode is a
+        foggy one" -- and that conditioning is the whole point: image variance
+        is a direct cue to sigma, so a constant-per-episode sigma is what makes
+        an uncertainty-dependent policy (slow down when the view is bad)
+        learnable at all.
+
+        dist controls where the samples pile up over [0, sigma_max]:
+          uniform    sigma = max * U           median 0.50*max
+          quadratic  sigma = max * U^2         median 0.25*max
+          constant   sigma = max               (every episode identical)
+        quadratic is the default because the measured behavioural cliff sits at
+        sigma ~ 0.2-0.4 (eval/noise_sweep_out) while everything above ~0.5 is a
+        flat proprioceptive floor -- uniform would spend half the episodes in
+        the regime where the conditions are indistinguishable from each other.
+        The support still reaches sigma_max either way, so the extreme end is
+        sampled, just not over-sampled.
+
+        constant is for the TRAINING-TIME dose-response sweep: fix sigma at one
+        value for the whole run, train one agent per level, and read off the
+        level at which gap-jumping stops being learnable. It answers a different
+        question than uniform/quadratic (which ask "can one agent span all noise
+        levels") -- here every episode sees exactly sigma_max, so there is no
+        per-episode "how foggy is today" cue to exploit; the agent just learns
+        the task at one fixed corruption level.
+        """
+        if self._pixel_noise_dist == "constant":
+            return jnp.full((nworld,), self._pixel_noise_sigma_max)
+        u = jax.random.uniform(rng, (nworld,))
+        if self._pixel_noise_dist == "quadratic":
+            u = u * u
+        return self._pixel_noise_sigma_max * u
+
+    @staticmethod
+    def _apply_pixel_noise(vision, sigma, rng):
+        """vision_noisy = clip(vision + sigma * N(0,1), 0, 1), per world.
+
+        Identical to the expression eval/noise_sweep.py applies at test time, so
+        the training corruption and the measurement are the same operation.
+        Pixels are float32 in [0,1] (see _unpack_grayscale), which is what makes
+        sigma interpretable as a fraction of full pixel range.
+        """
+        noise = jax.random.normal(rng, vision.shape, vision.dtype)
+        s = sigma.reshape((-1,) + (1,) * (vision.ndim - 1))  # broadcast over H,W,C
+        return jnp.clip(vision + s * noise, 0.0, 1.0)
+
     def _apply_eval_eye_mask(self, vision):
         """Deterministically mask one eye for evaluation.
 
@@ -588,6 +647,18 @@ class BinocularVisionRenderWrapper:
         self._ensure_renderers(rng.shape[0])
         vision = self._render_binocular(state.data)
 
+        # Gaussian pixel noise, BEFORE any eye mask: masking after keeps a
+        # dropped eye at exactly 0.0 ("eye closed"), whereas noising after
+        # would refill it with noise and destroy that signal.
+        if self._pixel_noise_sigma_max > 0.0:
+            # Per-world keys, batched so AutoResetWrapper's tree ops see a
+            # leading env axis -- same contract as eye_mask_rng below.
+            state.info["pixel_noise_rng"] = jax.vmap(jax.random.split)(rng)[:, 0]
+            sig_rng, noise_rng = jax.random.split(state.info["pixel_noise_rng"][0])
+            sigma = self._sample_sigma(sig_rng, rng.shape[0])
+            state.info["pixel_noise_sigma"] = sigma
+            vision = self._apply_pixel_noise(vision, sigma, noise_rng)
+
         # Stochastic eye dropout (training) or deterministic masking (eval)
         if self._eye_dropout_rate > 0.0:
             mask_rng, _ = jax.random.split(rng[0])
@@ -603,6 +674,21 @@ class BinocularVisionRenderWrapper:
     def step(self, state, action):
         state = self.env.step(state, action)
         vision = self._render_binocular(state.data)
+
+        # Gaussian pixel noise. sigma is redrawn ONLY where the episode just
+        # ended: the inner env is AutoReset-wrapped, so a done world already
+        # holds the first state of its NEXT episode and the vision rendered
+        # here belongs to that new episode -- it must get the new sigma.
+        if self._pixel_noise_sigma_max > 0.0:
+            sig_rng, noise_rng = jax.random.split(state.info["pixel_noise_rng"][0])
+            fresh = self._sample_sigma(sig_rng, vision.shape[0])
+            done = jnp.asarray(state.done).reshape(-1) > 0.5
+            sigma = jnp.where(done, fresh, state.info["pixel_noise_sigma"])
+            state.info["pixel_noise_sigma"] = sigma
+            state.info["pixel_noise_rng"] = jax.vmap(
+                lambda k: jax.random.split(k)[0]
+            )(state.info["pixel_noise_rng"])
+            vision = self._apply_pixel_noise(vision, sigma, noise_rng)
 
         # Stochastic eye dropout (training) or deterministic masking (eval)
         if self._eye_dropout_rate > 0.0:
