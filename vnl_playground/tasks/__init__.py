@@ -26,6 +26,7 @@ from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_veloc
 from vnl_playground.tasks.stick import imitation as stick_imitation
 
 from vnl_playground.tasks.celegans import imitation as worm_imitation
+from vnl_playground.tasks.celegans import maintain_velocity as worm_maintain_velocity
 
 # Unified wrappers and reference clips
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
@@ -46,7 +47,7 @@ _envs = {
     "StickMaintainVelocity": stick_maintain_velocity.MaintainVelocity,
     "StickImitation": stick_imitation.Imitation,
     "WormImitation": worm_imitation.Imitation,
-    "CelegansImitation": worm_imitation.Imitation,
+    "WormMaintainVelocity": worm_maintain_velocity.MaintainVelocity,
 }
 
 _cfgs = {
@@ -63,6 +64,7 @@ _cfgs = {
     "StickMaintainVelocity": stick_maintain_velocity.default_config,
     "StickImitation": stick_imitation.default_config,
     "WormImitation": worm_imitation.default_config,
+    "WormMaintainVelocity": worm_maintain_velocity.default_config,
 }
 
 # ReferenceClips class for imitation environments (not all envs use clips)
