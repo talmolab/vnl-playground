@@ -69,6 +69,7 @@ def default_config() -> config_dict.ConfigDict:
         obs_noise_std=0.0,
         obs_delay=0,
         max_obs_delay=4,
+        sensor_tau=0.0,
         reward_terms={
             # Dense guidance as potential-based *progress* (change in gaussian
             # proximity per step). Telescopes over a trajectory -> cannot be farmed by
@@ -234,6 +235,15 @@ class Thermotaxis(celegans_base.CelegansEnv):
             if "weight" in params
         )
 
+        # First-order RC sensor-response lag (opt-in; sensor_tau <= 0 disables it).
+        # Precompute the forward-Euler blend coefficient, clamped to 1 so a tau below
+        # the control step just tracks the true temperature fully (no lag).
+        self._sensor_tau = float(self._config.sensor_tau)
+        self._rc_lag = self._sensor_tau > 0.0
+        self._rc_coeff = (
+            min(float(self.ctrl_dt) / self._sensor_tau, 1.0) if self._rc_lag else 1.0
+        )
+
     # ----------------------------------------------------------------- helpers
     def _floor_extent(self) -> tuple:
         """Concrete floor half-extents (Lx, Ly) from ``gradient_cfg.arena_size``.
@@ -277,12 +287,15 @@ class Thermotaxis(celegans_base.CelegansEnv):
     def _sense_temperature(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> jp.ndarray:
-        """The temperature the agent observes (optionally delayed + noised).
+        """The temperature the agent observes: the sensor state (after any RC lag),
+        optionally read ``obs_delay`` steps ago, plus optional white noise.
 
-        ``obs_delay`` / ``obs_noise_std`` / ``max_obs_delay`` are static config, so
-        both branches resolve at trace time and are zero-cost when disabled.
+        ``sensor_tau`` / ``obs_delay`` / ``obs_noise_std`` / ``max_obs_delay`` are
+        static config, so every branch resolves at trace time and is zero-cost when
+        disabled. ``sensor_state`` equals the true temperature when ``sensor_tau<=0``.
         """
-        sensed = self._temperature_at(self._worm_xy(data), info)
+        del data
+        sensed = info["sensor_state"]
         delay = int(self._config.obs_delay)
         if delay > 0:
             buf_len = int(self._config.max_obs_delay) + 1
@@ -383,10 +396,17 @@ class Thermotaxis(celegans_base.CelegansEnv):
         info["rng"] = rng
         info["noise_key"] = noise_key
 
-        # Push the current true temperature into the obs-delay ring buffer.
-        true_temp = self._temperature_at(self._worm_xy(data), info)
+        # Sensor response: first-order thermal lag (RC low-pass) toward the true
+        # head temperature, then push the lagged value into the obs-delay buffer.
+        true_temp = self._temperature_at(self._sensor_xy(data), info)
+        if self._rc_lag:
+            info["sensor_state"] = info["sensor_state"] + self._rc_coeff * (
+                true_temp - info["sensor_state"]
+            )
+        else:
+            info["sensor_state"] = true_temp
         idx = info["hist_index"]
-        info["temp_history"] = info["temp_history"].at[idx].set(true_temp)
+        info["temp_history"] = info["temp_history"].at[idx].set(info["sensor_state"])
         info["hist_index"] = (idx + 1) % (int(self._config.max_obs_delay) + 1)
 
         obs = self._get_obs(data, info)
