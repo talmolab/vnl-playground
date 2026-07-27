@@ -1,0 +1,25 @@
+<mujoco>
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true" meshdir="./meshes" />
+  <option solver="CG" iterations="6" ls_iterations="6" timestep="0.002" gravity="0 0 -981" density="0.00128" viscosity="0.000185" cone="elliptic"/>
+  <visual>
+    <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
+    <global offwidth="2048" offheight="1536"/>
+    <quality shadowsize="8192"/>
+  </visual>
+
+  <asset>
+    <!-- <skin name="skin" file="rodent_walker_skin.skn"/> -->
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="30 30" texuniform="true" reflectance=".2"/>
+  </asset>
+
+  <worldbody>
+    <!-- A finite ±10 box slab so the worm can walk off the edge and fall. The top
+         surface and x,y extent match arena.xml's plane exactly (top at z=0, ±10 in
+         x,y), so the worm's resting height and proprioceptive inputs are unchanged.
+         The slab is given real thickness *below* z=0 (all invisible to the resting
+         worm): a paper-thin box does not generate contact support and the worm
+         tunnels straight through it. -->
+    <geom contype="0" conaffinity="1" name="floor" pos="0 0 -1" size="10 10 1" type="box" material="grid"/>
+  </worldbody>
+</mujoco>
