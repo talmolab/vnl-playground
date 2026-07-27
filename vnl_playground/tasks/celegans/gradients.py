@@ -223,3 +223,74 @@ class Gradient:
         )
         r2 = (xy[0] - lx) ** 2 + (xy[1] - ly) ** 2
         return min_temp + (setpoint - min_temp) * jp.exp(-r2 / (2.0 * sigma**2))
+
+
+class GridField:
+    """Temperature field held on a discrete 2D grid over the arena.
+
+    Use this only for fields that are genuinely discrete data -- an arbitrary or
+    image-defined temperature map, or a field you want to evolve with true
+    bounded-domain heat diffusion. For the parametric shapes (linear, gaussian),
+    prefer the analytic :class:`Gradient`: it returns the exact temperature at the
+    worm's *continuous* position with no discretization/interpolation error, and
+    those shapes even diffuse in closed form (a gaussian stays gaussian; a linear
+    field is diffusion-invariant), so a grid buys nothing there.
+
+    A grid necessarily samples space, so reads use bilinear interpolation. The array
+    is ``(ny, nx)`` with ``x`` indexing axis 1 and ``y`` indexing axis 0. Seed it from
+    image data directly, or from an analytic shape via :meth:`rasterize`; for a
+    dynamic field, advance it each step with :meth:`diffuse`. To plug one into the
+    env, store it in ``info`` and read it in ``_temperature_at`` via :meth:`evaluate`.
+    """
+
+    @staticmethod
+    def rasterize(shape_id, params, arena_lx, arena_ly, nx, ny):
+        """Seed an ``(ny, nx)`` grid by evaluating an analytic shape at cell centers."""
+        xs = jp.linspace(-arena_lx, arena_lx, nx)
+        ys = jp.linspace(-arena_ly, arena_ly, ny)
+        gx, gy = jp.meshgrid(xs, ys)  # (ny, nx)
+        xy = jp.stack([gx.ravel(), gy.ravel()], axis=-1)
+        vals = jax.vmap(lambda p: Gradient.evaluate(shape_id, params, p))(xy)
+        return vals.reshape(ny, nx)
+
+    @staticmethod
+    def evaluate(grid, xy, arena_lx, arena_ly):
+        """Bilinear interpolation of ``grid`` at world position ``xy`` (edge-clamped)."""
+        ny, nx = grid.shape
+        fx = jp.clip((xy[0] + arena_lx) / (2.0 * arena_lx) * (nx - 1), 0.0, nx - 1)
+        fy = jp.clip((xy[1] + arena_ly) / (2.0 * arena_ly) * (ny - 1), 0.0, ny - 1)
+        x0 = jp.floor(fx).astype(jp.int32)
+        y0 = jp.floor(fy).astype(jp.int32)
+        x1 = jp.minimum(x0 + 1, nx - 1)
+        y1 = jp.minimum(y0 + 1, ny - 1)
+        wx, wy = fx - x0, fy - y0
+        return (
+            grid[y0, x0] * (1 - wx) * (1 - wy)
+            + grid[y0, x1] * wx * (1 - wy)
+            + grid[y1, x0] * (1 - wx) * wy
+            + grid[y1, x1] * wx * wy
+        )
+
+    @staticmethod
+    def diffuse(grid, alpha, dt, dx, dy, n_sub):
+        """Advance ``grid`` by heat diffusion ``dT/dt = alpha * laplacian(T)``.
+
+        Explicit finite differences with Neumann (zero-flux / insulated) boundaries,
+        sub-stepped ``n_sub`` times for numerical stability (``n_sub`` is a static int
+        chosen so each sub-step satisfies the explicit-diffusion stability bound).
+        Unlike closed-form diffusion of an analytic shape, this respects the finite
+        arena walls (heat reflects and total heat is conserved).
+        """
+        dt_sub = dt / n_sub
+        cx = alpha * dt_sub / dx**2
+        cy = alpha * dt_sub / dy**2
+
+        def body(g, _):
+            gp = jp.pad(g, 1, mode="edge")  # zero-flux (Neumann) walls
+            lap = cx * (gp[1:-1, 2:] - 2 * g + gp[1:-1, :-2]) + cy * (
+                gp[2:, 1:-1] - 2 * g + gp[:-2, 1:-1]
+            )
+            return g + lap, None
+
+        grid, _ = jax.lax.scan(body, grid, None, length=n_sub)
+        return grid
