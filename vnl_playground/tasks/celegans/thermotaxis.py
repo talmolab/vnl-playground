@@ -57,11 +57,13 @@ def default_config() -> config_dict.ConfigDict:
             max_temp=25.0,
             arena_size=(10.0, 10.0),  # (Lx, Ly); must match arena_bounded.xml floor
         ),
-        # thresholds (TEMPERATURE space, except fell_off which is physical z)
-        epsilon=0.25,
-        max_temp_error=8.0,
-        min_z=-0.5,
-        # observation noise / delay (OFF in v1); buffer size static
+        # Thermosensory body: C. elegans senses temperature at the head, so the
+        # gradient is read at this body's position (not the mid-body root).
+        sensor_body="torso1_body",
+        # observation realism knobs (all OFF by default, and independent of each
+        # other): obs_noise_std = additive white noise; obs_delay = pure transport
+        # delay in control steps (<= max_obs_delay); sensor_tau = first-order thermal
+        # response lag in seconds (<= 0 disables; larger = more sluggish sensor).
         obs_noise_std=0.0,
         obs_delay=0,
         max_obs_delay=4,
@@ -204,16 +206,23 @@ class Thermotaxis(celegans_base.CelegansEnv):
         return mjx.forward(self.mjx_model, data)
 
     def _worm_xy(self, data: mjx.Data) -> jp.ndarray:
-        """Worm root planar position ``(x, y)``."""
+        """Worm root (mid-body) planar position ``(x, y)``."""
         return self._get_root_pos(data)[: self.config.dim]
 
+    def _sensor_xy(self, data: mjx.Data) -> jp.ndarray:
+        """Planar ``(x, y)`` of the thermosensory head body (temperature is read here)."""
+        head = data.bind(
+            self.mjx_model, self._spec.body(f"{self._config.sensor_body}{self.suffix}")
+        )
+        return head.xpos[: self.config.dim]
+
     def _temperature_at(self, xy: jp.ndarray, info: Mapping[str, Any]) -> jp.ndarray:
-        """Temperature at planar position ``xy`` for this episode's gradient."""
+        """Temperature at the worm's exact (continuous) planar position ``xy``."""
         return Gradient.evaluate(info["shape_id"], info["temp_field"], xy)
 
     def _temp_error(self, data: mjx.Data, info: Mapping[str, Any]) -> jp.ndarray:
-        """Absolute temperature error ``|T(worm) - setpoint|``."""
-        temp = self._temperature_at(self._worm_xy(data), info)
+        """Absolute temperature error ``|T(head) - setpoint|`` (sensed at the head)."""
+        temp = self._temperature_at(self._sensor_xy(data), info)
         return jp.abs(temp - info["setpoint"])
 
     def _sense_temperature(
