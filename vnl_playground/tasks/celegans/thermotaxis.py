@@ -66,14 +66,31 @@ def default_config() -> config_dict.ConfigDict:
         obs_delay=0,
         max_obs_delay=4,
         reward_terms={
-            "temperature": {"weight": 1.0, "exp_scale": 2.0},
-            "setpoint_bonus": {"weight": 10.0, "epsilon": 0.25},
+            # Dense guidance as potential-based *progress* (change in gaussian
+            # proximity per step). Telescopes over a trajectory -> cannot be farmed by
+            # loitering. exp_scale widened so the gaussian isn't flat at the cold start.
+            "progress": {"weight": 1.0, "exp_scale": 2.0},
+            # Configurable terminal reward/penalty added on the step a termination
+            # fires. Keys must be termination names; +ve = bonus, -ve = penalty. This
+            # is the single place to tune per-termination bonuses.
+            "termination_bonus": {
+                "bonuses": {
+                    "reached_setpoint": 10.0,  # success
+                    "too_far": -10.0,  # gave up (too cold)
+                    "fell_off": -10.0,  # walked off the floor
+                    "nan": 0.0,
+                }
+            },
+            # Per-step time cost -> reach the setpoint ASAP. Off for now (tune later);
+            # the loiter exploit stays closed at weight 0 because `progress` is
+            # non-farmable -- this term only adds "finish sooner" pressure.
+            "time": {"weight": 0.0},
             "control": {"weight": 0.0},
             "energy": {"weight": 0.0, "max_value": 50.0},
         },
         termination_criteria={
-            "reached_setpoint": {"epsilon": 0.25},
-            "too_far": {"max_temp_error": 8.0},
+            "reached_setpoint": {"epsilon": 0.5},
+            "too_far": {"max_temp_error": 5.0},
             "fell_off": {"min_z": -0.5},
             "nan": {},
         },
@@ -240,6 +257,8 @@ class Thermotaxis(celegans_base.CelegansEnv):
                 int(self._config.max_obs_delay) + 1, dtype=jp.float32
             ),
             "hist_index": jp.asarray(0, dtype=jp.int32),
+            "sensor_state": jp.asarray(0.0, dtype=jp.float32),  # RC-lag filtered temp
+            "prev_err": jp.asarray(0.0, dtype=jp.float32),  # progress-reward baseline
             "prev_action": self.null_action(),
             "action": self.null_action(),
         }
@@ -268,14 +287,19 @@ class Thermotaxis(celegans_base.CelegansEnv):
         )
         data = self._set_root_xy(data, info["start_xy"][0], info["start_xy"][1])
 
-        # Prefill the obs-delay ring buffer with the initial temperature.
-        init_temp = self._temperature_at(self._worm_xy(data), info)
+        # Prefill the obs-delay ring buffer and settle the sensor at the initial
+        # (head-sensed) temperature.
+        init_temp = self._temperature_at(self._sensor_xy(data), info)
         info["temp_history"] = jp.full_like(info["temp_history"], init_temp)
+        info["sensor_state"] = init_temp
+        # Baseline for the progress reward so the first-step reward is exactly 0.
+        info["prev_err"] = jp.abs(init_temp - info["setpoint"])
 
         metrics: Dict[str, Any] = {}
         obs = self._get_obs(data, info)
-        reward = self._get_reward(data, info, metrics)
+        # Terminations first so the termination_bonus reward can read their flags.
         done = self._is_done(data, info, metrics)
+        reward = self._get_reward(data, info, metrics)
 
         return mjx_env.State(data, obs, reward, jp.astype(done, float), metrics, info)
 
@@ -312,6 +336,9 @@ class Thermotaxis(celegans_base.CelegansEnv):
         reward = self._get_reward(data, info, state.metrics)
         reward = jp.nan_to_num(reward)
 
+        # Advance the progress-reward baseline to this step's error.
+        info["prev_err"] = self._temp_error(data, info)
+
         return state.replace(
             data=data,
             obs=obs,
@@ -338,9 +365,41 @@ class Thermotaxis(celegans_base.CelegansEnv):
         return collections.OrderedDict(state=obs)
 
     # ------------------------------------------------------------------ rewards
+    @staticmethod
+    def _proximity(err, exp_scale):
+        """Gaussian proximity potential in [0, 1] (1.0 at the setpoint)."""
+        return jp.exp(-((err / exp_scale) ** 2) / 2)
+
+    @_registry.reward("progress")
+    def _progress_reward(self, data, info, metrics, weight, exp_scale) -> float:
+        """Potential-based progress: change in gaussian proximity vs. the last step.
+
+        ``reward = weight * (phi(err_t) - phi(err_{t-1}))``. Positive when the worm
+        moves up the gradient toward the setpoint, negative when it moves away. Because
+        it is a difference of a potential, it telescopes over any trajectory to
+        ``phi_final - phi_start`` regardless of length -- so it cannot be farmed by
+        loitering just outside the success region.
+        """
+        err = self._temp_error(data, info)
+        reward = weight * (
+            self._proximity(err, exp_scale)
+            - self._proximity(info["prev_err"], exp_scale)
+        )
+        metrics["rewards/progress"] = metrics["rewards/progress/per_step"] = reward
+        metrics["magnitudes/temp_error"] = metrics[
+            "magnitudes/temp_error/per_step"
+        ] = err
+        return reward
+
     @_registry.reward("temperature")
     def _temperature_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Gaussian reward on the temperature error (1.0 at zero error)."""
+        """Gaussian reward on the temperature error (1.0 at zero error).
+
+        NOTE: this is a *positive per-step proximity* reward and is farmable by
+        loitering just outside the success region (early termination forfeits the
+        remaining per-step reward). It is kept registered for reference/ablation but is
+        NOT in the default reward set; use ``progress`` instead.
+        """
         err = self._temp_error(data, info)
         reward = weight * jp.exp(-((err / exp_scale) ** 2) / 2)
         metrics["rewards/temperature"] = metrics["rewards/temperature/per_step"] = (
@@ -351,15 +410,27 @@ class Thermotaxis(celegans_base.CelegansEnv):
         ] = err
         return reward
 
-    @_registry.reward("setpoint_bonus")
-    def _setpoint_bonus_reward(self, data, info, metrics, weight, epsilon) -> float:
-        """Large bonus for being within ``epsilon`` (temperature) of the setpoint."""
-        err = self._temp_error(data, info)
-        reward = weight * (err < epsilon).astype(float)
-        metrics["rewards/setpoint_bonus"] = metrics[
-            "rewards/setpoint_bonus/per_step"
-        ] = reward
-        return reward
+    @_registry.reward("termination_bonus")
+    def _termination_bonus(self, data, info, metrics, bonuses) -> float:
+        """Configurable terminal reward/penalty per termination.
+
+        ``bonuses`` maps termination names to a reward added on the step that
+        termination fires (positive = bonus, e.g. reaching the setpoint; negative =
+        penalty, e.g. falling off). Because it reads the termination flags written by
+        ``_is_done`` (which runs before ``_get_reward`` in both reset and step), the
+        bonus is applied exactly once, on the terminating step.
+        """
+        del data, info
+        total = jp.asarray(0.0, dtype=jp.float32)
+        for name, bonus in bonuses.items():
+            fired = metrics[f"terminations/{name}"]
+            contribution = bonus * fired
+            total = total + contribution
+            metrics[f"rewards/termination_bonus/{name}"] = contribution
+        metrics["rewards/termination_bonus"] = metrics[
+            "rewards/termination_bonus/per_step"
+        ] = total
+        return total
 
     @_registry.reward("control")
     def _control_cost(self, data, info, metrics, weight) -> float:
@@ -383,6 +454,14 @@ class Thermotaxis(celegans_base.CelegansEnv):
         cost = -weight * energy
         metrics["costs/energy"] = metrics["costs/energy/per_step"] = cost
         metrics["magnitudes/energy"] = metrics["magnitudes/energy/per_step"] = energy
+        return cost
+
+    @_registry.reward("time")
+    def _time_cost(self, data, info, metrics, weight) -> float:
+        """Constant per-step cost (temporal pressure to reach the setpoint sooner)."""
+        del data, info
+        cost = jp.asarray(-weight, dtype=jp.float32)
+        metrics["costs/time"] = metrics["costs/time/per_step"] = cost
         return cost
 
     # ------------------------------------------------------------- terminations
