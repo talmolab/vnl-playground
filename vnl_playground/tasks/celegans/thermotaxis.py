@@ -411,25 +411,26 @@ class Thermotaxis(celegans_base.CelegansEnv):
     # ---------------------------------------------------------------- rendering
     @staticmethod
     def _temperature_colors(temps: np.ndarray, alpha: float) -> np.ndarray:
-        """Map temperatures to a blue->grey->red diverging RGBA (in [0, 1]).
+        """Map temperatures to a saturated blue->red RGBA (in [0, 1]).
 
-        Normalized over the min/max of ``temps`` for maximum contrast. Dependency
-        free (no matplotlib) so rendering never fails on a missing colormap.
+        Normalized over the min/max of ``temps``. Uses a steep ramp centered at the
+        midpoint so the field reads as mostly blue (cold) on one side and red (warm)
+        on the other with only a thin transition band -- no washed-out white middle.
+        Dependency free (no matplotlib) so rendering never fails on a missing colormap.
         """
         t = np.asarray(temps, dtype=np.float64)
         tmin, tmax = float(t.min()), float(t.max())
         tn = (t - tmin) / (tmax - tmin + 1e-8)
-        cold = np.array([59.0, 76.0, 192.0])  # coolwarm blue
-        mid = np.array([221.0, 221.0, 221.0])  # light grey
-        warm = np.array([180.0, 4.0, 38.0])  # coolwarm red
-        below = tn < 0.5
-        frac = np.where(below, tn / 0.5, (tn - 0.5) / 0.5)[..., None]
-        rgb = np.where(below[..., None], cold + (mid - cold) * frac, mid + (warm - mid) * frac)
-        rgba = np.concatenate([rgb / 255.0, np.full((rgb.shape[0], 1), alpha)], axis=-1)
+        cold = np.array([40.0, 90.0, 215.0])  # saturated blue
+        warm = np.array([215.0, 45.0, 55.0])  # saturated red
+        # steep ramp: pure blue below ~0.44, pure red above ~0.56, thin blend between.
+        frac = np.clip((tn - 0.5) / 0.12 + 0.5, 0.0, 1.0)[..., None]
+        rgb = (cold + (warm - cold) * frac) / 255.0
+        rgba = np.concatenate([rgb, np.full((rgb.shape[0], 1), alpha)], axis=-1)
         return rgba.astype(np.float32)
 
     def _overlay_text(self, frame: np.ndarray, lines: Sequence[str]) -> np.ndarray:
-        """Draw white-on-black outlined text lines onto ``frame`` (top-left).
+        """Draw a translucent dark panel with crisp white text (top-left corner).
 
         Uses cv2 if available, else Pillow; if neither is installed, warns once and
         returns the frame unchanged so rendering never hard-fails on annotations.
@@ -437,25 +438,32 @@ class Thermotaxis(celegans_base.CelegansEnv):
         try:
             import cv2
 
+            fs, th, line_h = 0.55, 1, 22
+            widths = [
+                cv2.getTextSize(l, cv2.FONT_HERSHEY_SIMPLEX, fs, th)[0][0]
+                for l in lines
+            ]
+            panel_w = min(frame.shape[1], max(widths) + 16)
+            panel_h = 12 + line_h * len(lines)
+            panel = frame.copy()
+            cv2.rectangle(panel, (0, 0), (panel_w, panel_h), (0, 0, 0), -1)
+            frame = cv2.addWeighted(panel, 0.5, frame, 0.5, 0)
             for j, line in enumerate(lines):
-                org = (10, 24 + j * 22)
-                cv2.putText(frame, line, org, cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                            (0, 0, 0), 3, cv2.LINE_AA)
-                cv2.putText(frame, line, org, cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                            (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.putText(frame, line, (8, 24 + j * line_h),
+                            cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), th,
+                            cv2.LINE_AA)
             return frame
         except ImportError:
             pass
         try:
             from PIL import Image, ImageDraw
 
-            img = Image.fromarray(frame)
-            draw = ImageDraw.Draw(img)
+            img = Image.fromarray(frame).convert("RGB")
+            draw = ImageDraw.Draw(img, "RGBA")
+            line_h = 16
+            draw.rectangle([0, 0, 210, 6 + line_h * len(lines)], fill=(0, 0, 0, 140))
             for j, line in enumerate(lines):
-                x, y = 10, 8 + j * 18
-                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    draw.text((x + dx, y + dy), line, fill=(0, 0, 0))
-                draw.text((x, y), line, fill=(255, 255, 255))
+                draw.text((6, 3 + j * line_h), line, fill=(255, 255, 255))
             return np.asarray(img)
         except ImportError:
             if not getattr(self, "_warned_no_text", False):
@@ -463,12 +471,30 @@ class Thermotaxis(celegans_base.CelegansEnv):
                 self._warned_no_text = True
             return frame
 
+    def _resolve_camera(self, camera, arena_lx: float, arena_ly: float):
+        """Resolve a camera spec to ``(camera_arg, is_overhead)``.
+
+        ``None`` / ``"overhead"`` -> a free top-down MjvCamera framing the whole arena
+        (the worm is drawn as a marker there). Any other value (a camera name/id such
+        as ``"track-worm"``) is passed through and treated as a zoomed/tracking view,
+        where the worm marker is omitted so the body/gait is visible.
+        """
+        if camera is None or camera == "overhead":
+            cam = mujoco.MjvCamera()
+            cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+            cam.lookat[:] = [0.0, 0.0, 0.0]
+            cam.distance = 2.9 * max(arena_lx, arena_ly)
+            cam.azimuth = 90.0
+            cam.elevation = -90.0
+            return cam, True
+        return camera, False
+
     def render(
         self,
         trajectory: Sequence[mjx_env.State],
         height: int = 480,
         width: int = 640,
-        camera: Optional[Union[str, int]] = None,
+        camera: Optional[Union[str, int, Sequence]] = None,
         scene_option: Optional["mujoco.MjvOption"] = None,
         annotate: bool = True,
         overlay_gradient: bool = True,
@@ -492,8 +518,12 @@ class Thermotaxis(celegans_base.CelegansEnv):
                 e.g. from a rollout. The gradient parameters are read from
                 ``trajectory[0].info`` and assumed constant across the episode.
             height, width: Frame size in pixels.
-            camera: Camera name/id. ``None`` uses a top-down overhead view framing the
-                whole arena (best for seeing the gradient and the worm's trajectory).
+            camera: Camera name/id, or a list of them for side-by-side views tiled
+                horizontally. ``None`` / ``"overhead"`` is a top-down whole-arena view
+                (worm drawn as a marker); a named camera like ``"track-worm"`` is a
+                zoomed/tracking view showing the actual worm body. Example:
+                ``["overhead", "track-worm"]`` for arena + gait side by side. Each view
+                is ``width`` px wide, so the composed frame is ``width * n_cameras``.
             scene_option: Optional MjvOption for the scene.
             annotate: Overlay the text stats described above.
             overlay_gradient: Draw the thermal field on the floor.
@@ -516,7 +546,8 @@ class Thermotaxis(celegans_base.CelegansEnv):
             int(mj_model.vis.global_.offheight), height
         )
         mj_data = mujoco.MjData(mj_model)
-        root_bid = mj_model.body(f"{self.root_name}{self.suffix}").id
+        # Head body: the temperature annotation reflects what the worm senses there.
+        head_bid = mj_model.body(f"{self._config.sensor_body}{self.suffix}").id
         floor_size = mj_model.geom("floor").size
         arena_lx, arena_ly = float(floor_size[0]), float(floor_size[1])
 
@@ -525,17 +556,12 @@ class Thermotaxis(celegans_base.CelegansEnv):
             mj_model, height=height, width=width, max_geom=max_geom
         )
 
-        # Camera: default to a whole-arena top-down view.
-        if camera is None:
-            cam = mujoco.MjvCamera()
-            cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-            cam.lookat[:] = [0.0, 0.0, 0.0]
-            cam.distance = 2.9 * max(arena_lx, arena_ly)
-            cam.azimuth = 90.0
-            cam.elevation = -90.0
-            render_camera: Any = cam
-        else:
-            render_camera = camera
+        # Resolve camera(s). Passing a list renders each view and tiles them
+        # horizontally (e.g. ["overhead", "track-worm"] for arena + zoomed gait).
+        cam_specs = list(camera) if isinstance(camera, (list, tuple)) else [camera]
+        resolved_cams = [
+            self._resolve_camera(c, arena_lx, arena_ly) for c in cam_specs
+        ]
 
         # Episode-constant gradient params (from the first state).
         info0 = trajectory[0].info
@@ -572,55 +598,58 @@ class Thermotaxis(celegans_base.CelegansEnv):
         term_names = list(self.config.termination_criteria.keys())
         frames: List[np.ndarray] = []
         cumulative = 0.0
+        extent = min(arena_lx, arena_ly)
         for i, state in enumerate(trajectory):
             mj_data.qpos = np.asarray(state.data.qpos)
             mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(
-                mj_data, camera=render_camera, scene_option=scene_option
-            )
-            scene = renderer.scene
+            head_x = float(mj_data.xpos[head_bid][0])
+            head_y = float(mj_data.xpos[head_bid][1])
 
-            if overlay_gradient:
-                for pos, rgba in zip(tiles_pos, tiles_rgba):
-                    if scene.ngeom >= scene.maxgeom:
-                        break
+            views = []
+            for cam, is_overhead in resolved_cams:
+                # Site visibility: on the overhead view show only the worm_marker
+                # (group 3) and hide the model's body sites (groups 0-2); on the zoomed
+                # gait view hide all sites so the worm body/gait is unobstructed. A
+                # user-supplied scene_option is respected as-is.
+                if scene_option is not None:
+                    view_opt = scene_option
+                else:
+                    view_opt = mujoco.MjvOption()
+                    show_site = show_markers and is_overhead
+                    view_opt.sitegroup[:] = [0, 0, 0, 1 if show_site else 0, 0, 0]
+                renderer.update_scene(mj_data, camera=cam, scene_option=view_opt)
+                scene = renderer.scene
+
+                if overlay_gradient:
+                    for pos, rgba in zip(tiles_pos, tiles_rgba):
+                        if scene.ngeom >= scene.maxgeom:
+                            break
+                        mujoco.mjv_initGeom(
+                            scene.geoms[scene.ngeom],
+                            mujoco.mjtGeom.mjGEOM_BOX,
+                            tile_size, pos, eye, rgba,
+                        )
+                        scene.ngeom += 1
+
+                # setpoint marker (green, semi-transparent) on the overhead view only.
+                if show_markers and is_overhead and scene.ngeom < scene.maxgeom:
                     mujoco.mjv_initGeom(
                         scene.geoms[scene.ngeom],
-                        mujoco.mjtGeom.mjGEOM_BOX,
-                        tile_size,
-                        pos,
-                        eye,
-                        rgba,
+                        mujoco.mjtGeom.mjGEOM_SPHERE,
+                        np.array([0.06 * extent, 0.0, 0.0]),
+                        np.array([setpoint_loc[0], setpoint_loc[1], 0.03]),
+                        np.eye(3).flatten(),
+                        np.array([0.1, 0.9, 0.2, 0.55], dtype=np.float32),
                     )
                     scene.ngeom += 1
 
-            wx = float(mj_data.xpos[root_bid][0])
-            wy = float(mj_data.xpos[root_bid][1])
-            if show_markers and scene.ngeom + 2 <= scene.maxgeom:
-                mujoco.mjv_initGeom(
-                    scene.geoms[scene.ngeom],
-                    mujoco.mjtGeom.mjGEOM_SPHERE,
-                    np.array([0.4, 0.0, 0.0]),
-                    np.array([setpoint_loc[0], setpoint_loc[1], 0.05]),
-                    np.eye(3).flatten(),
-                    np.array([0.1, 0.9, 0.2, 1.0], dtype=np.float32),
-                )
-                scene.ngeom += 1
-                mujoco.mjv_initGeom(
-                    scene.geoms[scene.ngeom],
-                    mujoco.mjtGeom.mjGEOM_SPHERE,
-                    np.array([0.25, 0.0, 0.0]),
-                    np.array([wx, wy, 0.06]),
-                    np.eye(3).flatten(),
-                    np.array([0.05, 0.05, 0.05, 1.0], dtype=np.float32),
-                )
-                scene.ngeom += 1
+                views.append(np.ascontiguousarray(renderer.render()))
 
-            frame = np.ascontiguousarray(renderer.render())
+            frame = views[0] if len(views) == 1 else np.concatenate(views, axis=1)
             cumulative += float(state.reward)
 
             if annotate:
-                temp = field_temp(np.array([wx, wy]))
+                temp = field_temp(np.array([head_x, head_y]))
                 fired = [
                     n
                     for n in term_names
@@ -639,6 +668,188 @@ class Thermotaxis(celegans_base.CelegansEnv):
             frames.append(frame)
 
         renderer.close()
+
+        if vid_path is not None:
+            import imageio
+
+            if fps is None:
+                fps = int(round(1.0 / self.ctrl_dt))
+            with imageio.get_writer(vid_path, fps=fps) as writer:
+                for frame in frames:
+                    writer.append_data(frame)
+
+        return frames
+
+    def render_combined(
+        self,
+        trajectory: Sequence[mjx_env.State],
+        height: int = 480,
+        traj_width: int = 560,
+        gait_width: int = 480,
+        gait_camera: Union[str, int] = "track-worm",
+        gait_overlay: bool = True,
+        fps: Optional[float] = None,
+        vid_path: Optional[str] = None,
+    ) -> List[np.ndarray]:
+        """Side-by-side: matplotlib trajectory (left) + MuJoCo gait view (right).
+
+        Left is the CPU top-down field/trajectory (:meth:`plot_trajectory`); right is a
+        MuJoCo camera view of the actual worm body/gait (needs GL/EGL). Frames are the
+        same height and concatenated horizontally.
+
+        Args:
+            trajectory: Sequence of single-environment states.
+            height: Frame height (both panels).
+            traj_width, gait_width: Per-panel widths.
+            gait_camera: MuJoCo camera for the gait panel (e.g. ``"top-worm"`` for the
+                top-down body wave, ``"track-worm"`` for a profile).
+            gait_overlay: Draw the gradient tiles on the gait panel's floor too.
+            fps: Video frame rate (defaults to ``1 / ctrl_dt``).
+            vid_path: If given, also write the composed frames to this path.
+
+        Returns:
+            List of composed RGB frames (height x (traj_width + gait_width) x 3).
+        """
+        traj_frames = self.plot_trajectory(
+            trajectory, height=height, width=traj_width, annotate=True
+        )
+        gait_frames = self.render(
+            trajectory, height=height, width=gait_width, camera=gait_camera,
+            overlay_gradient=gait_overlay, annotate=False, show_markers=False,
+        )
+        combined = [
+            np.concatenate([t, g], axis=1)
+            for t, g in zip(traj_frames, gait_frames)
+        ]
+
+        if vid_path is not None:
+            import imageio
+
+            if fps is None:
+                fps = int(round(1.0 / self.ctrl_dt))
+            with imageio.get_writer(vid_path, fps=fps) as writer:
+                for frame in combined:
+                    writer.append_data(frame)
+
+        return combined
+
+    def plot_trajectory(
+        self,
+        trajectory: Sequence[mjx_env.State],
+        height: int = 480,
+        width: int = 560,
+        show_trail: bool = True,
+        point_size: float = 5.0,
+        annotate: bool = True,
+        fps: Optional[float] = None,
+        vid_path: Optional[str] = None,
+    ) -> List[np.ndarray]:
+        """Top-down matplotlib view of the worm's path over the thermal field (CPU only).
+
+        Renders the smooth temperature field as an image (saturated blue->red, minimal
+        white), with the worm as a small point plus its trail, the setpoint marker and
+        its iso-``setpoint`` contour, cm axes and a colorbar. This is for the
+        *trajectory* only -- it needs no MuJoCo/GL and does not show the worm body/gait
+        (use :meth:`render` with a camera like ``"top-worm"`` for that).
+
+        Args:
+            trajectory: Sequence of single-environment states.
+            height, width: Frame size in pixels.
+            show_trail: Draw the path travelled so far.
+            point_size: Worm marker size (small -> a point).
+            annotate: Title each frame with step / T / reward / terminations.
+            fps: Video frame rate (defaults to ``1 / ctrl_dt``).
+            vid_path: If given, also write the frames to this path.
+
+        Returns:
+            List of rendered RGB frames (HxWx3 uint8).
+        """
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.colors import LinearSegmentedColormap
+
+        if len(trajectory) == 0:
+            return []
+
+        info0 = trajectory[0].info
+        shape_id = jp.int32(int(np.asarray(info0["shape_id"])))
+        params = jp.asarray(np.asarray(info0["temp_field"], dtype=np.float32))
+        setpoint = float(np.asarray(info0["setpoint"]))
+        setpoint_loc = (float(params[1]), float(params[2]))
+        arena_lx, arena_ly = self._floor_extent()
+
+        # Smooth temperature field for imshow / contour (evaluated at the exact
+        # continuous grid of sample points -- this is display only).
+        n = 200
+        cgx, cgy = np.meshgrid(
+            np.linspace(-arena_lx, arena_lx, n),
+            np.linspace(-arena_ly, arena_ly, n),
+        )
+        field = np.asarray(
+            jax.vmap(lambda p: Gradient.evaluate(shape_id, params, p))(
+                jp.asarray(np.stack([cgx.ravel(), cgy.ravel()], axis=-1))
+            )
+        ).reshape(n, n)
+        fvmin, fvmax = float(field.min()), float(field.max())
+
+        cmap = LinearSegmentedColormap.from_list(
+            "thermo",
+            [(0.0, "#285fd7"), (0.42, "#3a66d2"), (0.5, "#8a4f9e"),
+             (0.58, "#d24a52"), (1.0, "#d72d37")],
+        )
+
+        # Plot the head (sensing point) trajectory -- that's what reads the gradient,
+        # and for a real gait it shows the head's side-to-side sweep.
+        head_bid = self.mj_model.body(f"{self._config.sensor_body}{self.suffix}").id
+        wpos = np.array(
+            [np.asarray(s.data.xpos)[head_bid, :2] for s in trajectory]
+        )
+
+        term_names = list(self.config.termination_criteria.keys())
+        dpi = 100
+        frames: List[np.ndarray] = []
+        cumulative = 0.0
+        for i, state in enumerate(trajectory):
+            cumulative += float(state.reward)
+            fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi)
+            ax = fig.add_subplot(111)
+            im = ax.imshow(
+                field, origin="lower", extent=[-arena_lx, arena_lx, -arena_ly, arena_ly],
+                cmap=cmap, vmin=fvmin, vmax=fvmax, aspect="equal",
+            )
+            ax.contour(cgx, cgy, field, levels=[setpoint], colors="lime",
+                       linewidths=1.2, linestyles="--")
+            ax.plot(setpoint_loc[0], setpoint_loc[1], marker="*", color="lime",
+                    markersize=13, markeredgecolor="black", markeredgewidth=0.6)
+            if show_trail and i > 0:
+                ax.plot(wpos[: i + 1, 0], wpos[: i + 1, 1], "--", color="black",
+                        lw=1.2, alpha=0.7)
+            ax.plot(wpos[i, 0], wpos[i, 1], "o", color="black", markersize=point_size)
+            ax.set_xlim(-arena_lx, arena_lx)
+            ax.set_ylim(-arena_ly, arena_ly)
+            ax.set_xlabel("x (cm)")
+            ax.set_ylabel("y (cm)")
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03, label="temperature")
+            if annotate:
+                temp = float(self._temperature_at(jp.asarray(wpos[i]), state.info))
+                fired = [
+                    nm for nm in term_names
+                    if float(np.asarray(state.metrics.get(f"terminations/{nm}", 0.0))) > 0
+                ]
+                ax.set_title(
+                    f"step {i}   T={temp:.2f}/{setpoint:.2f}   "
+                    f"r={float(state.reward):+.3f}  cum={cumulative:+.2f}   "
+                    f"[{', '.join(fired) if fired else '-'}]",
+                    fontsize=8,
+                )
+            fig.tight_layout()
+            canvas = FigureCanvasAgg(fig)
+            canvas.draw()
+            frame = np.asarray(canvas.buffer_rgba())[..., :3].copy()
+            frames.append(frame)
+            plt.close(fig)
 
         if vid_path is not None:
             import imageio
