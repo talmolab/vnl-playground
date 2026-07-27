@@ -45,17 +45,19 @@ def default_config() -> config_dict.ConfigDict:
         episode_length=2000,
         action_repeat=1,
         init_z=0.0,
-        # fixed start on the cold/left side (v1 deterministic)
-        init_x=-8.0,
+        # fixed start on the cold/left side (v1 deterministic). Scale is sized to the
+        # worm: ~0.01-0.03 cm/s over a 200 s episode -> a ~1 cm start->setpoint
+        # distance is reachable well within the episode.
+        init_x=-0.5,
         init_y=0.0,
         # kwargs for Gradient.make_gradient; any iterable leaf is [low, high] bounds
         gradient_cfg=config_dict.create(
             gradient_type="linear",  # str | list[str] | "random"; default linear
             setpoint=23.0,  # target temp AT setpoint_loc
-            setpoint_loc=(5.0, 0.0),  # (x, y) anchor; each element scalar or [lo, hi]
+            setpoint_loc=(0.5, 0.0),  # (x, y) anchor; each element scalar or [lo, hi]
             min_temp=15.0,
             max_temp=25.0,
-            arena_size=(10.0, 10.0),  # (Lx, Ly); must match arena_bounded.xml floor
+            arena_size=(2.0, 2.0),  # (Lx, Ly); the floor is auto-resized to this
         ),
         # Thermosensory body: C. elegans senses temperature at the head, so the
         # gradient is read at this body's position (not the mid-body root).
@@ -105,7 +107,19 @@ def default_config() -> config_dict.ConfigDict:
 
 
 class Thermotaxis(celegans_base.CelegansEnv):
-    """Thermotaxis environment: navigate a thermal gradient to a target temperature."""
+    """Thermotaxis environment: navigate a thermal gradient to a target temperature.
+
+    Reachability note: the ``time`` cost only yields "reach the setpoint ASAP"
+    behavior if the setpoint is actually reachable within ``episode_length``. The
+    default scale is sized to the worm (empirical speed ~0.01-0.03 cm/s, max ~0.07):
+    the ~1 cm start->setpoint distance is covered in ~1000 steps even at the slow end
+    (0.01 cm/s over a 200 s / 2000-step episode), with ample margin at average speed.
+    If you change ``init_x`` / ``setpoint_loc`` / ``arena_size`` / ``episode_length``,
+    keep a direct traversal comfortably inside the episode -- otherwise every step is
+    net-negative and the agent's best move becomes ending the episode early by failing
+    (the negative fell_off / too_far entries in the ``termination_bonus`` reward
+    discourage that; keep their magnitude >= ``time`` * ``episode_length``).
+    """
 
     _registry = _registry
 
@@ -174,6 +188,28 @@ class Thermotaxis(celegans_base.CelegansEnv):
         )
 
         self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
+
+        # Resize the floor to the configured arena extent so the worm can reach an edge
+        # and fall off within an episode. Only the x,y extent changes; the top surface
+        # stays at z=0 (thickness kept below it), so resting height / proprioception are
+        # unchanged.
+        floor = self._spec.geom("floor")
+        thickness = float(floor.size[2])
+        lx, ly = self._floor_extent()
+        floor.size = [lx, ly, thickness]
+        floor.pos = [0.0, 0.0, -thickness]
+
+        # Visual marker site on the worm so a top-down MuJoCo render still shows the
+        # ~mm worm. In a dedicated group (3, hidden by default) so render() can isolate
+        # it on the overhead view and hide it on the zoomed gait view, without touching
+        # the model's other sites (which are all in group 0).
+        worm_site = self._spec.body(f"{self.root_name}{self.suffix}").add_site()
+        worm_site.name = "worm_marker"
+        worm_site.type = mujoco.mjtGeom.mjGEOM_SPHERE
+        worm_site.size = [0.05 * min(lx, ly), 0.0, 0.0]
+        worm_site.rgba = [0.1, 0.1, 0.1, 1.0]
+        worm_site.group = 3
+
         self.compile()
 
         # Cache the (static) qpos addresses of the planar root slide joints.
@@ -199,6 +235,19 @@ class Thermotaxis(celegans_base.CelegansEnv):
         )
 
     # ----------------------------------------------------------------- helpers
+    def _floor_extent(self) -> tuple:
+        """Concrete floor half-extents (Lx, Ly) from ``gradient_cfg.arena_size``.
+
+        Uses the upper bound if an axis is given as sampling bounds, so the (static)
+        physical floor always contains any per-episode sampled gradient extent.
+        """
+        arena_size = self._config.gradient_cfg.arena_size
+
+        def extent(v):
+            return float(max(v)) if isinstance(v, (list, tuple)) else float(v)
+
+        return extent(arena_size[0]), extent(arena_size[1])
+
     def _set_root_xy(self, data: mjx.Data, x: jp.ndarray, y: jp.ndarray) -> mjx.Data:
         """Place the worm's planar root at world ``(x, y)`` via slide-joint qpos."""
         qpos = data.qpos.at[self._rootx_qadr].set(x).at[self._rooty_qadr].set(y)
