@@ -186,3 +186,9 @@ outputs/
 *.png
 vnl_playground/_version.py
 highlvl_checkpoints/
+
+# large binaries / logs (kept out of handoff commit)
+MUJOCO_LOG.TXT
+*.tar.gz
+archive/
+notebooks/kin_emg_bundle/

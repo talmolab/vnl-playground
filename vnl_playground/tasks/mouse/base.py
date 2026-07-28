@@ -1,6 +1,6 @@
 """Base classes for mouse (arena-first, add walker later)."""
 
-from typing import Any, Dict, Mapping, Optional, Union
+from typing import Any, Dict, Mapping, Optional, Sequence, Union
 
 import jax
 import jax.numpy as jp
@@ -36,6 +36,10 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.MOUSE_XML_PATH,
         arena_xml_path=consts.MOUSE_ARENA_XML_PATH,  # separate empty arena
+        # Top-level body name(s) of the walker XML to attach to the arena
+        # (see MouseBaseEnv.add_mouse for why multi-root models need more
+        # than one name here).
+        root_bodies=("clavicle",),
         ctrl_dt=0.0025,  # physics_steps_per_control_step=2 -> 0.00125*2
         sim_dt=0.00125,  # mj_model_timestep from imitation settings
         solver="cg",  # CG solver as in imitation settings
@@ -44,8 +48,33 @@ def default_config() -> config_dict.ConfigDict:
         noslip_iterations=0,
         Kp=35.0,
         Kd=0.5,
-        episode_length=150,
+        episode_length=100,
         mujoco_impl="jax",
+        # None = leave whatever the arena+walker attach conflict resolution
+        # produces (kept for exact backward compat with existing tasks); set
+        # explicitly when the walker XML's own <option integrator="..."/>
+        # must win over the arena's (e.g. v22 wants Euler, arena.xml says
+        # RK4, and the attach-conflict resolution keeps the arena's value).
+        integrator=None,
+        # Physics overrides (None = use XML defaults)
+        joint_damping=None,   # float -> sets mj_model.dof_damping[:]
+        joint_armature=None,  # float -> sets mj_model.dof_armature[:]
+        joint_stiffness=None, # float -> sets mj_model.jnt_stiffness[:]
+        force_scale=None,     # float -> multiplies mj_model.actuator_gainprm[:, 0]
+        # Warp-backend contact/constraint buffer sizes, passed explicitly to
+        # mjx.make_data(). The XML's own <size njmax=.../nconmax=.../> tag is
+        # NOT read by mjx.make_data for impl="warp" -- left None, MJX's Warp
+        # backend derives naconmax/njmax from a single-world (nworld=1)
+        # heuristic based on mjm.nv (0 collision geoms -> defaults as low as
+        # naconmax=16 total, shared across the WHOLE vmapped batch, not
+        # per-world), which is far too small once vmapped across thousands of
+        # parallel envs at training time -- this was the true root cause of
+        # the "broadphase overflow"/"nefc overflow" warnings, not collision
+        # geometry complexity. naconmax is a TOTAL across all vmapped worlds;
+        # njmax is PER WORLD. Set explicitly (see imitation_arm_hand.py) for
+        # any task with real contacts.
+        naconmax=None,
+        njmax=None,
     )
 
 
@@ -81,34 +110,61 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         pos: Union[tuple[float, float, float], list[float]] = (0.0, 0.0, 0.02),
         suffix: str = "-mouse",
         rgba: Optional[tuple[float, float, float, float]] = None,
+        root_bodies: Sequence[str] = ("clavicle",),
     ) -> None:
         """
         Attach a mouse model to the arena at the given position.
 
         Args:
-            freejoint: If True, add a freejoint on the attached root body.
+            freejoint: If True, add a freejoint on each attached root body.
             pos: Spawn position (x, y, z) in arena frame.
             suffix: Name suffix to avoid collisions for multiple mice.
             rgba: Optional per-geom RGBA override for the attached mouse.
+            root_bodies: Names of the walker model's top-level bodies to
+                attach. Most models have a single kinematic root
+                ("clavicle"). Models with disconnected subtrees under
+                worldbody (e.g. the v22 arm+hand+joystick model, where
+                "shoulder_base" carries the arm and a separate
+                "joystick_base" carries the manipulandum) need every root
+                listed here, or the un-listed subtree's joints/bodies are
+                silently dropped. When more than one name is given, the
+                *entire* walker spec is attached in one shot (see the
+                multi-root branch below) rather than attached body-by-body,
+                since `attach_body()` re-imports the source spec's whole
+                asset table on every call -- attaching two subtrees from the
+                same file with the same suffix collides on mesh names the
+                second time. This means any other top-level bodies the
+                walker XML happens to declare (e.g. a camera-mount "ground"
+                body) come along too; harmless in practice, but a real
+                behavior difference from the single-root path below.
 
         Returns:
             None
         """
-        mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
-
         # Attach using a frame (like rodent) instead of site for better positioning
         spawn_frame = self._spec.worldbody.add_frame(
             pos=list(pos),
             quat=[1, 0, 0, 0],
         )
-        # Attach the clavicle body (root of arm hierarchy), not entire worldbody
-        body = spawn_frame.attach_body(mouse_spec.body("clavicle"), "", suffix)
         self._suffix = suffix
-        if freejoint:
-            body.add_freejoint()
-        if rgba is not None:
-            for g in getattr(body, "geom", []):
-                g.rgba = list(rgba)
+
+        if len(root_bodies) == 1:
+            mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+            body = spawn_frame.attach_body(mouse_spec.body(root_bodies[0]), "", suffix)
+            if freejoint:
+                body.add_freejoint()
+            if rgba is not None:
+                for g in getattr(body, "geom", []):
+                    g.rgba = list(rgba)
+        else:
+            if freejoint or rgba is not None:
+                raise NotImplementedError(
+                    "freejoint/rgba are not yet supported when attaching a "
+                    "multi-root walker (root_bodies has more than one "
+                    "entry); neither is needed by any current caller."
+                )
+            mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+            self._spec.attach(mouse_spec, prefix="", suffix=suffix, frame=spawn_frame)
 
     def add_ghost_mouse(
         self,
@@ -121,6 +177,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
             0.54,
         ),
         no_collision: bool = True,
+        root_bodies: Sequence[str] = ("clavicle",),
     ) -> None:
         """
         Attach a ghost/reference mouse (no freejoint, translucent, non-colliding).
@@ -130,26 +187,39 @@ class MouseBaseEnv(mjx_env.MjxEnv):
             suffix: Name suffix to avoid collisions for multiple ghosts.
             ghost_rgba: RGBA to tint all geoms of the ghost mouse.
             no_collision: If True, set contype=conaffinity=0 on all geoms.
+            root_bodies: Names of the walker model's top-level bodies to
+                attach (see `add_mouse` for why multi-root models need this).
 
         Returns:
             None
         """
-        mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
-
         # Attach using a frame for consistent positioning
         spawn_frame = self._spec.worldbody.add_frame(
             pos=list(pos),
             quat=[1, 0, 0, 0],
         )
-        # Attach the clavicle body (root of arm hierarchy), not entire worldbody
-        body = spawn_frame.attach_body(mouse_spec.body("clavicle"), "", suffix)
         # Intentionally NO freejoint: kinematically tied through the attached tree.
+        def _recolor(body):
+            for g in body.geoms:
+                g.rgba = list(ghost_rgba)
+                if no_collision:
+                    g.contype = 0
+                    g.conaffinity = 0
+            for child in body.bodies:
+                _recolor(child)
 
-        for g in getattr(body, "geom", []):
-            g.rgba = list(ghost_rgba)
-            if no_collision:
-                g.contype = 0
-                g.conaffinity = 0
+        if len(root_bodies) == 1:
+            mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+            body = spawn_frame.attach_body(mouse_spec.body(root_bodies[0]), "", suffix)
+            _recolor(body)
+        else:
+            # Whole-model attach (see add_mouse) -- recolor every newly
+            # attached top-level body (name ends with `suffix`) recursively.
+            mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+            self._spec.attach(mouse_spec, prefix="", suffix=suffix, frame=spawn_frame)
+            for body in self._spec.worldbody.bodies:
+                if body.name.endswith(suffix):
+                    _recolor(body)
 
     def add_multiple_mice(
         self,
@@ -202,6 +272,23 @@ class MouseBaseEnv(mjx_env.MjxEnv):
             self._mj_model.opt.iterations = self._config.iterations
             self._mj_model.opt.ls_iterations = self._config.ls_iterations
             self._mj_model.opt.noslip_iterations = self._config.noslip_iterations
+            if self._config.integrator is not None:
+                self._mj_model.opt.integrator = {
+                    "euler": mujoco.mjtIntegrator.mjINT_EULER,
+                    "rk4": mujoco.mjtIntegrator.mjINT_RK4,
+                    "implicit": mujoco.mjtIntegrator.mjINT_IMPLICIT,
+                    "implicitfast": mujoco.mjtIntegrator.mjINT_IMPLICITFAST,
+                }[self._config.integrator.lower()]
+
+            # Apply physics overrides before mjx.put_model()
+            if self._config.joint_damping is not None:
+                self._mj_model.dof_damping[:] = self._config.joint_damping
+            if self._config.joint_armature is not None:
+                self._mj_model.dof_armature[:] = self._config.joint_armature
+            if self._config.joint_stiffness is not None:
+                self._mj_model.jnt_stiffness[:] = self._config.joint_stiffness
+            if self._config.force_scale is not None:
+                self._mj_model.actuator_gainprm[:, 0] *= self._config.force_scale
 
             # High-res offscreen buffer for nice renders
             self._mj_model.vis.global_.offwidth = 3840

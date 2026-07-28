@@ -31,13 +31,14 @@ def default_config() -> config_dict.ConfigDict:
     cfg = base_default_config()
     # Reference data settings
     cfg.reference_data_path = str(consts.MOUSE_REFERENCE_DATA_PATH)
-    cfg.mocap_hz = 50  # Frame rate of reference data
-    cfg.clip_length = 100  # Frames per clip
+    cfg.mocap_hz = 200  # Frame rate of reference data
+    cfg.clip_length = 50  # Frames per clip
     cfg.clip_set = "all"  # Which clips to use
-    cfg.reference_length = 5  # Frames of future reference to include in observation
+    cfg.reference_length = 1  # Frames of future reference to include in observation
     cfg.start_frame_range = [0, 1]  # Always start at frame 0
     cfg.qvel_init = "zeros"  # How to initialize velocities: "zeros", "reference"
     cfg.keep_clips_idx = None  # Indices of clips to keep (None = all)
+    cfg.recompute_kinematics = False  # Recompute xpos/xquat from sim model
 
     # Walker-specific settings (can be overridden via config)
     cfg.tracked_bodies = ["scapula", "humerus", "ulna", "radius", "wrist_body"]
@@ -45,12 +46,12 @@ def default_config() -> config_dict.ConfigDict:
 
     # Reward terms
     cfg.reward_terms = {
-        "joints": {"exp_scale": 1.0, "weight": 1.0},
-        "joints_vel": {"exp_scale": 1.0, "weight": 0.5},
-        "wrist_pos": {"exp_scale": 0.005, "weight": 2.0},  # End effector tracking
-        "bodies_pos": {"exp_scale": 0.01, "weight": 1.0},
+        "joints": {"exp_scale": 0.2, "weight": 5.0},
+        "joints_vel": {"exp_scale": 0.2, "weight": 0.5},
+        "wrist_pos": {"exp_scale": 0.1, "weight": 0.1},  # End effector tracking
+        "bodies_pos": {"exp_scale": 0.1, "weight": 0.1},
         "control_cost": {"weight": 0.01},
-        "control_diff_cost": {"weight": 0.01},
+        "control_diff_cost": {"weight": 0.00},
     }
 
     # Termination criteria
@@ -86,7 +87,9 @@ class MouseImitation(MouseBaseEnv):
         super().__init__(config, config_overrides)
 
         # Add mouse arm (no freejoint - fixed base)
-        self.add_mouse(freejoint=False, pos=(0.0, 0.0, 0.0))
+        self.add_mouse(
+            freejoint=False, pos=(0.0, 0.0, 0.0), root_bodies=self._config.root_bodies
+        )
         self.compile()
 
         # Load reference clips
@@ -100,8 +103,9 @@ class MouseImitation(MouseBaseEnv):
             )
 
         # Recompute xpos/xquat using simulation model for consistency
-        # (reference data may have been generated with a different model)
-        self.reference_clips.recompute_kinematics(self._mj_model)
+        # (skip if reference data was generated with the same model, e.g. re-STACed data)
+        if self._config.recompute_kinematics:
+            self.reference_clips.recompute_kinematics(self._mj_model)
 
         # Setup clip set
         max_n_clips = self.reference_clips.qpos.shape[0]
@@ -267,6 +271,8 @@ class MouseImitation(MouseBaseEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
+            naconmax=self._config.naconmax,
+            njmax=self._config.njmax,
         )
 
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
@@ -346,7 +352,7 @@ class MouseImitation(MouseBaseEnv):
 
     def _get_imitation_target(
         self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> Mapping[str, jp.ndarray]:
+    ) -> jp.ndarray:
         """Get imitation target (future reference poses relative to current state).
 
         Args:
@@ -354,39 +360,26 @@ class MouseImitation(MouseBaseEnv):
             info: Episode info dict containing 'reference_clip' and 'start_frame'.
 
         Returns:
-            Mapping[str, jp.ndarray]: OrderedDict with 'joint' (joint angle deltas)
-                and 'wrist' (wrist position deltas) targets.
+            jp.ndarray: Flattened concatenation of joint angle deltas and
+                body position deltas for all tracked bodies.
         """
         reference = self._get_imitation_reference(data, info)
 
         # Joint angle targets (difference from current)
         joint_targets = reference.joints - data.qpos
 
-        # Wrist position targets (in world frame since base is fixed)
-        wrist_pos = data.xpos[self._wrist_body_id]
-        wrist_targets = jax.vmap(lambda ref_pos: ref_pos - wrist_pos)(
-            reference.body_xpos("wrist_body")
-        )
+        # Body position deltas for all tracked bodies
+        body_deltas = []
+        for body_name in self._config.tracked_bodies:
+            ref_pos = reference.body_xpos(body_name)
+            model_pos = data.xpos[self._body_ids[body_name]]
+            body_deltas.append((ref_pos - model_pos).flatten())
 
-        return collections.OrderedDict(
-            joint=joint_targets,
-            wrist=wrist_targets,
-        )
+        return jp.concatenate([joint_targets.flatten()] + body_deltas)
 
     @_registry.reward("joints")
     def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Reward for matching joint angles.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict.
-            metrics: Mutable metrics dict.
-            weight: Reward weight multiplier.
-            exp_scale: Scale parameter for the Gaussian kernel.
-
-        Returns:
-            float: Weighted Gaussian reward based on joint angle L2 error.
-        """
+        """Reward for matching joint angles."""
         target = self._get_current_target(data, info)
         distance = jp.linalg.norm(target.joints - data.qpos)
         metrics["joint_l2_error"] = distance
@@ -396,18 +389,7 @@ class MouseImitation(MouseBaseEnv):
 
     @_registry.reward("joints_vel")
     def _joints_vel_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Reward for matching joint velocities.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict.
-            metrics: Mutable metrics dict.
-            weight: Reward weight multiplier.
-            exp_scale: Scale parameter for the Gaussian kernel.
-
-        Returns:
-            float: Weighted Gaussian reward based on joint velocity L2 error.
-        """
+        """Reward for matching joint velocities."""
         target = self._get_current_target(data, info)
         distance = jp.linalg.norm(target.joints_velocity - data.qvel)
         metrics["joint_vel_l2_error"] = distance
@@ -417,21 +399,10 @@ class MouseImitation(MouseBaseEnv):
 
     @_registry.reward("wrist_pos")
     def _wrist_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Reward for matching wrist (end effector) position.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict.
-            metrics: Mutable metrics dict.
-            weight: Reward weight multiplier.
-            exp_scale: Scale parameter for the Gaussian kernel.
-
-        Returns:
-            float: Weighted Gaussian reward based on wrist position L2 error.
-        """
+        """Reward for matching wrist (end effector) position."""
         target = self._get_current_target(data, info)
         wrist_pos = data.xpos[self._wrist_body_id]
-        target_wrist = target.body_xpos("wrist_body")
+        target_wrist = target.body_xpos(self._config.end_effector)
         distance = jp.linalg.norm(wrist_pos - target_wrist)
         metrics["wrist_pos_error"] = distance
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
@@ -440,18 +411,7 @@ class MouseImitation(MouseBaseEnv):
 
     @_registry.reward("bodies_pos")
     def _bodies_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Reward for matching all tracked body positions.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict.
-            metrics: Mutable metrics dict.
-            weight: Reward weight multiplier.
-            exp_scale: Scale parameter for the Gaussian kernel.
-
-        Returns:
-            float: Weighted Gaussian reward based on total body position L2 error.
-        """
+        """Reward for matching all tracked body positions."""
         target = self._get_current_target(data, info)
         total_dist_sqr = 0.0
         for body_name, body_id in self._body_ids.items():
@@ -468,17 +428,7 @@ class MouseImitation(MouseBaseEnv):
 
     @_registry.reward("control_cost")
     def _control_cost(self, data, info, metrics, weight) -> float:
-        """Penalty for control magnitude.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict.
-            metrics: Mutable metrics dict.
-            weight: Penalty weight multiplier.
-
-        Returns:
-            float: Negative weighted sum of squared action values.
-        """
+        """Penalty for control magnitude."""
         ctrl_sqr = jp.sum(jp.square(info["action"]))
         metrics["ctrl_sqr"] = ctrl_sqr
         cost = weight * ctrl_sqr
@@ -487,17 +437,7 @@ class MouseImitation(MouseBaseEnv):
 
     @_registry.reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
-        """Penalty for control rate of change.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict.
-            metrics: Mutable metrics dict.
-            weight: Penalty weight multiplier.
-
-        Returns:
-            float: Negative weighted sum of squared action deltas.
-        """
+        """Penalty for control rate of change."""
         ctrl_diff_sqr = jp.sum(jp.square(info["action"] - info["prev_action"]))
         metrics["ctrl_diff_sqr"] = ctrl_diff_sqr
         cost = weight * ctrl_diff_sqr
@@ -506,32 +446,17 @@ class MouseImitation(MouseBaseEnv):
 
     @_registry.termination("pose_error")
     def _bad_pose(self, data, info, max_l2_error) -> bool:
-        """Terminate if pose error is too large.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict.
-            max_l2_error: Maximum allowable L2 joint error before termination.
-
-        Returns:
-            bool: True if joint L2 error exceeds max_l2_error.
-        """
+        """Terminate if pose error is too large."""
         target = self._get_current_target(data, info)
         pose_error = jp.linalg.norm(target.joints - data.qpos)
         return pose_error > max_l2_error
 
     @_registry.termination("nan_termination")
     def _nan_termination(self, data, info) -> bool:
-        """Terminate if NaN values appear in simulation.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict.
-
-        Returns:
-            bool: True if any NaN values are found in qpos.
-        """
-        return jp.any(jp.isnan(data.qpos))
+        """Terminate if NaN values appear in simulation."""
+        flattened_vals, _ = flatten_util.ravel_pytree(data)
+        num_nans = jp.sum(jp.isnan(flattened_vals))
+        return num_nans > 0
 
     # ==================== Rendering ====================
 
@@ -561,12 +486,10 @@ class MouseImitation(MouseBaseEnv):
             # Create model with ghost mouse for visualization
             spec = self._spec.copy()
 
-            # Add ghost mouse
-            ghost_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+            # Add ghost mouse (every root body -- e.g. both the arm and the
+            # joystick for the v22 model -- so the ghost's qpos, which comes
+            # straight from the full reference clip, drives all of them).
             spawn_frame = spec.worldbody.add_frame(pos=[0, 0, 0], quat=[1, 0, 0, 0])
-            ghost_body = spawn_frame.attach_body(
-                ghost_spec.body("clavicle"), "", "-ghost"
-            )
 
             # Make ghost translucent and non-colliding
             def recolor_geoms(body, rgba):
@@ -577,7 +500,22 @@ class MouseImitation(MouseBaseEnv):
                 for child in body.bodies:
                     recolor_geoms(child, rgba)
 
-            recolor_geoms(ghost_body, [0.3, 0.8, 1.0, 0.4])
+            root_bodies = self._config.root_bodies
+            if len(root_bodies) == 1:
+                ghost_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+                ghost_body = spawn_frame.attach_body(
+                    ghost_spec.body(root_bodies[0]), "", "-ghost"
+                )
+                recolor_geoms(ghost_body, [0.3, 0.8, 1.0, 0.4])
+            else:
+                # Whole-model attach (see MouseBaseEnv.add_mouse for why
+                # attach_body-per-root collides on assets for multi-root
+                # walkers) -- recolor every newly attached top-level body.
+                ghost_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+                spec.attach(ghost_spec, prefix="", suffix="-ghost", frame=spawn_frame)
+                for body in spec.worldbody.bodies:
+                    if body.name.endswith("-ghost"):
+                        recolor_geoms(body, [0.3, 0.8, 1.0, 0.4])
             mj_model = spec.compile()
         else:
             mj_model = self.mj_model

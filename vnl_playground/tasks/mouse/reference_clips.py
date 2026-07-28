@@ -54,10 +54,27 @@ class MouseReferenceClips:
             keep_clips_idx: Optional indices of clips to keep after loading.
                 If None, all clips are retained.
         """
-        # Find all h5 files
-        h5_files = sorted(glob.glob(os.path.join(data_path, "*.h5")))
+        # Find all h5 files. Recursive so this works both for flat
+        # directories (one _ik.h5 per file, the old convention) and
+        # directories with one subdirectory per trial (stac-mjx's own
+        # output layout, e.g. refined_STACed_data_v22/<trial>/<trial>_ik.h5)
+        # -- specifically *_ik.h5, not *.h5, since per-trial subdirectories
+        # also contain a sibling _fit.h5 (incompatible: qvel is empty there)
+        # and reprojection videos.
+        h5_files = sorted(
+            glob.glob(os.path.join(str(data_path), "**", "*_ik.h5"), recursive=True)
+        )
         if not h5_files:
-            raise ValueError(f"No h5 files found in {data_path}")
+            raise ValueError(f"No *_ik.h5 files found in {data_path}")
+
+        # Filter to the requested clips BEFORE loading, not after stacking:
+        # np.stack below requires every loaded clip to have the same frame
+        # count, so a directory with mixed-length clips (e.g. v24's STAC fit
+        # still in progress -- some trials at the full 126 frames, others
+        # still 15-frame stubs) would raise a shape-mismatch error before
+        # keep_clips_idx ever got a chance to drop the mismatched ones.
+        if keep_clips_idx is not None:
+            h5_files = [h5_files[i] for i in keep_clips_idx]
 
         # Load first file to get structure
         with h5py.File(h5_files[0], "r") as f:
@@ -107,13 +124,6 @@ class MouseReferenceClips:
         }
         self.clip_names = np.array(clip_names)
 
-        # Apply clip filtering if requested
-        if keep_clips_idx is not None:
-            keep_clips_idx = np.array(keep_clips_idx)
-            for k in self._DATA_ARRAYS:
-                self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
-            self.clip_names = self.clip_names[keep_clips_idx]
-
         print(
             f"Loaded {len(self.clip_names)} clips with {self._n_frames_per_clip} frames each"
         )
@@ -138,6 +148,26 @@ class MouseReferenceClips:
 
         qpos = np.array(self._data_arrays["qpos"])
         n_clips, n_frames, n_joints = qpos.shape
+
+        if n_joints != mj_model.nq:
+            # Walker model has dofs the reference data was never fit against
+            # (e.g. a joystick added after the fact) -- pad by joint name,
+            # leaving the model's own extra dofs at zero.
+            qvel = np.array(self._data_arrays["qvel"])
+            full_qpos = np.zeros((n_clips, n_frames, mj_model.nq), dtype=qpos.dtype)
+            full_qvel = np.zeros((n_clips, n_frames, mj_model.nv), dtype=qvel.dtype)
+            for ref_idx, name in enumerate(self._names_qpos):
+                jnt_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_JOINT, name)
+                if jnt_id < 0:
+                    jnt_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_JOINT, name + strip_suffix)
+                if jnt_id < 0:
+                    raise ValueError(f"Reference joint '{name}' not found in walker model")
+                full_qpos[:, :, mj_model.jnt_qposadr[jnt_id]] = qpos[:, :, ref_idx]
+                full_qvel[:, :, mj_model.jnt_dofadr[jnt_id]] = qvel[:, :, ref_idx]
+            qpos = full_qpos
+            self._data_arrays["qpos"] = jp.array(qpos)
+            self._data_arrays["qvel"] = jp.array(full_qvel)
+            n_joints = mj_model.nq
 
         # Get body names from the simulation model, stripping suffix if present
         model_body_names = []
