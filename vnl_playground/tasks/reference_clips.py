@@ -266,8 +266,9 @@ class ReferenceClips:
     @property
     def root_position(self) -> Float[Array, "*batch 3"]:
         """World-space position of the configured root body."""
-        root_body_name = self.metadata.root_body_name
-        if root_body_name is not None and root_body_name in self.metadata.xpos_names:
+        if (
+            root_body_name := self.metadata.root_body_name
+        ) is not None and root_body_name in self.metadata.xpos_names:
             return self.body_xpos(root_body_name)
         if self.qpos.shape[-1] < 3:
             raise ValueError("Reference data does not contain a root position.")
@@ -276,8 +277,9 @@ class ReferenceClips:
     @property
     def root_quaternion(self) -> Float[Array, "*batch 4"]:
         """World-space orientation of the configured root body."""
-        root_body_name = self.metadata.root_body_name
-        if root_body_name is not None and root_body_name in self.metadata.xpos_names:
+        if (
+            root_body_name := self.metadata.root_body_name
+        ) is not None and root_body_name in self.metadata.xpos_names:
             return self.body_xquat(root_body_name)
         if self.qpos.shape[-1] < 7:
             raise ValueError("Reference data does not contain a root quaternion.")
@@ -402,8 +404,9 @@ def load_reference_clips(
     """Load reference motion into the canonical STAC/MuJoCo representation."""
     if n_frames_per_clip is not None and n_frames_per_clip <= 0:
         raise ValueError("n_frames_per_clip must be positive.")
-    normalized_indices = _normalize_indices(clip_indices)
-    if normalized_indices is not None and any(i < 0 for i in normalized_indices):
+    if (normalized_indices := _normalize_indices(clip_indices)) is not None and any(
+        i < 0 for i in normalized_indices
+    ):
         raise ValueError("clip_indices cannot contain negative indices.")
     normalized_joint_names = _normalize_names(joint_names)
     normalized_body_names = _normalize_names(body_names)
@@ -792,9 +795,9 @@ def _decode_names(values: np.ndarray) -> tuple[str, ...]:
 def _optional_metadata_names(
     group: h5py.Group | None, name: str
 ) -> tuple[str, ...] | None:
-    if group is None or name not in group:
+    if group is None or (dataset := group.get(name)) is None:
         return None
-    return _decode_names(group[name][()])
+    return _decode_names(dataset[()])
 
 
 def _load_stac_config(h5: h5py.File) -> Mapping[str, Any] | None:
@@ -803,8 +806,7 @@ def _load_stac_config(h5: h5py.File) -> Mapping[str, Any] | None:
     raw = h5["config"][()]
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
-    config = yaml.safe_load(raw)
-    if config is None:
+    if (config := yaml.safe_load(raw)) is None:
         return None
     if not isinstance(config, Mapping):
         raise TypeError("STAC config must decode to a mapping.")
@@ -816,11 +818,9 @@ def _extract_behaviour_labels(
 ) -> tuple[str, ...] | None:
     if config is None:
         return None
-    model_config = config.get("model")
-    if not isinstance(model_config, Mapping):
+    if not isinstance(model_config := config.get("model"), Mapping):
         return None
-    filenames = model_config.get("snips_order")
-    if filenames is None:
+    if (filenames := model_config.get("snips_order")) is None:
         return None
     if len(filenames) != n_clips:
         raise ValueError(

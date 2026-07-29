@@ -169,8 +169,7 @@ def load_reference_clips(
             f"Available: {sorted(_reference_clip_loaders)}"
         )
 
-    custom_loader = _reference_clip_loaders[env_name]
-    if custom_loader is not None:
+    if (custom_loader := _reference_clip_loaders[env_name]) is not None:
         return custom_loader(
             data_path=data_path,
             n_frames_per_clip=n_frames_per_clip,

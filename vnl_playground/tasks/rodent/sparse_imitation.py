@@ -750,9 +750,8 @@ class SparseImitation(rodent_base.RodentEnv):
         if render_ghost:
             spec = self._spec.copy()
             ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
-            ghost_rescale = self.reference_clips.scale_factor
-            if ghost_rescale is None:
-                ghost_rescale = self._config.rescale_factor
+        if (ghost_rescale := self.reference_clips.scale_factor) is None:
+            ghost_rescale = self._config.rescale_factor
             if ghost_rescale != 1.0:
                 ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
             for body in ghost_rodent.worldbody.bodies:

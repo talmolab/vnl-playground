@@ -432,9 +432,8 @@ class Imitation(stick_base.StickBugEnv):
         if render_ghost:
             spec = self._spec.copy()
             ghost_stick = mujoco.MjSpec.from_file(self._walker_xml_path)
-            ghost_rescale = self.reference_clips.scale_factor
-            if ghost_rescale is None:
-                ghost_rescale = self._config.rescale_factor
+        if (ghost_rescale := self.reference_clips.scale_factor) is None:
+            ghost_rescale = self._config.rescale_factor
             if ghost_rescale != 1.0:
                 ghost_stick = utils.scale_spec(
                     ghost_stick, ghost_rescale, root_body="reference_base"
