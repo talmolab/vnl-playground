@@ -120,6 +120,30 @@ def parse_args():
     )
 
     p.add_argument(
+        "--naconmax-per-world", type=int, default=None,
+        help="Set cfg.naconmax = this x num_envs. Warp treats naconmax as a "
+             "TOTAL across the whole vmapped batch (unlike njmax, which is "
+             "per world), so it must scale with num_envs -- sizing it as if "
+             "it were per-world asks for a 180 GiB allocation and OOMs."
+    )
+    p.add_argument("--njmax", type=int, default=None, help="Override cfg.njmax (per world).")
+    p.add_argument(
+        "--mujoco-impl", default=None, choices=["jax", "warp"],
+        help="Override cfg.mujoco_impl. Warp runs collision as CUDA kernels "
+             "rather than traced JAX, which matters here because scott_v1's "
+             "mixed variant puts 18 of 57 pairs through MJX's pure-JAX "
+             "iterative SDF collider."
+    )
+    p.add_argument(
+        "--drop-reward", action="append", default=[], metavar="TERM",
+        help="Remove a reward term entirely (not the same as weight=0, which "
+             "still evaluates it). Needed for joystick_contact under "
+             "--mujoco-impl warp: that term reads data.contact, and Warp "
+             "exposes contacts as a flat batch-wide array keyed by worldid "
+             "rather than the per-world static pair list the JAX backend "
+             "gives, so the term's precomputed row indices do not apply."
+    )
+    p.add_argument(
         "--reward-override", action="append", default=[], metavar="TERM.KEY=VALUE",
         help="Override one reward-term field, repeatable, e.g. "
              "--reward-override joints.exp_scale=1.5 "
@@ -203,6 +227,19 @@ elif args.scott_v1:
     env_cfg = default_config_scott_v1()
 else:
     env_cfg = default_config()
+for _term in args.drop_reward:
+    if _term not in env_cfg.reward_terms:
+        raise SystemExit(
+            f"--drop-reward: no reward term {_term!r}; have "
+            f"{sorted(env_cfg.reward_terms)}"
+        )
+    del env_cfg.reward_terms[_term]
+    print(f"dropped reward term: {_term}")
+
+if args.mujoco_impl is not None:
+    env_cfg.mujoco_impl = args.mujoco_impl
+    print(f"mujoco_impl: {args.mujoco_impl}")
+
 for _ov in args.reward_override:
     _key, _, _val = _ov.partition("=")
     _term, _, _field = _key.partition(".")
@@ -299,6 +336,16 @@ if args.episode_length is not None:
     ppo_params.episode_length = args.episode_length
 if args.num_timesteps is not None:
     ppo_params.num_timesteps = args.num_timesteps
+
+# Must come AFTER ppo_params: naconmax is a batch TOTAL for the Warp
+# backend, so it scales with num_envs.
+if args.naconmax_per_world is not None:
+    env_cfg.naconmax = args.naconmax_per_world * ppo_params.num_envs
+    print(f"naconmax = {args.naconmax_per_world} x {ppo_params.num_envs} envs "
+          f"= {env_cfg.naconmax}")
+if args.njmax is not None:
+    env_cfg.njmax = args.njmax
+
 if args.eval_every is not None:
     ppo_params.eval_every = args.eval_every
 
