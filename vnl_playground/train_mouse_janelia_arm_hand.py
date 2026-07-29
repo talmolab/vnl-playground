@@ -120,6 +120,18 @@ def parse_args():
     )
 
     p.add_argument(
+        "--contact-preset", default=None, choices=["shipped", "hard", "harder"],
+        help="Override cfg.contact_preset. 'hard' = gap 0 + solimp dmax 0.999, "
+             "leaving solref alone; 'harder' adds a direct solref at "
+             "stiffness_mult x k. solref's timeconst is floored at 2*dt, which "
+             "is what makes raw stiffness force a small timestep -- impedance "
+             "does not hit that clamp."
+    )
+    p.add_argument(
+        "--sim-dt", type=float, default=None,
+        help="Override cfg.sim_dt (seconds). substeps per action = ctrl_dt/sim_dt."
+    )
+    p.add_argument(
         "--num-envs", type=int, default=None,
         help="Override ppo_params.num_envs. The Warp backend needs far more "
              "memory per env than the JAX one (~57 GiB at 4096 envs on a 32 GiB "
@@ -242,6 +254,13 @@ for _term in args.drop_reward:
         )
     del env_cfg.reward_terms[_term]
     print(f"dropped reward term: {_term}")
+
+if args.contact_preset is not None:
+    env_cfg.contact_preset = args.contact_preset
+    print(f"contact_preset: {args.contact_preset}")
+if args.sim_dt is not None:
+    env_cfg.sim_dt = args.sim_dt
+    print(f"sim_dt: {args.sim_dt} ({int(round(env_cfg.ctrl_dt/args.sim_dt))} substeps/action)")
 
 if args.mujoco_impl is not None:
     env_cfg.mujoco_impl = args.mujoco_impl
@@ -582,6 +601,27 @@ def build_render_model(env):
             g.conaffinity = 0
         for child in body.bodies:
             recolor_geoms(child, rgba)
+
+    def highlight_collision_geoms(body):
+        """Make the contact-enabled proxies legible in the eval video.
+
+        scott_v1's grip proxies are minimum-volume fits *tangent* to each bone,
+        so at default colours they sit flush against the opaque bone meshes and
+        read as slightly-fattened bones -- which is why they looked absent in
+        the wandb rollouts. Bone meshes go translucent and the proxies go
+        opaque orange, so what actually collides is what you see.
+        """
+        for g in body.geoms:
+            if g.contype != 0 or g.conaffinity != 0:
+                g.rgba = [1.0, 0.45, 0.0, 1.0]      # collision proxy: orange
+            elif g.type == mujoco.mjtGeom.mjGEOM_MESH:
+                g.rgba = [0.75, 0.75, 0.78, 0.25]   # visual bone: translucent
+        for child in body.bodies:
+            highlight_collision_geoms(child)
+
+    for body in render_spec.worldbody.bodies:
+        if not body.name.endswith("-ghost"):
+            highlight_collision_geoms(body)
 
     if ghost_body is not None:
         recolor_geoms(ghost_body, [0.3, 0.8, 1.0, 0.4])
