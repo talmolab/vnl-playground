@@ -1,7 +1,8 @@
-from vnl_playground.tasks.mouse.mouse_reach import MouseEnv
-from mujoco_playground._src import mjx_env
 import jax
 import jax.numpy as jp
+from mujoco_playground._src import mjx_env
+
+from vnl_playground.tasks.mouse.mouse_reach import MouseEnv
 
 
 class MouseRender(MouseEnv):

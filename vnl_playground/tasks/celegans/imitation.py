@@ -6,8 +6,9 @@ allows training agents to mimic reference motion clips.
 
 import collections
 import warnings
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from collections.abc import Callable, Mapping, Sequence
 from pprint import pformat
+from typing import Any
 
 import brax.math
 import jax
@@ -18,6 +19,7 @@ import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
+
 from vnl_playground.tasks.reference_clips import ReferenceClips
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
@@ -96,10 +98,9 @@ class Imitation(worm_base.CelegansEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[
-            Dict[str, Union[str, int, List[Any], Dict[str, Any]]]
-        ] = None,
-        clips: Optional[ReferenceClips] = None,
+        config_overrides: dict[str, str | int | list[Any] | dict[str, Any]]
+        | None = None,
+        clips: ReferenceClips | None = None,
     ) -> None:
         """Initialize the imitation environment.
 
@@ -193,7 +194,8 @@ class Imitation(worm_base.CelegansEnv):
         self._n_steps = int(self.ctrl_dt / self.sim_dt)
         if self._n_steps == 0:
             warnings.warn(
-                f"Simulation will not advance! Please increase `ctrl_dt` from {self.ctrl_dt} to at least {self.sim_dt}."
+                f"Simulation will not advance! Please increase `ctrl_dt` from {self.ctrl_dt} to at least {self.sim_dt}.",
+                stacklevel=2,
             )
 
         self._avg_episode_length = (
@@ -204,9 +206,10 @@ class Imitation(worm_base.CelegansEnv):
         self._default_render_camera = f"{self._config.render_camera}-worm"
         if self._default_render_camera not in self.camera_names:
             warnings.warn(
-                f"Camera {self._default_render_camera} not found in available cameras: {self.spec.camera_names}! (Hint: did you forget the suffix?)"
+                f"Camera {self._default_render_camera} not found in available cameras: {self.spec.camera_names}! (Hint: did you forget the suffix?)",
+                stacklevel=2,
             )
-            warnings.warn("Defaulting to camera: 'track-worm'")
+            warnings.warn("Defaulting to camera: 'track-worm'", stacklevel=2)
             self._default_render_camera = "track-worm"
 
     def __repr__(self) -> str:
@@ -241,8 +244,8 @@ class Imitation(worm_base.CelegansEnv):
     def reset(
         self,
         rng: jax.Array,
-        clip_idx: Optional[int] = None,
-        start_frame: Optional[int] = None,
+        clip_idx: int | None = None,
+        start_frame: int | None = None,
     ) -> mjx_env.State:
         """Reset the environment to initial state.
 
@@ -661,7 +664,11 @@ class Imitation(worm_base.CelegansEnv):
         return reward
 
     def _get_bodies_dist(
-        self, data: mjx.Data, info: Mapping[str, Any], metrics, bodies: List[str] = None
+        self,
+        data: mjx.Data,
+        info: Mapping[str, Any],
+        metrics,
+        bodies: list[str] | None = None,
     ) -> float:
         """Calculate distance between current and target body positions.
 
@@ -1011,7 +1018,7 @@ class Imitation(worm_base.CelegansEnv):
         return self._config.reference_length
 
     @property
-    def start_frame_range(self) -> Tuple[int, int]:
+    def start_frame_range(self) -> tuple[int, int]:
         """Get the range of valid start frames.
 
         Returns:
@@ -1020,7 +1027,7 @@ class Imitation(worm_base.CelegansEnv):
         return tuple(self._config.start_frame_range)
 
     @property
-    def reward_terms(self) -> Dict[str, Any]:
+    def reward_terms(self) -> dict[str, Any]:
         """Get the configured reward terms.
 
         Returns:
@@ -1029,7 +1036,7 @@ class Imitation(worm_base.CelegansEnv):
         return self._config.reward_terms
 
     @property
-    def cost_terms(self) -> Dict[str, Any]:
+    def cost_terms(self) -> dict[str, Any]:
         """Get the configured cost terms.
 
         Returns:
@@ -1038,7 +1045,7 @@ class Imitation(worm_base.CelegansEnv):
         return self._config.cost_terms
 
     @property
-    def termination_criteria(self) -> Dict[str, Any]:
+    def termination_criteria(self) -> dict[str, Any]:
         """Get the configured termination criteria.
 
         Returns:
@@ -1074,16 +1081,16 @@ class Imitation(worm_base.CelegansEnv):
 
     def render(
         self,
-        trajectory: List[mjx_env.State],
+        trajectory: list[mjx_env.State],
         height: int = 240,
         width: int = 320,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
-        modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
+        modify_scene_fns: Sequence[Callable[[mujoco.MjvScene], None]] | None = None,
         add_labels: bool = False,
         termination_extra_frames: int = 0,
         render_ghost: bool = True,
-        vid_path: Optional[str] = None,
+        vid_path: str | None = None,
     ) -> Sequence[np.ndarray]:
         """
         Renders a sequence of states (trajectory). The video includes the imitation
@@ -1126,7 +1133,6 @@ class Imitation(worm_base.CelegansEnv):
                 inplace=False,
             )
         else:
-            spec = self.spec
             mj_model_with_ghost = self.mj_model
 
         try:
@@ -1144,9 +1150,10 @@ class Imitation(worm_base.CelegansEnv):
             camera = -1
         elif camera not in available_cameras:
             warnings.warn(
-                f"Camera {camera} not found in available cameras: {available_cameras}! (Hint: did you forget the suffix?)"
+                f"Camera {camera} not found in available cameras: {available_cameras}! (Hint: did you forget the suffix?)",
+                stacklevel=2,
             )
-            warnings.warn("Defaulting to camera: 'track-worm'")
+            warnings.warn("Defaulting to camera: 'track-worm'", stacklevel=2)
             camera = "track-worm"
         print(f"Rendering with camera: {camera}")
         rendered_frames = []
@@ -1191,7 +1198,7 @@ class Imitation(worm_base.CelegansEnv):
                     reason = "<Unknown>"
                     if state.info["truncated"]:
                         reason = "truncated"
-                    for name in self.termination_criteria.keys():
+                    for name in self.termination_criteria:
                         if state.metrics[name] > 0:
                             reason = name
                     cv2.putText(
@@ -1224,10 +1231,10 @@ class Imitation(worm_base.CelegansEnv):
         rollout_source: Any,
         height: int = 480,
         width: int = 640,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
         render_ghost: bool = True,
-    ) -> List[np.ndarray]:
+    ) -> list[np.ndarray]:
         """Render from precomputed qposes using the old track-mjx logic.
 
         Accepts either a rollout dictionary containing ``qposes_rollout`` and
@@ -1333,8 +1340,8 @@ class Imitation(worm_base.CelegansEnv):
             checks["joints"] = jp.allclose(
                 self._get_joint_angles(data), reference.joints, atol=atol
             )
-            body_pos = self._get_bodies_pos(data, flatten=False)
-            for body_name, body_pos in body_pos.items():
+            body_positions = self._get_bodies_pos(data, flatten=False)
+            for body_name, body_pos in body_positions.items():
                 checks[f"body_xpos/{body_name}"] = jp.allclose(
                     body_pos[: self._config.dim],
                     reference.body_xpos(body_name)[: self._config.dim],
@@ -1381,50 +1388,61 @@ class Imitation(worm_base.CelegansEnv):
                     warnings.warn(
                         f"Reference data verification failed for {n_failed} frames"
                         f" for check '{name}' for clip {clip}."
-                        f" First failure at frame {first_failed_frame}."
+                        f" First failure at frame {first_failed_frame}.",
+                        stacklevel=2,
                     )
                     if name == "root_pos":
                         warnings.warn(
-                            f"Root position: {self.root_body(data).xpos[: self._config.dim]} != {reference.body_xpos(self.root_name)[: self._config.dim]}"
+                            f"Root position: {self.root_body(data).xpos[: self._config.dim]} != {reference.body_xpos(self.root_name)[: self._config.dim]}",
+                            stacklevel=2,
                         )
                         warnings.warn(
-                            f"diff: {jp.linalg.norm(self.root_body(data).xpos[: self._config.dim] - reference.body_xpos(self.root_name)[: self._config.dim])}"
+                            f"diff: {jp.linalg.norm(self.root_body(data).xpos[: self._config.dim] - reference.body_xpos(self.root_name)[: self._config.dim])}",
+                            stacklevel=2,
                         )
                     elif name == "root_quat":
                         warnings.warn(
-                            f"Root quaternion: {self.root_body(data).xquat} != {reference.body_xquat(self.root_name)}"
+                            f"Root quaternion: {self.root_body(data).xquat} != {reference.body_xquat(self.root_name)}",
+                            stacklevel=2,
                         )
                         warnings.warn(
-                            f"diff: {jp.linalg.norm(self.root_body(data).xquat - reference.body_xquat(self.root_name))}"
+                            f"diff: {jp.linalg.norm(self.root_body(data).xquat - reference.body_xquat(self.root_name))}",
+                            stacklevel=2,
                         )
                     elif name == "joints":
                         warnings.warn(
-                            f"Joints: {self._get_joint_angles(data)} != {reference.joints}"
+                            f"Joints: {self._get_joint_angles(data)} != {reference.joints}",
+                            stacklevel=2,
                         )
                         warnings.warn(
-                            f"diff: {jp.linalg.norm(self._get_joint_angles(data) - reference.joints)}"
+                            f"diff: {jp.linalg.norm(self._get_joint_angles(data) - reference.joints)}",
+                            stacklevel=2,
                         )
                     elif name == "joints_ang_vel":
                         warnings.warn(
-                            f"Joints ang vel: {self._get_joint_ang_vels(data)} != {reference.joints_velocity}"
+                            f"Joints ang vel: {self._get_joint_ang_vels(data)} != {reference.joints_velocity}",
+                            stacklevel=2,
                         )
                         warnings.warn(
-                            f"diff: {jp.linalg.norm(self._get_joint_ang_vels(data) - reference.joints_velocity)}"
+                            f"diff: {jp.linalg.norm(self._get_joint_ang_vels(data) - reference.joints_velocity)}",
+                            stacklevel=2,
                         )
                     elif "body_xpos" in name:
                         body_name = name.split("/")[-1]
                         warnings.warn(
-                            f"Body {body_name} pos: {self._get_bodies_pos(data, flatten=False)[body_name][: self._config.dim]}(Sim) != {reference.body_xpos(body_name)[: self._config.dim]} (Ref)"
+                            f"Body {body_name} pos: {self._get_bodies_pos(data, flatten=False)[body_name][: self._config.dim]}(Sim) != {reference.body_xpos(body_name)[: self._config.dim]} (Ref)",
+                            stacklevel=2,
                         )
                         warnings.warn(
-                            f"diff: {jp.linalg.norm(self._get_bodies_pos(data, flatten=False)[body_name][: self._config.dim] - reference.body_xpos(body_name)[: self._config.dim])}"
+                            f"diff: {jp.linalg.norm(self._get_bodies_pos(data, flatten=False)[body_name][: self._config.dim] - reference.body_xpos(body_name)[: self._config.dim])}",
+                            stacklevel=2,
                         )
                     any_failed = True
         return not any_failed
 
 
 def _assert_all_are_prefix(
-    a: List[str], b: List[str], a_name: str = "a", b_name: str = "b"
+    a: list[str], b: list[str], a_name: str = "a", b_name: str = "b"
 ) -> None:
     """Assert that all elements in list a are prefixes of corresponding elements in list b.
 

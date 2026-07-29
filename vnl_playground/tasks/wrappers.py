@@ -4,15 +4,14 @@ These wrappers are generic and work with any MjxEnv-based environment,
 including rodent, fruitfly, and future organisms.
 """
 
-from typing import Any, Callable, Mapping
-
-from mujoco import mjx
-from mujoco_playground._src import mjx_env
+from collections.abc import Callable, Mapping
+from typing import Any
 
 import jax
 import jax.numpy as jp
-
+from mujoco import mjx
 from mujoco_playground import wrapper
+from mujoco_playground._src import mjx_env
 
 
 class FlattenObsWrapper(wrapper.Wrapper):

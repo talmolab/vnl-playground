@@ -3,7 +3,6 @@ Entry point for track-mjx. Load the config file, create environments, initialize
 """
 
 import os
-import sys
 
 # set default env variable if not set
 # os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = os.environ.get(
@@ -30,23 +29,20 @@ jax.config.update(
     "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
 )
 
-import hydra
-from omegaconf import DictConfig, OmegaConf
 import functools
-import wandb
-import orbax.checkpoint as ocp
-from track_mjx.agent.mlp_ppo import ppo, ppo_networks
-import warnings
-from pathlib import Path
-from datetime import datetime
 import logging
+import warnings
+from datetime import datetime
+
+import hydra
 import mujoco
+import orbax.checkpoint as ocp
+import wandb
+from omegaconf import DictConfig, OmegaConf
+from track_mjx.agent import checkpointing, wandb_logging
+from track_mjx.agent.mlp_ppo import ppo, ppo_networks
 
-from vnl_playground.tasks.rodent import flat_arena, bowl_escape, maze_forage
-
-from track_mjx.agent import checkpointing
-from track_mjx.agent import wandb_logging
-from track_mjx.analysis import render
+from vnl_playground.tasks.rodent import bowl_escape, flat_arena, maze_forage
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -57,7 +53,7 @@ def main(cfg: DictConfig):
     try:
         n_devices = jax.device_count(backend="gpu")
         logging.info(f"Using {n_devices} GPUs")
-    except:
+    except Exception:
         n_devices = 1
         logging.info("Not using GPUs")
 
@@ -80,26 +76,17 @@ def main(cfg: DictConfig):
             checkpointing.load_config_from_checkpoint(checkpoint_to_restore)
         )
         print(
-            "Overwriting decoder layer sizes from checkpoint from {} to {}".format(
-                cfg.network_config.decoder_layer_sizes,
-                cfg_loaded.network_config.decoder_layer_sizes,
-            )
+            f"Overwriting decoder layer sizes from checkpoint from {cfg.network_config.decoder_layer_sizes} to {cfg_loaded.network_config.decoder_layer_sizes}"
         )
         cfg.network_config.decoder_layer_sizes = (
             cfg_loaded.network_config.decoder_layer_sizes
         )
         print(
-            "Overwriting intention size from checkpoint from {} to {}".format(
-                cfg.network_config.intention_size,
-                cfg_loaded.network_config.intention_size,
-            )
+            f"Overwriting intention size from checkpoint from {cfg.network_config.intention_size} to {cfg_loaded.network_config.intention_size}"
         )
         cfg.network_config.intention_size = cfg_loaded.network_config.intention_size
         print(
-            "Overwriting rescale factor from checkpoint from {} to {}".format(
-                cfg.walker_config.rescale_factor,
-                cfg_loaded.walker_config.rescale_factor,
-            )
+            f"Overwriting rescale factor from checkpoint from {cfg.walker_config.rescale_factor} to {cfg_loaded.walker_config.rescale_factor}"
         )
         cfg.walker_config.rescale_factor = cfg_loaded.walker_config.rescale_factor
         cfg.env_config.env_args.rescale_factor = cfg_loaded.walker_config.rescale_factor

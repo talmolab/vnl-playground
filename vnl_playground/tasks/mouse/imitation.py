@@ -1,13 +1,13 @@
 """Mouse arm imitation environment for motion tracking."""
 
 import collections
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jp
 import mujoco
 import numpy as np
-from jax import flatten_util
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
@@ -15,6 +15,8 @@ from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.mouse import consts
 from vnl_playground.tasks.mouse.base import (
     MouseBaseEnv,
+)
+from vnl_playground.tasks.mouse.base import (
     default_config as base_default_config,
 )
 from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
@@ -73,8 +75,8 @@ class MouseImitation(MouseBaseEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
-        clips: Optional[MouseReferenceClips] = None,
+        config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
+        clips: MouseReferenceClips | None = None,
     ) -> None:
         """Initialize the mouse arm imitation environment.
 
@@ -129,8 +131,8 @@ class MouseImitation(MouseBaseEnv):
     def reset(
         self,
         rng: jax.Array,
-        clip_idx: Optional[int] = None,
-        start_frame: Optional[int] = None,
+        clip_idx: int | None = None,
+        start_frame: int | None = None,
     ) -> mjx_env.State:
         """Reset the environment to a reference pose.
 
@@ -537,11 +539,11 @@ class MouseImitation(MouseBaseEnv):
 
     def render(
         self,
-        trajectory: List[mjx_env.State],
+        trajectory: list[mjx_env.State],
         height: int = 480,
         width: int = 640,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
         render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """Render a trajectory with optional ghost showing reference motion.

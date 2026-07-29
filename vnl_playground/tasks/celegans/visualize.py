@@ -1,14 +1,13 @@
 """Celegans environment for visualization."""
 
-from vnl_playground.tasks.celegans import base as celegans_base
-from vnl_playground.tasks.celegans import consts
-
-from mujoco_playground._src import mjx_env
+from typing import Any
 
 import jax
 import jax.numpy as jp
 from ml_collections import config_dict
-from typing import Any, Dict, List, Optional, Union
+from mujoco_playground._src import mjx_env
+
+from vnl_playground.tasks.celegans import base as celegans_base
 
 
 class CelegansRender(celegans_base.CelegansEnv):
@@ -17,7 +16,7 @@ class CelegansRender(celegans_base.CelegansEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = celegans_base.default_config(),
-        config_override: Optional[Dict[str, Union[str, int, List[Any]]]] = None,
+        config_override: dict[str, str | int | list[Any]] | None = None,
     ):
         super().__init__(config, config_override)
 
