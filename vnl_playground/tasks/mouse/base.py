@@ -1,5 +1,6 @@
 """Base classes for mouse (arena-first, add walker later)."""
 
+import os
 from typing import Any, Dict, Mapping, Optional, Sequence, Union
 
 import jax
@@ -104,6 +105,35 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
         self._compiled = False
 
+    def _load_walker_spec(self) -> mujoco.MjSpec:
+        """Load the walker XML, repointing meshdir if the XML's own is dead.
+
+        The Janelia v22-v26 XMLs hardcode an absolute
+        meshdir="/root/vast/eric/janelia_model/vNN" that only exists inside
+        Eric's container, because the bone meshes are an unreleased asset and
+        are intentionally not committed (see consts.janelia_mesh_dir()).
+        Without this, a fresh clone dies inside mj_compile on a missing .obj.
+
+        Only overrides when the XML's own meshdir does not resolve on this
+        machine, so Eric's container and the mouse XMLs that use working
+        relative meshdirs (akira_muscle, moving_shoulder_ik) keep their
+        current behaviour untouched.
+        """
+        spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+        mesh_dir = consts.janelia_mesh_dir()
+        if mesh_dir is None:
+            return spec
+        # MuJoCo resolves a relative meshdir against the XML's own directory.
+        declared = spec.meshdir
+        resolved = (
+            declared
+            if os.path.isabs(declared)
+            else os.path.join(os.path.dirname(self._walker_xml_path), declared)
+        )
+        if not os.path.isdir(resolved):
+            spec.meshdir = mesh_dir
+        return spec
+
     def add_mouse(
         self,
         freejoint: bool = False,
@@ -149,7 +179,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         self._suffix = suffix
 
         if len(root_bodies) == 1:
-            mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+            mouse_spec = self._load_walker_spec()
             body = spawn_frame.attach_body(mouse_spec.body(root_bodies[0]), "", suffix)
             if freejoint:
                 body.add_freejoint()
@@ -163,7 +193,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
                     "multi-root walker (root_bodies has more than one "
                     "entry); neither is needed by any current caller."
                 )
-            mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+            mouse_spec = self._load_walker_spec()
             self._spec.attach(mouse_spec, prefix="", suffix=suffix, frame=spawn_frame)
 
     def add_ghost_mouse(
@@ -209,13 +239,13 @@ class MouseBaseEnv(mjx_env.MjxEnv):
                 _recolor(child)
 
         if len(root_bodies) == 1:
-            mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+            mouse_spec = self._load_walker_spec()
             body = spawn_frame.attach_body(mouse_spec.body(root_bodies[0]), "", suffix)
             _recolor(body)
         else:
             # Whole-model attach (see add_mouse) -- recolor every newly
             # attached top-level body (name ends with `suffix`) recursively.
-            mouse_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
+            mouse_spec = self._load_walker_spec()
             self._spec.attach(mouse_spec, prefix="", suffix=suffix, frame=spawn_frame)
             for body in self._spec.worldbody.bodies:
                 if body.name.endswith(suffix):

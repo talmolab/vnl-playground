@@ -5,9 +5,49 @@ specified via YAML config files for flexibility in parameter sweeps.
 See vnl_playground/config/mouse_imitation.yaml for an example.
 """
 
+import os
+from typing import Optional
+
 from etils import epath
 
 MOUSE_PATH = epath.Path(__file__).parent
+
+# --- Janelia bone meshes (deliberately NOT committed) ------------------------
+#
+# The Janelia mouse model's ~107 bone .obj meshes are an unreleased asset and
+# have never been committed to this repo (verified 2026-07-28 across every ref
+# in history). The v22-v26 XMLs therefore carry an absolute meshdir pointing
+# into Eric's container -- /root/vast/eric/janelia_model/{v22,v24} -- which
+# resolves there and nowhere else, so a fresh clone fails to compile the model
+# with no explanation of why.
+#
+# `janelia_mesh_dir()` supplies the path at load time instead; MouseBaseEnv's
+# _load_walker_spec() applies it. Keeping the meshes out of git is a hard
+# requirement, so the in-repo location below is gitignored: the meshes can sit
+# in the source tree for convenience without any way to commit them by accident.
+JANELIA_MESH_DIR_ENV = "JANELIA_MODEL_DIR"
+JANELIA_MESH_DIR_LOCAL = MOUSE_PATH / "xmls" / "assets" / "janelia_model_v24"
+
+
+def janelia_mesh_dir() -> Optional[str]:
+    """Where the Janelia bone meshes live on this machine.
+
+    Resolution order, first hit wins:
+      1. $JANELIA_MODEL_DIR -- explicit override, for meshes kept elsewhere
+         (a NAS mount, a shared scratch dir).
+      2. JANELIA_MESH_DIR_LOCAL -- the gitignored in-repo drop-in.
+      3. None -- caller keeps the XML's own meshdir untouched.
+
+    Returns None rather than raising so that Eric's container (where the XML's
+    absolute meshdir does resolve) and the non-Janelia mouse XMLs (which use
+    relative meshdirs) are both unaffected.
+    """
+    env_dir = os.environ.get(JANELIA_MESH_DIR_ENV)
+    if env_dir:
+        return env_dir
+    if JANELIA_MESH_DIR_LOCAL.exists():
+        return str(JANELIA_MESH_DIR_LOCAL)
+    return None
 
 MOUSE_XML_PATH = MOUSE_PATH / "xmls" / "akira_muscle.xml"
 JANELIA_MOUSE_XML_PATH = MOUSE_PATH / "xmls" / "mouse_forelimb_right.xml"

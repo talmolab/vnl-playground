@@ -192,3 +192,10 @@ MUJOCO_LOG.TXT
 *.tar.gz
 archive/
 notebooks/kin_emg_bundle/
+
+# Janelia mouse bone meshes -- unreleased asset, must never be committed.
+# The model geometry is not ours to open-source; the environment logic, XMLs
+# and configs that reference it are. Drop the ~107 .obj files here (or point
+# $JANELIA_MODEL_DIR elsewhere) and they stay invisible to git by construction
+# rather than by everyone remembering. See tasks/mouse/consts.janelia_mesh_dir().
+vnl_playground/tasks/mouse/xmls/assets/
