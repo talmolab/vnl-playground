@@ -3,7 +3,7 @@
 import copy
 import glob
 import os
-from typing import List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import h5py
 import jax
@@ -24,13 +24,13 @@ class MouseReferenceClips:
     the fixed-base arm structure (no root freejoint).
     """
 
-    _DATA_ARRAYS = ["qpos", "qvel", "xpos", "xquat"]
+    _DATA_ARRAYS: ClassVar[list[str]] = ["qpos", "qvel", "xpos", "xquat"]
 
     def __init__(
         self,
         data_path: str,
-        n_frames_per_clip: Optional[int] = None,
-        keep_clips_idx: Optional[List[int]] = None,
+        n_frames_per_clip: int | None = None,
+        keep_clips_idx: list[int] | None = None,
     ):
         """Load reference clips from a directory of h5 files.
 
@@ -44,9 +44,7 @@ class MouseReferenceClips:
         self._n_frames_per_clip = n_frames_per_clip
         self._load_from_disk(data_path, keep_clips_idx)
 
-    def _load_from_disk(
-        self, data_path: str, keep_clips_idx: Optional[List[int]] = None
-    ):
+    def _load_from_disk(self, data_path: str, keep_clips_idx: list[int] | None = None):
         """Load all h5 files from the directory into stacked JAX arrays.
 
         Args:

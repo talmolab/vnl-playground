@@ -29,12 +29,12 @@ Usage
 ... )
 >>>
 >>> # Access data using consistent API
->>> clips.qpos.shape        # (n_clips, n_frames, n_dof)
->>> clips.joints.shape      # (n_clips, n_frames, n_joints)
->>> clips.root_position     # (n_clips, n_frames, 3)
+>>> clips.qpos.shape  # (n_clips, n_frames, n_dof)
+>>> clips.joints.shape  # (n_clips, n_frames, n_joints)
+>>> clips.root_position  # (n_clips, n_frames, 3)
 >>>
 >>> # Slice operations
->>> frame = clips.at(clip=0, frame=10)      # Single frame
+>>> frame = clips.at(clip=0, frame=10)  # Single frame
 >>> seq = clips.slice(clip=0, start_frame=0, length=50)  # Frame sequence
 >>>
 >>> # Train/test split
@@ -47,17 +47,18 @@ See Also
 """
 
 import copy
+import logging
 import re
+import warnings
+from collections.abc import Mapping
 from ctypes import Array
-from typing import Any, Mapping, Optional, List, Tuple
+from typing import Any, ClassVar
 
 import h5py
 import jax
 import jax.numpy as jp
 import numpy as np
 import yaml
-import logging
-import warnings
 
 
 class ReferenceClips:
@@ -106,7 +107,7 @@ class ReferenceClips:
     """
 
     # Named-array format keys
-    _NAMED_ARRAYS = [
+    _NAMED_ARRAYS: ClassVar[list[str]] = [
         "position",
         "velocity",
         "quaternion",
@@ -118,15 +119,15 @@ class ReferenceClips:
     ]
 
     # Legacy flat-array format keys
-    _LEGACY_ARRAYS = ["qpos", "qvel", "xpos", "xquat"]
+    _LEGACY_ARRAYS: ClassVar[list[str]] = ["qpos", "qvel", "xpos", "xquat"]
 
     def __init__(
         self,
         data_path: str,
         n_frames_per_clip: int,
-        keep_clips_idx: Optional[Array[int]] = None,
-        joint_names: Optional[list[str]] = None,
-        body_names: Optional[list[str]] = None,
+        keep_clips_idx: Array[int] | None = None,
+        joint_names: list[str] | None = None,
+        body_names: list[str] | None = None,
     ):
         """Load reference clips from an HDF5 file.
 
@@ -160,8 +161,8 @@ class ReferenceClips:
         self._joint_names_list: list[str] = []
         self._body_names_map: dict[str, int] = {}
         self._is_legacy_format = False
-        self._config: Optional[dict] = None
-        self.clip_names: Optional[np.ndarray] = None
+        self._config: dict | None = None
+        self.clip_names: np.ndarray | None = None
 
         self._load_from_disk(
             data_path, n_frames_per_clip, keep_clips_idx, joint_names, body_names
@@ -182,9 +183,9 @@ class ReferenceClips:
         self,
         data_path: str,
         n_frames_per_clip: int,
-        keep_clips_idx: Optional[Array[int]],
-        joint_names: Optional[list[str]],
-        body_names: Optional[list[str]],
+        keep_clips_idx: Array[int] | None,
+        joint_names: list[str] | None,
+        body_names: list[str] | None,
     ) -> None:
         """Load data from H5 file, auto-detecting format.
 
@@ -198,7 +199,7 @@ class ReferenceClips:
         self._data_path = data_path
         with h5py.File(data_path, "r") as fid:
             # Detect format by checking for named arrays
-            group = fid["all_clips"] if "all_clips" in fid else fid
+            group = fid.get("all_clips", fid)
 
             if "joints" in group or "position" in group:
                 self._load_named_format(
@@ -213,9 +214,9 @@ class ReferenceClips:
         self,
         fid: h5py.File,
         group: h5py.Group,
-        keep_clips_idx: Optional[Array[int]],
-        joint_names: Optional[list[str]],
-        body_names: Optional[list[str]],
+        keep_clips_idx: Array[int] | None,
+        joint_names: list[str] | None,
+        body_names: list[str] | None,
     ) -> None:
         """Load named-array format (fruitfly-style)."""
         self._is_legacy_format = False
@@ -254,9 +255,9 @@ class ReferenceClips:
         self,
         fid: h5py.File,
         n_frames_per_clip: int,
-        keep_clips_idx: Optional[Array[int]],
-        joint_names: Optional[list[str]],
-        body_names: Optional[list[str]],
+        keep_clips_idx: Array[int] | None,
+        joint_names: list[str] | None,
+        body_names: list[str] | None,
     ) -> None:
         """Load legacy flat-array format (rodent-style)."""
         self._is_legacy_format = True
@@ -298,7 +299,7 @@ class ReferenceClips:
             else:
                 self._body_names_map = {n: i for (i, n) in enumerate(names_xpos)}
 
-    def _extract_clip_names(self, config: Mapping[str, Any]) -> Optional[np.ndarray]:
+    def _extract_clip_names(self, config: Mapping[str, Any]) -> np.ndarray | None:
         """Extract behavior names from legacy config metadata."""
         if "model" not in config or "snips_order" not in config.get("model", {}):
             return None
@@ -438,7 +439,8 @@ class ReferenceClips:
 
         if n_clips == n_train:
             warnings.warn(
-                "train_ratio results in empty test set; using full dataset for both."
+                "train_ratio results in empty test set; using full dataset for both.",
+                stacklevel=2,
             )
             logging.info(f"Training clips: {n_train}; Test clips: {n_train}")
             return copy.copy(self), copy.copy(self)
@@ -651,7 +653,7 @@ class ReferenceClips:
         return self._clip_idx
 
     @property
-    def shape(self) -> Tuple[int, ...]:
+    def shape(self) -> tuple[int, ...]:
         """Get the shape of the motion data.
 
         Returns:
@@ -669,7 +671,7 @@ class ReferenceClips:
         return self.qpos.ndim < 3
 
     @property
-    def joint_indices(self) -> List[int]:
+    def joint_indices(self) -> list[int]:
         """Get indices of joints.
 
         Returns:

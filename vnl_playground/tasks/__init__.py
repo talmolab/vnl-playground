@@ -4,32 +4,31 @@ Like mujoco_playground's locomotion/__init__.py - static imports,
 dict-based registry, load() function.
 """
 
-from typing import Any, Callable, Optional, Type
+from collections.abc import Callable
+from typing import Any
 
 from ml_collections import config_dict
 
-from vnl_playground.tasks.rodent import imitation as rodent_imitation
-from vnl_playground.tasks.rodent import sparse_imitation as rodent_sparse_imitation
-from vnl_playground.tasks.rodent import rearing as rodent_rearing
-from vnl_playground.tasks.rodent import bowl_escape as rodent_bowl_escape
-from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_velocity
-from vnl_playground.tasks.rodent import joystick as rodent_joystick
+from vnl_playground.tasks.celegans import imitation as worm_imitation
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
 from vnl_playground.tasks.fruitfly import (
     maintain_velocity as fruitfly_maintain_velocity,
 )
-
 from vnl_playground.tasks.mouse import imitation as mouse_imitation
 from vnl_playground.tasks.mouse import mouse_reach
 from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
-from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_velocity
+from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.rodent import bowl_escape as rodent_bowl_escape
+from vnl_playground.tasks.rodent import imitation as rodent_imitation
+from vnl_playground.tasks.rodent import joystick as rodent_joystick
+from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_velocity
+from vnl_playground.tasks.rodent import rearing as rodent_rearing
+from vnl_playground.tasks.rodent import sparse_imitation as rodent_sparse_imitation
 from vnl_playground.tasks.stick import imitation as stick_imitation
-
-from vnl_playground.tasks.celegans import imitation as worm_imitation
+from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_velocity
 
 # Unified wrappers and reference clips
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
-from vnl_playground.tasks.reference_clips import ReferenceClips
 
 # Registry dicts (like locomotion's _envs, _cfgs)
 _envs = {
@@ -85,10 +84,10 @@ def __getattr__(name):
 
 def register_environment(
     env_name: str,
-    env_class: Type,
+    env_class: type,
     cfg_class: Callable[[], config_dict.ConfigDict],
-    wrapper_class: Optional[Type] = None,
-    reference_clips_class: Optional[Type] = None,
+    wrapper_class: type | None = None,
+    reference_clips_class: type | None = None,
 ) -> None:
     """Register a new environment at runtime."""
     _envs[env_name] = env_class
@@ -109,7 +108,7 @@ def get_default_config(env_name: str) -> config_dict.ConfigDict:
 
 def load(
     env_name: str,
-    config: Optional[config_dict.ConfigDict] = None,
+    config: config_dict.ConfigDict | None = None,
     clips: Any = None,
     flatten_obs: bool = True,
     **kwargs,

@@ -1,25 +1,25 @@
 """Base classes for rodent"""
 
-from typing import Any, Dict, Optional, Union, Mapping
 import collections
-
-from etils import epath
 import logging
+from collections.abc import Mapping
+from typing import Any
+
 import jax
 import jax.numpy as jp
-import mujoco_playground
-import numpy as np
-from ml_collections import config_dict
 import mujoco
+import numpy as np
+from etils import epath
+from ml_collections import config_dict
 from mujoco import mjx
-
 from mujoco_playground._src import mjx_env
-from vnl_playground.tasks.rodent import consts
-from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
+
 from vnl_playground.tasks.reward_registry import RewardRegistry
+from vnl_playground.tasks.rodent import consts
+from vnl_playground.tasks.utils import _recolour_tree, _scale_body_tree, scale_spec
 
 
-def get_assets() -> Dict[str, bytes]:
+def get_assets() -> dict[str, bytes]:
     assets = {}
     mjx_env.update_assets(assets, consts.RODENT_PATH / "xmls", "*.xml")
     mjx_env.update_assets(assets, consts.RODENT_PATH / "xmls" / "assets")
@@ -54,7 +54,7 @@ class RodentEnv(mjx_env.MjxEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
     ) -> None:
         """
         Initialize the RodentEnv class with only arena
@@ -76,7 +76,7 @@ class RodentEnv(mjx_env.MjxEnv):
         rescale_factor: float = 1.0,
         pos: tuple[float, float, float] = (0, 0, 0),
         quat: tuple[float, float, float, float] = (1, 0, 0, 0),
-        rgba: Optional[tuple[float, float, float, float]] = None,
+        rgba: tuple[float, float, float, float] | None = None,
         suffix: str = "-rodent",
     ) -> None:
         """Adds the rodent model to the environment.
@@ -92,7 +92,7 @@ class RodentEnv(mjx_env.MjxEnv):
         """
         rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
 
-        # a) Convert motors to torque‑mode if requested
+        # a) Convert motors to torque-mode if requested
         if torque_actuators and hasattr(rodent, "actuator"):
             logging.info("Converting to torque actuators")
             for actuator in rodent.actuators:  # type: ignore[attr-defined]
@@ -174,7 +174,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_appendages_pos(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+    ) -> dict[str, jp.ndarray] | jp.ndarray:
         """Get _egocentric_ position of the appendages."""
         torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         appendages_pos = collections.OrderedDict()
@@ -190,7 +190,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_bodies_pos(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+    ) -> dict[str, jp.ndarray] | jp.ndarray:
         """Get _global_ positions of the body parts."""
         bodies_pos = collections.OrderedDict()
         for body_name in consts.BODIES:
@@ -227,7 +227,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_proprioception(
         self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True
-    ) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
+    ) -> jp.ndarray | Mapping[str, jp.ndarray]:
         """Get proprioception data from the environment."""
         proprioception = collections.OrderedDict(
             joint_angles=self._get_joint_angles(data),
@@ -246,7 +246,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_kinematic_sensors(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
+    ) -> Mapping[str, jp.ndarray] | jp.ndarray:
         """Get kinematic sensors data from the environment."""
         accelerometer = data.bind(
             self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")

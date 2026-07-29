@@ -1,24 +1,23 @@
 """Base classes for stick bug (Sungaya inexpectata)."""
 
 import collections
-from typing import Any, Dict, Mapping, Optional, Union
+import logging
+from collections.abc import Mapping
+from typing import Any
 
-from etils import epath
 import jax
 import jax.numpy as jp
-import logging
-import numpy as np
-from ml_collections import config_dict
 import mujoco
+from ml_collections import config_dict
 from mujoco import mjx
-
 from mujoco_playground._src import mjx_env
-from vnl_playground.tasks.stick import consts
+
 from vnl_playground.tasks.reward_registry import RewardRegistry
-from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
+from vnl_playground.tasks.stick import consts
+from vnl_playground.tasks.utils import _recolour_tree, scale_spec
 
 
-def get_assets() -> Dict[str, bytes]:
+def get_assets() -> dict[str, bytes]:
     assets = {}
     mjx_env.update_assets(assets, consts.STICK_PATH / "xmls", "*.xml")
     return assets
@@ -49,7 +48,7 @@ class StickBugEnv(mjx_env.MjxEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
     ) -> None:
         super().__init__(config, config_overrides)
         self._walker_xml_path = str(config.walker_xml_path)
@@ -63,7 +62,7 @@ class StickBugEnv(mjx_env.MjxEnv):
         rescale_factor: float = 1.0,
         pos: tuple[float, float, float] = (0, 0, 0),
         quat: tuple[float, float, float, float] = (1, 0, 0, 0),
-        rgba: Optional[tuple[float, float, float, float]] = None,
+        rgba: tuple[float, float, float, float] | None = None,
         suffix: str = "-stick",
     ) -> None:
         """Adds the stick bug model to the environment.
@@ -100,9 +99,7 @@ class StickBugEnv(mjx_env.MjxEnv):
         # Attach the reference_base body (root of the stick bug).
         # The stick XML already contains a free joint named "root",
         # so we do NOT call add_freejoint() here.
-        spawn_body = spawn_frame.attach_body(
-            stick.body("reference_base"), "", suffix=suffix
-        )
+        spawn_frame.attach_body(stick.body("reference_base"), "", suffix=suffix)
         self._suffix = suffix
 
         # Add explicit floor-foot contact pairs.
@@ -158,7 +155,7 @@ class StickBugEnv(mjx_env.MjxEnv):
 
     def _get_appendages_pos(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+    ) -> dict[str, jp.ndarray] | jp.ndarray:
         """Get egocentric position of the end effectors (claws)."""
         root = data.bind(
             self.mjx_model,
@@ -178,7 +175,7 @@ class StickBugEnv(mjx_env.MjxEnv):
 
     def _get_bodies_pos(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+    ) -> dict[str, jp.ndarray] | jp.ndarray:
         """Get global positions of the body parts."""
         bodies_pos = collections.OrderedDict()
         for body_name in consts.BODIES:
@@ -216,7 +213,7 @@ class StickBugEnv(mjx_env.MjxEnv):
 
     def _get_proprioception(
         self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True
-    ) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
+    ) -> jp.ndarray | Mapping[str, jp.ndarray]:
         """Get proprioception data from the environment."""
         proprioception = collections.OrderedDict(
             joint_angles=self._get_joint_angles(data),
@@ -234,7 +231,7 @@ class StickBugEnv(mjx_env.MjxEnv):
 
     def _get_kinematic_sensors(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
+    ) -> Mapping[str, jp.ndarray] | jp.ndarray:
         """Get kinematic sensors data from the environment."""
         accelerometer = data.bind(
             self.mjx_model,
