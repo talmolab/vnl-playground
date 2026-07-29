@@ -120,6 +120,13 @@ def parse_args():
     )
 
     p.add_argument(
+        "--num-envs", type=int, default=None,
+        help="Override ppo_params.num_envs. The Warp backend needs far more "
+             "memory per env than the JAX one (~57 GiB at 4096 envs on a 32 GiB "
+             "card, vs JAX fitting comfortably), so a Warp run trades env count "
+             "for its higher per-env throughput."
+    )
+    p.add_argument(
         "--naconmax-per-world", type=int, default=None,
         help="Set cfg.naconmax = this x num_envs. Warp treats naconmax as a "
              "TOTAL across the whole vmapped batch (unlike njmax, which is "
@@ -334,6 +341,8 @@ if args.num_minibatches is not None:
     ppo_params.num_minibatches = args.num_minibatches
 if args.episode_length is not None:
     ppo_params.episode_length = args.episode_length
+if args.num_envs is not None:
+    ppo_params.num_envs = args.num_envs
 if args.num_timesteps is not None:
     ppo_params.num_timesteps = args.num_timesteps
 
