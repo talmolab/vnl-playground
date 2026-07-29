@@ -120,6 +120,17 @@ def parse_args():
     )
 
     p.add_argument(
+        "--reward-override", action="append", default=[], metavar="TERM.KEY=VALUE",
+        help="Override one reward-term field, repeatable, e.g. "
+             "--reward-override joints.exp_scale=1.5 "
+             "--reward-override control_cost.weight=0.01. Every tracking term "
+             "is w*exp(-(d/s)^2/2), so exp_scale alone decides whether the "
+             "term has usable gradient at the error the policy actually sits "
+             "at -- which is measurable from a run and is not knowable in "
+             "advance. Exists so re-tuning an arm does not need a code edit."
+    )
+
+    p.add_argument(
         "--scott-v1", action="store_true",
         help="Use the scott_v1 config (default_config_scott_v1): the v25 rig "
              "with 19 contact-enabled hand bones fitted as per-bone "
@@ -192,6 +203,21 @@ elif args.scott_v1:
     env_cfg = default_config_scott_v1()
 else:
     env_cfg = default_config()
+for _ov in args.reward_override:
+    _key, _, _val = _ov.partition("=")
+    _term, _, _field = _key.partition(".")
+    if not (_term and _field and _val):
+        raise SystemExit(
+            f"--reward-override expects TERM.KEY=VALUE, got {_ov!r}"
+        )
+    if _term not in env_cfg.reward_terms:
+        raise SystemExit(
+            f"--reward-override: no reward term {_term!r}; have "
+            f"{sorted(env_cfg.reward_terms)}"
+        )
+    env_cfg.reward_terms[_term][_field] = float(_val)
+    print(f"reward override: {_term}.{_field} = {float(_val)}")
+
 if args.xml_path is not None:
     env_cfg.walker_xml_path = epath.Path(args.xml_path)
 if args.data_path is not None:
