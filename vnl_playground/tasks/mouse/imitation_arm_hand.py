@@ -24,6 +24,7 @@ from mujoco_playground._src import mjx_env
 
 from vnl_playground.tasks.mouse import contact_presets
 from vnl_playground.tasks.mouse.consts import (
+    janelia_scott_v1_xml_path,
     JANELIA_MOUSE_ARM_HAND_V22_RAW_JOYSTICK_XML_PATH,
     JANELIA_MOUSE_ARM_HAND_V22_XML_PATH,
     JANELIA_MOUSE_ARM_HAND_V22X_XML_PATH,
@@ -502,7 +503,7 @@ def default_config_v25() -> config_dict.ConfigDict:
     return cfg
 
 
-def default_config_scott_v1() -> config_dict.ConfigDict:
+def default_config_scott_v1(variant: str = "mixed") -> config_dict.ConfigDict:
     """scott_v1: the v25 rig with a 19-geom anatomical hand and hard contact.
 
     Three things change together relative to v25, so this is deliberately NOT
@@ -534,7 +535,7 @@ def default_config_scott_v1() -> config_dict.ConfigDict:
     so the blast radius is this one term.
     """
     cfg = default_config_v25()
-    cfg.walker_xml_path = JANELIA_MOUSE_ARM_HAND_SCOTT_V1_XML_PATH
+    cfg.walker_xml_path = janelia_scott_v1_xml_path(variant)
 
     # -- contact ------------------------------------------------------------
     # "harder" = gap 0 + solimp dmax 0.999 on all 22 grip/joystick geoms, a

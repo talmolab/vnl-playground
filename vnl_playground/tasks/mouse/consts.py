@@ -182,11 +182,39 @@ MOUSE_REFERENCE_DATA_JANELIA_V25_PATH = epath.Path(
 # collision geoms differ -- so MOUSE_REFERENCE_DATA_JANELIA_V25_PATH is reused
 # unchanged. The version counter is independent of Eric's v22->v26 line: this
 # is scott_v1, not "v27".
-JANELIA_MOUSE_ARM_HAND_SCOTT_V1_XML_PATH = (
-    MOUSE_PATH
-    / "xmls"
-    / "mouse_forelimb_right_janelia_scott_v1_mixed_arm_hand_joystick.xml"
-)
+def janelia_scott_v1_xml_path(variant: str = "mixed"):
+    """Walker XML for a scott_v1 collision variant.
+
+    The three variants differ only in which primitive each hand bone's proxy
+    is, and that choice has a real cost in MJX's pure-JAX pipeline: the
+    joystick is two capsules and a sphere, so capsule/sphere pairs take the
+    closed-form `collision_primitive` path while every *ellipsoid* pair falls
+    through to `collision_sdf`, which runs 10 gradient-descent steps with a
+    10-point line search and an autodiff gradient per pair.
+
+        variant     ellipsoid grip geoms   SDF pairs (of 57)
+        capsule                        0                   0
+        mixed                          6                  18
+        ellipsoid                     19                  57
+
+    The kinematic contact probe found capsule and mixed within a few percent of
+    each other on every transmission measure -- they differ on 6 of 19 geoms
+    and none of them is the palm -- so `capsule` is the cheap escape hatch if
+    the SDF cost dominates.
+    """
+    if variant not in ("mixed", "capsule", "ellipsoid"):
+        raise ValueError(
+            f"unknown scott_v1 variant {variant!r}; expected one of "
+            "'mixed', 'capsule', 'ellipsoid'"
+        )
+    return (
+        MOUSE_PATH
+        / "xmls"
+        / f"mouse_forelimb_right_janelia_scott_v1_{variant}_arm_hand_joystick.xml"
+    )
+
+
+JANELIA_MOUSE_ARM_HAND_SCOTT_V1_XML_PATH = janelia_scott_v1_xml_path("mixed")
 
 # STAC v24-native reference data. As of 2026-07-17 the STAC v24 fitting job is
 # still running -- only 6 of the eventual trial set exist on disk, and only

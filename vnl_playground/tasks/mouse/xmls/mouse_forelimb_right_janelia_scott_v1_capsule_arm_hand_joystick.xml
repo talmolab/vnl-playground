@@ -1,0 +1,1073 @@
+<mujoco model="MuJoCo Model">
+  <compiler angle="radian" meshdir="assets/janelia_model_v24" boundmass="1e-08" boundinertia="0"/>
+
+  <option timestep="0.001" iterations="30" ls_iterations="30"/>
+
+  <visual>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.6 0.6 0.6" specular="0.1 0.1 0.1"/>
+  </visual>
+
+  <default>
+    <joint solreflimit="0.002" solimplimit="0 0.95 0.035" damping="1e-05"/>
+    <site size="0.0005 0.005 0.005" rgba="0.2 0.8 0.2 1"/>
+
+    <tendon width="0.0003" rgba="0.8 0.2 0.2 1"/>
+    <general ctrllimited="true" ctrlrange="0 1" dyntype="muscle" dynprm="0.002 0.004 0 0 0 0 0 0 0 0" gaintype="muscle" biastype="muscle" gainprm="0.75 1.05 0.5 200 0.5 1.6 1.5 1.3 1.2" biasprm="0.75 1.05 0.5 200 0.5 1.6 1.5 1.3 1.2"/>
+  </default>
+
+  <asset>
+    <texture type="skybox" colorspace="auto" builtin="flat" rgb1="1 1 1" rgb2="1 1 1" width="512" height="3072"/>
+    <material name="curves" shininess="0.6" rgba="1 0.00263794 0.00263794 1"/>
+    <material name="bone" shininess="0.975587" rgba="0.558615 0.558615 0.558615 1"/>
+    <material name="cartillage" specular="0.809859" shininess="0.905164" rgba="0.391446 0.667537 0.800023 1"/>
+    <material name="incisors" specular="0.992958" shininess="1"/>
+    <mesh name="Sesamoid_hand_n_right_bone" file="Sesamoid_hand_n_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_k_right_bone" file="Sesamoid_hand_k_right_bone.obj"/>
+    <mesh name="Phalanx_hand_3_5_right_bone" file="Phalanx_hand_3_5_right_bone.obj"/>
+    <mesh name="Phalanx_hand_3_4_right_bone" file="Phalanx_hand_3_4_right_bone.obj"/>
+    <mesh name="Phalanx_hand_3_3_right_bone" file="Phalanx_hand_3_3_right_bone.obj"/>
+    <mesh name="Phalanx_hand_3_2_right_bone" file="Phalanx_hand_3_2_right_bone.obj"/>
+    <mesh name="Phalanx_hand_2_5_right_bone" file="Phalanx_hand_2_5_right_bone.obj"/>
+    <mesh name="Phalanx_hand_2_4_right_bone" file="Phalanx_hand_2_4_right_bone.obj"/>
+    <mesh name="Phalanx_hand_2_3_right_bone" file="Phalanx_hand_2_3_right_bone.obj"/>
+    <mesh name="Phalanx_hand_2_2_right_bone" file="Phalanx_hand_2_2_right_bone.obj"/>
+    <mesh name="Phalanx_hand_2_1_right_bone" file="Phalanx_hand_2_1_right_bone.obj"/>
+    <mesh name="Phalanx_hand_1_5_right_bone" file="Phalanx_hand_1_5_right_bone.obj"/>
+    <mesh name="Phalanx_hand_1_4_right_bone" file="Phalanx_hand_1_4_right_bone.obj"/>
+    <mesh name="Phalanx_hand_1_3_right_bone" file="Phalanx_hand_1_3_right_bone.obj"/>
+    <mesh name="Phalanx_hand_1_2_right_bone" file="Phalanx_hand_1_2_right_bone.obj"/>
+    <mesh name="Phalanx_hand_1_1_right_bone" file="Phalanx_hand_1_1_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_m_right_bone" file="Sesamoid_hand_m_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_l_right_bone" file="Sesamoid_hand_l_right_bone.obj"/>
+    <mesh name="T9_bone" file="T9_bone.obj"/>
+    <mesh name="T8_bone" file="T8_bone.obj"/>
+    <mesh name="T7_bone" file="T7_bone.obj"/>
+    <mesh name="T6_bone" file="T6_bone.obj"/>
+    <mesh name="T5_bone" file="T5_bone.obj"/>
+    <mesh name="T4_bone" file="T4_bone.obj"/>
+    <mesh name="T3_bone" file="T3_bone.obj"/>
+    <mesh name="T2_bone" file="T2_bone.obj"/>
+    <mesh name="T13_bone" file="T13_bone.obj"/>
+    <mesh name="T12_bone" file="T12_bone.obj"/>
+    <mesh name="T11_bone" file="T11_bone.obj"/>
+    <mesh name="T10_bone" file="T10_bone.obj"/>
+    <mesh name="T1_bone" file="T1_bone.obj"/>
+    <mesh name="ulna_right_bone" file="ulna_right_bone.obj"/>
+    <mesh name="Triangular_right_bone" file="Triangular_right_bone.obj"/>
+    <mesh name="Sternebrum_4_cartillage" file="Sternebrum_4_cartillage.obj"/>
+    <mesh name="Sternebrum_3_bone" file="Sternebrum_3_bone.obj"/>
+    <mesh name="Sternebrum_2_bone" file="Sternebrum_2_bone.obj"/>
+    <mesh name="Sternebrum_1_bone" file="Sternebrum_1_bone.obj"/>
+    <mesh name="Skull_bone" file="Skull_bone.obj"/>
+    <mesh name="Sesamoid_hand_j_right_bone" file="Sesamoid_hand_j_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_i_right_bone" file="Sesamoid_hand_i_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_h_right_bone" file="Sesamoid_hand_h_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_g_right_bone" file="Sesamoid_hand_g_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_f_right_bone" file="Sesamoid_hand_f_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_e_right_bone" file="Sesamoid_hand_e_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_d_right_bone" file="Sesamoid_hand_d_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_c_right_bone" file="Sesamoid_hand_c_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_b_right_bone" file="Sesamoid_hand_b_right_bone.obj"/>
+    <mesh name="Sesamoid_hand_a_right_bone" file="Sesamoid_hand_a_right_bone.obj"/>
+    <mesh name="Sesamoid_elbow_right_bone" file="Sesamoid_elbow_right_bone.obj"/>
+    <mesh name="Rib_9_right_bone" file="Rib_9_right_bone.obj"/>
+    <mesh name="Rib_9_right_cartillage" file="Rib_9_right_cartillage.obj"/>
+    <mesh name="Rib_8_right_bone" file="Rib_8_right_bone.obj"/>
+    <mesh name="Rib_8_right_cartillage" file="Rib_8_right_cartillage.obj"/>
+    <mesh name="Rib_7_right_bone" file="Rib_7_right_bone.obj"/>
+    <mesh name="Rib_7_right_cartillage" file="Rib_7_right_cartillage.obj"/>
+    <mesh name="Rib_6_right_bone" file="Rib_6_right_bone.obj"/>
+    <mesh name="Rib_6_right_cartillage" file="Rib_6_right_cartillage.obj"/>
+    <mesh name="Rib_5_right_bone" file="Rib_5_right_bone.obj"/>
+    <mesh name="Rib_5_right_cartillage" file="Rib_5_right_cartillage.obj"/>
+    <mesh name="Rib_4_right_bone" file="Rib_4_right_bone.obj"/>
+    <mesh name="Rib_4_right_cartillage" file="Rib_4_right_cartillage.obj"/>
+    <mesh name="Rib_3_right_bone" file="Rib_3_right_bone.obj"/>
+    <mesh name="Rib_3_right_cartillage" file="Rib_3_right_cartillage.obj"/>
+    <mesh name="Rib_2_right_bone" file="Rib_2_right_bone.obj"/>
+    <mesh name="Rib_2_right_cartillage" file="Rib_2_right_cartillage.obj"/>
+    <mesh name="Rib_1a_right_bone" file="Rib_1a_right_bone.obj"/>
+    <mesh name="Rib_1a_right_cartillage" file="Rib_1a_right_cartillage.obj"/>
+    <mesh name="Rib_13_right_bone" file="Rib_13_right_bone.obj"/>
+    <mesh name="Rib_13_right_cartillage" file="Rib_13_right_cartillage.obj"/>
+    <mesh name="Rib_12_right_bone" file="Rib_12_right_bone.obj"/>
+    <mesh name="Rib_12_right_cartillage" file="Rib_12_right_cartillage.obj"/>
+    <mesh name="Rib_11_right_bone" file="Rib_11_right_bone.obj"/>
+    <mesh name="Rib_11_right_cartillage" file="Rib_11_right_cartillage.obj"/>
+    <mesh name="Rib_10_right_bone" file="Rib_10_right_bone.obj"/>
+    <mesh name="Rib_10_right_cartillage" file="Rib_10_right_cartillage.obj"/>
+    <mesh name="scapula_right_bone" file="scapula_right_bone.obj"/>
+    <mesh name="radius_right_bone" file="radius_right_bone.obj"/>
+    <mesh name="Pisiform_right_bone" file="Pisiform_right_bone.obj"/>
+    <mesh name="Navicular_lunate_right_bone" file="Navicular_lunate_right_bone.obj"/>
+    <mesh name="Multangular_right_bone" file="Multangular_right_bone.obj"/>
+    <mesh name="Metacarpal_hand_5_right_bone_bone" file="Metacarpal_hand_5_right_bone_bone.obj"/>
+    <mesh name="Metacarpal_hand_4_right_bone" file="Metacarpal_hand_4_right_bone.obj"/>
+    <mesh name="Metacarpal_hand_3_right_bone" file="Metacarpal_hand_3_right_bone.obj"/>
+    <mesh name="Metacarpal_hand_2_right_bone" file="Metacarpal_hand_2_right_bone.obj"/>
+    <mesh name="Metacarpal_hand_1_right_bone" file="Metacarpal_hand_1_right_bone.obj"/>
+    <mesh name="manubrium_bone" file="manubrium_bone.obj"/>
+    <mesh name="Mandible_right_bone" file="Mandible_right_bone.obj"/>
+    <mesh name="Mandible_left_bone" file="Mandible_left_bone.obj"/>
+    <mesh name="Incisor_top_right_incisors" file="Incisor_top_right_incisors.obj"/>
+    <mesh name="Incisor_top_left_incisors" file="Incisor_top_left_incisors.obj"/>
+    <mesh name="Incisor_bottom_right_incisors" file="Incisor_bottom_right_incisors.obj"/>
+    <mesh name="Incisor_bottom_left_incisors" file="Incisor_bottom_left_incisors.obj"/>
+    <mesh name="humerus_right_bone" file="humerus_right_bone.obj"/>
+    <mesh name="Hamate_right_bone" file="Hamate_right_bone.obj"/>
+    <mesh name="Falsiformis_right_bone" file="Falsiformis_right_bone.obj"/>
+    <mesh name="clavicle_right_bone" file="clavicle_right_bone.obj"/>
+    <mesh name="Centrale_right_bone" file="Centrale_right_bone.obj"/>
+    <mesh name="Capitate_right_bone" file="Capitate_right_bone.obj"/>
+    <mesh name="C7_bone" file="C7_bone.obj"/>
+    <mesh name="C6_bone" file="C6_bone.obj"/>
+    <mesh name="C5_bone" file="C5_bone.obj"/>
+    <mesh name="C4_bone" file="C4_bone.obj"/>
+    <mesh name="C3_bone" file="C3_bone.obj"/>
+    <mesh name="C2_bone" file="C2_bone.obj"/>
+    <mesh name="C1_bone" file="C1_bone.obj"/>
+    <mesh name="Hyoid_bone" file="Hyoid_bone.obj"/>
+  </asset>
+
+  <worldbody>
+    <light pos="1 -1 2" dir="-0.408248 0.408248 -0.816497" type="directional" castshadow="false" diffuse="0.6 0.6 0.6"/>
+    <light pos="-2 -1 1" dir="0.666667 0.333333 -0.666667" type="directional" castshadow="false" diffuse="0.3 0.3 0.3" specular="0 0 0"/>
+    <body name="joystick_base" pos="-0.0111416 -0.0294865 0.0440792">
+      <joint name="x_slide" pos="0 0 0" axis="1 0 0" type="slide" springref="0.004997" stiffness="14.8" limited="true" range="-0.006 0.006" damping="0.0099"/>
+      <joint name="y_slide" pos="0 0 0" axis="0 1 0" type="slide" springref="0.004773" stiffness="11.2" limited="true" range="-0.006 0.006" damping="0.0082"/>
+      <geom name="circular_base" size="0.0015 0.00025" type="capsule" contype="8" conaffinity="4" condim="4" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001" rgba="0.6 0.6 0.6 1"/>
+      <body name="joystick">
+        <geom name="joystick_geom" size="0.001 0.0071815" pos="0 0 0.0071815" type="capsule" contype="8" conaffinity="4" condim="4" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001" density="4000" rgba="0 0 1 1"/>
+        <geom name="joystick_ball" size="0.002" pos="0 0 0.016184" contype="8" conaffinity="4" condim="4" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001" rgba="0 0 1 1"/>
+      </body>
+    </body>
+    <body name="Armature">
+      <body name="T13" pos="0 -0.00878372 0.0465662" quat="0.77155 0.636169 0 0">
+        <geom name="T13_bone" pos="0 -3.84171e-09 -1.86265e-09" quat="0.77155 -0.636169 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T13_bone"/>
+        <geom name="Rib_13_right_bone" pos="0 -7.33417e-09 -3.72529e-09" quat="0.77155 -0.636169 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_13_right_bone"/>
+        <geom name="Rib_13_right_cartillage" pos="0 -7.33417e-09 -3.72529e-09" quat="0.77155 -0.636169 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_13_right_cartillage"/>
+        <geom name="T13_col" size="0.0117935 0.0110858 0.0143397" pos="-1.05872e-05 0.00907521 0.00834182" quat="0.77155 -0.636169 0 0" type="ellipsoid" conaffinity="0" group="1"/>
+        <site name="Spinotrapezius_P0" pos="-0.000496762 0.00221506 -0.00291143"/>
+        <body name="T12" pos="0 0.00244216 -9.31323e-10" quat="0.99882 0.0485574 0 0">
+          <geom name="T12_bone" pos="0 1.16415e-09 0" quat="0.739749 -0.672883 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T12_bone"/>
+          <geom name="Rib_12_right_bone" pos="0 1.16415e-09 0" quat="0.739749 -0.672883 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_12_right_bone"/>
+          <geom name="Rib_12_right_cartillage" pos="0 1.16415e-09 0" quat="0.739749 -0.672883 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_12_right_cartillage"/>
+          <body name="T11" pos="0 0.00209136 -9.31323e-10" quat="0.995555 0.0941826 0 0">
+            <geom name="T11_bone" pos="0 -3.55067e-09 -2.32831e-10" quat="0.673087 -0.739563 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T11_bone"/>
+            <geom name="Rib_11_right_bone" pos="0 -3.55067e-09 -2.32831e-10" quat="0.673087 -0.739563 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_11_right_bone"/>
+            <geom name="Rib_11_right_cartillage" pos="0 -3.55067e-09 -2.32831e-10" quat="0.673087 -0.739563 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_11_right_cartillage"/>
+            <site name="Spinotrapezius_P1" pos="-0.00254595 0.00109484 -0.00289724"/>
+            <site name="Cutaneousmaximus_P0" pos="-0.00849846 -0.000700772 0.00196184"/>
+            <body name="T10" pos="0 0.0019374 2.32831e-10" quat="0.999599 0.0283139 0 0">
+              <geom name="T10_bone" pos="0 -2.56114e-09 -2.91038e-11" quat="0.651877 -0.758324 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T10_bone"/>
+              <geom name="Rib_10_right_bone" pos="0 -2.67755e-09 -9.60426e-10" quat="0.651877 -0.758324 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_10_right_bone"/>
+              <geom name="Rib_10_right_cartillage" pos="0 -2.67755e-09 -9.60426e-10" quat="0.651877 -0.758324 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_10_right_cartillage"/>
+              <body name="T9" pos="0 0.00182404 -2.91038e-11" quat="0.998531 0.0541837 0 0">
+                <geom name="T9_bone" pos="0 -4.19095e-09 1.39698e-09" quat="0.609831 -0.792532 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T9_bone"/>
+                <geom name="Rib_9_right_bone" pos="0 -7.68341e-09 3.25963e-09" quat="0.609831 -0.792532 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_9_right_bone"/>
+                <geom name="Rib_9_right_cartillage" pos="0 -7.68341e-09 3.25963e-09" quat="0.609831 -0.792532 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_9_right_cartillage"/>
+                <body name="T8" pos="0 0.00167567 -1.39698e-09" quat="1 -0.00051979 0 0">
+                  <geom name="T8_bone" pos="0 -4.19095e-09 -4.65661e-10" quat="0.610243 -0.792215 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T8_bone"/>
+                  <geom name="Rib_8_right_bone" pos="0 -8.14907e-09 -4.65661e-10" quat="0.610243 -0.792215 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_8_right_bone"/>
+                  <geom name="Rib_8_right_cartillage" pos="0 -8.14907e-09 -4.65661e-10" quat="0.610243 -0.792215 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_8_right_cartillage"/>
+                  <site name="Spinotrapezius_P2" pos="-0.00339925 0.00101775 -0.00340471"/>
+                  <body name="T7" pos="0 0.00175873 4.65661e-10" quat="0.999501 0.0315817 0 0">
+                    <geom name="T7_bone" pos="0 -3.95812e-09 2.79397e-09" quat="0.584919 -0.811092 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T7_bone"/>
+                    <geom name="Sternebrum_4_cartillage" pos="0 0.00164214 2.79397e-09" quat="0.584919 -0.811092 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Sternebrum_4_cartillage"/>
+                    <geom name="Rib_7_right_bone" pos="0 -3.95812e-09 2.79397e-09" quat="0.584919 -0.811092 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_7_right_bone"/>
+                    <geom name="Rib_7_right_cartillage" pos="0 -3.95812e-09 2.79397e-09" quat="0.584919 -0.811092 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_7_right_cartillage"/>
+                    <body name="T6" pos="0 0.00164214 0" quat="0.999898 0.0142662 0 0">
+                      <geom name="T6_bone" pos="0 -5.12227e-09 9.31323e-10" quat="0.573288 -0.819354 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T6_bone"/>
+                      <geom name="Rib_6_right_bone" pos="0 -5.58794e-09 -9.31323e-10" quat="0.573288 -0.819354 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_6_right_bone"/>
+                      <geom name="Rib_6_right_cartillage" pos="0 -5.58794e-09 -9.31323e-10" quat="0.573288 -0.819354 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_6_right_cartillage"/>
+                      <site name="Cutaneousmaximus_P1" pos="-0.00894258 -0.000627408 0.00266814"/>
+                      <body name="T5" pos="0 0.00167677 0" quat="0.999999 0.00117104 0 0">
+                        <geom name="T5_bone" pos="0 3.25963e-09 -1.86265e-09" quat="0.572328 -0.820025 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T5_bone"/>
+                        <geom name="Sternebrum_3_bone" pos="0 0.0016135 -1.86265e-09" quat="0.572328 -0.820025 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sternebrum_3_bone"/>
+                        <geom name="Rib_5_right_bone" pos="0 6.98492e-09 -1.86265e-09" quat="0.572328 -0.820025 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_5_right_bone"/>
+                        <geom name="Rib_5_right_cartillage" pos="0 6.98492e-09 -1.86265e-09" quat="0.572328 -0.820025 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_5_right_cartillage"/>
+                        <site name="Serratusanterior_P0" pos="-0.00571465 0.00135391 0.00786881"/>
+                        <site name="Serratusanterior_P1" pos="-0.00703284 0.00128407 0.00348486"/>
+                        <site name="PecMin_P0" pos="-7.16755e-05 0.00485027 0.0123928"/>
+                        <body name="T4" pos="0 0.0016135 9.31323e-10" quat="0.999898 -0.014255 0 0">
+                          <geom name="T4_bone" pos="0 -2.32831e-10 -9.31323e-10" quat="0.583959 -0.811783 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T4_bone"/>
+                          <geom name="Rib_4_right_bone" pos="0 7.91624e-09 -9.31323e-10" quat="0.583959 -0.811783 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_4_right_bone"/>
+                          <geom name="Rib_4_right_cartillage" pos="0 7.91624e-09 -9.31323e-10" quat="0.583959 -0.811783 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_4_right_cartillage"/>
+                          <body name="T3" pos="0 0.00153931 0" quat="0.996891 -0.0787967 0 0">
+                            <geom name="T3_bone" pos="0 -2.21189e-09 7.567e-10" quat="0.646109 -0.763245 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T3_bone"/>
+                            <geom name="Sternebrum_2_bone" pos="0 5.3551e-09 -1.74623e-10" quat="0.646109 -0.763245 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sternebrum_2_bone"/>
+                            <geom name="Rib_3_right_bone" pos="0 5.3551e-09 -1.74623e-10" quat="0.646109 -0.763245 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_3_right_bone"/>
+                            <geom name="Rib_3_right_cartillage" pos="0 5.3551e-09 -1.74623e-10" quat="0.646109 -0.763245 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_3_right_cartillage"/>
+                            <site name="PecMin_P1" pos="-0.00244721 0.00130808 0.0102372"/>
+                            <body name="T2" pos="0 0.0015004 -1.74623e-10" quat="0.999867 -0.0163232 0 0">
+                              <geom name="T2_bone" pos="0 1.74623e-09 4.65661e-10" quat="0.658482 -0.752597 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T2_bone"/>
+                              <geom name="Sternebrum_1_bone" pos="0 9.31323e-09 4.65661e-10" quat="0.658482 -0.752597 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sternebrum_1_bone"/>
+                              <geom name="Rib_2_right_bone" pos="0 9.31323e-09 4.65661e-10" quat="0.658482 -0.752597 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_2_right_bone"/>
+                              <geom name="Rib_2_right_cartillage" pos="0 9.31323e-09 4.65661e-10" quat="0.658482 -0.752597 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_2_right_cartillage"/>
+                              <site name="Pectoralismajordeeper_P0" pos="-0.000208327 0.00257653 0.00747598"/>
+                              <site name="Pectoralismajordeeper_P1" pos="-0.0027759 0.00375739 0.00800692"/>
+                              <site name="Pectoralismajordeeper_P2" pos="-0.00508723 0.00357645 0.00707923"/>
+                              <site name="Rhomboideusmajor_P0" pos="-0.000139772 0.000919726 -0.00466596"/>
+                              <body name="scapula_right" pos="-0.00466922 -0.000917924 -0.00634364" quat="0.895641 0.37986 0.135071 0.187857">
+                                <geom name="scapula_right_bone" pos="-4.65661e-09 0.0108132 1.16415e-09" quat="0.303882 -0.924187 0.0524384 -0.225354" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="scapula_right_bone"/>
+                                <geom name="scapula_right_col" size="0.00700097 0.00467911 0.002206" pos="-0.000583918 0.00491563 3.05939e-05" quat="0.19429 -0.697337 -0.637406 0.263983" type="ellipsoid" conaffinity="0" group="1"/>
+                                <site name="Occipitoscapularis_P2" pos="0.00197896 0.00333553 -0.00252447"/>
+                                <site name="Occipitoscapularis_P3" pos="0.000556109 8.13123e-05 -0.000400796"/>
+                                <site name="Levatorscapulae_P1" pos="-0.000337247 -0.000155955 0.000550293"/>
+                                <site name="Levator_claviculae_P2" pos="-0.00110062 0.011158 -0.00136121"/>
+                                <site name="Infraspinatus_P0" pos="-0.00124204 -2.2033e-05 0.000952381"/>
+                                <site name="Infraspinatus_P1" pos="-0.00131532 0.0052103 -0.000162019"/>
+                                <site name="TricepsbrachiiLH_P0" pos="-0.00038455 0.00879934 -0.000242891"/>
+                                <site name="Teresmajor_P0" pos="-0.00284345 0.00102198 0.00273581"/>
+                                <site name="Supraspinatus_P0" pos="0.00130365 0.000579715 -0.00104985"/>
+                                <site name="Supraspinatus_P1" pos="0.00152745 0.00452233 -0.00183735"/>
+                                <site name="Supraspinatus_P2" pos="0.000773589 0.00916591 -0.00169035"/>
+                                <site name="SubscapularisC_P0" pos="-0.00112812 0.00181953 0.00167431"/>
+                                <site name="SubscapularisB_P0" pos="0.000582143 0.00157788 -0.000327146"/>
+                                <site name="SubscapularisA_P0" pos="0.00231294 0.0018012 -0.00140196"/>
+                                <site name="Splenius_P2" pos="0.00368361 0.00153197 -0.00139041"/>
+                                <site name="Splenius_P3" pos="0.00107523 0.000516156 0.000867347"/>
+                                <site name="Splenius_P4" pos="-0.00193135 0.000362651 0.00261373"/>
+                                <site name="Spinotrapezius_P3" pos="-0.00152589 -0.00039132 0.00122571"/>
+                                <site name="Spinotrapezius_P4" pos="-0.000344393 0.00379657 -0.00137378"/>
+                                <site name="Spinodeltoideus_P0" pos="-0.000790565 0.00336324 -0.00125973"/>
+                                <site name="Spinodeltoideus_P1" pos="-0.00223114 0.00709263 -0.00113399"/>
+                                <site name="Serratusanterior_P2" pos="-0.00350017 0.00207813 0.00449453"/>
+                                <site name="Serratusanterior_P3" pos="-0.00149407 -0.000166933 0.0019093"/>
+                                <site name="Rhomboideusmajor_P1" pos="-6.73766e-05 -0.000242693 0.000142078"/>
+                                <site name="Coracobrachialis?_P0" pos="0.0013901 0.0106755 -3.9811e-05"/>
+                                <site name="bicepsbrachii_P0" pos="0.00118885 0.0108594 -0.000131958"/>
+                                <site name="Acromiotrapezius_P1" pos="0.00258464 0.00486072 -0.00408356"/>
+                                <site name="Acromiotrapezius_P2" pos="0.000449261 0.00788911 -0.00313022"/>
+                                <site name="Acromiotrapezius_P3" pos="-0.00128557 0.0109052 -0.00132365"/>
+                                <site name="Acromiodeltoideus_P0" pos="-0.000873664 0.0111659 -0.00124825"/>
+                                <site name="PecMin_P3" pos="0.00117299 0.0109736 0.0026992"/>
+                                <site name="PecMin_P4" pos="0.00147744 0.010546 -6.49281e-05"/>
+                                <body name="humerus_right" pos="1.10595e-09 0.0108132 2.09548e-09" quat="0.371895 0.0351611 0.437159 0.818138">
+                                  <joint name="shoulder_protraction" pos="0 0 0" axis="1 0 0" limited="true" range="-0.785398 0.785398"/>
+                                  <joint name="shoulder_internal_rotation" pos="0 0 0" axis="0 1 0" limited="true" range="-0.785398 0.785398"/>
+                                  <joint name="shoulder_abduction" pos="0 0 0" axis="0 0 1" limited="true" range="-0.785398 0.785398"/>
+                                  <geom name="humerus_right_bone" pos="9.31323e-10 1.10595e-08 1.16415e-09" quat="0.0809301 0.212968 -0.634846 0.738286" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="humerus_right_bone"/>
+                                  <geom name="humerus_right_col" size="0.00302821 0.0044034" pos="0.000181114 0.00506034 0.000526796" quat="0.659599 -0.717257 -0.166612 -0.150705" type="capsule" conaffinity="0" group="1"/>
+                                  <site name="Pectoralismajordeeper_P3" pos="0.00129183 0.00476283 0.00169182"/>
+                                  <site name="palmarislongus_P0" pos="-0.00163924 0.0104137 0.00014033"/>
+                                  <site name="Infraspinatus_P2" pos="0.0011279 -2.51199e-05 0.000143749"/>
+                                  <site name="flexorcarpiradialis_P0" pos="-0.00142132 0.0102127 0.000351388"/>
+                                  <site name="flexor_digitorum_profundus_UH_P0" pos="-0.000681728 0.0107596 0.000591846"/>
+                                  <site name="Flexor_digitorum_profundus_SH_P0" pos="-0.00134555 0.0106356 0.000371705"/>
+                                  <site name="TricepsbrachiiMH_P0" pos="-0.000515342 0.0024334 0.000464605"/>
+                                  <site name="TricepsbrachiiLH_P1" pos="-0.000415931 0.00666069 -0.00264596"/>
+                                  <site name="TricepsbrachiiLH_P2" pos="-0.000404941 0.0111958 -0.00179957"/>
+                                  <site name="tricepsbrachiiLatH_P0" pos="0.000622314 0.000420786 -0.00051352"/>
+                                  <site name="tricepsbrachiiLatH_P1" pos="0.0014087 0.00778895 -0.00110153"/>
+                                  <site name="Teresmajor_P1" pos="-0.00070764 0.00213111 0.000500412"/>
+                                  <site name="Supraspinatus_P3" pos="0.000981541 -0.000624225 -1.87957e-05"/>
+                                  <site name="SubscapularisC_P1" pos="-0.00111098 0.000198559 -4.1188e-05"/>
+                                  <site name="SubscapularisB_P1" pos="-0.00122664 -2.62099e-05 -6.63027e-05"/>
+                                  <site name="SubscapularisA_P1" pos="-0.00117327 -0.000348397 -5.60747e-05"/>
+                                  <site name="Spinodeltoideus_P2" pos="0.00162412 0.00230806 -0.00163124"/>
+                                  <site name="Spinodeltoideus_P3" pos="0.00154699 0.00400629 0.00147499"/>
+                                  <site name="pronatorteres_P0" pos="-0.00143651 0.00990273 -0.000114764"/>
+                                  <site name="Pectoralismajorsuperficial_P3" pos="0.00130814 0.00471238 0.00170239"/>
+                                  <site name="fdsD_P0" pos="-0.00109484 0.0108215 8.78333e-05"/>
+                                  <site name="fdsC_P0" pos="-0.00109484 0.0108215 8.78333e-05"/>
+                                  <site name="fdsB,_P0" pos="-0.00109484 0.0108215 8.78333e-05"/>
+                                  <site name="fdsA_P0" pos="-0.00109484 0.0108215 8.78333e-05"/>
+                                  <site name="extensororcarpiradialisbrevis_P0" pos="0.00127874 0.0099081 -0.000271296"/>
+                                  <site name="extensordigitiquatri_P0" pos="0.00131048 0.0102024 4.63901e-05"/>
+                                  <site name="extensorcarpiradialislongus_P0" pos="0.00120999 0.00910957 -0.000748021"/>
+                                  <site name="extensorcarpiiulnaris_P0" pos="0.000886739 0.0108787 2.74619e-05"/>
+                                  <site name="edcD_P0" pos="0.00106659 0.00986116 -0.000215858"/>
+                                  <site name="edcC_P0" pos="0.00106659 0.00986116 -0.000215858"/>
+                                  <site name="edcB_P0" pos="0.00106659 0.00986116 -0.000215858"/>
+                                  <site name="edcA_P0" pos="0.00106659 0.00986116 -0.000215858"/>
+                                  <site name="Cutaneousmaximus_P2" pos="-0.00106314 0.00188696 0.000912932"/>
+                                  <site name="Cutaneousmaximus_P3" pos="-0.000469021 -7.15733e-06 0.000900465"/>
+                                  <site name="Coracobrachialis?_P1" pos="-0.000760632 0.00468604 0.000450348"/>
+                                  <site name="Coracobrachialis?_P2" pos="-0.00100289 0.00969031 -1.1947e-05"/>
+                                  <site name="Claviculodeltoideus_P1" pos="0.000319143 8.13021e-05 0.00184284"/>
+                                  <site name="Claviculodeltoideus_P2" pos="0.00100635 0.00227583 0.00219456"/>
+                                  <site name="Claviculodeltoideus_P3" pos="0.00147383 0.00470179 0.00164085"/>
+                                  <site name="brachialis_P0" pos="0.000195869 0.000759387 -0.00044375"/>
+                                  <site name="brachialis_P1" pos="0.000710635 0.00483403 0.000184039"/>
+                                  <site name="brachialis_P2" pos="0.00071638 0.00718533 0.000588964"/>
+                                  <site name="bicepsbrachii_P1" pos="-0.000646537 0.000692857 0.00100222"/>
+                                  <site name="anconeus_P0" pos="-0.00156439 0.01031 -0.000125674"/>
+                                  <site name="Acromiodeltoideus_P1" pos="0.00176529 0.00195875 0.000480653"/>
+                                  <site name="Acromiodeltoideus_P2" pos="0.00146791 0.00477096 0.00155768"/>
+                                  <body name="ulna_right" pos="9.31323e-10 0.0103683 1.39698e-09" quat="0.761255 0.644484 -0.0524726 -0.0487748">
+                                    <joint name="elbow_flexion" pos="0 0 0" axis="1 0 0" limited="true" range="-0.785398 0.785398"/>
+                                    <geom name="ulna_right_bone" pos="1.86265e-09 -2.79397e-09 2.36323e-08" quat="0.196165 0.179669 0.00716856 0.963943" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="ulna_right_bone"/>
+                                    <geom name="ulna_right_col" size="0.00110199 0.00573969" pos="-3.5651e-05 0.00479804 -0.000186198" quat="0.44915 0.457772 -0.561296 0.523121" type="capsule" conaffinity="0" group="1"/>
+                                    <site name="flexorcarpiiulnaris_P0" pos="-0.000785602 -0.00152638 -0.000966925"/>
+                                    <site name="flexorcarpiiulnaris_P1" pos="-0.000711847 0.00557383 -0.000789454"/>
+                                    <site name="flexor_digitorum_profundus_UH_P1" pos="-0.000490123 0.00501643 0.000281113"/>
+                                    <site name="flexor_digitorum_profundus_UH_P3" pos="-0.000994015 0.0111888 -5.01263e-05"/>
+                                    <site name="flexor_digitorum_profundus_MH_P0" pos="-0.000330773 0.00160572 -0.000864609"/>
+                                    <site name="flexor_digitorum_profundus_MH_P1" pos="-0.000413943 0.00778539 -8.30614e-05"/>
+                                    <site name="flexor_digitorum_profundus_MH_P2" pos="-0.000983458 0.0110721 -0.000262319"/>
+                                    <site name="TricepsbrachiiMH_P1" pos="-0.000193448 -0.00192609 -5.94405e-06"/>
+                                    <site name="tricepsbrachiiLatH_P2" pos="1.01379e-05 -0.00154355 -0.00105328"/>
+                                    <site name="extensordigitiquatri_P1" pos="0.000821144 0.00682031 4.32059e-05"/>
+                                    <site name="extensordigitiquatri_P2" pos="0.000131067 0.0116239 0.000116671"/>
+                                    <site name="extensorcarpiiulnaris_P1" pos="0.000629965 0.00593987 -0.000398559"/>
+                                    <site name="extensorcarpiiulnaris_P2" pos="0.000263883 0.0111975 -0.000186099"/>
+                                    <site name="epl_P0" pos="7.78236e-05 0.000231432 -0.00101176"/>
+                                    <site name="brachialis_P3" pos="-0.00027283 0.000956937 -0.000506262"/>
+                                    <site name="anconeus_P1" pos="-0.000825785 -0.00170604 -0.000615867"/>
+                                    <body name="radius_right" pos="0.000571605 6.4197e-05 -0.000110071" quat="-0.992816 -0.0242038 -0.10135 -0.0588097">
+                                      <joint name="forearm_supination" pos="0 0 0" axis="0 1 0" limited="true" range="-0.785398 0.785398"/>
+                                      <geom name="Sesamoid_elbow_right_bone" pos="0.000663798 0.000499388 0.000200643" quat="0.254688 0.0678435 1.14117e-06 0.964641" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_elbow_right_bone"/>
+                                      <geom name="radius_right_bone" pos="-0.000537722 4.61261e-06 3.18504e-05" quat="0.254688 0.0678436 8.274e-07 0.964641" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="radius_right_bone"/>
+                                      <geom name="radius_right_col" size="0.000915768 0.00474355" pos="0.000120671 0.00608419 0.000344136" quat="0.635247 0.636891 -0.312934 0.3048" type="capsule" conaffinity="0" group="1"/>
+                                      <site name="palmarislongus_P1" pos="-0.00201101 0.00244008 -0.00055591"/>
+                                      <site name="palmarislongus_P2" pos="-0.00114976 0.00495369 -0.000808567"/>
+                                      <site name="palmarislongus_P3" pos="-0.000533836 0.00802166 -0.000636824"/>
+                                      <site name="flexorcarpiradialis_P1" pos="-0.00167451 0.003098 0.00063252"/>
+                                      <site name="flexorcarpiradialis_P2" pos="-0.000542207 0.00664984 0.000610548"/>
+                                      <site name="flexorcarpiradialis_P3" pos="-0.000121565 0.00890371 0.000446489"/>
+                                      <site name="flexorcarpiradialis_P4" pos="-0.000397262 0.0110117 -7.13559e-05"/>
+                                      <site name="flexor_digitorum_profundus_UH_P2" pos="-0.000296755 0.00810352 -5.39465e-05"/>
+                                      <site name="Flexor_digitorum_profundus_SH_P1" pos="-0.000673696 0.00634991 -0.000108592"/>
+                                      <site name="Flexor_digitorum_profundus_SH_P2" pos="-0.000623279 0.0112645 -0.000472868"/>
+                                      <site name="Flexor_digitorum_profundus_RH_P0" pos="-0.000265815 0.00226873 0.00034283"/>
+                                      <site name="Flexor_digitorum_profundus_RH_P1" pos="-0.000242128 0.00536747 0.000371154"/>
+                                      <site name="Flexor_digitorum_profundus_RH_P2" pos="-0.000154821 0.00872108 -0.000113298"/>
+                                      <site name="Flexor_digitorum_profundus_RH_P3" pos="-0.000408704 0.0112348 -0.000498138"/>
+                                      <site name="pronatorteres_P1" pos="5.28344e-05 0.00545291 0.00105119"/>
+                                      <site name="fdsD_P1" pos="-0.000129066 0.0058103 -0.000835178"/>
+                                      <site name="fdsD_P2" pos="-7.17386e-05 0.0100394 -0.000823683"/>
+                                      <site name="fdsC_P1" pos="-0.000596343 0.00532215 -0.00048258"/>
+                                      <site name="fdsC_P2" pos="-0.000180018 0.00943628 -0.000657349"/>
+                                      <site name="fdsC_P3" pos="-0.000270665 0.0110985 -0.000837031"/>
+                                      <site name="fdsB,_P1" pos="-0.000596343 0.00532215 -0.00048258"/>
+                                      <site name="fdsB,_P2" pos="-0.00032764 0.00946614 -0.000645925"/>
+                                      <site name="fdsB,_P3" pos="-0.000367893 0.0111371 -0.00075314"/>
+                                      <site name="fdsA_P1" pos="-0.000596343 0.00532215 -0.00048258"/>
+                                      <site name="fdsA_P2" pos="-0.000415221 0.00944991 -0.000398311"/>
+                                      <site name="fdsA_P3" pos="-0.000551522 0.0111853 -0.00062398"/>
+                                      <site name="extensororcarpiradialisbrevis_P1" pos="0.000368018 0.00522061 0.00128245"/>
+                                      <site name="extensororcarpiradialisbrevis_P2" pos="0.000353768 0.0112987 0.000762953"/>
+                                      <site name="extensorcarpiradialislongus_P1" pos="0.00021188 0.00547918 0.00141804"/>
+                                      <site name="extensorcarpiradialislongus_P2" pos="0.00020568 0.0113047 0.000837392"/>
+                                      <site name="epl_P1" pos="0.000405636 0.00296692 -0.00045167"/>
+                                      <site name="epl_P2" pos="0.000779071 0.00669733 0.000449243"/>
+                                      <site name="epl_P3" pos="0.000616616 0.00800636 0.000918354"/>
+                                      <site name="epl_P4" pos="0.000124515 0.0101055 0.000801838"/>
+                                      <site name="epl_P5" pos="-0.000547629 0.0112961 0.000596529"/>
+                                      <site name="epb_P0" pos="0.000358046 0.00211119 0.000101098"/>
+                                      <site name="epb_P1" pos="0.000716511 0.0066718 0.000836441"/>
+                                      <site name="epb_P2" pos="0.000480632 0.0085357 0.000969087"/>
+                                      <site name="epb_P3" pos="-0.000119583 0.0101863 0.000858926"/>
+                                      <site name="epb_P4" pos="-0.000547629 0.0112961 0.000596529"/>
+                                      <site name="edcD_P1" pos="0.000987658 0.00583384 0.000349342"/>
+                                      <site name="edcD_P2" pos="0.000735515 0.0114166 -6.92337e-05"/>
+                                      <site name="edcC_P1" pos="0.000988442 0.00589416 0.000349382"/>
+                                      <site name="edcC_P2" pos="0.000718395 0.0113428 -5.49597e-06"/>
+                                      <site name="edcB_P1" pos="0.00096248 0.00589109 0.000412421"/>
+                                      <site name="edcB_P2" pos="0.000666219 0.0113749 5.6479e-05"/>
+                                      <site name="edcA_P1" pos="0.000954275 0.00593016 0.000535903"/>
+                                      <site name="edcA_P2" pos="0.00056044 0.0114448 0.000193124"/>
+                                      <site name="bicepsbrachii_P2" pos="-0.000161348 0.00167946 -6.35451e-05"/>
+                                      <body name="N_L_C_right" pos="9.31323e-10 0.0117013 -8.73115e-10" quat="0.145388 0.422517 0.779257 -0.439432">
+                                        <joint name="wrist_deviation" pos="0 0 0" axis="1 0 0" limited="true" range="-0.785398 0.785398"/>
+                                        <joint name="wrist_flexion" pos="0 0 0" axis="0 0 1" limited="true" range="-0.785398 0.785398"/>
+                                        <geom name="Triangular_right_bone" pos="-0.000380295 0.000810074 0.00034126" quat="0.353843 0.848111 -0.240763 -0.312308" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Triangular_right_bone"/>
+                                        <geom name="Pisiform_right_bone" pos="-0.000380295 0.000810074 0.00034126" quat="0.353843 0.848111 -0.240763 -0.312308" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Pisiform_right_bone"/>
+                                        <geom name="Navicular_lunate_right_bone" pos="-0.000380295 0.000810074 0.00034126" quat="0.353843 0.848111 -0.240763 -0.312308" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Navicular_lunate_right_bone"/>
+                                        <geom name="Hamate_right_bone" pos="-0.000380295 0.000810074 0.00034126" quat="0.353843 0.848111 -0.240763 -0.312308" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Hamate_right_bone"/>
+                                        <geom name="Falsiformis_right_bone" pos="-0.000380295 0.000810074 0.00034126" quat="0.353843 0.848111 -0.240763 -0.312308" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Falsiformis_right_bone"/>
+                                        <geom name="Centrale_right_bone" pos="-0.000380295 0.000810074 0.00034126" quat="0.353843 0.848111 -0.240763 -0.312308" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Centrale_right_bone"/>
+                                        <geom name="Capitate_right_bone" pos="-0.000380295 0.000810074 0.00034126" quat="0.353843 0.848111 -0.240763 -0.312308" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Capitate_right_bone"/>
+                                        <geom name="Capitate_right_col" size="0.000431593 0.000278132 0.000333096" pos="0.000113321 0.000437394 -0.000164245" quat="0.144065 -0.345026 0.205206 0.904485" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                        <geom name="Centrale_right_col" size="0.000401963 0.000333645 0.000156345" pos="0.000147227 5.78975e-05 -0.000217016" quat="0.319087 -0.184044 -0.474828 0.799281" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                        <geom name="Falsiformis_right_col" size="0.000882233 0.000352417 0.000179143" pos="0.000880935 -0.00044112 0.000490794" quat="0.875934 0.232721 -0.28735 0.309858" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                        <geom name="Hamate_right_col" size="0.000555082 0.000352456 0.000290147" pos="0.000185867 0.000897458 0.000153779" quat="0.00170958 0.778967 0.526617 0.340414" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                        <geom name="Navicular_lunate_right_col" size="0.0007837 0.00055355 0.000420483" pos="0.000229746 -4.61061e-05 0.000128716" quat="0.428172 -0.128684 -0.246403 0.859881" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                        <geom name="Pisiform_right_col" size="0.000564802 0.000384271 0.000394561" pos="3.28657e-05 0.000473255 0.000973246" quat="0.235345 -0.539776 -0.100098 0.802019" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                        <geom name="Triangular_right_col" size="0.00043077 0.000333479 0.000205622" pos="-4.38222e-05 0.000793231 0.000379562" quat="0.31908 0.319773 -0.19437 -0.87072" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                        <site name="palmarislongus_P4" pos="0.000517207 -0.000246231 0.00138731"/>
+                                        <site name="flexorcarpiradialis_P5" pos="0.000442613 -0.000107186 0.000149882"/>
+                                        <site name="flexorcarpiiulnaris_P2" pos="0.000145225 0.000256506 0.00140633"/>
+                                        <site name="flexor_digitorum_profundus_UH_P4" pos="0.000870843 0.000641866 0.000289874"/>
+                                        <site name="Flexor_digitorum_profundus_SH_P3" pos="0.000980214 -0.000100258 0.000218457"/>
+                                        <site name="Flexor_digitorum_profundus_RH_P4" pos="0.000888789 0.000319583 0.000222744"/>
+                                        <site name="flexor_digitorum_profundus_MH_P3" pos="0.000870677 0.000741622 0.000545229"/>
+                                        <site name="fdsD_P3" pos="0.000163196 -0.000124916 0.00157752"/>
+                                        <site name="fdsC_P4" pos="0.000749732 0.000404119 0.000591714"/>
+                                        <site name="fdsB,_P4" pos="0.000772962 0.000212199 0.000485289"/>
+                                        <site name="fdsA_P4" pos="0.00093924 -5.1387e-05 0.000407853"/>
+                                        <site name="extensororcarpiradialisbrevis_P3" pos="-0.000185284 2.23892e-05 -0.000547157"/>
+                                        <site name="extensordigitiquatri_P3" pos="3.05437e-05 0.0011726 -0.000127658"/>
+                                        <site name="extensorcarpiradialislongus_P3" pos="-0.000137141 -0.000270186 -0.000597952"/>
+                                        <site name="edcD_P3" pos="-1.13249e-06 0.000986757 -0.000220768"/>
+                                        <site name="edcC_P3" pos="-5.05119e-05 0.0007851 -0.000330956"/>
+                                        <site name="edcB_P3" pos="-4.26425e-05 0.00066041 -0.000410776"/>
+                                        <site name="edcA_P3" pos="-7.30192e-05 0.000376073 -0.000532479"/>
+                                        <site name="Abductor_digiti_quinti_hand_P0" pos="0.000478948 0.000522552 0.00120464"/>
+                                        <body name="Metacarpal_hand_1_right" pos="0.000406539 -0.000370514 -0.000356975" quat="0.00194103 -0.804645 -0.562193 0.191002">
+                                          <joint name="mcp_flexion_1" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                          <joint name="mcp_abduction_1" pos="0 0 0" axis="0 1 0" limited="true" range="-0.0872665 0.0872665"/>
+                                          <geom name="Sesamoid_hand_b_right_bone" pos="-9.50923e-05 0.000698514 -0.000312611" quat="0.60604 -0.0648015 -0.287769 0.738719" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_b_right_bone"/>
+                                          <geom name="Multangular_right_bone" pos="-2.79397e-09 -1.04774e-08 7.68341e-09" quat="0.60604 -0.0648014 -0.287769 0.738719" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Multangular_right_bone"/>
+                                          <geom name="Metacarpal_hand_1_right_bone" pos="-5.93718e-09 -6.98492e-09 1.82772e-08" quat="0.60604 -0.0648015 -0.287769 0.738719" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Metacarpal_hand_1_right_bone"/>
+                                          <geom name="Metacarpal_hand_1_right_col" size="0.000396725 0.000146076" pos="-2.1456e-05 0.000466253 -2.51277e-05" quat="0.802999 -0.574716 0.102976 0.11954" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                          <geom name="Multangular_right_col" size="0.000308822 0.000247468 0.000222458" pos="7.25657e-05 1.49631e-05 -1.5029e-05" quat="0.689641 -0.0942577 0.708733 -0.114925" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                          <geom name="Sesamoid_hand_b_right_col" size="0.000282248 0.000181101 0.000119365" pos="-7.98342e-05 0.000704567 -0.00031446" quat="0.154669 -0.954986 0.0943612 0.234894" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                          <site name="epl_P6" pos="-0.00041542 0.000235932 -6.30543e-05"/>
+                                          <site name="epb_P5" pos="-0.00041542 0.000235932 -6.30543e-05"/>
+                                          <body name="Phalanx_hand_1_1_right" pos="4.65661e-09 0.000675352 3.43425e-09" quat="0.941259 0.259093 0.204878 -0.0701906">
+                                            <joint name="pip_flexion_1" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                            <geom name="Phalanx_hand_1_1_right_bone" pos="-1.00699e-08 -1.16415e-10 1.35624e-08" quat="0.442842 -0.349165 -0.208181 0.799146" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_1_1_right_bone"/>
+                                            <geom name="Phalanx_hand_1_1_right_col" size="0.00030745 0.000189419" pos="1.11521e-05 0.000415809 -7.62072e-05" quat="0.796359 -0.60211 0.0233315 0.0522666" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                            <body name="Phalanx_hand_2_1_right" pos="2.91038e-09 0.000659741 -6.69388e-09" quat="0.970045 -0.228014 0.0651097 0.052754">
+                                              <joint name="dip_flexion_1" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                              <geom name="Phalanx_hand_2_1_right_bone" pos="-1.7375e-08 -4.42378e-09 9.76252e-09" quat="0.537795 -0.300744 -0.394575 0.681645" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_2_1_right_bone"/>
+                                              <geom name="Phalanx_hand_2_1_right_col" size="0.00040279 8.01809e-05" pos="-2.57577e-06 0.000372563 -5.5808e-05" quat="0.663128 -0.540256 -0.358154 -0.374313" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                            </body>
+                                          </body>
+                                        </body>
+                                        <body name="Metacarpal_hand_2_right" pos="0.00028252 -0.000124209 -0.000258088" quat="0.216848 -0.577779 -0.735401 0.27988">
+                                          <geom name="Sesamoid_hand_j_right_bone" pos="-0.000288229 0.0023141 -0.000210517" quat="0.323644 -0.0912996 -0.151085 0.929566" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_j_right_bone"/>
+                                          <geom name="Sesamoid_hand_i_right_bone" pos="7.26418e-05 0.00220719 -0.000346844" quat="0.323644 -0.0912996 -0.151085 0.929566" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_i_right_bone"/>
+                                          <geom name="Metacarpal_hand_2_right_bone" pos="1.39698e-09 -3.25963e-09 -6.41739e-09" quat="0.323644 -0.0912996 -0.151085 0.929566" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Metacarpal_hand_2_right_bone"/>
+                                          <geom name="Metacarpal_hand_2_right_col" size="0.000458899 0.001141" pos="0.000112378 0.00143059 2.75693e-05" quat="-0.446611 0.365158 0.537978 0.614637" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                          <geom name="Sesamoid_hand_i_right_col" size="0.000313771 0.000152445 0.000148373" pos="5.93134e-05 0.0022535 -0.000355522" quat="0.1937 0.628238 -0.753375 -0.0149367" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                          <geom name="Sesamoid_hand_j_right_col" size="0.000335331 0.000185329 0.000169019" pos="-0.000278727 0.00236672 -0.000223145" quat="0.154938 -0.74562 0.568322 -0.311538" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                          <site name="fdsA_P5" pos="-0.000144486 0.00137973 -0.000723464"/>
+                                          <site name="extensorcarpiradialislongus_P4" pos="-8.21467e-05 0.000931717 0.00014146"/>
+                                          <site name="edcA_P4" pos="0.000120766 0.00269136 0.000272437"/>
+                                          <body name="Phalanx_hand_1_2_right" pos="-1.16415e-10 0.00252648 -1.60799e-09" quat="0.970277 -0.223015 0.0139092 0.0929143">
+                                            <joint name="pip_flexion_2" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                            <geom name="Phalanx_hand_1_2_right_bone" pos="-2.79397e-09 -1.30385e-08 -5.47152e-09" quat="0.418655 -0.0433769 -0.349921 0.8369" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_1_2_right_bone"/>
+                                            <geom name="Phalanx_hand_1_2_right_col" size="0.000359611 0.000807308" pos="3.15924e-05 0.00104714 9.95488e-06" quat="0.69319 -0.659009 0.198545 0.21395" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                            <site name="Flexor_digitorum_profundus_SH_P4" pos="-0.000120065 0.000285367 -0.000341552"/>
+                                            <site name="fdsA_P6" pos="-0.000126297 0.000279818 -0.000433841"/>
+                                            <site name="edcA_P5" pos="8.73315e-05 0.000435499 0.000333847"/>
+                                            <site name="edcA_P6" pos="8.11354e-05 0.00210945 0.000147581"/>
+                                            <body name="Phalanx_hand_2_2_right" pos="-1.13505e-09 0.00193516 -3.7071e-09" quat="0.690452 -0.700458 0.168526 0.0650634">
+                                              <joint name="dip_flexion_2" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                              <geom name="Sesamoid_hand_n_right_bone" pos="-5.66663e-06 0.00123341 -0.00027402" quat="0.314925 0.0994947 -0.895548 0.298188" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_n_right_bone"/>
+                                              <geom name="Phalanx_hand_2_2_right_bone" pos="7.79255e-09 -5.61386e-09 1.13068e-08" quat="0.314925 0.0994918 -0.895548 0.298189" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_2_2_right_bone"/>
+                                              <geom name="Phalanx_hand_2_2_right_col" size="0.000276426 0.000510985" pos="2.7479e-05 0.000767229 -1.65971e-05" quat="0.761287 -0.647742 0.0169656 0.0241498" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                              <geom name="Sesamoid_hand_n_right_col" size="0.000142686 0.000107311 7.01955e-05" pos="-5.6772e-06 0.0012334 -0.000274025" quat="0.0825404 -0.986785 0.137581 -0.0226625" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                              <site name="Flexor_digitorum_profundus_SH_P5" pos="-2.54104e-05 0.000433652 -0.000456389"/>
+                                              <site name="fdsA_P7" pos="4.80246e-05 0.000302097 -0.00027193"/>
+                                              <site name="edcA_P7" pos="3.01663e-05 0.000246572 0.00019304"/>
+                                              <body name="Phalanx_hand_3_2_right" pos="1.47702e-09 0.00127174 3.53612e-09" quat="0.992213 0.124424 0.00536255 0.00178391">
+                                                <joint name="tip_flexion_2" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                                <geom name="Phalanx_hand_3_2_right_bone" pos="-7.31961e-09 -2.57569e-09 -2.51021e-10" quat="0.320583 0.0563364 -0.853339 0.407266" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_3_2_right_bone"/>
+                                                <geom name="Phalanx_hand_3_2_right_col" size="0.000274373 0.000351593" pos="8.76733e-06 0.000501561 -8.83329e-05" quat="-0.473947 0.518235 0.540984 0.462755" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                                <site name="Flexor_digitorum_profundus_SH_P6" pos="-3.65233e-05 -7.19297e-05 -0.000335956"/>
+                                                <site name="Flexor_digitorum_profundus_SH_P7" pos="-1.4812e-05 1.55493e-05 -0.000220246"/>
+                                                <site name="edcA_P8" pos="1.00906e-05 7.4639e-05 0.000200798"/>
+                                              </body>
+                                            </body>
+                                          </body>
+                                        </body>
+                                        <body name="Metacarpal_hand_3_right" pos="0.000449164 0.000553537 -0.000305609" quat="0.27783 -0.532088 -0.770694 0.21383">
+                                          <geom name="Sesamoid_hand_h_right_bone" pos="-0.000239339 0.00264631 -0.000155479" quat="0.23419 -0.131731 -0.190639 0.944171" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_h_right_bone"/>
+                                          <geom name="Sesamoid_hand_g_right_bone" pos="9.91903e-05 0.00263784 -0.000258661" quat="0.23419 -0.131731 -0.190639 0.944171" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_g_right_bone"/>
+                                          <geom name="Metacarpal_hand_3_right_bone" pos="2.32831e-10 -1.5134e-09 -2.44472e-09" quat="0.23419 -0.131731 -0.190639 0.944171" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Metacarpal_hand_3_right_bone"/>
+                                          <geom name="Metacarpal_hand_3_right_col" size="0.000387176 0.00147215" pos="3.89981e-05 0.00146866 8.99772e-05" quat="0.585837 -0.544729 -0.407366 -0.440589" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                          <geom name="Sesamoid_hand_g_right_col" size="0.000309239 0.000169593 0.000136001" pos="0.000125145 0.0026757 -0.000269444" quat="0.225736 0.645345 -0.72442 -0.0882537" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                          <geom name="Sesamoid_hand_h_right_col" size="0.000313149 0.000147812 0.000108254" pos="-0.000254946 0.00271388 -0.00014408" quat="0.616989 0.398943 -0.399121 -0.548518" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                          <site name="flexorcarpiradialis_P6" pos="-0.000153219 0.00029496 -0.000277708"/>
+                                          <site name="fdsB,_P5" pos="-0.000254359 0.000998439 -0.000733569"/>
+                                          <site name="extensororcarpiradialisbrevis_P4" pos="-0.000194718 0.000571995 0.000262451"/>
+                                          <site name="edcB_P4" pos="3.99279e-05 0.00304184 0.000379991"/>
+                                          <body name="Phalanx_hand_1_3_right" pos="-1.86265e-09 0.00299405 -1.07684e-09" quat="0.911336 -0.385378 0.119474 0.081708">
+                                            <joint name="pip_flexion_3" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                            <geom name="Phalanx_hand_1_3_right_bone" pos="-5.82077e-10 -1.75787e-08 2.95404e-09" quat="0.318562 -0.158182 -0.554815 0.752115" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_1_3_right_bone"/>
+                                            <geom name="Phalanx_hand_1_3_right_col" size="0.000361961 0.000893794" pos="5.65959e-05 0.00115296 8.71433e-06" quat="0.704421 -0.704881 0.0724605 0.0410353" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                            <site name="Flexor_digitorum_profundus_RH_P5" pos="1.44867e-06 0.000264952 -0.000311068"/>
+                                            <site name="fdsB,_P6" pos="-1.34986e-05 0.000251274 -0.000452722"/>
+                                            <site name="edcB_P5" pos="-5.84077e-05 0.000279733 0.000348541"/>
+                                            <site name="edcB_P6" pos="3.80774e-05 0.00227255 0.00025272"/>
+                                            <body name="Phalanx_hand_2_3_right" pos="-1.25146e-09 0.00212165 1.23691e-10" quat="0.682918 -0.728946 -0.0174497 0.0442279">
+                                              <joint name="dip_flexion_3" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                              <geom name="Phalanx_hand_2_3_right_bone" pos="6.1118e-09 4.51109e-10 5.12227e-09" quat="0.375804 0.112774 -0.914589 0.0978768" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_2_3_right_bone"/>
+                                              <geom name="Sesamoid_hand_m_right_bone" pos="-8.78354e-08 0.00149278 -0.000221869" quat="0.375804 0.112774 -0.914589 0.0978768" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_m_right_bone"/>
+                                              <geom name="Phalanx_hand_2_3_right_col" size="0.000330434 0.00054045" pos="3.72363e-05 0.00089361 -2.10002e-05" quat="0.756892 -0.649615 0.00632982 -0.0712368" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                              <geom name="Sesamoid_hand_m_right_col" size="0.000180401 0.000125831 7.37344e-05" pos="-9.23174e-08 0.00149278 -0.000221864" quat="0.0650332 0.0208502 -0.982912 -0.170937" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                              <site name="Flexor_digitorum_profundus_RH_P6" pos="-4.02283e-05 0.000328611 -0.000483007"/>
+                                              <site name="fdsB,_P7" pos="-1.02788e-05 0.000273342 -0.000287513"/>
+                                              <site name="edcB_P7" pos="4.13868e-05 0.000258889 0.00021783"/>
+                                              <body name="Phalanx_hand_3_3_right" pos="0 0.00145908 5.82077e-11" quat="0.964994 0.260238 0.031984 -0.00633679">
+                                                <joint name="tip_flexion_3" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                                <geom name="Phalanx_hand_3_3_right_bone" pos="1.00117e-08 -8.44011e-10 1.80444e-09" quat="0.362124 0.0136929 -0.868407 0.33845" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_3_3_right_bone"/>
+                                                <geom name="Phalanx_hand_3_3_right_col" size="0.000297869 0.000358868" pos="4.58393e-06 0.000558867 -3.77523e-05" quat="0.527684 -0.541895 -0.461829 -0.463264" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                                <site name="Flexor_digitorum_profundus_RH_P7" pos="7.30064e-06 -0.000110382 -0.000343301"/>
+                                                <site name="Flexor_digitorum_profundus_RH_P8" pos="2.49129e-07 0.000217323 -0.000311156"/>
+                                                <site name="edcB_P8" pos="1.08769e-05 8.06238e-05 0.000217771"/>
+                                              </body>
+                                            </body>
+                                          </body>
+                                        </body>
+                                        <body name="Metacarpal_hand_4_right" pos="0.000363562 0.000960428 -0.000227783" quat="0.476703 -0.51262 -0.714039 0.0110659">
+                                          <geom name="Sesamoid_hand_f_right_bone" pos="-0.000107173 0.00236006 -0.000265559" quat="0.0976234 -0.360021 -0.288597 0.881797" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_f_right_bone"/>
+                                          <geom name="Sesamoid_hand_e_right_bone" pos="0.000264848 0.00238427 -0.000151407" quat="0.0976234 -0.360021 -0.288597 0.881797" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_e_right_bone"/>
+                                          <geom name="Sesamoid_hand_a_right_bone" pos="0.000103357 9.24735e-05 -0.000514529" quat="0.0976234 -0.360021 -0.288597 0.881797" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_a_right_bone"/>
+                                          <geom name="Metacarpal_hand_4_right_bone" pos="1.16415e-09 -2.21189e-09 -4.19095e-09" quat="0.0976237 -0.360021 -0.288597 0.881797" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Metacarpal_hand_4_right_bone"/>
+                                          <geom name="Metacarpal_hand_4_right_col" size="0.00038854 0.00130582" pos="-6.70242e-06 0.00133463 1.16911e-05" quat="0.716025 -0.646638 -0.18638 -0.185551" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                          <geom name="Sesamoid_hand_a_right_col" size="0.000271785 0.000166674 9.2939e-05" pos="0.000134487 5.63606e-05 -0.000518104" quat="0.0827316 -0.930541 0.351468 -0.0609793" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                          <geom name="Sesamoid_hand_e_right_col" size="0.000328867 0.000156525 0.000124425" pos="0.000274197 0.00243394 -0.000148987" quat="0.434809 0.544857 -0.552926 -0.456448" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                          <geom name="Sesamoid_hand_f_right_col" size="0.000321767 0.000157188 0.000137181" pos="-0.000122719 0.0023972 -0.000288769" quat="0.102661 -0.712734 0.633225 -0.283721" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                          <site name="fdsC_P5" pos="0.000132012 0.000928183 -0.000826723"/>
+                                          <site name="extensordigitiquatri_P4" pos="0.000301031 0.00270897 0.00018393"/>
+                                          <site name="edcC_P4" pos="-0.000241852 0.00282901 0.000308426"/>
+                                          <body name="Phalanx_hand_1_4_right" pos="-1.74623e-09 0.0027384 -5.47152e-09" quat="0.884302 -0.4454 -0.122043 -0.0688102">
+                                            <joint name="pip_flexion_4" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                            <geom name="Phalanx_hand_1_4_right_bone" pos="4.19095e-09 -1.07684e-08 -6.54836e-10" quat="0.221227 -0.147411 -0.660819 0.701888" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_1_4_right_bone"/>
+                                            <geom name="Phalanx_hand_1_4_right_col" size="0.000370464 0.000836311" pos="-2.25073e-05 0.0011214 -1.44888e-05" quat="0.705281 -0.708205 0.00835984 0.0308925" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                            <site name="flexor_digitorum_profundus_UH_P5" pos="1.14527e-05 0.000329888 -0.000275699"/>
+                                            <site name="fdsC_P6" pos="-4.88944e-06 0.000398614 -0.00026294"/>
+                                            <site name="extensordigitiquatri_P5" pos="0.000117892 0.00030331 0.000263642"/>
+                                            <site name="edcC_P5" pos="-7.98318e-05 0.000349754 0.000349195"/>
+                                            <site name="edcC_P6" pos="-7.22107e-05 0.0022507 0.000204631"/>
+                                            <body name="Phalanx_hand_2_4_right" pos="8.14907e-10 0.00210246 2.47383e-10" quat="0.724598 -0.687187 0.0353486 0.0385008">
+                                              <joint name="dip_flexion_4" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                              <geom name="Phalanx_hand_2_4_right_bone" pos="1.71713e-09 -1.222e-08 -2.38651e-09" quat="0.265264 -0.00504339 -0.963301 0.0407568" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_2_4_right_bone"/>
+                                              <geom name="Sesamoid_hand_l_right_bone" pos="9.2768e-05 0.00155196 -0.000196713" quat="0.265262 -0.00504139 -0.963301 0.0407553" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_l_right_bone"/>
+                                              <geom name="Phalanx_hand_2_4_right_col" size="0.000325385 0.000580974" pos="-3.25434e-05 0.000816999 -7.68668e-06" quat="0.7458 -0.65897 -0.0826733 -0.0520217" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                              <geom name="Sesamoid_hand_l_right_col" size="0.000173519 0.000124916 6.60749e-05" pos="0.000118112 0.00157059 -0.000186771" quat="0.276096 -0.94271 -0.0776542 -0.170407" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                              <site name="flexor_digitorum_profundus_UH_P6" pos="8.69944e-05 0.000338696 -0.000477498"/>
+                                              <site name="fdsC_P7" pos="7.10561e-06 0.000238282 -0.000267317"/>
+                                              <site name="edcC_P7" pos="-6.7473e-05 0.000196056 0.000231332"/>
+                                              <body name="Phalanx_hand_3_4_right" pos="5.82077e-11 0.00140542 1.86265e-09" quat="0.922725 0.343416 -0.157034 0.0773561">
+                                                <joint name="tip_flexion_4" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                                <geom name="Phalanx_hand_3_4_right_bone" pos="-4.00178e-09 -1.71713e-08 5.82077e-11" quat="0.397457 -0.163866 -0.83282 0.348692" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_3_4_right_bone"/>
+                                                <geom name="Phalanx_hand_3_4_right_col" size="0.000310713 0.000320033" pos="-2.57299e-05 0.000535235 -3.52752e-05" quat="-0.482619 0.448154 0.510813 0.552546" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                                <site name="flexor_digitorum_profundus_UH_P7" pos="2.5911e-05 -0.000193559 -0.000319479"/>
+                                                <site name="flexor_digitorum_profundus_UH_P8" pos="1.30989e-05 0.000166576 -0.000302652"/>
+                                                <site name="edcC_P8" pos="-1.22462e-05 0.000118552 0.00022081"/>
+                                              </body>
+                                            </body>
+                                          </body>
+                                        </body>
+                                        <body name="Metacarpal_hand_5_right" pos="0.000479951 0.00119332 0.000313333" quat="0.408774 -0.441224 -0.797914 0.0394769">
+                                          <geom name="Sesamoid_hand_d_right_bone" pos="-0.000143052 0.0012179 -0.000177376" quat="0.049787 -0.244111 -0.288237 0.924581" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_d_right_bone"/>
+                                          <geom name="Sesamoid_hand_c_right_bone" pos="0.000190971 0.00116279 -0.000269866" quat="0.049787 -0.244111 -0.288237 0.924581" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_c_right_bone"/>
+                                          <geom name="Metacarpal_hand_5_right_bone" pos="5.70435e-09 2.61934e-09 1.10595e-08" quat="0.0497871 -0.244111 -0.288237 0.924581" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Metacarpal_hand_5_right_bone_bone"/>
+                                          <geom name="Metacarpal_hand_5_right_col" size="0.000363031 0.000679692" pos="4.41583e-05 0.000728454 4.6358e-05" quat="-0.323377 0.330142 0.628046 0.626093" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                          <geom name="Sesamoid_hand_c_right_col" size="0.000273226 0.000192024 0.000145516" pos="0.000182204 0.00117744 -0.000322784" quat="0.167878 -0.705921 0.552126 -0.410669" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                          <geom name="Sesamoid_hand_d_right_col" size="0.000236929 0.000172352 0.000151117" pos="-0.000121301 0.00124484 -0.000176401" quat="0.475805 0.613154 -0.59725 -0.202347" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                          <site name="extensorcarpiiulnaris_P3" pos="0.000306601 0.000103841 -5.47784e-05"/>
+                                          <site name="edcD_P4" pos="6.90205e-05 0.00163868 0.000312103"/>
+                                          <body name="Phalanx_hand_1_5_right" pos="-4.65661e-10 0.00150715 8.3819e-09" quat="0.892098 -0.295847 0.219378 -0.261742">
+                                            <joint name="pip_flexion_5" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                            <geom name="Phalanx_hand_1_5_right_bone" pos="2.56114e-09 5.41331e-09 -4.19095e-09" quat="0.188601 0.330433 0.605487 -0.69902" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_1_5_right_bone"/>
+                                            <geom name="Phalanx_hand_1_5_right_col" size="0.000373334 0.000622299" pos="1.72912e-05 0.000870551 -4.96876e-05" quat="0.738861 -0.671291 -0.0548881 -0.02099" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                            <site name="flexor_digitorum_profundus_MH_P4" pos="0.00017111 0.000243619 -0.000374589"/>
+                                            <site name="edcD_P5" pos="-7.90001e-05 0.000332386 0.000273456"/>
+                                            <site name="edcD_P6" pos="-6.62168e-05 0.00176665 0.000183844"/>
+                                            <site name="Abductor_digiti_quinti_hand_P1" pos="0.000407177 0.000310905 -0.000140974"/>
+                                            <body name="Phalanx_hand_2_5_right" pos="2.09548e-09 0.00165489 -1.86265e-09" quat="0.770144 -0.626035 -0.119167 -0.0275211">
+                                              <joint name="dip_flexion_5" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                              <geom name="Sesamoid_hand_k_right_bone" pos="2.64314e-05 0.00101593 -0.000218445" quat="0.114528 -0.272585 -0.935493 0.193478" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Sesamoid_hand_k_right_bone"/>
+                                              <geom name="Phalanx_hand_2_5_right_bone" pos="9.31323e-10 -1.49012e-08 -1.45519e-09" quat="0.114528 -0.272587 -0.935492 0.19348" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_2_5_right_bone"/>
+                                              <geom name="Phalanx_hand_2_5_right_col" size="0.000274069 0.000354546" pos="-2.41889e-05 0.000561408 -4.13209e-05" quat="0.707715 -0.684421 -0.135838 -0.1107" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                              <geom name="Sesamoid_hand_k_right_col" size="0.000153709 0.000109831 7.15784e-05" pos="2.64239e-05 0.00101592 -0.000218448" quat="0.232002 -0.928462 0.278043 -0.0826121" type="ellipsoid" contype="0" conaffinity="0" group="1"/>
+                                              <site name="flexor_digitorum_profundus_MH_P5" pos="2.75266e-05 0.000272869 -0.00043553"/>
+                                              <site name="edcD_P7" pos="7.01891e-06 0.000198528 0.000217458"/>
+                                              <body name="Phalanx_hand_3_5_right" pos="6.98492e-10 0.000978196 -2.00816e-09" quat="0.92022 0.38006 0.00362089 -0.0934648">
+                                                <joint name="tip_flexion_5" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                                <geom name="Phalanx_hand_3_5_right_bone" pos="-1.86265e-09 -1.04192e-08 -2.32831e-10" quat="0.0196782 0.207633 0.813218 -0.543302" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Phalanx_hand_3_5_right_bone"/>
+                                                <geom name="Phalanx_hand_3_5_right_col" size="0.000273936 0.000212646" pos="-1.47623e-05 0.000415858 -3.83344e-05" quat="-0.497315 0.459293 0.492406 0.54705" type="capsule" contype="4" conaffinity="8" condim="4" group="1" friction="4 0.05 0.05" solref="0.002" solimp="0.95 0.95 0.0001"/>
+                                                <site name="flexor_digitorum_profundus_MH_P6" pos="5.26432e-05 -0.00018704 -0.000245591"/>
+                                                <site name="flexor_digitorum_profundus_MH_P7" pos="1.59866e-05 0.000192948 -0.000320946"/>
+                                                <site name="edcD_P8" pos="1.27298e-05 9.83453e-05 0.000171905"/>
+                                              </body>
+                                            </body>
+                                          </body>
+                                        </body>
+                                      </body>
+                                    </body>
+                                  </body>
+                                </body>
+                              </body>
+                              <body name="T1" pos="0 0.00144009 -4.65661e-10" quat="0.996687 -0.0813371 0 0">
+                                <geom name="T1_bone" pos="0 2.2992e-09 -6.98492e-10" quat="0.717514 -0.696544 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="T1_bone"/>
+                                <geom name="Rib_1a_right_bone" pos="0 2.2992e-09 -6.98492e-10" quat="0.717514 -0.696544 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Rib_1a_right_bone"/>
+                                <geom name="Rib_1a_right_cartillage" pos="0 2.2992e-09 -6.98492e-10" quat="0.717514 -0.696544 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="cartillage" mesh="Rib_1a_right_cartillage"/>
+                                <geom name="manubrium_bone" pos="0 0.0042666 0.00284451" quat="0.717514 -0.696544 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="manubrium_bone"/>
+                                <site name="Levatorscapulae_P0" pos="-0.00299041 0.00108025 0.00330286"/>
+                                <site name="Subclavicus_right_P1" pos="-0.00219451 0.00200114 0.00373516"/>
+                                <site name="Pectoralismajorsuperficial_P0" pos="-0.000221982 0.00366397 0.00470663"/>
+                                <site name="Pectoralismajorsuperficial_P1" pos="-0.00322748 0.00336738 0.0061918"/>
+                                <site name="Pectoralismajorsuperficial_P2" pos="-0.00554064 0.00208479 0.00625632"/>
+                                <site name="PecMin_P2" pos="-0.00409099 5.52459e-05 0.0062995"/>
+                                <body name="C7" pos="0 0.00129059 0" quat="0.990534 -0.137269 0 0">
+                                  <joint name="neck_flexion" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                  <geom name="C7_bone" pos="0 0 -6.51926e-09" quat="0.806336 -0.591458 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="C7_bone"/>
+                                  <geom name="C1_col" size="0.00463727 0.00463727 0.00463727" pos="3e-06 0.00455087 -0.000889071" quat="0.806336 -0.591458 0 0" type="ellipsoid" conaffinity="0" group="1"/>
+                                  <body name="C6" pos="0 0.00121105 -1.86265e-09" quat="0.999942 0.0107613 0 0">
+                                    <geom name="C6_bone" pos="0 -4.65661e-10 -3.72529e-09" quat="0.799924 -0.600101 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="C6_bone"/>
+                                    <body name="C5" pos="0 0.00120107 -2.79397e-09" quat="0.997938 -0.0641877 0 0">
+                                      <geom name="C5_bone" pos="0 -9.77889e-09 9.31323e-10" quat="0.836794 -0.547518 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="C5_bone"/>
+                                      <body name="C4" pos="0 0.0011813 1.86265e-09" quat="0.999993 -0.00365302 0 0">
+                                        <geom name="C4_bone" pos="0 5.58794e-09 1.86265e-09" quat="0.838788 -0.544457 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="C4_bone"/>
+                                        <body name="C3" pos="0 0.00112825 -9.31323e-10" quat="0.999759 -0.0219453 0 0">
+                                          <geom name="C3_bone" pos="0 -1.39698e-09 -1.86265e-09" quat="0.850535 -0.525919 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="C3_bone"/>
+                                          <site name="Splenius_P1" pos="-0.00182631 0.000441094 -0.00482367"/>
+                                          <body name="C2" pos="0 0.00122644 9.31323e-10" quat="0.99179 -0.127874 0 0">
+                                            <geom name="C2_bone" pos="0 0 -1.86265e-09" quat="0.910804 -0.41284 0 0" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="C2_bone"/>
+                                            <site name="Acromiotrapezius_P0" pos="-0.00100623 0.0017602 -0.00474283"/>
+                                            <body name="C1" pos="0 0.00144706 9.31323e-10" quat="0.982784 0.184759 -1.17157e-07 -2.2025e-08">
+                                              <geom name="C1_bone" pos="0 -8.3819e-09 0" quat="0.818847 -0.574011 9.76142e-08 6.84275e-08" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="C1_bone"/>
+                                              <site name="Levator_claviculae_P0" pos="-0.000395192 0.000157641 0.00155676"/>
+                                              <site name="Splenius_P0" pos="-0.00134028 0.000913165 -0.00387685"/>
+                                              <body name="Skull" pos="0 0.0021049 -1.39698e-09" quat="0.752202 0.658932 1.79339e-07 0">
+                                                <joint name="head_flexion" pos="0 0 0" axis="1 0 0" limited="true" range="-0.0872665 0.0872665"/>
+                                                <geom name="Skull_bone" pos="0 -6.51926e-09 -3.72529e-09" quat="0.237704 -0.971338 -2.83366e-08 -1.15792e-07" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Skull_bone"/>
+                                                <geom name="Incisor_top_right_incisors" pos="0 -6.51926e-09 -3.72529e-09" quat="0.237704 -0.971338 -2.83366e-08 -1.15792e-07" type="mesh" contype="0" conaffinity="0" density="0" material="incisors" mesh="Incisor_top_right_incisors"/>
+                                                <geom name="Incisor_top_left_incisors" pos="0 -6.51926e-09 -3.72529e-09" quat="0.237704 -0.971338 -2.83366e-08 -1.15792e-07" type="mesh" contype="0" conaffinity="0" density="0" material="incisors" mesh="Incisor_top_left_incisors"/>
+                                                <geom name="Hyoid_bone" pos="-6.94869e-10 0.00536351 0.00369344" quat="0.237704 -0.971338 -2.83365e-08 -1.15792e-07" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Hyoid_bone"/>
+                                                <geom name="Skull_col" size="0.0135356 0.0073617 0.00482245" pos="0.000176095 0.00975654 -0.00216013" quat="0.536375 -0.460762 -0.536375 0.460762" type="ellipsoid" conaffinity="0" group="1"/>
+                                                <site name="Occipitoscapularis_P0" pos="-0.00441489 0.00152243 -0.00383531"/>
+                                                <site name="Occipitoscapularis_P1" pos="-0.00547392 -0.00029639 0.00018575"/>
+                                                <body name="Mandible" pos="5.85343e-10 0.00616238 -0.00050199" quat="7.32582e-08 -3.93885e-08 0.970335 0.241765">
+                                                  <geom name="Mandible_right_bone" pos="0 1.57161e-09 4.53292e-09" quat="3.15775e-10 7.54947e-08 0.00418256 -0.999991" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Mandible_right_bone"/>
+                                                  <geom name="Mandible_left_bone" pos="0 1.57161e-09 4.53292e-09" quat="3.15775e-10 7.54947e-08 0.00418256 -0.999991" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="Mandible_left_bone"/>
+                                                  <geom name="Incisor_bottom_right_incisors" pos="0 1.57161e-09 4.53292e-09" quat="3.15775e-10 7.54947e-08 0.00418256 -0.999991" type="mesh" contype="0" conaffinity="0" density="0" material="incisors" mesh="Incisor_bottom_right_incisors"/>
+                                                  <geom name="Incisor_bottom_left_incisors" pos="0 1.57161e-09 4.53292e-09" quat="3.15775e-10 7.54947e-08 0.00418256 -0.999991" type="mesh" contype="0" conaffinity="0" density="0" material="incisors" mesh="Incisor_bottom_left_incisors"/>
+                                                  <geom name="Mandible_left_col" size="0.00656462 0.0032744 0.00114049" pos="-0.00286187 0.00541265 -0.00140495" quat="0.602919 0.589498 0.383714 0.37649" type="ellipsoid" conaffinity="0" group="1"/>
+                                                  <geom name="Mandible_right_col" size="0.00656462 0.0032744 0.00114049" pos="0.00286186 0.00541265 -0.00140495" quat="0.602919 0.589498 -0.383714 -0.37649" type="ellipsoid" conaffinity="0" group="1"/>
+                                                </body>
+                                              </body>
+                                            </body>
+                                          </body>
+                                        </body>
+                                      </body>
+                                      <body name="clavicle_right" pos="-0.0071983 -0.00049449 0.00294232" quat="0.691181 0.113604 0.0503518 -0.711918">
+                                        <geom name="clavicle_right_bone" pos="-4.59568e-05 0.00644614 -3.79808e-05" quat="0.516176 -0.473497 -0.431922 0.56816" type="mesh" contype="0" conaffinity="0" density="0" material="bone" mesh="clavicle_right_bone"/>
+                                        <geom name="clavicle_right_col" size="0.00380903 0.000825511 0.000499663" pos="-0.000741966 0.00287569 0.000303617" quat="0.372306 -0.483192 0.638713 -0.468998" type="ellipsoid" conaffinity="0" group="1"/>
+                                        <site name="Levator_claviculae_P1" pos="2.37889e-05 0.00643906 -6.18663e-05"/>
+                                        <site name="Subclavicus_right_P0" pos="0.000248213 0.00560341 -0.000234036"/>
+                                        <site name="Claviculodeltoideus_P0" pos="0.00104091 0.00410922 -1.74725e-05"/>
+                                      </body>
+                                    </body>
+                                  </body>
+                                </body>
+                              </body>
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <tendon>
+    <spatial name="Pectoralismajordeeper">
+      <site site="Pectoralismajordeeper_P0"/>
+      <site site="Pectoralismajordeeper_P1"/>
+      <site site="Pectoralismajordeeper_P2"/>
+      <site site="Pectoralismajordeeper_P3"/>
+    </spatial>
+    <spatial name="palmarislongus">
+      <site site="palmarislongus_P0"/>
+      <site site="palmarislongus_P1"/>
+      <site site="palmarislongus_P2"/>
+      <site site="palmarislongus_P3"/>
+      <site site="palmarislongus_P4"/>
+    </spatial>
+    <spatial name="Occipitoscapularis">
+      <site site="Occipitoscapularis_P0"/>
+      <site site="Occipitoscapularis_P1"/>
+      <site site="Occipitoscapularis_P2"/>
+      <site site="Occipitoscapularis_P3"/>
+    </spatial>
+    <spatial name="Levatorscapulae">
+      <site site="Levatorscapulae_P0"/>
+      <site site="Levatorscapulae_P1"/>
+    </spatial>
+    <spatial name="Levator_claviculae">
+      <site site="Levator_claviculae_P0"/>
+      <site site="Levator_claviculae_P1"/>
+      <site site="Levator_claviculae_P2"/>
+    </spatial>
+    <spatial name="Infraspinatus">
+      <site site="Infraspinatus_P0"/>
+      <site site="Infraspinatus_P1"/>
+      <site site="Infraspinatus_P2"/>
+    </spatial>
+    <spatial name="flexorcarpiradialis">
+      <site site="flexorcarpiradialis_P0"/>
+      <site site="flexorcarpiradialis_P1"/>
+      <site site="flexorcarpiradialis_P2"/>
+      <site site="flexorcarpiradialis_P3"/>
+      <site site="flexorcarpiradialis_P4"/>
+      <site site="flexorcarpiradialis_P5"/>
+      <site site="flexorcarpiradialis_P6"/>
+    </spatial>
+    <spatial name="flexorcarpiiulnaris">
+      <site site="flexorcarpiiulnaris_P0"/>
+      <site site="flexorcarpiiulnaris_P1"/>
+      <site site="flexorcarpiiulnaris_P2"/>
+    </spatial>
+    <spatial name="flexor_digitorum_profundus_UH">
+      <site site="flexor_digitorum_profundus_UH_P0"/>
+      <site site="flexor_digitorum_profundus_UH_P1"/>
+      <site site="flexor_digitorum_profundus_UH_P2"/>
+      <site site="flexor_digitorum_profundus_UH_P3"/>
+      <site site="flexor_digitorum_profundus_UH_P4"/>
+      <site site="flexor_digitorum_profundus_UH_P5"/>
+      <site site="flexor_digitorum_profundus_UH_P6"/>
+      <site site="flexor_digitorum_profundus_UH_P7"/>
+      <site site="flexor_digitorum_profundus_UH_P8"/>
+    </spatial>
+    <spatial name="Flexor_digitorum_profundus_SH">
+      <site site="Flexor_digitorum_profundus_SH_P0"/>
+      <site site="Flexor_digitorum_profundus_SH_P1"/>
+      <site site="Flexor_digitorum_profundus_SH_P2"/>
+      <site site="Flexor_digitorum_profundus_SH_P3"/>
+      <site site="Flexor_digitorum_profundus_SH_P4"/>
+      <site site="Flexor_digitorum_profundus_SH_P5"/>
+      <site site="Flexor_digitorum_profundus_SH_P6"/>
+      <site site="Flexor_digitorum_profundus_SH_P7"/>
+    </spatial>
+    <spatial name="Flexor_digitorum_profundus_RH">
+      <site site="Flexor_digitorum_profundus_RH_P0"/>
+      <site site="Flexor_digitorum_profundus_RH_P1"/>
+      <site site="Flexor_digitorum_profundus_RH_P2"/>
+      <site site="Flexor_digitorum_profundus_RH_P3"/>
+      <site site="Flexor_digitorum_profundus_RH_P4"/>
+      <site site="Flexor_digitorum_profundus_RH_P5"/>
+      <site site="Flexor_digitorum_profundus_RH_P6"/>
+      <site site="Flexor_digitorum_profundus_RH_P7"/>
+      <site site="Flexor_digitorum_profundus_RH_P8"/>
+    </spatial>
+    <spatial name="flexor_digitorum_profundus_MH">
+      <site site="flexor_digitorum_profundus_MH_P0"/>
+      <site site="flexor_digitorum_profundus_MH_P1"/>
+      <site site="flexor_digitorum_profundus_MH_P2"/>
+      <site site="flexor_digitorum_profundus_MH_P3"/>
+      <site site="flexor_digitorum_profundus_MH_P4"/>
+      <site site="flexor_digitorum_profundus_MH_P5"/>
+      <site site="flexor_digitorum_profundus_MH_P6"/>
+      <site site="flexor_digitorum_profundus_MH_P7"/>
+    </spatial>
+    <spatial name="TricepsbrachiiMH">
+      <site site="TricepsbrachiiMH_P0"/>
+      <site site="TricepsbrachiiMH_P1"/>
+    </spatial>
+    <spatial name="TricepsbrachiiLH">
+      <site site="TricepsbrachiiLH_P0"/>
+      <site site="TricepsbrachiiLH_P1"/>
+      <site site="TricepsbrachiiLH_P2"/>
+    </spatial>
+    <spatial name="tricepsbrachiiLatH">
+      <site site="tricepsbrachiiLatH_P0"/>
+      <site site="tricepsbrachiiLatH_P1"/>
+      <site site="tricepsbrachiiLatH_P2"/>
+    </spatial>
+    <spatial name="Teresmajor">
+      <site site="Teresmajor_P0"/>
+      <site site="Teresmajor_P1"/>
+    </spatial>
+    <spatial name="Supraspinatus">
+      <site site="Supraspinatus_P0"/>
+      <site site="Supraspinatus_P1"/>
+      <site site="Supraspinatus_P2"/>
+      <site site="Supraspinatus_P3"/>
+    </spatial>
+    <spatial name="SubscapularisC">
+      <site site="SubscapularisC_P0"/>
+      <site site="SubscapularisC_P1"/>
+    </spatial>
+    <spatial name="SubscapularisB">
+      <site site="SubscapularisB_P0"/>
+      <site site="SubscapularisB_P1"/>
+    </spatial>
+    <spatial name="SubscapularisA">
+      <site site="SubscapularisA_P0"/>
+      <site site="SubscapularisA_P1"/>
+    </spatial>
+    <spatial name="Subclavicus_right">
+      <site site="Subclavicus_right_P0"/>
+      <site site="Subclavicus_right_P1"/>
+    </spatial>
+    <spatial name="Splenius">
+      <site site="Splenius_P0"/>
+      <site site="Splenius_P1"/>
+      <site site="Splenius_P2"/>
+      <site site="Splenius_P3"/>
+      <site site="Splenius_P4"/>
+    </spatial>
+    <spatial name="Spinotrapezius">
+      <site site="Spinotrapezius_P0"/>
+      <site site="Spinotrapezius_P1"/>
+      <site site="Spinotrapezius_P2"/>
+      <site site="Spinotrapezius_P3"/>
+      <site site="Spinotrapezius_P4"/>
+    </spatial>
+    <spatial name="Spinodeltoideus">
+      <site site="Spinodeltoideus_P0"/>
+      <site site="Spinodeltoideus_P1"/>
+      <site site="Spinodeltoideus_P2"/>
+      <site site="Spinodeltoideus_P3"/>
+    </spatial>
+    <spatial name="Serratusanterior">
+      <site site="Serratusanterior_P0"/>
+      <site site="Serratusanterior_P1"/>
+      <site site="Serratusanterior_P2"/>
+      <site site="Serratusanterior_P3"/>
+    </spatial>
+    <spatial name="Rhomboideusmajor">
+      <site site="Rhomboideusmajor_P0"/>
+      <site site="Rhomboideusmajor_P1"/>
+    </spatial>
+    <spatial name="pronatorteres">
+      <site site="pronatorteres_P0"/>
+      <site site="pronatorteres_P1"/>
+    </spatial>
+    <spatial name="Pectoralismajorsuperficial">
+      <site site="Pectoralismajorsuperficial_P0"/>
+      <site site="Pectoralismajorsuperficial_P1"/>
+      <site site="Pectoralismajorsuperficial_P2"/>
+      <site site="Pectoralismajorsuperficial_P3"/>
+    </spatial>
+    <spatial name="fdsD">
+      <site site="fdsD_P0"/>
+      <site site="fdsD_P1"/>
+      <site site="fdsD_P2"/>
+      <site site="fdsD_P3"/>
+    </spatial>
+    <spatial name="fdsC">
+      <site site="fdsC_P0"/>
+      <site site="fdsC_P1"/>
+      <site site="fdsC_P2"/>
+      <site site="fdsC_P3"/>
+      <site site="fdsC_P4"/>
+      <site site="fdsC_P5"/>
+      <site site="fdsC_P6"/>
+      <site site="fdsC_P7"/>
+    </spatial>
+    <spatial name="fdsB,">
+      <site site="fdsB,_P0"/>
+      <site site="fdsB,_P1"/>
+      <site site="fdsB,_P2"/>
+      <site site="fdsB,_P3"/>
+      <site site="fdsB,_P4"/>
+      <site site="fdsB,_P5"/>
+      <site site="fdsB,_P6"/>
+      <site site="fdsB,_P7"/>
+    </spatial>
+    <spatial name="fdsA">
+      <site site="fdsA_P0"/>
+      <site site="fdsA_P1"/>
+      <site site="fdsA_P2"/>
+      <site site="fdsA_P3"/>
+      <site site="fdsA_P4"/>
+      <site site="fdsA_P5"/>
+      <site site="fdsA_P6"/>
+      <site site="fdsA_P7"/>
+    </spatial>
+    <spatial name="extensororcarpiradialisbrevis">
+      <site site="extensororcarpiradialisbrevis_P0"/>
+      <site site="extensororcarpiradialisbrevis_P1"/>
+      <site site="extensororcarpiradialisbrevis_P2"/>
+      <site site="extensororcarpiradialisbrevis_P3"/>
+      <site site="extensororcarpiradialisbrevis_P4"/>
+    </spatial>
+    <spatial name="extensordigitiquatri">
+      <site site="extensordigitiquatri_P0"/>
+      <site site="extensordigitiquatri_P1"/>
+      <site site="extensordigitiquatri_P2"/>
+      <site site="extensordigitiquatri_P3"/>
+      <site site="extensordigitiquatri_P4"/>
+      <site site="extensordigitiquatri_P5"/>
+    </spatial>
+    <spatial name="extensorcarpiradialislongus">
+      <site site="extensorcarpiradialislongus_P0"/>
+      <site site="extensorcarpiradialislongus_P1"/>
+      <site site="extensorcarpiradialislongus_P2"/>
+      <site site="extensorcarpiradialislongus_P3"/>
+      <site site="extensorcarpiradialislongus_P4"/>
+    </spatial>
+    <spatial name="extensorcarpiiulnaris">
+      <site site="extensorcarpiiulnaris_P0"/>
+      <site site="extensorcarpiiulnaris_P1"/>
+      <site site="extensorcarpiiulnaris_P2"/>
+      <site site="extensorcarpiiulnaris_P3"/>
+    </spatial>
+    <spatial name="epl">
+      <site site="epl_P0"/>
+      <site site="epl_P1"/>
+      <site site="epl_P2"/>
+      <site site="epl_P3"/>
+      <site site="epl_P4"/>
+      <site site="epl_P5"/>
+      <site site="epl_P6"/>
+    </spatial>
+    <spatial name="epb">
+      <site site="epb_P0"/>
+      <site site="epb_P1"/>
+      <site site="epb_P2"/>
+      <site site="epb_P3"/>
+      <site site="epb_P4"/>
+      <site site="epb_P5"/>
+    </spatial>
+    <spatial name="edcD">
+      <site site="edcD_P0"/>
+      <site site="edcD_P1"/>
+      <site site="edcD_P2"/>
+      <site site="edcD_P3"/>
+      <site site="edcD_P4"/>
+      <site site="edcD_P5"/>
+      <site site="edcD_P6"/>
+      <site site="edcD_P7"/>
+      <site site="edcD_P8"/>
+    </spatial>
+    <spatial name="edcC">
+      <site site="edcC_P0"/>
+      <site site="edcC_P1"/>
+      <site site="edcC_P2"/>
+      <site site="edcC_P3"/>
+      <site site="edcC_P4"/>
+      <site site="edcC_P5"/>
+      <site site="edcC_P6"/>
+      <site site="edcC_P7"/>
+      <site site="edcC_P8"/>
+    </spatial>
+    <spatial name="edcB">
+      <site site="edcB_P0"/>
+      <site site="edcB_P1"/>
+      <site site="edcB_P2"/>
+      <site site="edcB_P3"/>
+      <site site="edcB_P4"/>
+      <site site="edcB_P5"/>
+      <site site="edcB_P6"/>
+      <site site="edcB_P7"/>
+      <site site="edcB_P8"/>
+    </spatial>
+    <spatial name="edcA">
+      <site site="edcA_P0"/>
+      <site site="edcA_P1"/>
+      <site site="edcA_P2"/>
+      <site site="edcA_P3"/>
+      <site site="edcA_P4"/>
+      <site site="edcA_P5"/>
+      <site site="edcA_P6"/>
+      <site site="edcA_P7"/>
+      <site site="edcA_P8"/>
+    </spatial>
+    <spatial name="Cutaneousmaximus">
+      <site site="Cutaneousmaximus_P0"/>
+      <site site="Cutaneousmaximus_P1"/>
+      <site site="Cutaneousmaximus_P2"/>
+      <site site="Cutaneousmaximus_P3"/>
+    </spatial>
+    <spatial name="Coracobrachialis?">
+      <site site="Coracobrachialis?_P0"/>
+      <site site="Coracobrachialis?_P1"/>
+      <site site="Coracobrachialis?_P2"/>
+    </spatial>
+    <spatial name="Claviculodeltoideus">
+      <site site="Claviculodeltoideus_P0"/>
+      <site site="Claviculodeltoideus_P1"/>
+      <site site="Claviculodeltoideus_P2"/>
+      <site site="Claviculodeltoideus_P3"/>
+    </spatial>
+    <spatial name="brachialis">
+      <site site="brachialis_P0"/>
+      <site site="brachialis_P1"/>
+      <site site="brachialis_P2"/>
+      <site site="brachialis_P3"/>
+    </spatial>
+    <spatial name="bicepsbrachii">
+      <site site="bicepsbrachii_P0"/>
+      <site site="bicepsbrachii_P1"/>
+      <site site="bicepsbrachii_P2"/>
+    </spatial>
+    <spatial name="anconeus">
+      <site site="anconeus_P0"/>
+      <site site="anconeus_P1"/>
+    </spatial>
+    <spatial name="Acromiotrapezius">
+      <site site="Acromiotrapezius_P0"/>
+      <site site="Acromiotrapezius_P1"/>
+      <site site="Acromiotrapezius_P2"/>
+      <site site="Acromiotrapezius_P3"/>
+    </spatial>
+    <spatial name="Acromiodeltoideus">
+      <site site="Acromiodeltoideus_P0"/>
+      <site site="Acromiodeltoideus_P1"/>
+      <site site="Acromiodeltoideus_P2"/>
+    </spatial>
+    <spatial name="Abductor_digiti_quinti_hand">
+      <site site="Abductor_digiti_quinti_hand_P0"/>
+      <site site="Abductor_digiti_quinti_hand_P1"/>
+    </spatial>
+    <spatial name="PecMin">
+      <site site="PecMin_P0"/>
+      <site site="PecMin_P1"/>
+      <site site="PecMin_P2"/>
+      <site site="PecMin_P3"/>
+      <site site="PecMin_P4"/>
+    </spatial>
+  </tendon>
+
+  <actuator>
+    <general name="Pectoralismajordeeper" tendon="Pectoralismajordeeper" lengthrange="0.006122 0.015864"/>
+    <general name="palmarislongus" tendon="palmarislongus" lengthrange="0.010263 0.012804"/>
+    <general name="Occipitoscapularis" tendon="Occipitoscapularis" lengthrange="0.014911 0.016008"/>
+    <general name="Levatorscapulae" tendon="Levatorscapulae" lengthrange="0.009837 0.010872"/>
+    <general name="Levator_claviculae" tendon="Levator_claviculae" lengthrange="0.01426 0.014378"/>
+    <general name="Infraspinatus" tendon="Infraspinatus" lengthrange="0.010654 0.012319"/>
+    <general name="flexorcarpiradialis" tendon="flexorcarpiradialis" lengthrange="0.011998 0.013859"/>
+    <general name="flexorcarpiiulnaris" tendon="flexorcarpiiulnaris" lengthrange="0.011959 0.01329"/>
+    <general name="flexor_digitorum_profundus_UH" tendon="flexor_digitorum_profundus_UH" lengthrange="0.016455 0.018644"/>
+    <general name="Flexor_digitorum_profundus_SH" tendon="Flexor_digitorum_profundus_SH" lengthrange="0.015644 0.017326"/>
+    <general name="Flexor_digitorum_profundus_RH" tendon="Flexor_digitorum_profundus_RH" lengthrange="0.015488 0.016649"/>
+    <general name="flexor_digitorum_profundus_MH" tendon="flexor_digitorum_profundus_MH" lengthrange="0.013455 0.015624"/>
+    <general name="TricepsbrachiiMH" tendon="TricepsbrachiiMH" lengthrange="0.006473 0.009446"/>
+    <general name="TricepsbrachiiLH" tendon="TricepsbrachiiLH" lengthrange="0.009547 0.013528"/>
+    <general name="tricepsbrachiiLatH" tendon="tricepsbrachiiLatH" lengthrange="0.009847 0.012016"/>
+    <general name="Teresmajor" tendon="Teresmajor" lengthrange="0.008084 0.011921"/>
+    <general name="Supraspinatus" tendon="Supraspinatus" lengthrange="0.010329 0.012436"/>
+    <general name="SubscapularisC" tendon="SubscapularisC" lengthrange="0.008013 0.009661"/>
+    <general name="SubscapularisB" tendon="SubscapularisB" lengthrange="0.00795 0.00974"/>
+    <general name="SubscapularisA" tendon="SubscapularisA" lengthrange="0.008101 0.009934"/>
+    <general name="Subclavicus_right" tendon="Subclavicus_right" lengthrange="0.00199 0.002657"/>
+    <general name="Splenius" tendon="Splenius" lengthrange="0.012165 0.013343"/>
+    <general name="Spinotrapezius" tendon="Spinotrapezius" lengthrange="0.020588 0.022755"/>
+    <general name="Spinodeltoideus" tendon="Spinodeltoideus" lengthrange="0.008503 0.014283"/>
+    <general name="Serratusanterior" tendon="Serratusanterior" lengthrange="0.012358 0.013658"/>
+    <general name="Rhomboideusmajor" tendon="Rhomboideusmajor" lengthrange="0.00499 0.005515"/>
+    <general name="pronatorteres" tendon="pronatorteres" lengthrange="0.005065 0.006612"/>
+    <general name="Pectoralismajorsuperficial" tendon="Pectoralismajorsuperficial" lengthrange="0.005972 0.015114"/>
+    <general name="fdsD" tendon="fdsD" lengthrange="0.010157 0.012029"/>
+    <general name="fdsC" tendon="fdsC" lengthrange="0.015411 0.017625"/>
+    <general name="fdsB," tendon="fdsB," lengthrange="0.01569 0.017709"/>
+    <general name="fdsA" tendon="fdsA" lengthrange="0.014868 0.016923"/>
+    <general name="extensororcarpiradialisbrevis" tendon="extensororcarpiradialisbrevis" lengthrange="0.013388 0.014324"/>
+    <general name="extensordigitiquatri" tendon="extensordigitiquatri" lengthrange="0.015174 0.017088"/>
+    <general name="extensorcarpiradialislongus" tendon="extensorcarpiradialislongus" lengthrange="0.013013 0.015416"/>
+    <general name="extensorcarpiiulnaris" tendon="extensorcarpiiulnaris" lengthrange="0.010823 0.014495"/>
+    <general name="epl" tendon="epl" lengthrange="0.01169 0.013517"/>
+    <general name="epb" tendon="epb" lengthrange="0.009535 0.011114"/>
+    <general name="edcD" tendon="edcD" lengthrange="0.016512 0.018576"/>
+    <general name="edcC" tendon="edcC" lengthrange="0.018635 0.020768"/>
+    <general name="edcB" tendon="edcB" lengthrange="0.01908 0.020974"/>
+    <general name="edcA" tendon="edcA" lengthrange="0.018184 0.019574"/>
+    <general name="Cutaneousmaximus" tendon="Cutaneousmaximus" lengthrange="0.021288 0.025592"/>
+    <general name="Coracobrachialis?" tendon="Coracobrachialis?" lengthrange="0.008874 0.011254"/>
+    <general name="Claviculodeltoideus" tendon="Claviculodeltoideus" lengthrange="0.007286 0.010636"/>
+    <general name="brachialis" tendon="brachialis" lengthrange="0.009767 0.010984"/>
+    <general name="bicepsbrachii" tendon="bicepsbrachii" lengthrange="0.009278 0.013932"/>
+    <general name="anconeus" tendon="anconeus" lengthrange="0.001718 0.002146"/>
+    <general name="Acromiotrapezius" tendon="Acromiotrapezius" lengthrange="0.012059 0.012399"/>
+    <general name="Acromiodeltoideus" tendon="Acromiodeltoideus" lengthrange="0.004031 0.007168"/>
+    <general name="Abductor_digiti_quinti_hand" tendon="Abductor_digiti_quinti_hand" lengthrange="0.002232 0.002284"/>
+    <general name="PecMin" tendon="PecMin" lengthrange="0.01502 0.016601"/>
+  </actuator>
+</mujoco>

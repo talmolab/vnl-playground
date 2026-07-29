@@ -53,10 +53,12 @@ from orbax import checkpoint as ocp
 from mujoco_playground import wrapper
 from vnl_playground.tasks.mouse.imitation_arm_hand import (
     MouseImitationArmHand,
+    MouseImitationArmHandScottV1,
     default_config,
     default_config_no_joystick,
     default_config_raw_joystick,
     default_config_v23,
+    default_config_scott_v1,
     default_config_v25,
 )
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
@@ -118,6 +120,16 @@ def parse_args():
     )
 
     p.add_argument(
+        "--scott-v1", action="store_true",
+        help="Use the scott_v1 config (default_config_scott_v1): the v25 rig "
+             "with 19 contact-enabled hand bones fitted as per-bone "
+             "minimum-volume ellipsoid/capsule proxies (57 contact pairs), "
+             "the 'harder' contact preset (sim_dt 0.25 ms), and retuned "
+             "reward exp_scales with joints_vel dropped. Mutually exclusive "
+             "with the other model flags."
+    )
+
+    p.add_argument(
         "--finetune-path", type=str, default=None,
         help="Path to a checkpoint dir (e.g. checkpoints/<exp>/<step>) to "
              "restore policy/value/normalizer params from via brax's "
@@ -163,8 +175,10 @@ args = parse_args()
 
 
 # ── Environment config ──────────────────────────────────────────────────────
-assert sum([args.no_joystick, args.v23, args.raw_joystick, args.v25]) <= 1, (
-    "--no-joystick, --v23, --raw-joystick, and --v25 are mutually exclusive"
+assert sum([args.no_joystick, args.v23, args.raw_joystick, args.v25,
+            args.scott_v1]) <= 1, (
+    "--no-joystick, --v23, --raw-joystick, --v25 and --scott-v1 are "
+    "mutually exclusive"
 )
 if args.no_joystick:
     env_cfg = default_config_no_joystick()
@@ -174,6 +188,8 @@ elif args.raw_joystick:
     env_cfg = default_config_raw_joystick()
 elif args.v25:
     env_cfg = default_config_v25()
+elif args.scott_v1:
+    env_cfg = default_config_scott_v1()
 else:
     env_cfg = default_config()
 if args.xml_path is not None:
@@ -272,6 +288,8 @@ elif args.raw_joystick:
     env_name = "janelia-v22-raw-joystick-camera"
 elif args.v25:
     env_name = "janelia-v25-arm-hand-joystick"
+elif args.scott_v1:
+    env_name = "janelia-scott-v1-arm-hand-joystick"
 else:
     env_name = "janelia-v22-arm-hand"
 SUFFIX = None
@@ -507,8 +525,13 @@ def build_render_model(env):
 
 # ══════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    env = FlattenObsWrapper(MouseImitationArmHand(config=env_cfg))
-    eval_env = FlattenObsWrapper(MouseImitationArmHand(config=env_cfg))
+    # scott_v1 needs its own class: its contact reward reads exact geom
+    # distances instead of v25's sphere-only radius proxy, which would be
+    # silently wrong on ellipsoid/capsule grip geoms (see
+    # MouseImitationArmHandScottV1).
+    env_cls = MouseImitationArmHandScottV1 if args.scott_v1 else MouseImitationArmHand
+    env = FlattenObsWrapper(env_cls(config=env_cfg))
+    eval_env = FlattenObsWrapper(env_cls(config=env_cfg))
 
     # ── Rendering setup ─────────────────────────────────────────────────────
     jit_reset = jax.jit(eval_env.reset)
