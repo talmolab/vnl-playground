@@ -41,7 +41,7 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = imitation.default_config()
 env_cfg.mujoco_impl = "warp"
-env_cfg.keep_clips_idx = np.arange(50)
+env_cfg.clip_indices = np.arange(50)
 
 ppo_params = config_dict.create(
     num_envs=4096,

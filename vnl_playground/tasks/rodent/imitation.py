@@ -13,7 +13,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
-from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.reference_clips import ReferenceClips, prepare_reference_clips
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
@@ -29,6 +29,7 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         joints=consts.JOINTS,
         bodies=consts.BODIES,
+        root_body="walker",
         end_effectors=consts.END_EFFECTORS,
         touch_sensors=consts.TOUCH_SENSORS,
         mujoco_impl="jax",
@@ -45,12 +46,12 @@ def default_config() -> config_dict.ConfigDict:
         reference_data_path=consts.IMITATION_REFERENCE_PATH,
         mocap_hz=50,
         clip_length=250,
-        clip_set="all",  # NOTE: Charles added keep_clips_idx which basically is the same as this for indices to reduce memory usage
+        clip_set="all",
         reference_length=5,
         reference_stride=1,
         start_frame_range=[0, 44],
         qvel_init="zeros",
-        keep_clips_idx=None,
+        clip_indices=None,
         reward_terms={
             # Imitation rewards
             "root_pos": {"exp_scale": 0.035, "weight": 1.0},  # Meters
@@ -112,26 +113,24 @@ class Imitation(rodent_base.RodentEnv):
             rgba=(0, 0.5, 0.5, 1),  # Teal color
         )
         self.compile()
-        if clips is not None:
-            self.reference_clips = clips
-        else:
-            self.reference_clips = ReferenceClips(
-                self._config.reference_data_path,
-                self._config.clip_length,
-                self._config.keep_clips_idx,
-                joint_names=self._config.joints,
-                body_names=self._config.bodies,
-            )
+        self.reference_clips = prepare_reference_clips(
+            self._config,
+            clips,
+            joint_names=self._config.joints,
+            body_names=self._config.bodies,
+            root_body_name=self._config.root_body,
+        )
         max_n_clips = self.reference_clips.qpos.shape[0]
+        behaviour_labels = self.reference_clips.behaviour_labels
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
         elif isinstance(self._config.clip_set, (list, tuple, jp.ndarray, np.ndarray)):
             self._clip_set = jp.array(self._config.clip_set)
-        elif self._config.clip_set in self.reference_clips.clip_names:
+        elif behaviour_labels is not None and self._config.clip_set in behaviour_labels:
             # Only use clips whose types match the specified set of
             # clips (e.g. "Walk", "LGroom")
             (self._clip_set,) = jp.where(
-                self._config.clip_set == self.reference_clips.clip_names
+                self._config.clip_set == np.asarray(behaviour_labels)
             )
         else:
             raise ValueError(
@@ -140,13 +139,13 @@ class Imitation(rodent_base.RodentEnv):
             )
 
         if (
-            self._config.rescale_factor
-            != self.reference_clips._config["model"]["SCALE_FACTOR"]
+            self.reference_clips.scale_factor is not None
+            and self._config.rescale_factor != self.reference_clips.scale_factor
         ):
             warnings.warn(
                 f"Environment `rescale_factor` ({self._config.rescale_factor})"
                 f" does not match the reference data `SCALE_FACTOR`"
-                f" ({self.reference_clips._config['model']['SCALE_FACTOR']}).",
+                f" ({self.reference_clips.scale_factor}).",
                 stacklevel=2,
             )
 
@@ -482,7 +481,9 @@ class Imitation(rodent_base.RodentEnv):
         """Compile a new MjModel with an attached transparent ghost walker."""
         spec = self._spec.copy()
         ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
-        ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
+        ghost_rescale = self.reference_clips.scale_factor
+        if ghost_rescale is None:
+            ghost_rescale = self._config.rescale_factor
         if ghost_rescale != 1.0:
             ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
         for body in ghost_rodent.worldbody.bodies:
@@ -558,8 +559,13 @@ class Imitation(rodent_base.RodentEnv):
             if add_labels:
                 import cv2
 
-                behavior_label = self.reference_clips.clip_names[clip]
-                label = f"Clip {clip} ({behavior_label})"
+                behaviour_labels = self.reference_clips.behaviour_labels
+                behaviour_label = (
+                    behaviour_labels[clip]
+                    if behaviour_labels is not None
+                    else "<unlabelled>"
+                )
+                label = f"Clip {clip} ({behaviour_label})"
                 cv2.putText(
                     rendered_frame,
                     label,
@@ -700,9 +706,9 @@ class Imitation(rodent_base.RodentEnv):
                 self._get_joint_angles(data), reference.joints, atol=atol
             )
             body_positions = self._get_bodies_pos(data, flatten=False)
-            for body_name, body_pos in body_positions.items():
+            for body_name, body_position in body_positions.items():
                 checks[f"body_xpos/{body_name}"] = jp.allclose(
-                    body_pos, reference.body_xpos(body_name), atol=atol
+                    body_position, reference.body_xpos(body_name), atol=atol
                 )
             if self._config.qvel_init == "reference":
                 checks["joints_ang_vel"] = jp.allclose(
@@ -740,10 +746,15 @@ class Imitation(rodent_base.RodentEnv):
                 n_failed = jp.sum(np.logical_not(result))
                 if n_failed > 0:
                     first_failed_frame = jp.argmax(np.logical_not(result))
-                    clip_label = self.reference_clips.clip_names[clip]
+                    behaviour_labels = self.reference_clips.behaviour_labels
+                    behaviour_label = (
+                        behaviour_labels[clip]
+                        if behaviour_labels is not None
+                        else "<unlabelled>"
+                    )
                     warnings.warn(
                         f"Reference data verification failed for {n_failed} frames"
-                        f" for check '{name}' for clip {clip} ({clip_label})."
+                        f" for check '{name}' for clip {clip} ({behaviour_label})."
                         f" First failure at frame {first_failed_frame}.",
                         stacklevel=2,
                     )
