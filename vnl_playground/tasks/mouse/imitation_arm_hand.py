@@ -22,11 +22,13 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
+from vnl_playground.tasks.mouse import contact_presets
 from vnl_playground.tasks.mouse.consts import (
     JANELIA_MOUSE_ARM_HAND_V22_RAW_JOYSTICK_XML_PATH,
     JANELIA_MOUSE_ARM_HAND_V22_XML_PATH,
     JANELIA_MOUSE_ARM_HAND_V22X_XML_PATH,
     JANELIA_MOUSE_ARM_HAND_V23_XML_PATH,
+    JANELIA_MOUSE_ARM_HAND_SCOTT_V1_XML_PATH,
     JANELIA_MOUSE_ARM_HAND_V25_XML_PATH,
     MOUSE_REFERENCE_DATA_JANELIA_V22_PATH,
     MOUSE_REFERENCE_DATA_JANELIA_V22X_PATH,
@@ -500,6 +502,115 @@ def default_config_v25() -> config_dict.ConfigDict:
     return cfg
 
 
+def default_config_scott_v1() -> config_dict.ConfigDict:
+    """scott_v1: the v25 rig with a 19-geom anatomical hand and hard contact.
+
+    Three things change together relative to v25, so this is deliberately NOT
+    a clean A/B against it:
+
+    1. **Collision geometry.** 19 contact-enabled hand bones (every metacarpal
+       and phalanx) as per-bone minimum-volume primitives -- 6 ellipsoid + 13
+       capsule -- instead of v25's 5 spheres sized as the arithmetic mean of
+       three ellipsoid semi-axes. 57 contact pairs, not 15. See
+       analysis/2026-07-28-scott-v1-hand-collision-ellipsoids/README.md.
+
+    2. **Contact parameters.** `contact_preset="harder"`. At v25's shipped
+       parameters the kinematic probe measured press transmission 0.024 and
+       1.1 mN of push -- a 19-geom anatomical hand buys literally nothing
+       until the contact is stiffened, so the geometry work cannot pay off
+       without this. See contact_presets.py.
+
+    3. **Reward exp_scales.** Retuned so that some term has gradient at every
+       competence level; see the reward_terms block below.
+
+    `joints_vel` is dropped outright (weight 0). It contributed exactly 0.0
+    reward and 0.0 gradient in every v25 run -- `exp_scale=0.2` against a
+    median error of 33.6 rad/s is `exp(-14148)` -- and rescaling it would be
+    worse than deleting it, because the target itself is wrong: the STAC v25
+    h5s' stored `qvel` is 14-40x the derivative of the `qpos` stored in the
+    same file (median 33.87 vs 1.17 rad/s). Measured, not inferred. Nothing
+    else consumes reference qvel here (`qvel_init="zeros"`, and
+    `_get_imitation_target` carries joint-angle and body-position deltas only),
+    so the blast radius is this one term.
+    """
+    cfg = default_config_v25()
+    cfg.walker_xml_path = JANELIA_MOUSE_ARM_HAND_SCOTT_V1_XML_PATH
+
+    # -- contact ------------------------------------------------------------
+    # "harder" = gap 0 + solimp dmax 0.999 on all 22 grip/joystick geoms, a
+    # direct negative solref at stiffness_mult x the shipped k, and the same
+    # applied to the joystick's own slide limits (otherwise those become the
+    # weakest link and the stick is squeezed through its own +-6 mm range).
+    #
+    # k=30x with sim_dt=0.25 ms is the probe's measured sweet spot: 62 mN of
+    # push against the ~54 mN the joystick's return spring actually needs, with
+    # 10 mN of ringing. k=3000x reaches a nominally better transmission (0.964
+    # vs 0.920) but delivers 1036 mN -- 19x what the spring needs -- oscillating
+    # at +-687 mN, and halving the timestep does not fix it (687 -> 674 mN), so
+    # it is genuine stiff-contact ringing rather than discretisation. k=3000x
+    # also needs sim_dt=0.01 ms, i.e. 2000 physics substeps per control step
+    # against the 80 used here -- a ~25x throughput cost on top of everything.
+    cfg.contact_preset = "harder"
+    cfg.contact_stiffness_mult = 30.0
+    # 0.25 ms is the largest timestep at which k=30x is stable (the probe found
+    # each ~5x in stiffness needs ~5x smaller dt). ctrl_dt is unchanged at
+    # 0.02 s, so this is 80 substeps per control step, up from v25's 20.
+    cfg.sim_dt = 0.00025
+
+    # -- constraint buffers -------------------------------------------------
+    # v25's njmax=256/naconmax=512 were sized for 15 contact pairs; scott_v1
+    # has 57, all of which are always present in MJX's jax pipeline (the pair
+    # list is static -- verified: contact.geom is identical across poses).
+    # Sized from a measured random-action rollout, not guessed; undersizing
+    # silently drops constraints, which is a correctness bug rather than log
+    # spam (see the v22x njmax=8 history in default_config_no_joystick).
+    cfg.njmax = 512
+    cfg.naconmax = 1024
+
+    # -- reward exp_scales --------------------------------------------------
+    # Every tracking term is w*exp(-(d/s)^2/2), so `s` alone decides whether a
+    # term has usable gradient: at d/s -> 0 it is saturated (improving gains
+    # nothing), at d/s >> 1 it is dead (invisible to PPO), and the signal
+    # |d*dr/dd|/w peaks at d/s = sqrt(2). Measured on the 519M v25 checkpoint
+    # (6 clips x 252 steps) and on Eric's from-scratch probe, v25's scales put
+    # every term in one of the two dead regimes:
+    #
+    #   term          s      r/w at cold | zero-action | expert
+    #   joystick_pos  2 mm   0.73 | 0.72 | 0.80   <- saturated; doing nothing
+    #                                               already scores 91% of what
+    #                                               the trained policy scores
+    #   joints        0.2    0.00 | 0.00 | 0.37   <- exp(-35) from a cold start:
+    #                                               nothing to climb
+    #   wrist_pos     0.1    0.99 | 1.00 | 1.00   <- a constant
+    #   bodies_pos    0.1    0.91 | 1.00 | 1.00   <- a constant
+    #
+    # The scales below form a staircase instead, so something always has
+    # gradient: wrist_pos/bodies_pos are cold-start shaping (live early,
+    # saturate late), joints/joystick_pos carry late precision. Predicted
+    # effect, from the same measurement: the zero-action floor drops from 57%
+    # of the reward ceiling to 16%. Weights are deliberately left alone.
+    cfg.reward_terms["joystick_pos"]["exp_scale"] = 0.00075
+    cfg.reward_terms["joints"]["exp_scale"] = 0.8
+    cfg.reward_terms["wrist_pos"]["exp_scale"] = 0.005
+    cfg.reward_terms["bodies_pos"]["exp_scale"] = 0.03
+    cfg.reward_terms["joints_vel"]["weight"] = 0.0
+    # Raised 0.01 -> 0.02. Tension worth recording: control_cost was the *only*
+    # term with a live gradient in the from-scratch v25 probe, and the policy
+    # optimised it by going limp and backing away from the joystick (clearance
+    # 7.0 -> 8.3 mm over 78M steps). Raising it is defensible only because the
+    # tracking terms above now carry real gradient; if a run goes limp again
+    # this is the first thing to reverse.
+    cfg.reward_terms["control_cost"]["weight"] = 0.02
+    # Recalibrated against the exact reference clearance computed by
+    # MouseImitationArmHandScottV1 (mj_geomDistance over all 57 pairs), which
+    # is a different quantity from v25's isotropic-radius proxy -- see that
+    # class's _joystick_contact_reward. 0 mm = "the reference hand is touching
+    # or inside the joystick", which holds on ~77% of reference frames.
+    cfg.reward_terms["joystick_contact"]["exp_scale"] = 0.00075
+    cfg.reward_terms["joystick_contact"]["contact_threshold"] = 0.0
+    return cfg
+
+
 # Build a registry that inherits all parent entries, then override specific ones.
 _registry = RewardRegistry()
 _registry.rewards.update(_parent_registry.rewards)
@@ -780,3 +891,182 @@ class MouseImitationArmHand(MouseImitation):
             target.joints[self._non_ik_idx] - data.qpos[self._non_ik_idx]
         )
         return pose_error > max_l2_error
+
+
+def _mjx_contact(data):
+    """`data.contact` across mujoco-mjx versions.
+
+    3.4 moved it behind `data._impl` and deprecated the direct attribute; the
+    direct one still works but warns on every call, which is unusable inside a
+    reward evaluated every step.
+    """
+    impl = getattr(data, "_impl", None)
+    return impl.contact if impl is not None else data.contact
+
+
+# scott_v1 inherits every arm+hand reward/termination and overrides only
+# joystick_contact below.
+_scott_v1_registry = RewardRegistry()
+_scott_v1_registry.rewards.update(_registry.rewards)
+_scott_v1_registry.terminations.update(_registry.terminations)
+
+
+class MouseImitationArmHandScottV1(MouseImitationArmHand):
+    """scott_v1 variant: exact contact clearance instead of a radius proxy.
+
+    v25's `_joystick_contact_reward` builds surface-to-surface clearance as
+    `center_distance - (r_grip + r_joystick)`, reading each radius as
+    `geom_size[id][0]`. That is only correct when every geom is a sphere.
+    scott_v1's grip proxies are 6 ellipsoids and 13 capsules, where
+    `geom_size[0]` is the *longest semi-axis* (3-5x the other two) or a capsule
+    radius with its length ignored -- so the v25 term would be silently wrong
+    on every pair, in a direction that varies per bone and per pose.
+
+    Both sides are replaced with exact geometry:
+
+    * **Sim side** -- `data.contact.dist`, MJX's own signed distance for each
+      pair, exact for any geom type. MJX's jax pipeline enumerates a *static*
+      pair list (verified: `contact.geom` is identical across poses), so the
+      relevant entries can be located once at construction.
+
+      Cross-checked against `mj_geomDistance` over 12 random poses x 57 pairs:
+      the two agree to 0.052 mm max (0.001 mm median) at separations under
+      2 mm, and diverge by up to 4.9 mm only beyond 5 mm, and only on the
+      ellipsoid pairs that go through MJX's iterative SDF collider rather than
+      an analytic one. The reward is `exp(-(d/0.75mm)^2/2)`, already ~0 by
+      2 mm, so the disagreement lives entirely where the term is flat.
+
+    * **Reference side** (the hard gate) -- precomputed once at construction
+      with `mj_geomDistance`, which is exact for any pair. The reference
+      clearance depends only on the clip data and never on the sim, so there
+      is no reason to approximate it at all, let alone every step.
+
+    The sim clearance is also clamped at 0. v25's term is an *even* function of
+    clearance: it peaks at exactly touching and decays for interpenetration, so
+    pressing into the joystick scored the same as hovering the same distance
+    away. Over the 519M-step v25 run the grip deepened (min clearance -0.26 ->
+    -0.56 mm) and this term's reward *fell* (0.0220 -> 0.0197) -- it was
+    penalising the policy for gripping harder. Clamping makes "touching" and
+    "pressing" score alike, which is the weakest change that removes the
+    perverse gradient.
+    """
+
+    _registry = _scott_v1_registry
+
+    def __init__(self, config=None, config_overrides=None, clips=None):
+        super().__init__(
+            config if config is not None else default_config_scott_v1(),
+            config_overrides,
+            clips,
+        )
+        if "joystick_contact" not in self._config.reward_terms:
+            return
+
+        m = self._mj_model
+        grip = np.flatnonzero(m.geom_contype == contact_presets.GRIP_CONTYPE)
+        joystick = np.flatnonzero(m.geom_contype == contact_presets.JOYSTICK_CONTYPE)
+        if grip.size == 0 or joystick.size == 0:
+            raise ValueError(
+                "scott_v1 needs geoms carrying contype "
+                f"{contact_presets.GRIP_CONTYPE} (grip) and "
+                f"{contact_presets.JOYSTICK_CONTYPE} (joystick); found "
+                f"{grip.size} and {joystick.size}."
+            )
+        self._grip_geom_ids_exact = grip
+        self._joystick_geom_ids_exact = joystick
+
+        self._contact_row_idx = self._locate_contact_rows(grip, joystick)
+        self._ref_clearance_table = jp.asarray(
+            self._precompute_reference_clearance(grip, joystick)
+        )
+
+    def _locate_contact_rows(self, grip, joystick):
+        """Rows of MJX's static contact array that are grip<->joystick pairs.
+
+        Runs one `mjx.forward` at construction to read the pair list. That list
+        is fixed by `mjx.put_model`, not by the pose, so doing it once is
+        correct -- and the alternative (reproducing MJX's broadphase pair
+        enumeration here) would silently rot the first time it changed
+        upstream.
+        """
+        data = mjx.make_data(
+            self._mj_model,
+            impl=self._config.mujoco_impl,
+            naconmax=self._config.naconmax,
+            njmax=self._config.njmax,
+        )
+        pairs = np.asarray(_mjx_contact(mjx.forward(self.mjx_model, data)).geom)
+        grip_set, joystick_set = set(grip.tolist()), set(joystick.tolist())
+        rows = np.flatnonzero(
+            [
+                (a in grip_set and b in joystick_set)
+                or (a in joystick_set and b in grip_set)
+                for a, b in pairs
+            ]
+        )
+        if rows.size == 0:
+            raise ValueError(
+                "no grip<->joystick pair appears in MJX's contact list; the "
+                "contact reward would be reading unrelated geoms."
+            )
+        return jp.asarray(rows, dtype=int)
+
+    def _precompute_reference_clearance(self, grip, joystick):
+        """Exact min surface-to-surface clearance at every reference pose.
+
+        Shape (n_clips, n_frames), metres, negative = the reference hand is
+        inside the joystick. Costs one `mj_forward` + `n_grip * n_joystick`
+        `mj_geomDistance` calls per reference frame, once, at construction.
+        """
+        import mujoco  # local: only needed on the CPU-side setup path
+
+        m, data = self._mj_model, mujoco.MjData(self._mj_model)
+        qpos = np.asarray(self.reference_clips.qpos)
+        n_clips, n_frames = qpos.shape[0], qpos.shape[1]
+        out = np.empty((n_clips, n_frames), dtype=np.float32)
+        # distmax only bounds the search; anything past it is far enough that
+        # the reward is flat there anyway.
+        distmax = 1.0
+        for c in range(n_clips):
+            for f in range(n_frames):
+                data.qpos[:] = qpos[c, f]
+                mujoco.mj_forward(m, data)
+                out[c, f] = min(
+                    mujoco.mj_geomDistance(m, data, int(g), int(j), distmax, None)
+                    for g in grip
+                    for j in joystick
+                )
+        return out
+
+    @_scott_v1_registry.reward("joystick_contact")
+    def _joystick_contact_reward(
+        self, data, info, metrics, weight, exp_scale, contact_threshold
+    ) -> float:
+        """Reward touching the joystick on frames where the reference does.
+
+        Hard-gated on the *reference*'s own clearance, so the term is exactly 0
+        on frames where the real mouse was not gripping and cannot be farmed by
+        simply holding the joystick the whole episode.
+        """
+        cur_frame = jp.minimum(
+            self._get_cur_frame(data, info), self._clip_length() - 1
+        )
+        ref_clearance = self._ref_clearance_table[info["reference_clip"], cur_frame]
+        should_contact = ref_clearance < contact_threshold
+
+        # Clamped at 0: pressing scores the same as just touching, rather than
+        # decaying back down the far side of a Gaussian centred on "barely in
+        # contact" (see the class docstring).
+        sim_clearance = jp.min(_mjx_contact(data).dist[self._contact_row_idx])
+        gated_clearance = jp.maximum(sim_clearance, 0.0)
+
+        metrics["joystick_contact_ref_clearance"] = ref_clearance
+        metrics["joystick_contact_sim_clearance"] = sim_clearance
+        metrics["joystick_should_contact"] = jp.astype(should_contact, float)
+        reward = jp.where(
+            should_contact,
+            weight * jp.exp(-((gated_clearance / exp_scale) ** 2) / 2),
+            0.0,
+        )
+        metrics["rewards/joystick_contact"] = reward
+        return reward

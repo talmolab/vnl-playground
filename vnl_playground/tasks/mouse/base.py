@@ -11,7 +11,7 @@ from mujoco import mjx
 from tqdm import tqdm
 
 from mujoco_playground._src import mjx_env
-from vnl_playground.tasks.mouse import consts
+from vnl_playground.tasks.mouse import consts, contact_presets
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
@@ -76,6 +76,12 @@ def default_config() -> config_dict.ConfigDict:
         # any task with real contacts.
         naconmax=None,
         njmax=None,
+        # Hand<->joystick contact hardening, applied in compile() (see
+        # contact_presets.py for what each preset does and what the kinematic
+        # probe measured it to deliver). None/"shipped" is a no-op, so every
+        # config predating this key keeps its original contact behaviour.
+        contact_preset=None,
+        contact_stiffness_mult=30.0,
     )
 
 
@@ -319,6 +325,17 @@ class MouseBaseEnv(mjx_env.MjxEnv):
                 self._mj_model.jnt_stiffness[:] = self._config.joint_stiffness
             if self._config.force_scale is not None:
                 self._mj_model.actuator_gainprm[:, 0] *= self._config.force_scale
+
+            # Hand<->joystick contact hardening. Must run after opt.timestep is
+            # final above: the shipped stiffness is read back through MuJoCo's
+            # REFSAFE clamp (solref timeconst floored at 2*dt), so measuring it
+            # earlier would read a different k than the sim will actually use.
+            if getattr(self._config, "contact_preset", None):
+                contact_presets.apply_contact_preset(
+                    self._mj_model,
+                    self._config.contact_preset,
+                    stiffness_mult=self._config.contact_stiffness_mult,
+                )
 
             # High-res offscreen buffer for nice renders
             self._mj_model.vis.global_.offwidth = 3840

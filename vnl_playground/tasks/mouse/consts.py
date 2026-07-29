@@ -169,7 +169,23 @@ JANELIA_MOUSE_ARM_HAND_V25_XML_PATH = (
 # CFL_35_20240128_trial_0001 is still fit-only (_fit.h5, no _ik.h5 yet) and
 # is skipped automatically by MouseReferenceClips' *_ik.h5 glob.
 MOUSE_REFERENCE_DATA_JANELIA_V25_PATH = epath.Path(
-    "/root/vast/eric/stac-mjx/refined_STACed_data_v25"
+    os.environ.get(
+        "VNL_STAC_V25_DIR", "/root/vast/eric/stac-mjx/refined_STACed_data_v25"
+    )
+)
+
+# scott_v1 (2026-07-29): the v25 rig with its 5 hand-sphere grip geoms replaced
+# by 19 per-bone minimum-volume primitives -- 6 ellipsoid + 13 capsule, the
+# "mixed" variant, emitted from the v25 template by
+# analysis/2026-07-28-scott-v1-hand-collision-ellipsoids/scripts/emit_xml.py.
+# Kinematic tree, qpos layout and STAC clips are identical to v25 -- only the
+# collision geoms differ -- so MOUSE_REFERENCE_DATA_JANELIA_V25_PATH is reused
+# unchanged. The version counter is independent of Eric's v22->v26 line: this
+# is scott_v1, not "v27".
+JANELIA_MOUSE_ARM_HAND_SCOTT_V1_XML_PATH = (
+    MOUSE_PATH
+    / "xmls"
+    / "mouse_forelimb_right_janelia_scott_v1_mixed_arm_hand_joystick.xml"
 )
 
 # STAC v24-native reference data. As of 2026-07-17 the STAC v24 fitting job is
