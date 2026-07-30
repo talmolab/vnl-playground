@@ -630,12 +630,27 @@ def default_config_scott_v2(variant: str = "wrist_forearm") -> config_dict.Confi
     * The wrist and forearm proxies exist in the v1 XML with `contype=0`, and
       the trained policy parks them *inside* the joystick -- the carpal block
       on 46.9% of frames (deepest 1.73 mm), the distal ulna on 26.7%
-      (1.92 mm), the distal radius on 9.2% (2.09 mm). The grip depends on a
-      phantom wrist.
-    * That is what produces the stem-push: 21.9% of delivered impulse lands on
-      the stem rather than the ball, 58.7% of it from `Metacarpal_hand_2`
-      alone at 12.4 mm -- 1.8 mm below the ball's lower edge -- carrying the
-      largest p99 force in the model (50.8 mN).
+      (1.92 mm), the distal radius on 9.2% (2.09 mm). Broken down by target,
+      the wrist is inside the 2 mm **ball** on 47.1% of all frames and inside
+      the stem on only 7.7%: the hand wraps the ball so tightly that the carpal
+      block occupies it. That grasp is not physically realisable.
+
+    What v2 is NOT predicted to fix, contrary to an earlier version of this
+    docstring. The claim that the pass-through is *why* the policy pushes the
+    stem (21.9% of delivered impulse, 58.7% of it from `Metacarpal_hand_2` at
+    12.4 mm) was asserted without a test and is **refuted**: on a5's own
+    trajectory P(a v2 geom is inside the joystick | stem contact is carrying
+    force) is 0.086 against 0.742 given ball contact only -- 0.12x, where >2x
+    was predicted. When the hand reaches down to the stem the wrist is 1.46 mm
+    clear. In pose space the two classes are indistinguishable: 72.9% of
+    stem-touching poses stay v2-feasible against 70.3% of ball-touching ones.
+    Whether v2 changes where the hand pushes is an open question for the b1
+    training arm, not a prediction.
+
+    Checked, so the fix is not worse than the problem: v2 does not hold the
+    hand off the ball. 70.3% of ball-touching poses in the reference
+    neighbourhood stay feasible, and the deepest achievable ball press is
+    unchanged at -2.364 mm (13,608 poses).
 
     Worth being explicit about what this does *not* fix. The joystick is
     translation-only (two slide joints with return springs on `joystick_base`;

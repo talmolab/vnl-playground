@@ -223,10 +223,19 @@ JANELIA_MOUSE_ARM_HAND_SCOTT_V1_XML_PATH = janelia_scott_v1_xml_path("mixed")
 # The motivating measurement: over the a5 rollout at 293.6M steps, the wrist
 # and forearm proxies that already exist in the v1 XML with contype=0 spend
 # much of the episode *inside* the joystick -- the carpal block on 46.9% of
-# frames (deepest 1.73 mm), the distal ulna on 26.7% (1.92 mm). The policy's
-# grip depends on the wrist passing through the stick, which is why it reaches
-# below the ball and pushes the stem (21.9% of delivered impulse, 58.7% of it
-# from Metacarpal_hand_2 alone).
+# frames (deepest 1.73 mm), the distal ulna on 26.7% (1.92 mm). Specifically,
+# the wrist is inside the 2 mm BALL on 47.1% of all frames: the hand wraps the
+# ball so tightly that the carpal block ends up occupying it. That grasp is not
+# physically realisable and v2 forbids it.
+#
+# An earlier version of this comment claimed the pass-through was *why* the
+# policy pushes the stem. That was asserted without a test and is now REFUTED
+# (analysis .../scripts/test_hypotheses.py, H1): P(a v2 geom is inside the
+# joystick | stem contact carrying force) = 0.086, against 0.742 given ball
+# contact only -- a ratio of 0.12x where >2x was predicted. When the hand goes
+# down to the stem the wrist is 1.46 mm CLEAR. Stem-pushing and the
+# pass-through are separate phenomena, and v2 is not predicted to remove the
+# stem-push.
 #
 # Three properties of the emitted XML are load-bearing:
 #
