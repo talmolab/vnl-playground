@@ -216,6 +216,65 @@ def janelia_scott_v1_xml_path(variant: str = "mixed"):
 
 JANELIA_MOUSE_ARM_HAND_SCOTT_V1_XML_PATH = janelia_scott_v1_xml_path("mixed")
 
+# scott_v2 (2026-07-30): scott_v1's 19 hand geoms, unchanged, plus three
+# contact geoms at the wrist and the wrist->elbow bones. Emitted by
+# analysis/2026-07-29-scott-v2-wrist-forearm-contact-geoms/scripts/emit_v2_xml.py.
+#
+# The motivating measurement: over the a5 rollout at 293.6M steps, the wrist
+# and forearm proxies that already exist in the v1 XML with contype=0 spend
+# much of the episode *inside* the joystick -- the carpal block on 46.9% of
+# frames (deepest 1.73 mm), the distal ulna on 26.7% (1.92 mm). The policy's
+# grip depends on the wrist passing through the stick, which is why it reaches
+# below the ball and pushes the stem (21.9% of delivered impulse, 58.7% of it
+# from Metacarpal_hand_2 alone).
+#
+# Three properties of the emitted XML are load-bearing:
+#
+#   * The added geoms carry density="0". The bone meshes are all density="0",
+#     so the existing `*_col` geoms are the ONLY source of each segment's mass
+#     -- the humerus capsule's volume x 1000 kg/m^3 reproduces its 370.029 mg
+#     exactly. Body mass and inertia are bit-identical to scott_v1 on all 51
+#     bodies, asserted at emit time, so v1-vs-v2 differs in contact set alone.
+#   * They carry contype=4/conaffinity=8, so contact_presets.apply_contact_preset
+#     hardens them and MouseImitationArmHandScottV1 picks them up in its
+#     contact-pair row index with no code change.
+#   * Nothing existing is edited. The seven carpal `*_col` ellipsoids and the
+#     two forearm capsules stay contact-disabled and keep their sizes, because
+#     they are what carry the mass.
+def janelia_scott_v2_xml_path(variant: str = "wrist_forearm"):
+    """Walker XML for a scott_v2 contact-set variant.
+
+    Only `wrist_forearm` is committed. The others were fitted and measured in
+    the analysis directory above and can be emitted from it on demand:
+
+        variant              added geoms                    pairs  SDF pairs
+        wrist                wrist_block ellipsoid             60         21
+        forearm              radius + ulna distal capsules     63         18
+        wrist_forearm        both of the above                 66         21
+        wrist_forearm_full   whole-bone forearm capsules       66         21
+        wrist_forearm_palm   + palm_pad ellipsoid              69         24
+
+    `wrist_forearm` is the committed one because it closes the pass-through at
+    both sites for 8% throughput (3,555 vs 3,861 env steps/s at 4096 envs on an
+    RTX 5090), and leaves the palm exactly as scott_v1 has it so the comparison
+    stays single-factor.
+    """
+    if variant != "wrist_forearm":
+        raise ValueError(
+            f"unknown or uncommitted scott_v2 variant {variant!r}; only "
+            "'wrist_forearm' is in the repo. See "
+            "analysis/2026-07-29-scott-v2-wrist-forearm-contact-geoms/"
+            "scripts/emit_v2_xml.py to emit the others."
+        )
+    return (
+        MOUSE_PATH
+        / "xmls"
+        / f"mouse_forelimb_right_janelia_scott_v2_{variant}_arm_hand_joystick.xml"
+    )
+
+
+JANELIA_MOUSE_ARM_HAND_SCOTT_V2_XML_PATH = janelia_scott_v2_xml_path()
+
 # STAC v24-native reference data. As of 2026-07-17 the STAC v24 fitting job is
 # still running -- only 6 of the eventual trial set exist on disk, and only
 # CFL_35_20240128_trial_0101 has the full native 126 frames; the other 5 are

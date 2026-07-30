@@ -25,6 +25,7 @@ from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.mouse import contact_presets
 from vnl_playground.tasks.mouse.consts import (
     janelia_scott_v1_xml_path,
+    janelia_scott_v2_xml_path,
     JANELIA_MOUSE_ARM_HAND_V22_RAW_JOYSTICK_XML_PATH,
     JANELIA_MOUSE_ARM_HAND_V22_XML_PATH,
     JANELIA_MOUSE_ARM_HAND_V22X_XML_PATH,
@@ -609,6 +610,48 @@ def default_config_scott_v1(variant: str = "mixed") -> config_dict.ConfigDict:
     # or inside the joystick", which holds on ~77% of reference frames.
     cfg.reward_terms["joystick_contact"]["exp_scale"] = 0.00075
     cfg.reward_terms["joystick_contact"]["contact_threshold"] = 0.0
+    return cfg
+
+
+def default_config_scott_v2(variant: str = "wrist_forearm") -> config_dict.ConfigDict:
+    """scott_v2: scott_v1 plus contact at the wrist and the wrist->elbow bones.
+
+    **Exactly one thing changes from scott_v1: the set of contacting geoms.**
+    Every reward scale, weight, contact parameter, timestep and the entire
+    kinematic tree are inherited untouched, and the added geoms are
+    `density="0"` so body mass and inertia are bit-identical (asserted at emit
+    time on all 51 bodies). scott_v1 vs scott_v2 is therefore a clean
+    single-factor comparison, which scott_v1 vs v25 deliberately was not.
+
+    What it fixes, measured on the a5 rollout at 293.6M steps (6 clips,
+    8,091 contact events -- see
+    analysis/2026-07-29-scott-v2-wrist-forearm-contact-geoms/README.md):
+
+    * The wrist and forearm proxies exist in the v1 XML with `contype=0`, and
+      the trained policy parks them *inside* the joystick -- the carpal block
+      on 46.9% of frames (deepest 1.73 mm), the distal ulna on 26.7%
+      (1.92 mm), the distal radius on 9.2% (2.09 mm). The grip depends on a
+      phantom wrist.
+    * That is what produces the stem-push: 21.9% of delivered impulse lands on
+      the stem rather than the ball, 58.7% of it from `Metacarpal_hand_2`
+      alone at 12.4 mm -- 1.8 mm below the ball's lower edge -- carrying the
+      largest p99 force in the model (50.8 mN).
+
+    Worth being explicit about what this does *not* fix. The joystick is
+    translation-only (two slide joints with return springs on `joystick_base`;
+    the `joystick` body has no joints), so a push on the stem moves the stick
+    exactly as much as the same push on the ball. Contact height buys no
+    leverage here, and v2 is not expected to increase force transmission. What
+    it removes is a set of hand placements that no real forelimb could reach.
+
+    Buffers are inherited at njmax=512 / naconmax=1024, which carried ~39%
+    headroom over v1's measured peak of 57 contacts / 369 constraints per
+    world. v2 adds 9 possible pairs (57 -> 66); re-measure before trusting the
+    headroom under a different backend, since Warp treats naconmax as a batch
+    total rather than a per-world budget.
+    """
+    cfg = default_config_scott_v1()
+    cfg.walker_xml_path = janelia_scott_v2_xml_path(variant)
     return cfg
 
 

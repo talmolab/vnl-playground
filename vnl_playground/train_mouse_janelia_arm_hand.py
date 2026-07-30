@@ -59,6 +59,7 @@ from vnl_playground.tasks.mouse.imitation_arm_hand import (
     default_config_raw_joystick,
     default_config_v23,
     default_config_scott_v1,
+    default_config_scott_v2,
     default_config_v25,
 )
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
@@ -147,6 +148,15 @@ def parse_args():
     )
     p.add_argument("--njmax", type=int, default=None, help="Override cfg.njmax (per world).")
     p.add_argument(
+        "--integrator", default=None,
+        choices=["euler", "implicit", "implicitfast", "rk4"],
+        help="Override cfg.integrator. The env hardcodes 'euler'; a stiff "
+             "contact set is exactly the case MuJoCo documents 'implicitfast' "
+             "for, and it may hold a larger sim_dt at the same stiffness. "
+             "Note RK4 is known to error on this model's geom types under the "
+             "Warp backend -- see imitation_arm_hand.default_config()."
+    )
+    p.add_argument(
         "--mujoco-impl", default=None, choices=["jax", "warp"],
         help="Override cfg.mujoco_impl. Warp runs collision as CUDA kernels "
              "rather than traced JAX, which matters here because scott_v1's "
@@ -184,6 +194,17 @@ def parse_args():
     )
 
     p.add_argument(
+        "--scott-v2", action="store_true",
+        help="Use the scott_v2 config (default_config_scott_v2): scott_v1 with "
+             "three added contact geoms -- one ellipsoid over the seven welded "
+             "carpals, and capsules on the distal 40% of radius and ulna "
+             "(66 contact pairs, not 57). Everything else, including mass and "
+             "inertia, is bit-identical to scott_v1, so v1-vs-v2 is a clean "
+             "single-factor comparison. Mutually exclusive with the other "
+             "model flags."
+    )
+
+    p.add_argument(
         "--finetune-path", type=str, default=None,
         help="Path to a checkpoint dir (e.g. checkpoints/<exp>/<step>) to "
              "restore policy/value/normalizer params from via brax's "
@@ -215,6 +236,12 @@ def parse_args():
     p.add_argument("--discounting", type=float, default=None, help="PPO discount factor")
     p.add_argument("--batch-size", type=int, default=None, help="PPO batch size")
     p.add_argument("--num-minibatches", type=int, default=None, help="PPO num minibatches")
+    p.add_argument(
+        "--unroll-length", type=int, default=None,
+        help="PPO unroll length. Trades per-step dispatch overhead against "
+             "rollout-buffer memory: a longer unroll amortises the scan's "
+             "fixed cost over more steps but holds more transitions live."
+    )
     p.add_argument("--num-timesteps", type=int, default=None, help="Total training timesteps")
     p.add_argument("--eval-every", type=int, default=None, help="Env steps between eval/wandb log points (default: 100_000_000 -- too sparse to see progress on a multi-hour run, override for visibility)")
 
@@ -230,9 +257,9 @@ args = parse_args()
 
 # ── Environment config ──────────────────────────────────────────────────────
 assert sum([args.no_joystick, args.v23, args.raw_joystick, args.v25,
-            args.scott_v1]) <= 1, (
-    "--no-joystick, --v23, --raw-joystick, --v25 and --scott-v1 are "
-    "mutually exclusive"
+            args.scott_v1, args.scott_v2]) <= 1, (
+    "--no-joystick, --v23, --raw-joystick, --v25, --scott-v1 and --scott-v2 "
+    "are mutually exclusive"
 )
 if args.no_joystick:
     env_cfg = default_config_no_joystick()
@@ -244,6 +271,8 @@ elif args.v25:
     env_cfg = default_config_v25()
 elif args.scott_v1:
     env_cfg = default_config_scott_v1()
+elif args.scott_v2:
+    env_cfg = default_config_scott_v2()
 else:
     env_cfg = default_config()
 for _term in args.drop_reward:
@@ -358,6 +387,8 @@ if args.batch_size is not None:
     ppo_params.batch_size = args.batch_size
 if args.num_minibatches is not None:
     ppo_params.num_minibatches = args.num_minibatches
+if args.unroll_length is not None:
+    ppo_params.unroll_length = args.unroll_length
 if args.episode_length is not None:
     ppo_params.episode_length = args.episode_length
 if args.num_envs is not None:
@@ -373,6 +404,13 @@ if args.naconmax_per_world is not None:
           f"= {env_cfg.naconmax}")
 if args.njmax is not None:
     env_cfg.njmax = args.njmax
+if args.integrator is not None:
+    # MouseBaseEnv.compile() re-applies cfg.integrator after attach, so
+    # setting it here is what actually reaches opt.integrator -- the walker
+    # XML's own <option> value is discarded by that same "parent wins"
+    # override. See imitation_arm_hand.default_config().
+    env_cfg.integrator = args.integrator
+    print(f"integrator: {args.integrator}")
 
 if args.eval_every is not None:
     ppo_params.eval_every = args.eval_every
@@ -391,6 +429,8 @@ elif args.v25:
     env_name = "janelia-v25-arm-hand-joystick"
 elif args.scott_v1:
     env_name = "janelia-scott-v1-arm-hand-joystick"
+elif args.scott_v2:
+    env_name = "janelia-scott-v2-arm-hand-joystick"
 else:
     env_name = "janelia-v22-arm-hand"
 SUFFIX = None
@@ -650,8 +690,12 @@ if __name__ == "__main__":
     # scott_v1 needs its own class: its contact reward reads exact geom
     # distances instead of v25's sphere-only radius proxy, which would be
     # silently wrong on ellipsoid/capsule grip geoms (see
-    # MouseImitationArmHandScottV1).
-    env_cls = MouseImitationArmHandScottV1 if args.scott_v1 else MouseImitationArmHand
+    # MouseImitationArmHandScottV1). scott_v2 reuses it unchanged -- that class
+    # selects grip geoms by `geom_contype == GRIP_CONTYPE` and enumerates the
+    # pair rows from MJX's own static list, so the three added geoms are picked
+    # up without a code change.
+    env_cls = (MouseImitationArmHandScottV1
+               if (args.scott_v1 or args.scott_v2) else MouseImitationArmHand)
     env = FlattenObsWrapper(env_cls(config=env_cfg))
     eval_env = FlattenObsWrapper(env_cls(config=env_cfg))
 
