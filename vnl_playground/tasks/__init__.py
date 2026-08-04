@@ -65,14 +65,14 @@ _cfgs = {
     "WormImitation": worm_imitation.default_config,
 }
 
-# Built-ins use the shared loader; runtime registrations may provide a custom one.
-_reference_clip_loaders = {
-    "RodentImitation": None,
-    "RodentSparseImitation": None,
-    "FruitflyImitation": None,
-    "MouseImitation": None,
-    "StickImitation": None,
-    "WormImitation": None,
+# Environments that consume reference clips.
+_reference_clip_envs = {
+    "RodentImitation",
+    "RodentSparseImitation",
+    "FruitflyImitation",
+    "MouseImitation",
+    "StickImitation",
+    "WormImitation",
 }
 
 
@@ -88,13 +88,13 @@ def register_environment(
     env_class: type,
     cfg_class: Callable[[], config_dict.ConfigDict],
     wrapper_class: type | None = None,
-    reference_clips_class: type | None = None,
+    supports_reference_clips: bool = False,
 ) -> None:
     """Register a new environment at runtime."""
     _envs[env_name] = env_class
     _cfgs[env_name] = cfg_class
-    if reference_clips_class is not None:
-        _reference_clip_loaders[env_name] = reference_clips_class
+    if supports_reference_clips:
+        _reference_clip_envs.add(env_name)
 
 
 def get_default_config(env_name: str) -> config_dict.ConfigDict:
@@ -132,7 +132,7 @@ def load(
     config = config or get_default_config(env_name)
 
     # Imitation envs use clips, locomotion envs use rng
-    if env_name in _reference_clip_loaders:
+    if env_name in _reference_clip_envs:
         env = _envs[env_name](config=config, clips=clips, **kwargs)
     else:
         env = _envs[env_name](config=config, **kwargs)
@@ -163,22 +163,13 @@ def load_reference_clips(
     Returns:
         Instantiated ReferenceClips object.
     """
-    if env_name not in _reference_clip_loaders:
+    if env_name not in _reference_clip_envs:
         raise ValueError(
             f"Env '{env_name}' does not support reference clips. "
-            f"Available: {sorted(_reference_clip_loaders)}"
-        )
-
-    if (custom_loader := _reference_clip_loaders[env_name]) is not None:
-        return custom_loader(
-            data_path=data_path,
-            n_frames_per_clip=n_frames_per_clip,
-            keep_clips_idx=clip_indices,
-            **kwargs,
+            f"Available: {sorted(_reference_clip_envs)}"
         )
 
     config = get_default_config(env_name)
-    kwargs.setdefault("data_format", config.get("reference_data_format", "stac"))
     if "joints" in config:
         kwargs.setdefault("joint_names", config.joints)
     if "bodies" in config:

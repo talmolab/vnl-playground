@@ -42,7 +42,6 @@ def default_config() -> config_dict.ConfigDict:
         torque_actuators=False,  # Keep XML actuators as-is
         rescale_factor=1.0,
         reference_data_path=consts.IMITATION_REFERENCE_PATH,
-        reference_data_format="fruitfly",
         mocap_hz=500,
         clip_length=600,
         clip_set="all",

@@ -1,8 +1,7 @@
 """Typed reference-motion data and HDF5 loaders.
 
-The canonical representation follows the native ``stac-mjx`` output contract:
-``qpos``, ``qvel``, ``xpos``, and ``xquat``. The temporary fruit-fly format is
-converted to that representation at the loading boundary.
+Reference files use the native ``stac-mjx`` output contract: ``qpos``, ``qvel``,
+``xpos``, ``xquat``, and their associated state names.
 """
 
 import os
@@ -11,7 +10,7 @@ import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal, Self
+from typing import Any, Self
 
 import h5py
 import jax
@@ -19,8 +18,6 @@ import jax.numpy as jp
 import numpy as np
 import yaml
 from jaxtyping import Array, Float, Integer
-
-ReferenceDataFormat = Literal["stac", "fruitfly"]
 
 
 @dataclass(frozen=True, eq=False)
@@ -395,7 +392,6 @@ def load_reference_clips(
     data_path: str | os.PathLike[str],
     *,
     n_frames_per_clip: int | None = None,
-    data_format: ReferenceDataFormat = "stac",
     clip_indices: Sequence[int] | np.ndarray | Array | None = None,
     joint_names: Sequence[str] | None = None,
     body_names: Sequence[str] | None = None,
@@ -414,21 +410,11 @@ def load_reference_clips(
 
     if not path.exists():
         raise FileNotFoundError(path)
-    if path.is_dir():
-        if data_format != "stac":
-            raise ValueError("Directory loading is supported only for STAC files.")
-        clips = _load_stac_directory(path, n_frames_per_clip)
-    elif data_format == "stac":
-        clips = _load_stac_h5(path, n_frames_per_clip)
-    elif data_format == "fruitfly":
-        clips = _load_fruitfly_h5(
-            path,
-            n_frames_per_clip=n_frames_per_clip,
-            joint_names=normalized_joint_names,
-            body_names=normalized_body_names,
-        )
-    else:
-        raise ValueError(f"Unsupported reference data format: {data_format!r}")
+    clips = (
+        _load_reference_directory(path, n_frames_per_clip)
+        if path.is_dir()
+        else _load_reference_file(path, n_frames_per_clip)
+    )
 
     if normalized_indices is not None:
         selected = np.asarray(normalized_indices, dtype=int)
@@ -457,7 +443,6 @@ def prepare_reference_clips(
         return load_reference_clips(
             config["reference_data_path"],
             n_frames_per_clip=config["clip_length"],
-            data_format=config.get("reference_data_format", "stac"),
             clip_indices=config.get("clip_indices"),
             joint_names=joint_names,
             body_names=body_names,
@@ -473,31 +458,19 @@ def prepare_reference_clips(
     )
 
 
-def _load_stac_h5(path: Path, n_frames_per_clip: int | None) -> ReferenceClips:
+def _load_reference_file(path: Path, n_frames_per_clip: int | None) -> ReferenceClips:
     with h5py.File(path, "r") as h5:
         required = ("qpos", "xpos", "xquat", "names_qpos", "names_xpos")
-        if "qpos" not in h5 and {"position", "joints"}.issubset(h5.keys()):
-            raise ValueError(
-                f"{path} looks like temporary fruit-fly reference data; pass "
-                "data_format='fruitfly'."
-            )
-        if "all_clips" in h5 and {"position", "joints"}.issubset(
-            h5["all_clips"].keys()
-        ):
-            raise ValueError(
-                f"{path} looks like temporary fruit-fly reference data; pass "
-                "data_format='fruitfly'."
-            )
-        _require_h5_keys(h5, required, "STAC")
+        _require_h5_keys(h5, required)
         if "qvel" not in h5 or h5["qvel"].size == 0:
             raise ValueError(
-                f"{path}: STAC reference data has no inferred qvel values; "
+                f"{path}: reference data has no inferred qvel values; "
                 "rerun stac-mjx with stac.infer_qvels=true."
             )
         arrays = {name: h5[name][()] for name in ("qpos", "qvel", "xpos", "xquat")}
         qpos_names = _decode_names(h5["names_qpos"][()])
         xpos_names = _decode_names(h5["names_xpos"][()])
-        stac_config = _load_stac_config(h5)
+        stac_config = _load_config(h5)
 
     data = _canonical_data(**arrays, n_frames_per_clip=n_frames_per_clip)
     if len(qpos_names) != data.qpos.shape[-1]:
@@ -522,7 +495,9 @@ def _load_stac_h5(path: Path, n_frames_per_clip: int | None) -> ReferenceClips:
     )
 
 
-def _load_stac_directory(path: Path, n_frames_per_clip: int | None) -> ReferenceClips:
+def _load_reference_directory(
+    path: Path, n_frames_per_clip: int | None
+) -> ReferenceClips:
     h5_paths = sorted(path.glob("*.h5"))
     if not h5_paths:
         raise ValueError(f"No HDF5 files found in {path}.")
@@ -530,7 +505,7 @@ def _load_stac_directory(path: Path, n_frames_per_clip: int | None) -> Reference
     clips: list[ReferenceClips] = []
     target_frames = n_frames_per_clip
     for h5_path in h5_paths:
-        clip = _load_stac_h5(h5_path, None)
+        clip = _load_reference_file(h5_path, None)
         if clip.data.qpos.shape[0] != 1:
             raise ValueError(f"Expected one clip per file in {h5_path}.")
         native_frames = clip.data.qpos.shape[1]
@@ -565,82 +540,6 @@ def _load_stac_directory(path: Path, n_frames_per_clip: int | None) -> Reference
         xpos_names=first.metadata.xpos_names,
         stac_config=first.metadata.stac_config,
         behaviour_labels=labels,
-    )
-
-
-def _load_fruitfly_h5(
-    path: Path,
-    *,
-    n_frames_per_clip: int | None,
-    joint_names: tuple[str, ...] | None,
-    body_names: tuple[str, ...] | None,
-) -> ReferenceClips:
-    required = (
-        "position",
-        "velocity",
-        "quaternion",
-        "angular_velocity",
-        "joints",
-        "joints_velocity",
-        "body_positions",
-        "body_quaternions",
-    )
-    with h5py.File(path, "r") as h5:
-        group = h5.get("all_clips", h5)
-        _require_h5_keys(group, required, "fruit-fly")
-        arrays = {name: group[name][()] for name in required}
-        metadata_group = h5.get("metadata")
-        file_joint_names = _optional_metadata_names(metadata_group, "joint_names")
-        file_body_names = _optional_metadata_names(metadata_group, "body_names")
-
-    joint_names = joint_names or file_joint_names
-    body_names = body_names or file_body_names
-    n_joints = arrays["joints"].shape[-1]
-    n_bodies = arrays["body_positions"].shape[-2]
-    if joint_names is None:
-        joint_names = tuple(f"joint_{i}" for i in range(n_joints))
-    if body_names is None:
-        body_names = tuple(f"body_{i}" for i in range(n_bodies))
-    if len(joint_names) != n_joints:
-        raise ValueError(
-            f"Fruit-fly joint names have length {len(joint_names)}; expected {n_joints}."
-        )
-    if len(body_names) != n_bodies:
-        raise ValueError(
-            f"Fruit-fly body names have length {len(body_names)}; expected {n_bodies}."
-        )
-
-    data = _canonical_data(
-        qpos=np.concatenate(
-            [arrays["position"], arrays["quaternion"], arrays["joints"]], axis=-1
-        ),
-        qvel=np.concatenate(
-            [
-                arrays["velocity"],
-                arrays["angular_velocity"],
-                arrays["joints_velocity"],
-            ],
-            axis=-1,
-        ),
-        xpos=arrays["body_positions"],
-        xquat=arrays["body_quaternions"],
-        n_frames_per_clip=n_frames_per_clip,
-    )
-    qpos_names = (
-        "root_x",
-        "root_y",
-        "root_z",
-        "root_qw",
-        "root_qx",
-        "root_qy",
-        "root_qz",
-        *joint_names,
-    )
-    return _make_reference_clips(
-        path,
-        data,
-        qpos_names=qpos_names,
-        xpos_names=body_names,
     )
 
 
@@ -774,14 +673,12 @@ def _canonical_data(
     )
 
 
-def _require_h5_keys(
-    group: h5py.Group, required: Sequence[str], format_name: str
-) -> None:
+def _require_h5_keys(group: h5py.Group, required: Sequence[str]) -> None:
     missing = [name for name in required if name not in group]
     if missing:
         present = list(group.keys())
         raise ValueError(
-            f"Invalid {format_name} reference data: missing {missing}; present keys: {present}."
+            f"Invalid reference data: missing {missing}; present keys: {present}."
         )
 
 
@@ -792,15 +689,7 @@ def _decode_names(values: np.ndarray) -> tuple[str, ...]:
     )
 
 
-def _optional_metadata_names(
-    group: h5py.Group | None, name: str
-) -> tuple[str, ...] | None:
-    if group is None or (dataset := group.get(name)) is None:
-        return None
-    return _decode_names(dataset[()])
-
-
-def _load_stac_config(h5: h5py.File) -> Mapping[str, Any] | None:
+def _load_config(h5: h5py.File) -> Mapping[str, Any] | None:
     if "config" not in h5:
         return None
     raw = h5["config"][()]
@@ -809,7 +698,7 @@ def _load_stac_config(h5: h5py.File) -> Mapping[str, Any] | None:
     if (config := yaml.safe_load(raw)) is None:
         return None
     if not isinstance(config, Mapping):
-        raise TypeError("STAC config must decode to a mapping.")
+        raise TypeError("Reference config must decode to a mapping.")
     return config
 
 

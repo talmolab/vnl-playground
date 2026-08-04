@@ -1,6 +1,7 @@
 """Tests for the canonical reference-motion data contract."""
 
 import importlib.util
+import inspect
 from pathlib import Path
 
 import h5py
@@ -16,6 +17,12 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(reference_clips)
 
 
+def test_loader_has_one_canonical_format() -> None:
+    parameters = inspect.signature(reference_clips.load_reference_clips).parameters
+
+    assert "data_format" not in parameters
+
+
 def test_data_rejects_inconsistent_leading_axes() -> None:
     with pytest.raises(ValueError, match="identical leading dimensions"):
         reference_clips.ReferenceClipData(
@@ -26,7 +33,7 @@ def test_data_rejects_inconsistent_leading_axes() -> None:
         )
 
 
-def _write_stac(
+def _write_reference(
     path: Path,
     *,
     n_clips: int = 2,
@@ -66,33 +73,39 @@ def _write_stac(
         )
 
 
-def _write_fruitfly(path: Path) -> None:
-    leading = (2, 3)
+def _write_fly_reference(path: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    n_clips, n_frames, n_joints, n_bodies = 2, 3, 36, 68
+    leading = (n_clips * n_frames,)
+    joint_names = tuple(f"joint_{i}" for i in range(n_joints))
+    body_names = ("world", "thorax", *(f"body_{i}" for i in range(n_bodies - 2)))
+
+    qpos = np.zeros((*leading, 7 + n_joints), dtype=np.float32)
+    qpos[:, :3] = 1.0
+    qpos[:, 3] = 1.0
+    qpos[:, 7:] = 4.0
+    qvel = np.zeros((*leading, 6 + n_joints), dtype=np.float32)
+    qvel[:, 3:6] = 3.0
+    qvel[:, 6:] = 5.0
+    xpos = np.full((*leading, n_bodies, 3), 6.0, dtype=np.float32)
+    xquat = np.zeros((*leading, n_bodies, 4), dtype=np.float32)
+    xquat[..., 0] = 1.0
+
     with h5py.File(path, "w") as h5:
-        group = h5.create_group("all_clips")
-        group.create_dataset("position", data=np.ones((*leading, 3), np.float32))
-        group.create_dataset("velocity", data=np.ones((*leading, 3), np.float32) * 2)
-        quaternion = np.zeros((*leading, 4), np.float32)
-        quaternion[..., 0] = 1.0
-        group.create_dataset("quaternion", data=quaternion)
-        group.create_dataset(
-            "angular_velocity", data=np.ones((*leading, 3), np.float32) * 3
+        h5.create_dataset("qpos", data=qpos)
+        h5.create_dataset("qvel", data=qvel)
+        h5.create_dataset("xpos", data=xpos)
+        h5.create_dataset("xquat", data=xquat)
+        h5.create_dataset(
+            "names_qpos", data=np.asarray(["root"] * 7 + list(joint_names), dtype="S")
         )
-        group.create_dataset("joints", data=np.ones((*leading, 2), np.float32) * 4)
-        group.create_dataset(
-            "joints_velocity", data=np.ones((*leading, 2), np.float32) * 5
-        )
-        group.create_dataset(
-            "body_positions", data=np.ones((*leading, 2, 3), np.float32) * 6
-        )
-        body_quaternions = np.zeros((*leading, 2, 4), np.float32)
-        body_quaternions[..., 0] = 1.0
-        group.create_dataset("body_quaternions", data=body_quaternions)
+        h5.create_dataset("names_xpos", data=np.asarray(body_names, dtype="S"))
+
+    return joint_names, body_names
 
 
-def test_stac_is_default_and_preserves_semantics(tmp_path: Path) -> None:
+def test_reference_file_preserves_semantics(tmp_path: Path) -> None:
     path = tmp_path / "reference.h5"
-    _write_stac(path)
+    _write_reference(path)
 
     clips = reference_clips.load_reference_clips(
         path,
@@ -118,7 +131,7 @@ def test_stac_is_default_and_preserves_semantics(tmp_path: Path) -> None:
 
 def test_selection_slicing_and_split_preserve_source_indices(tmp_path: Path) -> None:
     path = tmp_path / "reference.h5"
-    _write_stac(path, n_clips=3, n_frames=4)
+    _write_reference(path, n_clips=3, n_frames=4)
     clips = reference_clips.load_reference_clips(
         path, n_frames_per_clip=4, clip_indices=(2, 0)
     )
@@ -132,7 +145,7 @@ def test_selection_slicing_and_split_preserve_source_indices(tmp_path: Path) -> 
 
 def test_numpy_clip_indices_are_supported(tmp_path: Path) -> None:
     path = tmp_path / "reference.h5"
-    _write_stac(path, n_clips=3)
+    _write_reference(path, n_clips=3)
 
     clips = reference_clips.load_reference_clips(
         path,
@@ -145,7 +158,7 @@ def test_numpy_clip_indices_are_supported(tmp_path: Path) -> None:
 
 def test_typed_views_accept_traced_indices(tmp_path: Path) -> None:
     path = tmp_path / "reference.h5"
-    _write_stac(path)
+    _write_reference(path)
     clips = reference_clips.load_reference_clips(path, n_frames_per_clip=3)
 
     get_joints = jax.jit(lambda clip, frame: clips.at(clip, frame).joints)
@@ -155,44 +168,11 @@ def test_typed_views_accept_traced_indices(tmp_path: Path) -> None:
     assert get_sequence(jp.asarray(0), jp.asarray(0)).shape == (2, 2)
 
 
-def test_fruitfly_adapter_normalizes_once(tmp_path: Path) -> None:
-    path = tmp_path / "fruitfly.h5"
-    _write_fruitfly(path)
-
-    with pytest.raises(ValueError, match="data_format='fruitfly'"):
-        reference_clips.load_reference_clips(path, n_frames_per_clip=3)
-    with pytest.raises(ValueError, match="contains 3 frames per clip; expected 2"):
-        reference_clips.load_reference_clips(
-            path,
-            n_frames_per_clip=2,
-            data_format="fruitfly",
-        )
-
-    clips = reference_clips.load_reference_clips(
-        path,
-        n_frames_per_clip=3,
-        data_format="fruitfly",
-        joint_names=("joint_a", "joint_b"),
-        body_names=("body_a", "body_b"),
-        root_body_name="thorax",
-    )
-
-    assert clips.qpos.shape == (2, 3, 9)
-    assert clips.qvel.shape == (2, 3, 8)
-    np.testing.assert_allclose(clips.root_position, 1.0)
-    np.testing.assert_allclose(clips.angular_velocity, 3.0)
-    np.testing.assert_allclose(clips.joints, 4.0)
-    np.testing.assert_allclose(clips.joints_velocity, 5.0)
-
-
-def test_prepare_reference_clips_passes_layout_to_fruitfly_adapter(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "fruitfly.h5"
-    _write_fruitfly(path)
+def test_fly_reference_uses_the_canonical_loader(tmp_path: Path) -> None:
+    path = tmp_path / "fly_reference.h5"
+    joint_names, body_names = _write_fly_reference(path)
     config = {
         "reference_data_path": path,
-        "reference_data_format": "fruitfly",
         "clip_length": 3,
         "clip_indices": None,
     }
@@ -200,18 +180,26 @@ def test_prepare_reference_clips_passes_layout_to_fruitfly_adapter(
     clips = reference_clips.prepare_reference_clips(
         config,
         None,
-        joint_names=("joint_a", "joint_b"),
-        body_names=("body_a", "body_b"),
+        joint_names=joint_names,
+        body_names=body_names[1:],
         root_body_name="thorax",
     )
 
-    assert clips.joint_names == ["joint_a", "joint_b"]
-    assert clips.body_names == ["body_a", "body_b"]
+    assert clips.qpos.shape == (2, 3, 43)
+    assert clips.qvel.shape == (2, 3, 42)
+    assert clips.xpos.shape == (2, 3, 68, 3)
+    assert clips.joints.shape == (2, 3, 36)
+    assert clips.joint_names == list(joint_names)
+    assert clips.body_names == list(body_names[1:])
+    np.testing.assert_allclose(clips.root_position, 6.0)
+    np.testing.assert_allclose(clips.angular_velocity, 3.0)
+    np.testing.assert_allclose(clips.joints, 4.0)
+    np.testing.assert_allclose(clips.joints_velocity, 5.0)
 
 
-def test_prepare_reference_clips_defaults_to_stac(tmp_path: Path) -> None:
+def test_prepare_reference_clips_loads_canonical_file(tmp_path: Path) -> None:
     path = tmp_path / "reference.h5"
-    _write_stac(path)
+    _write_reference(path)
     config = {
         "reference_data_path": path,
         "clip_length": 3,
@@ -231,7 +219,7 @@ def test_prepare_reference_clips_defaults_to_stac(tmp_path: Path) -> None:
 
 def test_fixed_root_uses_matching_qpos_and_qvel_indices(tmp_path: Path) -> None:
     path = tmp_path / "fixed.h5"
-    _write_stac(path, fixed_root=True)
+    _write_reference(path, fixed_root=True)
     clips = reference_clips.load_reference_clips(
         path,
         n_frames_per_clip=3,
@@ -248,7 +236,7 @@ def test_fixed_root_uses_matching_qpos_and_qvel_indices(tmp_path: Path) -> None:
 
 def test_preloaded_clips_can_be_bound_to_an_environment_layout(tmp_path: Path) -> None:
     path = tmp_path / "reference.h5"
-    _write_stac(path)
+    _write_reference(path)
     clips = reference_clips.load_reference_clips(path, n_frames_per_clip=3)
 
     bound = clips.bind_model_layout(
@@ -265,15 +253,15 @@ def test_preloaded_clips_can_be_bound_to_an_environment_layout(tmp_path: Path) -
 
 def test_invalid_frame_partition_fails_early(tmp_path: Path) -> None:
     path = tmp_path / "reference.h5"
-    _write_stac(path, n_clips=1, n_frames=5)
+    _write_reference(path, n_clips=1, n_frames=5)
 
     with pytest.raises(ValueError, match="not divisible"):
         reference_clips.load_reference_clips(path, n_frames_per_clip=3)
 
 
-def test_stac_without_inferred_velocities_has_actionable_error(tmp_path: Path) -> None:
+def test_missing_inferred_velocities_has_actionable_error(tmp_path: Path) -> None:
     path = tmp_path / "reference.h5"
-    _write_stac(path)
+    _write_reference(path)
     with h5py.File(path, "a") as h5:
         del h5["qvel"]
         h5.create_dataset("qvel", data=np.asarray([], dtype=np.float32))
@@ -282,11 +270,11 @@ def test_stac_without_inferred_velocities_has_actionable_error(tmp_path: Path) -
         reference_clips.load_reference_clips(path, n_frames_per_clip=3)
 
 
-def test_stac_directory_stacks_one_file_per_clip(tmp_path: Path) -> None:
+def test_reference_directory_stacks_one_file_per_clip(tmp_path: Path) -> None:
     directory = tmp_path / "clips"
     directory.mkdir()
-    _write_stac(directory / "reach_ik.h5", n_clips=1, n_frames=4, fixed_root=True)
-    _write_stac(directory / "walk_ik.h5", n_clips=1, n_frames=4, fixed_root=True)
+    _write_reference(directory / "reach_ik.h5", n_clips=1, n_frames=4, fixed_root=True)
+    _write_reference(directory / "walk_ik.h5", n_clips=1, n_frames=4, fixed_root=True)
 
     clips = reference_clips.load_reference_clips(directory, n_frames_per_clip=3)
 
