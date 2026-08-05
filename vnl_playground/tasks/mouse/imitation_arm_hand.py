@@ -11,7 +11,7 @@ simulated (driven only by hand-joystick contact, per Eric 2026-07-16).
 
 import glob
 import os
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Mapping, Optional, Union
 
 import brax.math as brax_math
 import h5py
@@ -1128,4 +1128,182 @@ class MouseImitationArmHandScottV1(MouseImitationArmHand):
             0.0,
         )
         metrics["rewards/joystick_contact"] = reward
+        return reward
+
+
+class MouseImitationArmHandJoystickOnly(MouseImitationArmHandScottV1):
+    """scott_v2 rig, but the arm's imitation supervision is removed entirely.
+
+    The A1 arm of
+    `analysis/2026-08-05-joystick-imitation-constraint-vs-task-driven/`. The
+    question it exists to answer: does a policy told only *where the joystick
+    should go* reach that trajectory through arm motion no mouse could produce?
+
+    **Only `_get_imitation_target` is overridden.** The observation drops from
+    78 dims (27 joint deltas + 17 tracked bodies x 3) to **2** -- the joystick's
+    own next-frame delta. Proprioception is untouched at 54 dims (qpos 27 +
+    qvel 27), so the policy still knows where its own arm is; it is simply never
+    told, and never rewarded for, where the arm *should* be. The joystick
+    reference is still supplied, so this remains an imitation task -- of the
+    joystick alone.
+
+    The reward half of the ablation needs no code and is done at the launch line
+    with `--drop-reward joints --drop-reward wrist_pos --drop-reward bodies_pos
+    --drop-reward joints_vel`, leaving `joystick_pos` and `control_cost`.
+
+    **This is deliberately a subclass rather than a flag on the parent.** The
+    A0 control for this experiment is the already-trained
+    `scottv2-wristforearm-b1` checkpoint, whose env is
+    `MouseImitationArmHandScottV1`. If that class were edited to carry a mode
+    switch, A0's environment would no longer be provably the one A0 trained in,
+    and the comparison the whole experiment rests on would be unverifiable.
+    Nothing above this line changes.
+
+    Two properties worth recording, both measured 2026-08-05 before this class
+    was written rather than assumed afterwards:
+
+    * **The remaining reward is not saturated.** With every arm term gone,
+      `joystick_pos` is the only tracking signal. At v25's `exp_scale=2 mm` a
+      policy that never touched the joystick would score 0.712 of ceiling and
+      the run would be worthless. At the inherited scott_v1/v2 value of 0.75 mm
+      it scores **0.193**, with only 8.1% of frames above half -- live gradient
+      across the reference's whole deflection range (signal peaks at
+      d = sqrt(2)*s = 1.06 mm; the reference's median deflection is 1.48 mm).
+      No reward scale is changed from b1.
+
+    * **`reference_length` is 1**, so the imitation target is a single future
+      frame and this override returns exactly 2 numbers. If `reference_length`
+      is ever raised, this returns 2 x that many and the observation size
+      changes -- it is not hardcoded, but it is also not independent of that
+      config value.
+    """
+
+    def __init__(self, config=None, config_overrides=None, clips=None):
+        super().__init__(config, config_overrides, clips)
+        # `_joystick_qpos_idx` is set by MouseImitationArmHand.__init__ only when
+        # "joystick_pos" is among the reward terms. This class reads it to build
+        # the *observation*, so dropping that reward term would otherwise fail
+        # with a bare AttributeError from inside a jitted _get_obs -- far from
+        # the launch line that caused it.
+        if not hasattr(self, "_joystick_qpos_idx"):
+            raise ValueError(
+                f"{type(self).__name__} builds its observation from "
+                "cfg.joystick_qpos_idx, which is only prepared when the "
+                "'joystick_pos' reward term is present. It was dropped, which "
+                "would leave this policy with no task signal at all -- neither "
+                "reward nor observation. Keep 'joystick_pos'."
+            )
+
+    def _get_imitation_target(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> jp.ndarray:
+        reference = self._get_imitation_reference(data, info)
+        joystick_target = (
+            reference.joints[..., self._joystick_qpos_idx]
+            - data.qpos[self._joystick_qpos_idx]
+        )
+        return joystick_target.flatten()
+
+
+# A2 needs its own registry. `_scott_v1_registry` is shared *by reference* with
+# MouseImitationArmHandScottV1 -- the class the already-trained A0 control runs
+# in -- so decorating `joints` on it would silently redefine A0's reward too.
+# Copy first, override second.
+_arm_only_registry = RewardRegistry()
+_arm_only_registry.rewards.update(_scott_v1_registry.rewards)
+_arm_only_registry.terminations.update(_scott_v1_registry.terminations)
+
+
+class MouseImitationArmHandArmOnly(MouseImitationArmHandScottV1):
+    """scott_v2 rig imitating the arm only; the joystick is unsupervised.
+
+    The A2 arm of
+    `analysis/2026-08-05-joystick-imitation-constraint-vs-task-driven/`, and the
+    exact complement of `MouseImitationArmHandJoystickOnly`. Together with A0
+    (both) the three arms form a factorial over which half of the reference is
+    supervised:
+
+        A0  arm + joystick   task_obs 78   (27 joint deltas + 17 bodies x 3)
+        A1  joystick only    task_obs  2   (joystick delta)
+        A2  arm only         task_obs 76   (25 arm joint deltas + 17 bodies x 3)
+
+    Proprioception is 54 (qpos 27 + qvel 27) in all three, unchanged. **A2 still
+    perceives the joystick's current state** through proprioception, because the
+    joystick remains a physical part of the environment the arm interacts with;
+    what it loses is any reference for where the joystick *should* be, and any
+    reward for putting it there.
+
+    **The non-obvious part, and the reason this needs a class at all.** Dropping
+    the `joystick_pos` reward term is not sufficient. `joints` is an L2 norm over
+    `_non_ik_idx`, which on this rig is all 27 qpos dims -- and qpos[0:2] are
+    `x_slide-mouse` / `y_slide-mouse`, i.e. **the joystick itself** (verified
+    against the model, not assumed). So a run that merely dropped `joystick_pos`
+    would still be supervising joystick position through `joints`, just more
+    weakly, and would not be the experiment it claimed to be. Both the reward
+    and the observation are restricted to the 25 arm dims here.
+
+    `wrist_pos` and `bodies_pos` need no such treatment: `_TRACKED_BODIES_V25` is
+    17 arm/hand bones with no joystick body among them (checked).
+
+    Reward ceiling is 6.0116/step (`joints` 6.0 + `wrist_pos` 0.0058 +
+    `bodies_pos` 0.0058) against A0's 12.0116 and A1's 6.0, so episode reward is
+    not comparable across the three arms. The comparable scalars are the error
+    metrics: `joint_l2_error` (now arm-only) and `joystick_pos_error`.
+
+    **Neutralise `joystick_pos` with `weight=0`, do NOT `--drop-reward` it.**
+    Both give exactly 0 reward and 0 gradient, but dropping the term also
+    removes `_joystick_pos_reward` from the evaluated set, and that function is
+    what writes `metrics["joystick_pos_error"]`. Dropping it would leave A2
+    training blind to the single most interesting quantity it produces -- what
+    the joystick does when nothing asks it to move. `joints_vel` is already
+    carried this way for the same reason. Launch with
+    `--reward-override joystick_pos.weight=0.0`.
+    """
+
+    _registry = _arm_only_registry
+
+    def __init__(self, config=None, config_overrides=None, clips=None):
+        super().__init__(config, config_overrides, clips)
+        joystick = list(self._config.joystick_qpos_idx)
+        self._arm_qpos_idx = jp.array(
+            [i for i in range(self.mjx_model.nq) if i not in joystick], dtype=int
+        )
+
+    def _get_imitation_target(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> jp.ndarray:
+        reference = self._get_imitation_reference(data, info)
+        joint_targets = (
+            reference.joints[..., self._arm_qpos_idx] - data.qpos[self._arm_qpos_idx]
+        )
+        body_deltas = []
+        for body_name in self._config.tracked_bodies:
+            ref_pos = reference.body_xpos(body_name)
+            model_pos = data.xpos[self._body_ids[body_name]]
+            body_deltas.append((ref_pos - model_pos).flatten())
+        return jp.concatenate([joint_targets.flatten()] + body_deltas)
+
+    @_arm_only_registry.reward("joints")
+    def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
+        """Arm-only pose tracking: the joystick's own 2 dims are excluded."""
+        target = self._get_current_target(data, info)
+        distance = jp.linalg.norm(
+            target.joints[self._arm_qpos_idx] - data.qpos[self._arm_qpos_idx]
+        )
+        metrics["joint_l2_error"] = distance
+        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        metrics["rewards/joints"] = reward
+        return reward
+
+    @_arm_only_registry.reward("joints_vel")
+    def _joints_vel_reward(self, data, info, metrics, weight, exp_scale) -> float:
+        """Same exclusion as `joints`. Weight is 0 by config, but if it is ever
+        re-enabled it must not quietly resupervise the joystick."""
+        target = self._get_current_target(data, info)
+        distance = jp.linalg.norm(
+            target.joints_velocity[self._arm_qpos_idx] - data.qvel[self._arm_qpos_idx]
+        )
+        metrics["joint_vel_l2_error"] = distance
+        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        metrics["rewards/joints_vel"] = reward
         return reward

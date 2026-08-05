@@ -53,6 +53,8 @@ from orbax import checkpoint as ocp
 from mujoco_playground import wrapper
 from vnl_playground.tasks.mouse.imitation_arm_hand import (
     MouseImitationArmHand,
+    MouseImitationArmHandArmOnly,
+    MouseImitationArmHandJoystickOnly,
     MouseImitationArmHandScottV1,
     default_config,
     default_config_no_joystick,
@@ -205,6 +207,34 @@ def parse_args():
     )
 
     p.add_argument(
+        "--joystick-only-obs", action="store_true",
+        help="Replace the 78-dim imitation target (27 joint deltas + 17 tracked "
+             "bodies x 3) with the joystick's own 2-dim next-frame delta, so the "
+             "arm reference is never observed. Proprioception (qpos+qvel, 54 "
+             "dims) is unchanged. Pair with --drop-reward joints/wrist_pos/"
+             "bodies_pos/joints_vel to remove the arm's imitation supervision "
+             "from the reward as well: that combination is the A1 arm of "
+             "analysis/2026-08-05-joystick-imitation-constraint-vs-task-driven/. "
+             "Requires --scott-v1 or --scott-v2."
+    )
+
+    p.add_argument(
+        "--arm-only-obs", action="store_true",
+        help="The complement of --joystick-only-obs: imitate the ARM and leave "
+             "the joystick unsupervised. task_obs becomes 76 dims (25 arm joint "
+             "deltas + 17 tracked bodies x 3) -- the joystick's own 2 qpos dims "
+             "are excluded -- and the `joints`/`joints_vel` rewards are "
+             "restricted to the same 25 dims. That restriction is the point: "
+             "`joints` is an L2 norm over all 27 qpos dims, and qpos[0:2] IS the "
+             "joystick, so dropping --drop-reward joystick_pos alone would still "
+             "supervise joystick position through `joints`. The joystick remains "
+             "physically present and is still observed via proprioception. Pair "
+             "with --drop-reward joystick_pos. This is the A2 arm of "
+             "analysis/2026-08-05-joystick-imitation-constraint-vs-task-driven/. "
+             "Requires --scott-v1 or --scott-v2."
+    )
+
+    p.add_argument(
         "--finetune-path", type=str, default=None,
         help="Path to a checkpoint dir (e.g. checkpoints/<exp>/<step>) to "
              "restore policy/value/normalizer params from via brax's "
@@ -261,6 +291,22 @@ assert sum([args.no_joystick, args.v23, args.raw_joystick, args.v25,
     "--no-joystick, --v23, --raw-joystick, --v25, --scott-v1 and --scott-v2 "
     "are mutually exclusive"
 )
+# MouseImitationArmHandJoystickOnly subclasses MouseImitationArmHandScottV1, so
+# it carries that class's exact-geom-distance contact reward and its assumption
+# that the grip geoms are selectable by contype. Selecting it under a v25 or
+# earlier config would silently pair a scott-era env class with a config whose
+# geometry it was not written for.
+if (args.joystick_only_obs or args.arm_only_obs) and not (args.scott_v1 or args.scott_v2):
+    raise SystemExit(
+        "--joystick-only-obs / --arm-only-obs require --scott-v1 or --scott-v2 "
+        "(the classes they select subclass MouseImitationArmHandScottV1)"
+    )
+if args.joystick_only_obs and args.arm_only_obs:
+    raise SystemExit(
+        "--joystick-only-obs and --arm-only-obs are complements, not "
+        "composable: the first supervises only the joystick, the second only "
+        "the arm. Passing both would silently give you the arm-only env."
+    )
 if args.no_joystick:
     env_cfg = default_config_no_joystick()
 elif args.v23:
@@ -696,6 +742,26 @@ if __name__ == "__main__":
     # up without a code change.
     env_cls = (MouseImitationArmHandScottV1
                if (args.scott_v1 or args.scott_v2) else MouseImitationArmHand)
+    # --joystick-only-obs swaps in the A1 subclass, which returns a 2-dim
+    # imitation target (the joystick's own next-frame delta) instead of the
+    # 78-dim arm reference. Paired at the launch line with --drop-reward for
+    # joints/wrist_pos/bodies_pos/joints_vel, this removes the arm's imitation
+    # supervision from both the reward and the observation. See
+    # MouseImitationArmHandJoystickOnly and
+    # analysis/2026-08-05-joystick-imitation-constraint-vs-task-driven/.
+    if args.joystick_only_obs:
+        env_cls = MouseImitationArmHandJoystickOnly
+        print("joystick-only obs: imitation target is the joystick delta only "
+              "(2 dims); the arm reference is not observed")
+    # --arm-only-obs is the complement: the arm is supervised, the joystick is
+    # not. Note this also restricts the `joints` reward to the 25 arm dims --
+    # dropping joystick_pos alone would leave qpos[0:2] (the joystick) inside
+    # that term's L2 norm. See MouseImitationArmHandArmOnly.
+    if args.arm_only_obs:
+        env_cls = MouseImitationArmHandArmOnly
+        print("arm-only obs: imitation target is 25 arm joint deltas + 17 body "
+              "deltas (76 dims); the joystick reference is not observed and "
+              "`joints`/`joints_vel` exclude the joystick's own 2 qpos dims")
     env = FlattenObsWrapper(env_cls(config=env_cfg))
     eval_env = FlattenObsWrapper(env_cls(config=env_cfg))
 
