@@ -15,28 +15,21 @@ os.environ["PYOPENGL_PLATFORM"] = "egl"
 import functools
 import json
 from datetime import datetime
-import numpy as np
-import imageio
 
+import imageio
 import jax
 import jax.numpy as jp
-import matplotlib.pyplot as plt
-import mediapy as media
 import mujoco
+import numpy as np
 import wandb
+from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
-from brax.training.acme import running_statistics
-
 from etils import epath
 from flax.training import orbax_utils
-from IPython.display import clear_output, display
-from orbax import checkpoint as ocp
 from ml_collections import config_dict
-from tqdm import tqdm
-
-from mujoco_playground import locomotion, wrapper
-from mujoco_playground.config import locomotion_params
+from mujoco_playground import wrapper
+from orbax import checkpoint as ocp
 
 from vnl_playground.tasks.rodent import imitation
 from vnl_playground.tasks.rodent import wrappers as rodent_wrappers
@@ -52,7 +45,7 @@ env_cfg.keep_clips_idx = np.arange(50)
 
 ppo_params = config_dict.create(
     num_envs=4096,
-    num_timesteps=int(4_000_000_000),
+    num_timesteps=4_000_000_000,
     batch_size=1024,
     num_minibatches=16,
     num_updates_per_batch=3,
@@ -146,7 +139,12 @@ del training_params["eval_every"]
 network_factory = functools.partial(
     ppo_networks.make_ppo_networks, **ppo_params.network_factory
 )
-normalize = lambda x, y: x
+
+
+def normalize(x, y):
+    return x
+
+
 if training_params["normalize_observations"]:
     normalize = running_statistics.normalize
 
@@ -242,7 +240,7 @@ if __name__ == "__main__":
         qposes_rollout = np.array([state.data.qpos for state in rollout])
         video_path = f"{ckpt_path}/{current_step}.mp4"
 
-        with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
+        with imageio.get_writer(video_path, fps=int(1.0 / env.dt)) as video:
             for qpos in qposes_rollout:
                 mj_data.qpos = qpos
                 mujoco.mj_forward(mj_model, mj_data)

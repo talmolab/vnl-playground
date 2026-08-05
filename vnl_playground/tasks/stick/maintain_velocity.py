@@ -11,21 +11,19 @@ Termination occurs if:
 """
 
 import collections
-from typing import Any, Dict, Mapping, Optional, Union
+from typing import Any
 
 import jax
 import jax.numpy as jp
 import numpy as np
-from jax import flatten_util
 from ml_collections import config_dict
 from mujoco import mjx
-
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward as reward_fns
 
+from vnl_playground.tasks.reward_registry import RewardRegistry
 from vnl_playground.tasks.stick import base as stick_base
 from vnl_playground.tasks.stick import consts
-from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -74,7 +72,7 @@ class MaintainVelocity(stick_base.StickBugEnv):
         self,
         rng: jax.Array = jax.random.PRNGKey(0),
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
     ) -> None:
         super().__init__(config, config_overrides)
         self._rng = rng

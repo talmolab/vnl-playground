@@ -1,20 +1,22 @@
 """Mouse forelimb reaching task following rodent task patterns."""
 
 import collections
-from typing import Any, Dict, Mapping, Optional, Union
+from collections.abc import Mapping
+from typing import Any
 
 import jax
 import jax.numpy as jp
-from ml_collections import config_dict
 import mujoco
+from ml_collections import config_dict
 from mujoco import mjx
-
-from jax import flatten_util
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward as reward_fns
+
 from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.mouse.base import (
     MouseBaseEnv,
+)
+from vnl_playground.tasks.mouse.base import (
     default_config as base_default_config,
 )
 from vnl_playground.tasks.reward_registry import RewardRegistry
@@ -57,7 +59,7 @@ class MouseReach(MouseBaseEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
     ) -> None:
         """Initialize the mouse reaching environment.
 

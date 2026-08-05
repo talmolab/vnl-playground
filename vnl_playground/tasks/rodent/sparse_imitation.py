@@ -11,7 +11,8 @@ Key behavior:
 """
 
 import collections
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jp
@@ -20,14 +21,14 @@ import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
-from jax import flatten_util
+
+from vnl_playground.tasks import math_utils
+from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
 from . import base as rodent_base
 from . import consts
-from vnl_playground.tasks import math_utils
-from vnl_playground.tasks.reference_clips import ReferenceClips
-from vnl_playground.tasks.reward_registry import RewardRegistry
 
 _registry = RewardRegistry()
 
@@ -102,8 +103,8 @@ class SparseImitation(rodent_base.RodentEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
-        clips: Optional[ReferenceClips] = None,
+        config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
+        clips: ReferenceClips | None = None,
     ) -> None:
         """Initialize the sparse imitation environment.
 
@@ -172,7 +173,7 @@ class SparseImitation(rodent_base.RodentEnv):
     def reset(
         self,
         rng: jax.Array,
-        clip_idx: Optional[int] = None,
+        clip_idx: int | None = None,
     ) -> mjx_env.State:
         """Reset the environment state.
 
@@ -572,7 +573,7 @@ class SparseImitation(rodent_base.RodentEnv):
             new_max: Updated max_steps array
             complete: Boolean, True if full sequence matched
         """
-        L = ref_joints.shape[0]
+        ref_joints.shape[0]
         INF = jp.iinfo(jp.int32).max // 4
         NINF = -INF
         tolerance = self._config.tolerance
@@ -723,12 +724,12 @@ class SparseImitation(rodent_base.RodentEnv):
 
     def render(
         self,
-        trajectory: List[mjx_env.State],
+        trajectory: list[mjx_env.State],
         height: int = 240,
         width: int = 320,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
-        modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
+        modify_scene_fns: Sequence[Callable[[mujoco.MjvScene], None]] | None = None,
         render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """Render a sequence of states (trajectory).

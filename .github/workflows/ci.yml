@@ -22,8 +22,12 @@ jobs:
 
       - name: Install linting tools
         run: |
-          pip install "black[jupyter]"
+          pip install ruff
 
-      - name: Run Black
+      - name: Run Ruff format check
         run: |
-          black --check --diff vnl_playground/ notebooks/
+          ruff format --check vnl_playground/
+
+      - name: Run Ruff lint
+        run: |
+          ruff check vnl_playground/

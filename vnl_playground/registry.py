@@ -15,7 +15,7 @@ Usage:
     clips = registry.load_reference_clips("RodentImitation", data_path, ...)
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from ml_collections import config_dict
 
@@ -40,7 +40,7 @@ def get_default_config(env_name: str) -> config_dict.ConfigDict:
 
 def load(
     env_name: str,
-    config: Optional[config_dict.ConfigDict] = None,
+    config: config_dict.ConfigDict | None = None,
     clips: Any = None,
     flatten_obs: bool = True,
     **kwargs,

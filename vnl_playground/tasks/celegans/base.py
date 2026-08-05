@@ -6,25 +6,26 @@ creating and managing C. elegans simulation environments using MuJoCo.
 
 import collections
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union, Mapping
-from xml.etree import ElementTree as ET
+from collections.abc import Mapping
 from pprint import pformat
+from typing import Any
+from xml.etree import ElementTree as ET
 
 import jax
 import jax.numpy as jp
 import mujoco
 import numpy as np
-from etils import epath
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
+
 from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.celegans import consts
-from vnl_playground.tasks.utils import _recolour_tree, scale_spec
 from vnl_playground.tasks.reward_registry import RewardRegistry
+from vnl_playground.tasks.utils import _recolour_tree, scale_spec
 
 
-def get_assets() -> Dict[str, bytes]:
+def get_assets() -> dict[str, bytes]:
     """Get asset files for C. elegans environment.
 
     Returns:
@@ -100,7 +101,7 @@ class CelegansEnv(mjx_env.MjxEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, List[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
     ) -> None:
         """Initialize the CelegansEnv class with only arena.
 
@@ -165,16 +166,16 @@ class CelegansEnv(mjx_env.MjxEnv):
         torque_actuators: bool,
         rescale_factor: float = 1.0,
         trans_joint: str = "slide",
-        pos: Tuple[float, float, float] = (0, 0, 0.05),
-        quat: Tuple[float, float, float, float] = (1, 0, 0, 0),
-        friction: Tuple[float, ...] = BASE_CONFIG.friction,
-        solimp: Tuple[float, ...] = BASE_CONFIG.solimp,
-        solref: Tuple[float, ...] = BASE_CONFIG.solref,
-        solreffriction: Tuple[float, ...] = BASE_CONFIG.solreffriction,
-        muscle_config: Optional[Dict[str, Any]] = BASE_CONFIG.muscle_config,
-        joint_config: Optional[Dict[str, Any]] = BASE_CONFIG.joint_config,
-        contact_geom: Optional[mujoco.mjtGeom] = mujoco.mjtGeom.mjGEOM_CAPSULE,
-        rgba: Optional[Tuple[float, float, float, float]] = None,
+        pos: tuple[float, float, float] = (0, 0, 0.05),
+        quat: tuple[float, float, float, float] = (1, 0, 0, 0),
+        friction: tuple[float, ...] = BASE_CONFIG.friction,
+        solimp: tuple[float, ...] = BASE_CONFIG.solimp,
+        solref: tuple[float, ...] = BASE_CONFIG.solref,
+        solreffriction: tuple[float, ...] = BASE_CONFIG.solreffriction,
+        muscle_config: dict[str, Any] | None = BASE_CONFIG.muscle_config,
+        joint_config: dict[str, Any] | None = BASE_CONFIG.joint_config,
+        contact_geom: mujoco.mjtGeom | None = mujoco.mjtGeom.mjGEOM_CAPSULE,
+        rgba: tuple[float, float, float, float] | None = None,
         suffix: str = "-worm",
     ) -> None:
         """Adds the c. elegans model to the environment.
@@ -191,7 +192,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         print(f"Loading worm from {self._walker_xml_path}")
         worm = mujoco.MjSpec.from_file(self._walker_xml_path)
 
-        # a) Convert motors to torque‑mode if requested
+        # a) Convert motors to torque-mode if requested
         if torque_actuators and hasattr(worm, "actuator"):
             logging.info("Converting to torque actuators")
             for actuator in worm.actuators:  # type: ignore[attr-defined]
@@ -307,7 +308,7 @@ class CelegansEnv(mjx_env.MjxEnv):
                         for i, (key, default) in enumerate(default_gainprm.items()):
                             gainprm[i] = value.get(key, default)
                         muscle.gainprm = gainprm
-                        if "biasprm" not in muscle_config.keys():
+                        if "biasprm" not in muscle_config:
                             muscle.biasprm = gainprm
                     elif key == "gear":
                         gear = np.zeros_like(muscle.gear)
@@ -343,12 +344,12 @@ class CelegansEnv(mjx_env.MjxEnv):
     def add_ghost(
         self,
         rescale_factor: float = 1.0,
-        pos: Tuple[float, float, float] = (0, 0, 0.05),
-        ghost_rgba: Tuple[float, float, float, float] = (0.8, 0.8, 0.8, 0.3),
+        pos: tuple[float, float, float] = (0, 0, 0.05),
+        ghost_rgba: tuple[float, float, float, float] = (0.8, 0.8, 0.8, 0.3),
         suffix: str = "-ghost",
         trans_joint: str = "slide",
         inplace: bool = False,
-    ) -> Optional[Tuple[mujoco.MjSpec, mujoco.MjModel]]:
+    ) -> tuple[mujoco.MjSpec, mujoco.MjModel] | None:
         """Add a ghost worm model to the environment.
 
         Args:
@@ -365,10 +366,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         """
         print(f"Loading ghost worm from {self._walker_xml_path}")
 
-        if not inplace:
-            spec = self._spec.copy()
-        else:
-            spec = self._spec
+        spec = self._spec.copy() if not inplace else self._spec
 
         walker_spec = mujoco.MjSpec.from_file(self._walker_xml_path)
         if rescale_factor != 1.0:
@@ -536,7 +534,7 @@ class CelegansEnv(mjx_env.MjxEnv):
 
     def _get_appendages_pos(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[jp.ndarray, Dict[str, jp.ndarray]]:
+    ) -> jp.ndarray | dict[str, jp.ndarray]:
         """Get appendages positions from the environment.
 
         Args:
@@ -565,7 +563,7 @@ class CelegansEnv(mjx_env.MjxEnv):
 
     def _get_bodies_pos(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[Dict[str, jp.ndarray], jp.ndarray]:
+    ) -> dict[str, jp.ndarray] | jp.ndarray:
         """Get global positions of the body parts.
 
         Args:
@@ -588,7 +586,7 @@ class CelegansEnv(mjx_env.MjxEnv):
 
     def _get_joint_angles(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[jp.ndarray, Dict[str, jp.ndarray]]:
+    ) -> jp.ndarray | dict[str, jp.ndarray]:
         """Get joint angles of the body parts.
 
         Args:
@@ -605,18 +603,17 @@ class CelegansEnv(mjx_env.MjxEnv):
                 joint_angles[joint_name] = data.bind(
                     self.mjx_model, self.spec.joint(f"{joint_name}{self.suffix}")
                 ).qpos
-            except Exception as e:
-                print(e)
+            except Exception as error:
                 raise ValueError(
                     f"Joint {joint_name}{self._suffix} not found in the environment.\nAvailable joints: {[joint.name for joint in self._spec.joints]}"
-                )
+                ) from error
         if flatten:
             joint_angles, _ = jax.flatten_util.ravel_pytree(joint_angles)
         return joint_angles
 
     def _get_joint_ang_vels(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[jp.ndarray, Dict[str, jp.ndarray]]:
+    ) -> jp.ndarray | dict[str, jp.ndarray]:
         """Get joint angular velocities of the body parts.
 
         Args:
@@ -677,9 +674,9 @@ class CelegansEnv(mjx_env.MjxEnv):
         self,
         data: mjx.Data,
         info: Mapping[str, Any],
-        filter_keys: List[str] = [],
+        filter_keys: list[str] | None = None,
         flatten: bool = True,
-    ) -> Union[jp.ndarray, Dict[str, Any]]:
+    ) -> jp.ndarray | dict[str, Any]:
         """Get proprioception data from the environment.
 
         Args:
@@ -700,7 +697,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             kinematic_sensors=self._get_kinematic_sensors(data, flatten=flatten),
             prev_action=info["prev_action"],
         )
-        for key in filter_keys:
+        for key in filter_keys or ():
             proprioception.pop(key)
         if flatten:
             proprioception, _ = jax.flatten_util.ravel_pytree(proprioception)
@@ -708,7 +705,7 @@ class CelegansEnv(mjx_env.MjxEnv):
 
     def _get_kinematic_sensors(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[jp.ndarray, Dict[str, jp.ndarray]]:
+    ) -> jp.ndarray | dict[str, jp.ndarray]:
         """Get kinematic sensors data from the environment.
 
         Args:
@@ -832,7 +829,9 @@ class CelegansEnv(mjx_env.MjxEnv):
             self.mjx_model, self._spec.sensor(f"velocimeter{self._suffix}")
         ).sensordata
 
-    def subtree_linvel(self, data: mjx.Data, body_name: str = None) -> jp.ndarray:
+    def subtree_linvel(
+        self, data: mjx.Data, body_name: str | None = None
+    ) -> jp.ndarray:
         """Get the subtree linear velocity sensor data.
 
         Args:
@@ -850,7 +849,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             self.mjx_model, self._spec.sensor(f"subtreelinvel{self._suffix}")
         ).sensordata
 
-    def save_spec(self, path: str, return_str: bool = False) -> Optional[str]:
+    def save_spec(self, path: str, return_str: bool = False) -> str | None:
         """Save the spec to a file.
 
         Args:
@@ -951,7 +950,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         self._max_reward = max_reward
 
     @property
-    def rewards(self) -> Dict[str, Any]:
+    def rewards(self) -> dict[str, Any]:
         """Get the reward terms.
 
         Returns:
@@ -960,7 +959,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         return self.registry.rewards
 
     @property
-    def costs(self) -> Dict[str, Any]:
+    def costs(self) -> dict[str, Any]:
         """Get the cost terms.
 
         Returns:
@@ -969,7 +968,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         return self.registry.costs
 
     @property
-    def terminations(self) -> Dict[str, Any]:
+    def terminations(self) -> dict[str, Any]:
         """Get the termination terms.
 
         Returns:
@@ -1104,7 +1103,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         return self.config.get("root_body", consts.ROOT)
 
     @property
-    def joint_names(self) -> List[str]:
+    def joint_names(self) -> list[str]:
         """Get the list of joint names in the configuration.
 
         Returns:
@@ -1113,7 +1112,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         return self.config.get("joints", consts.JOINTS)
 
     @property
-    def body_names(self) -> List[str]:
+    def body_names(self) -> list[str]:
         """Get the list of body names in the configuration.
 
         Returns:
@@ -1122,7 +1121,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         return self.config.get("bodies", consts.BODIES)
 
     @property
-    def end_eff_names(self) -> List[str]:
+    def end_eff_names(self) -> list[str]:
         """Get the list of end effector names in the configuration.
 
         Returns:
@@ -1131,7 +1130,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         return self.config.get("end_effectors", consts.END_EFFECTORS)
 
     @property
-    def touch_sensor_names(self) -> List[str]:
+    def touch_sensor_names(self) -> list[str]:
         """Get the list of touch sensor names in the configuration.
 
         Returns:
@@ -1140,7 +1139,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         return self.config.get("touch_sensors", consts.TOUCH_SENSORS)
 
     @property
-    def sensor_names(self) -> List[str]:
+    def sensor_names(self) -> list[str]:
         """Get the list of sensor names in the configuration.
 
         Returns:
@@ -1176,7 +1175,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         return len(self.end_eff_names)
 
     @property
-    def camera_names(self) -> List[str]:
+    def camera_names(self) -> list[str]:
         """Get the list of camera names in the configuration.
 
         Returns:

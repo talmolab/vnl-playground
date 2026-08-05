@@ -1,8 +1,8 @@
 """Fruitfly multi-clip imitation environment."""
 
 import collections
-import warnings
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import brax.math
 import jax
@@ -12,14 +12,14 @@ import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
-from jax import flatten_util
+
+from vnl_playground.tasks import math_utils
+from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
 from . import base as fruitfly_base
 from . import consts
-from vnl_playground.tasks import math_utils
-from vnl_playground.tasks.reference_clips import ReferenceClips
-from vnl_playground.tasks.reward_registry import RewardRegistry
 
 _registry = RewardRegistry()
 
@@ -88,8 +88,8 @@ class Imitation(fruitfly_base.FruitflyEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
-        clips: Optional[ReferenceClips] = None,
+        config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
+        clips: ReferenceClips | None = None,
     ) -> None:
         """
         Initialize the fruitfly imitation environment.
@@ -134,8 +134,8 @@ class Imitation(fruitfly_base.FruitflyEnv):
     def reset(
         self,
         rng: jax.Array,
-        clip_idx: Optional[int] = None,
-        start_frame: Optional[int] = None,
+        clip_idx: int | None = None,
+        start_frame: int | None = None,
     ) -> mjx_env.State:
         """
         Resets the environment state.
@@ -441,12 +441,12 @@ class Imitation(fruitfly_base.FruitflyEnv):
 
     def render(
         self,
-        trajectory: List[mjx_env.State],
+        trajectory: list[mjx_env.State],
         height: int = 240,
         width: int = 320,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
-        modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
+        modify_scene_fns: Sequence[Callable[[mujoco.MjvScene], None]] | None = None,
         add_labels=False,
         termination_extra_frames=0,
     ) -> Sequence[np.ndarray]:
@@ -494,9 +494,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
             disable_collision_recursive(body)
 
         spawn_frame = spec.worldbody.add_frame(pos=(0, 0, 0.0), quat=(1, 0, 0, 0))
-        spawn_body = spawn_frame.attach_body(
-            ghost_fly.body("thorax"), "", suffix="-ghost"
-        )
+        spawn_frame.attach_body(ghost_fly.body("thorax"), "", suffix="-ghost")
 
         mj_model_with_ghost = spec.compile()
         mj_model_with_ghost.vis.global_.offwidth = width
@@ -538,29 +536,28 @@ class Imitation(fruitfly_base.FruitflyEnv):
                     cv2.LINE_AA,
                 )
             rendered_frames.append(rendered_frame)
-            if state.done:
-                if add_labels:
-                    import cv2
+            if state.done and add_labels:
+                import cv2
 
-                    reason = "<Unknown>"
-                    if state.info["truncated"]:
-                        reason = "truncated"
-                    for name in self._config.termination_criteria.keys():
-                        if state.metrics["terminations/" + name] > 0:
-                            reason = name
-                    cv2.putText(
-                        rendered_frame,
-                        reason,
-                        (10, 70),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1.0,
-                        (255, 255, 255),
-                        2,
-                        cv2.LINE_AA,
-                    )
-                    for t in range(termination_extra_frames):
-                        rel_t = t / termination_extra_frames
-                        fade_factor = 1 / (1 + np.exp(10 * (rel_t - 0.5)))
-                        faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
-                        rendered_frames.append(faded_frame)
+                reason = "<Unknown>"
+                if state.info["truncated"]:
+                    reason = "truncated"
+                for name in self._config.termination_criteria:
+                    if state.metrics["terminations/" + name] > 0:
+                        reason = name
+                cv2.putText(
+                    rendered_frame,
+                    reason,
+                    (10, 70),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+                for t in range(termination_extra_frames):
+                    rel_t = t / termination_extra_frames
+                    fade_factor = 1 / (1 + np.exp(10 * (rel_t - 0.5)))
+                    faded_frame = (rendered_frame * fade_factor).astype(np.uint8)
+                    rendered_frames.append(faded_frame)
         return rendered_frames

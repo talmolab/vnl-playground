@@ -1,24 +1,25 @@
 import collections
-import tqdm
 import warnings
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import brax.math
 import jax
 import jax.numpy as jp
 import mujoco
 import numpy as np
+import tqdm
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
-from jax import flatten_util
+
+from vnl_playground.tasks import math_utils
+from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
 from . import base as rodent_base
 from . import consts
-from vnl_playground.tasks import math_utils
-from vnl_playground.tasks.reference_clips import ReferenceClips
-from vnl_playground.tasks.reward_registry import RewardRegistry
 
 _registry = RewardRegistry()
 
@@ -91,8 +92,8 @@ class Imitation(rodent_base.RodentEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
-        clips: Optional[ReferenceClips] = None,
+        config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
+        clips: ReferenceClips | None = None,
     ) -> None:
         """
         Initialize the rodent imitation environment.
@@ -146,14 +147,15 @@ class Imitation(rodent_base.RodentEnv):
             warnings.warn(
                 f"Environment `rescale_factor` ({self._config.rescale_factor})"
                 f" does not match the reference data `SCALE_FACTOR`"
-                f" ({self.reference_clips._config['model']['SCALE_FACTOR']})."
+                f" ({self.reference_clips._config['model']['SCALE_FACTOR']}).",
+                stacklevel=2,
             )
 
     def reset(
         self,
         rng: jax.Array,
-        clip_idx: Optional[int] = None,
-        start_frame: Optional[int] = None,
+        clip_idx: int | None = None,
+        start_frame: int | None = None,
     ) -> mjx_env.State:
         """
         Resets the environment state: draws a new reference clip and initializes the rodent's pose to match.
@@ -496,12 +498,12 @@ class Imitation(rodent_base.RodentEnv):
 
     def render(
         self,
-        trajectory: List[mjx_env.State],
+        trajectory: list[mjx_env.State],
         height: int = 240,
         width: int = 320,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
-        modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
+        modify_scene_fns: Sequence[Callable[[mujoco.MjvScene], None]] | None = None,
         add_labels=False,
         termination_extra_frames=0,
         render_ghost: bool = True,
@@ -532,10 +534,7 @@ class Imitation(rodent_base.RodentEnv):
         Returns:
             Sequence[np.ndarray]: List of rendered frames as numpy arrays.
         """
-        if render_ghost:
-            mj_model = self._compile_with_ghost()
-        else:
-            mj_model = self.mj_model
+        mj_model = self._compile_with_ghost() if render_ghost else self.mj_model
         mj_data = mujoco.MjData(mj_model)
 
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
@@ -583,7 +582,7 @@ class Imitation(rodent_base.RodentEnv):
                     reason = "<Unknown>"
                     if state.info["truncated"]:
                         reason = "truncated"
-                    for name in self._config.termination_criteria.keys():
+                    for name in self._config.termination_criteria:
                         if state.metrics["terminations/" + name] > 0:
                             reason = name
                     cv2.putText(
@@ -610,10 +609,10 @@ class Imitation(rodent_base.RodentEnv):
         rollout_source: Any,
         height: int = 480,
         width: int = 640,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
         render_ghost: bool = True,
-    ) -> List[np.ndarray]:
+    ) -> list[np.ndarray]:
         """Render from precomputed qposes using the old track-mjx logic.
 
         Accepts either a rollout dictionary containing ``qposes_rollout`` and
@@ -704,8 +703,8 @@ class Imitation(rodent_base.RodentEnv):
             checks["joints"] = jp.allclose(
                 self._get_joint_angles(data), reference.joints, atol=atol
             )
-            body_pos = self._get_bodies_pos(data, flatten=False)
-            for body_name, body_pos in body_pos.items():
+            body_positions = self._get_bodies_pos(data, flatten=False)
+            for body_name, body_pos in body_positions.items():
                 checks[f"body_xpos/{body_name}"] = jp.allclose(
                     body_pos, reference.body_xpos(body_name), atol=atol
                 )
@@ -749,7 +748,8 @@ class Imitation(rodent_base.RodentEnv):
                     warnings.warn(
                         f"Reference data verification failed for {n_failed} frames"
                         f" for check '{name}' for clip {clip} ({clip_label})."
-                        f" First failure at frame {first_failed_frame}."
+                        f" First failure at frame {first_failed_frame}.",
+                        stacklevel=2,
                     )
                     any_failed = True
         return not any_failed
