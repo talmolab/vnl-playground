@@ -14,6 +14,7 @@ import mujoco
 from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.rodent import consts
 from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
 from vnl_playground.tasks.reward_registry import RewardRegistry
@@ -182,7 +183,9 @@ class RodentEnv(mjx_env.MjxEnv):
             global_xpos = data.bind(
                 self.mjx_model, self._spec.body(f"{apppendage_name}{self._suffix}")
             ).xpos
-            egocentric_xpos = jp.dot(global_xpos - torso.xpos, torso.xmat)
+            egocentric_xpos = math_utils.world_point_to_local(
+                global_xpos, torso.xpos, torso.xquat
+            )
             appendages_pos[apppendage_name] = egocentric_xpos
         if flatten:
             appendages_pos, _ = jax.flatten_util.ravel_pytree(appendages_pos)
@@ -279,9 +282,8 @@ class RodentEnv(mjx_env.MjxEnv):
     def _get_origin(self, data: mjx.Data) -> jp.ndarray:
         """Get origin position in the torso frame."""
         torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
-        torso_frame = torso.xmat
         torso_pos = torso.xpos
-        return jp.dot(-torso_pos, torso_frame)
+        return math_utils.world_vector_to_local(-torso_pos, torso.xquat)
 
     def _get_egocentric_camera(self, data: mjx.Data):
         """Get egocentric camera data from the environment."""

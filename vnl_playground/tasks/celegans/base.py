@@ -18,6 +18,7 @@ from etils import epath
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.celegans import consts
 from vnl_playground.tasks.utils import _recolour_tree, scale_spec
 from vnl_playground.tasks.reward_registry import RewardRegistry
@@ -554,7 +555,9 @@ class CelegansEnv(mjx_env.MjxEnv):
             global_xpos = data.bind(
                 self.mjx_model, self.spec.body(f"{apppendage_name}{self.suffix}")
             ).xpos
-            egocentric_xpos = jp.dot(global_xpos - root.xpos, root.xmat)
+            egocentric_xpos = math_utils.world_point_to_local(
+                global_xpos, root.xpos, root.xquat
+            )
             appendages_pos[apppendage_name] = egocentric_xpos
         if flatten:
             appendages_pos, _ = jax.flatten_util.ravel_pytree(appendages_pos)
@@ -760,9 +763,8 @@ class CelegansEnv(mjx_env.MjxEnv):
             Origin position relative to the torso coordinate frame.
         """
         torso = self.root_body(data)
-        torso_frame = torso.xmat
         torso_pos = torso.xpos
-        return jp.dot(-torso_pos, torso_frame)
+        return math_utils.world_vector_to_local(-torso_pos, torso.xquat)
 
     def _get_egocentric_camera(self, data: mjx.Data) -> None:
         """Get egocentric camera data from the environment.

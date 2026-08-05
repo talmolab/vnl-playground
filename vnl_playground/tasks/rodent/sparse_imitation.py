@@ -25,6 +25,7 @@ from jax import flatten_util
 from .. import utils
 from . import base as rodent_base
 from . import consts
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.reference_clips import ReferenceClips
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
@@ -542,7 +543,7 @@ class SparseImitation(rodent_base.RodentEnv):
         Uses atan2(sin(a-b), cos(a-b)) to handle angle wrapping at ±π.
         """
         diff = angles1 - angles2
-        wrapped_diff = jp.arctan2(jp.sin(diff), jp.cos(diff))
+        wrapped_diff = math_utils.wrap_angle_to_pi(diff)
         return jp.linalg.norm(wrapped_diff)
 
     def _dp_update(
@@ -581,7 +582,7 @@ class SparseImitation(rodent_base.RodentEnv):
         # Compute per-frame emission match (does current_joints match each ref frame?)
         if self._config.use_wrapped_angles:
             diff = current_joints[None, :] - ref_joints  # (L, n_joints)
-            wrapped_diff = jp.arctan2(jp.sin(diff), jp.cos(diff))
+            wrapped_diff = math_utils.wrap_angle_to_pi(diff)
             frame_distances = jp.linalg.norm(wrapped_diff, axis=1)  # (L,)
         else:
             frame_distances = jp.linalg.norm(

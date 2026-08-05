@@ -22,6 +22,7 @@ from jax import flatten_util
 from .. import utils
 from . import base as stick_base
 from . import consts
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.reference_clips import ReferenceClips
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
@@ -256,7 +257,9 @@ class Imitation(stick_base.StickBugEnv):
         root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
         root_targets = jax.vmap(
-            lambda ref_pos: brax.math.inv_rotate(ref_pos - root_pos, root_quat)
+            lambda ref_pos: math_utils.world_point_to_local(
+                ref_pos, root_pos, root_quat
+            )
         )(reference.root_position)
         quat_targets = jax.vmap(
             lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat)
@@ -275,7 +278,7 @@ class Imitation(stick_base.StickBugEnv):
             [reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos]
         )
         to_egocentric = jax.vmap(
-            lambda diff_vec: brax.math.inv_rotate(diff_vec, root_quat)
+            lambda diff_vec: math_utils.world_vector_to_local(diff_vec, root_quat)
         )
         body_targets = jax.vmap(to_egocentric)(body_rel_pos)
 
@@ -293,7 +296,7 @@ class Imitation(stick_base.StickBugEnv):
         root_pos = self.root_body(data).xpos
         distance = jp.linalg.norm(target.root_position - root_pos)
         metrics["root_pos_distance"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/root_pos"] = reward
         return reward
 
@@ -301,11 +304,13 @@ class Imitation(stick_base.StickBugEnv):
     def _root_quat_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
-        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        rot_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
-        ang_dist_degrees = jp.rad2deg(rot_dist)
+        ang_dist_degrees = math_utils.quaternion_angle(
+            root_quat, target.root_quaternion, degrees=True
+        )
         metrics["root_angular_error"] = ang_dist_degrees
-        reward = weight * jp.exp(-((ang_dist_degrees / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(
+            ang_dist_degrees, weight=weight, scale=exp_scale
+        )
         metrics["rewards/root_quat"] = reward
         return reward
 
@@ -315,7 +320,7 @@ class Imitation(stick_base.StickBugEnv):
         joints = self._get_joint_angles(data)
         distance = jp.linalg.norm(target.joints - joints)
         metrics["joint_l2_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/joints"] = reward
         return reward
 
@@ -325,7 +330,7 @@ class Imitation(stick_base.StickBugEnv):
         joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         metrics["joint_vel_l2_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/joints_vel"] = reward
         return reward
 
@@ -343,7 +348,7 @@ class Imitation(stick_base.StickBugEnv):
     def _body_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         total_dist = self._get_bodies_dist(data, info, metrics, consts.BODIES)
         metrics["body_errors/total"] = total_dist
-        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(total_dist, weight=weight, scale=exp_scale)
         metrics["rewards/bodies_pos"] = reward
         return reward
 
@@ -351,7 +356,7 @@ class Imitation(stick_base.StickBugEnv):
     def _end_eff_reward(self, data, info, metrics, weight, exp_scale) -> float:
         total_dist = self._get_bodies_dist(data, info, metrics, consts.END_EFFECTORS)
         metrics["body_errors/end_eff_total"] = total_dist
-        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(total_dist, weight=weight, scale=exp_scale)
         metrics["rewards/end_eff"] = reward
         return reward
 
@@ -369,15 +374,15 @@ class Imitation(stick_base.StickBugEnv):
 
     @_registry.reward("control_cost")
     def _control_cost(self, data, info, metrics, weight) -> float:
-        metrics["ctrl_sqr"] = ctrl_sqr = jp.sum(jp.square(info["action"]))
+        metrics["ctrl_sqr"] = ctrl_sqr = math_utils.squared_l2_norm(info["action"])
         cost = weight * ctrl_sqr
         metrics["rewards/control_cost"] = -cost
         return -cost
 
     @_registry.reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
-        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(
-            jp.square(info["action"] - info["prev_action"])
+        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = math_utils.squared_l2_norm(
+            info["action"] - info["prev_action"]
         )
         cost = weight * ctrl_diff_sqr
         metrics["rewards/control_diff_cost"] = -cost
@@ -385,7 +390,7 @@ class Imitation(stick_base.StickBugEnv):
 
     @_registry.reward("energy_cost")
     def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
-        energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
+        energy_use = math_utils.absolute_actuator_power(data.qvel, data.qfrc_actuator)
         metrics["energy_use"] = energy_use
         cost = weight * jp.minimum(energy_use, max_value)
         metrics["rewards/energy_cost"] = -cost
@@ -403,8 +408,7 @@ class Imitation(stick_base.StickBugEnv):
     def _root_too_rotated(self, data, info, max_degrees) -> bool:
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
-        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        ang_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
+        ang_dist = math_utils.quaternion_angle(root_quat, target.root_quaternion)
         return ang_dist > jp.deg2rad(max_degrees)
 
     @_registry.termination("pose_error")

@@ -12,6 +12,7 @@ from mujoco import mjx
 from jax import flatten_util
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward as reward_fns
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.mouse.base import (
     MouseBaseEnv,
     default_config as base_default_config,
@@ -266,7 +267,7 @@ class MouseReach(MouseBaseEnv):
 
     @_registry.reward("control_cost")
     def _control_cost(self, data, info, metrics, weight) -> float:
-        cost = -weight * jp.sum(jp.square(info["action"]))
+        cost = -weight * math_utils.squared_l2_norm(info["action"])
         metrics["rewards/control_cost"] = cost
         return cost
 

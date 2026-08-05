@@ -13,6 +13,7 @@ import mujoco
 from mujoco import mjx
 
 from mujoco_playground._src import mjx_env
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.fruitfly import consts
 from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
 from vnl_playground.tasks.reward_registry import RewardRegistry
@@ -170,7 +171,9 @@ class FruitflyEnv(mjx_env.MjxEnv):
             global_xpos = data.bind(
                 self.mjx_model, self._spec.body(f"{appendage_name}{self._suffix}")
             ).xpos
-            egocentric_xpos = jp.dot(global_xpos - thorax.xpos, thorax.xmat)
+            egocentric_xpos = math_utils.world_point_to_local(
+                global_xpos, thorax.xpos, thorax.xquat
+            )
             appendages_pos[appendage_name] = egocentric_xpos
         if flatten:
             appendages_pos, _ = jax.flatten_util.ravel_pytree(appendages_pos)
@@ -217,7 +220,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
     def _get_origin(self, data: mjx.Data) -> jp.ndarray:
         """Get origin position in the thorax frame."""
         thorax = data.bind(self.mjx_model, self._spec.body(f"thorax{self._suffix}"))
-        return jp.dot(-thorax.xpos, thorax.xmat)
+        return math_utils.world_vector_to_local(-thorax.xpos, thorax.xquat)
 
     def _get_proprioception(
         self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True

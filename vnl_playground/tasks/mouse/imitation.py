@@ -12,6 +12,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.mouse import consts
 from vnl_playground.tasks.mouse.base import (
     MouseBaseEnv,
@@ -390,7 +391,7 @@ class MouseImitation(MouseBaseEnv):
         target = self._get_current_target(data, info)
         distance = jp.linalg.norm(target.joints - data.qpos)
         metrics["joint_l2_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/joints"] = reward
         return reward
 
@@ -411,7 +412,7 @@ class MouseImitation(MouseBaseEnv):
         target = self._get_current_target(data, info)
         distance = jp.linalg.norm(target.joints_velocity - data.qvel)
         metrics["joint_vel_l2_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/joints_vel"] = reward
         return reward
 
@@ -434,7 +435,7 @@ class MouseImitation(MouseBaseEnv):
         target_wrist = target.body_xpos("wrist_body")
         distance = jp.linalg.norm(wrist_pos - target_wrist)
         metrics["wrist_pos_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/wrist_pos"] = reward
         return reward
 
@@ -462,7 +463,7 @@ class MouseImitation(MouseBaseEnv):
             total_dist_sqr += dist_sqr
         total_dist = jp.sqrt(total_dist_sqr)
         metrics["body_errors/total"] = total_dist
-        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(total_dist, weight=weight, scale=exp_scale)
         metrics["rewards/bodies_pos"] = reward
         return reward
 
@@ -479,7 +480,7 @@ class MouseImitation(MouseBaseEnv):
         Returns:
             float: Negative weighted sum of squared action values.
         """
-        ctrl_sqr = jp.sum(jp.square(info["action"]))
+        ctrl_sqr = math_utils.squared_l2_norm(info["action"])
         metrics["ctrl_sqr"] = ctrl_sqr
         cost = weight * ctrl_sqr
         metrics["rewards/control_cost"] = -cost
@@ -498,7 +499,7 @@ class MouseImitation(MouseBaseEnv):
         Returns:
             float: Negative weighted sum of squared action deltas.
         """
-        ctrl_diff_sqr = jp.sum(jp.square(info["action"] - info["prev_action"]))
+        ctrl_diff_sqr = math_utils.squared_l2_norm(info["action"] - info["prev_action"])
         metrics["ctrl_diff_sqr"] = ctrl_diff_sqr
         cost = weight * ctrl_diff_sqr
         metrics["rewards/control_diff_cost"] = -cost

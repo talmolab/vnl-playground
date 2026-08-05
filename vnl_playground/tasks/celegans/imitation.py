@@ -18,6 +18,7 @@ import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.reference_clips import ReferenceClips
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
@@ -522,9 +523,9 @@ class Imitation(worm_base.CelegansEnv):
         root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
         root_targets = jax.vmap(
-            lambda ref_pos: brax.math.inv_rotate(ref_pos - root_pos, root_quat)[
-                : self.config.dim
-            ]
+            lambda ref_pos: math_utils.world_point_to_local(
+                ref_pos, root_pos, root_quat
+            )[: self.config.dim]
         )(reference.body_xpos(self.root_name))
         quat_targets = jax.vmap(
             lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat)
@@ -543,7 +544,7 @@ class Imitation(worm_base.CelegansEnv):
             [reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos]
         )
         to_egocentric = jax.vmap(
-            lambda diff_vec: brax.math.inv_rotate(diff_vec, root_quat)[
+            lambda diff_vec: math_utils.world_vector_to_local(diff_vec, root_quat)[
                 : self._config.dim
             ]
         )
@@ -575,7 +576,7 @@ class Imitation(worm_base.CelegansEnv):
         root_pos = self._get_root_pos(data)[: self.config.dim]
 
         distance = jp.linalg.norm(target_pos - root_pos)
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
 
         self._insert_metric(metrics, info, "root_pos", reward=reward, distance=distance)
         return reward
@@ -598,11 +599,9 @@ class Imitation(worm_base.CelegansEnv):
         target_quat = target.body_xquat(self.root_name)
         root_quat = self._get_root_quat(data)
 
-        quat_dist = 2.0 * jp.dot(root_quat, target_quat) ** 2 - 1.0
-        ang_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
-        ang_dist = jp.rad2deg(ang_dist)
+        ang_dist = math_utils.quaternion_angle(root_quat, target_quat, degrees=True)
 
-        reward = weight * jp.exp(-((ang_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(ang_dist, weight=weight, scale=exp_scale)
 
         self._insert_metric(
             metrics, info, "root_quat", reward=reward, distance=ang_dist
@@ -628,7 +627,7 @@ class Imitation(worm_base.CelegansEnv):
         error = target.joints - joints
         distance = jp.linalg.norm(error)
 
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
 
         self._insert_metric(metrics, info, "joints", reward=reward, distance=distance)
         for joint_name, joint_dist in zip(self.joint_names, error):
@@ -653,7 +652,7 @@ class Imitation(worm_base.CelegansEnv):
         target = self._get_current_target(data, info)
         joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
 
         self._insert_metric(
             metrics, info, "joints_vel", reward=reward, distance=distance
@@ -707,7 +706,7 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (reward_value, total_body_distance).
         """
         total_dist = self._get_bodies_dist(data, info, metrics, bodies=self.body_names)
-        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(total_dist, weight=weight, scale=exp_scale)
 
         self._insert_metric(
             metrics, info, "bodies_pos", reward=reward, distance=total_dist
@@ -730,7 +729,7 @@ class Imitation(worm_base.CelegansEnv):
         total_dist = self._get_bodies_dist(
             data, info, metrics, bodies=self.end_eff_names
         )
-        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(total_dist, weight=weight, scale=exp_scale)
 
         self._insert_metric(
             metrics, info, "end_eff", reward=reward, distance=total_dist
@@ -770,7 +769,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Tuple of (cost_value, control_magnitude).
         """
-        ctrl_magnitude = jp.sum(jp.square(info["action"]))
+        ctrl_magnitude = math_utils.squared_l2_norm(info["action"])
         cost = -weight * ctrl_magnitude
         self._insert_metric(
             metrics, info, "control", cost=cost, magnitude=ctrl_magnitude
@@ -789,7 +788,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Tuple of (cost_value, control_difference).
         """
-        ctrl_diff = jp.sum(jp.square(info["action"] - info["prev_action"]))
+        ctrl_diff = math_utils.squared_l2_norm(info["action"] - info["prev_action"])
         cost = -weight * ctrl_diff
         self._insert_metric(
             metrics, info, "control_diff", cost=cost, magnitude=ctrl_diff
@@ -810,7 +809,8 @@ class Imitation(worm_base.CelegansEnv):
             Tuple of (cost_value, energy_consumption).
         """
         energy = jp.minimum(
-            jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator)), max_value
+            math_utils.absolute_actuator_power(data.qvel, data.qfrc_actuator),
+            max_value,
         )
         cost = -weight * energy
         self._insert_metric(metrics, info, "energy", cost=cost, magnitude=energy)
@@ -913,8 +913,7 @@ class Imitation(worm_base.CelegansEnv):
         target = self._get_current_target(data, info)
         target_quat = target.body_xquat(self.root_name)
         root_quat = self._get_root_quat(data)
-        quat_dist = 2.0 * jp.dot(root_quat, target_quat) ** 2 - 1.0
-        ang_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
+        ang_dist = math_utils.quaternion_angle(root_quat, target_quat)
         return ang_dist > jp.deg2rad(max_degrees)
 
     @_registry.termination("pose_error")
