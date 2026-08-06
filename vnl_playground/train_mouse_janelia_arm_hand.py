@@ -52,6 +52,7 @@ from orbax import checkpoint as ocp
 
 from mujoco_playground import wrapper
 from vnl_playground.tasks.mouse.imitation_arm_hand import (
+    _NATIVE_N_FRAMES_V25,
     MouseImitationArmHand,
     MouseImitationArmHandArmOnly,
     MouseImitationArmHandJoystickOnly,
@@ -133,6 +134,21 @@ def parse_args():
     p.add_argument(
         "--sim-dt", type=float, default=None,
         help="Override cfg.sim_dt (seconds). substeps per action = ctrl_dt/sim_dt."
+    )
+    p.add_argument(
+        "--ctrl-dt", type=float, default=None,
+        help="Override cfg.ctrl_dt (seconds). Moves with --mocap-hz; see the "
+             "episode-length consistency check below."
+    )
+    p.add_argument(
+        "--mocap-hz", type=float, default=None,
+        help="Override cfg.mocap_hz, the rate the reference clip is played at. "
+             "The shipped 25 was read off the reprojection clips' CONTAINER "
+             "frame rate; those clips are written at 25 fps for 10x slow-motion "
+             "playback and the real acquisition was 250 Hz (126 frames = 504 ms, "
+             "confirmed against the matched EMG's own time_ms/frame_in_clip "
+             "columns on all 15 trials). At 25 the whole reach is simulated over "
+             "5.04 s instead of 0.504 s."
     )
     p.add_argument(
         "--num-envs", type=int, default=None,
@@ -333,9 +349,23 @@ for _term in args.drop_reward:
 if args.contact_preset is not None:
     env_cfg.contact_preset = args.contact_preset
     print(f"contact_preset: {args.contact_preset}")
+if args.mocap_hz is not None:
+    # ml_collections locks each field's type, and cfg.mocap_hz ships as int, so
+    # a float 250.0 raises rather than casting. Preserve the field's own type.
+    env_cfg.mocap_hz = (
+        int(args.mocap_hz)
+        if isinstance(env_cfg.mocap_hz, int) and float(args.mocap_hz).is_integer()
+        else args.mocap_hz
+    )
+    print(f"mocap_hz: {env_cfg.mocap_hz}")
+if args.ctrl_dt is not None:
+    env_cfg.ctrl_dt = args.ctrl_dt
+    print(f"ctrl_dt: {args.ctrl_dt}")
 if args.sim_dt is not None:
     env_cfg.sim_dt = args.sim_dt
-    print(f"sim_dt: {args.sim_dt} ({int(round(env_cfg.ctrl_dt/args.sim_dt))} substeps/action)")
+if args.sim_dt is not None or args.ctrl_dt is not None:
+    print(f"sim_dt: {env_cfg.sim_dt} "
+          f"({int(round(env_cfg.ctrl_dt/env_cfg.sim_dt))} substeps/action)")
 
 if args.mujoco_impl is not None:
     env_cfg.mujoco_impl = args.mujoco_impl
@@ -437,6 +467,32 @@ if args.unroll_length is not None:
     ppo_params.unroll_length = args.unroll_length
 if args.episode_length is not None:
     ppo_params.episode_length = args.episode_length
+
+# --- reference-clock / episode-length consistency -------------------------
+# _get_cur_frame() advances the reference by ctrl_dt * mocap_hz frames per
+# control step, so an episode spans the clip exactly when
+#     episode_length == n_frames / (ctrl_dt * mocap_hz).
+# The shipped 25 Hz / 0.02 s pair and the corrected 250 Hz / 0.002 s pair both
+# give 0.5 frames per step, hence the same 252 -- that invariance is the point
+# of moving the two together. Getting it wrong is silent: episodes either stop
+# partway through the clip or run off its end, and nothing raises. Checked here
+# rather than trusted, since --ctrl-dt and --mocap-hz make it easy to move one
+# without the other.
+_frames_per_step = env_cfg.ctrl_dt * env_cfg.mocap_hz
+_required_ep_len = _NATIVE_N_FRAMES_V25 / _frames_per_step
+if abs(_required_ep_len - ppo_params.episode_length) > 0.5:
+    raise SystemExit(
+        f"episode_length {ppo_params.episode_length} does not span the clip at "
+        f"ctrl_dt={env_cfg.ctrl_dt} x mocap_hz={env_cfg.mocap_hz} "
+        f"({_frames_per_step:g} frames/step). "
+        f"{_NATIVE_N_FRAMES_V25} frames needs episode_length "
+        f"{_required_ep_len:g}. Pass --episode-length {int(round(_required_ep_len))}, "
+        "or move ctrl_dt and mocap_hz together so their product is unchanged."
+    )
+print(f"reference clock: mocap_hz={env_cfg.mocap_hz} x ctrl_dt={env_cfg.ctrl_dt} "
+      f"= {_frames_per_step:g} frames/step -> episode_length "
+      f"{ppo_params.episode_length} spans {_NATIVE_N_FRAMES_V25} frames "
+      f"= {_NATIVE_N_FRAMES_V25 / env_cfg.mocap_hz * 1000:.0f} ms of real time")
 if args.num_envs is not None:
     ppo_params.num_envs = args.num_envs
 if args.num_timesteps is not None:
