@@ -22,7 +22,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
-from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.reference_clips import ReferenceClips, prepare_reference_clips
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
@@ -51,11 +51,14 @@ def default_config() -> config_dict.ConfigDict:
         rescale_factor=0.9,
         # Reference data params
         reference_data_path=consts.IMITATION_REFERENCE_PATH,
+        joints=consts.JOINTS,
+        bodies=consts.BODIES,
+        root_body="walker",
         mocap_hz=50,
         clip_length=250,
         clip_set="all",
         qvel_init="zeros",
-        keep_clips_idx=None,
+        clip_indices=None,
         clip_range=(
             75,
             200,
@@ -121,23 +124,23 @@ class SparseImitation(rodent_base.RodentEnv):
         )
         self.compile()
 
-        if clips is not None:
-            self.reference_clips = clips
-        else:
-            self.reference_clips = ReferenceClips(
-                self._config.reference_data_path,
-                self._config.clip_length,
-                self._config.keep_clips_idx,
-            )
+        self.reference_clips = prepare_reference_clips(
+            self._config,
+            clips,
+            joint_names=self._config.joints,
+            body_names=self._config.bodies,
+            root_body_name=self._config.root_body,
+        )
 
         max_n_clips = self.reference_clips.qpos.shape[0]
+        behaviour_labels = self.reference_clips.behaviour_labels
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
         elif isinstance(self._config.clip_set, (list, tuple, jp.ndarray, np.ndarray)):
             self._clip_set = jp.array(self._config.clip_set)
-        elif self._config.clip_set in self.reference_clips.clip_names:
+        elif behaviour_labels is not None and self._config.clip_set in behaviour_labels:
             (self._clip_set,) = jp.where(
-                self._config.clip_set == self.reference_clips.clip_names
+                self._config.clip_set == np.asarray(behaviour_labels)
             )
         else:
             raise ValueError(
@@ -572,7 +575,6 @@ class SparseImitation(rodent_base.RodentEnv):
             new_max: Updated max_steps array
             complete: Boolean, True if full sequence matched
         """
-        ref_joints.shape[0]
         INF = jp.iinfo(jp.int32).max // 4
         NINF = -INF
         tolerance = self._config.tolerance
@@ -748,7 +750,8 @@ class SparseImitation(rodent_base.RodentEnv):
         if render_ghost:
             spec = self._spec.copy()
             ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
-            ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
+        if (ghost_rescale := self.reference_clips.scale_factor) is None:
+            ghost_rescale = self._config.rescale_factor
             if ghost_rescale != 1.0:
                 ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
             for body in ghost_rodent.worldbody.bodies:

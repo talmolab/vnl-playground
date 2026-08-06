@@ -20,7 +20,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
-from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.reference_clips import ReferenceClips, prepare_reference_clips
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from . import base as worm_base
@@ -42,7 +42,7 @@ def default_config() -> config_dict.ConfigDict:
         reference_length=5,
         start_frame_range=[0, 50],
         qvel_init="zeros",
-        keep_clips_idx=None,
+        clip_indices=None,
         with_ghost=False,
         var_window_size=10,
         proprioceptive_filter=[],
@@ -174,15 +174,13 @@ class Imitation(worm_base.CelegansEnv):
 
         self.compile()
 
-        if clips is not None:
-            self.reference_clips = clips
-        else:
-            self.reference_clips = ReferenceClips(
-                self._config.reference_data_path,
-                self._config.clip_length,
-                joint_names=self.joint_names,
-                body_names=self.body_names,
-            )
+        self.reference_clips = prepare_reference_clips(
+            self._config,
+            clips,
+            joint_names=self.joint_names,
+            body_names=self.body_names,
+            root_body_name=self.root_name,
+        )
         max_n_clips = self.reference_clips.n_clips
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
@@ -1124,7 +1122,7 @@ class Imitation(worm_base.CelegansEnv):
         pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.05})
         pos = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.05)]
         if render_ghost:
-            spec, mj_model_with_ghost = self.add_ghost(
+            _, mj_model_with_ghost = self.add_ghost(
                 rescale_factor=self._config.rescale_factor,
                 trans_joint=self._config.trans_joint,
                 pos=pos,
@@ -1341,9 +1339,9 @@ class Imitation(worm_base.CelegansEnv):
                 self._get_joint_angles(data), reference.joints, atol=atol
             )
             body_positions = self._get_bodies_pos(data, flatten=False)
-            for body_name, body_pos in body_positions.items():
+            for body_name, body_position in body_positions.items():
                 checks[f"body_xpos/{body_name}"] = jp.allclose(
-                    body_pos[: self._config.dim],
+                    body_position[: self._config.dim],
                     reference.body_xpos(body_name)[: self._config.dim],
                     atol=atol,
                 )

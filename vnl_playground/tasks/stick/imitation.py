@@ -1,8 +1,8 @@
 """Imitation task for stick bug.
 
 Multi-clip imitation environment where the stick bug must track motion
-capture reference data. Uses the legacy H5 format (qpos/qvel/xpos/xquat)
-loaded via the unified ReferenceClips class.
+capture reference data. Uses native STAC state arrays loaded through the
+shared :class:`ReferenceClips` interface.
 """
 
 import collections
@@ -19,7 +19,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
-from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.reference_clips import ReferenceClips, prepare_reference_clips
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
@@ -33,6 +33,7 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         joints=consts.JOINTS,
         bodies=consts.BODIES,
+        root_body="reference_base",
         mujoco_impl="jax",
         sim_dt=0.002,
         ctrl_dt=0.01,
@@ -51,7 +52,7 @@ def default_config() -> config_dict.ConfigDict:
         reference_length=5,
         start_frame_range=[0, 44],
         qvel_init="zeros",
-        keep_clips_idx=None,
+        clip_indices=None,
         reward_terms={
             "root_pos": {"exp_scale": 0.035, "weight": 1.0},
             "root_quat": {"exp_scale": 40.0, "weight": 1.0},
@@ -94,16 +95,13 @@ class Imitation(stick_base.StickBugEnv):
             rgba=(0, 0.5, 0.5, 1),
         )
         self.compile()
-        if clips is not None:
-            self.reference_clips = clips
-        else:
-            self.reference_clips = ReferenceClips(
-                self._config.reference_data_path,
-                self._config.clip_length,
-                self._config.keep_clips_idx,
-                joint_names=self._config.joints,
-                body_names=self._config.bodies,
-            )
+        self.reference_clips = prepare_reference_clips(
+            self._config,
+            clips,
+            joint_names=self._config.joints,
+            body_names=self._config.bodies,
+            root_body_name=self._config.root_body,
+        )
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
@@ -116,15 +114,13 @@ class Imitation(stick_base.StickBugEnv):
             )
 
         if (
-            self.reference_clips._config is not None
-            and "model" in self.reference_clips._config
-            and self._config.rescale_factor
-            != self.reference_clips._config["model"]["SCALE_FACTOR"]
+            self.reference_clips.scale_factor is not None
+            and self._config.rescale_factor != self.reference_clips.scale_factor
         ):
             warnings.warn(
                 f"Environment `rescale_factor` ({self._config.rescale_factor})"
                 f" does not match the reference data `SCALE_FACTOR`"
-                f" ({self.reference_clips._config['model']['SCALE_FACTOR']}).",
+                f" ({self.reference_clips.scale_factor}).",
                 stacklevel=2,
             )
 
@@ -436,12 +432,8 @@ class Imitation(stick_base.StickBugEnv):
         if render_ghost:
             spec = self._spec.copy()
             ghost_stick = mujoco.MjSpec.from_file(self._walker_xml_path)
+        if (ghost_rescale := self.reference_clips.scale_factor) is None:
             ghost_rescale = self._config.rescale_factor
-            if (
-                self.reference_clips._config is not None
-                and "model" in self.reference_clips._config
-            ):
-                ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
             if ghost_rescale != 1.0:
                 ghost_stick = utils.scale_spec(
                     ghost_stick, ghost_rescale, root_body="reference_base"

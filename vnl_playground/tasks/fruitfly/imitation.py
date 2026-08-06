@@ -13,7 +13,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
-from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.reference_clips import ReferenceClips, prepare_reference_clips
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
@@ -29,6 +29,7 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         joints=consts.JOINTS,
         bodies=consts.BODIES,
+        root_body="thorax",
         end_effectors=consts.END_EFFECTORS,
         mujoco_impl="warp",  # Use warp backend for faster testing
         naconmax=1024 * 10,
@@ -47,7 +48,7 @@ def default_config() -> config_dict.ConfigDict:
         reference_length=5,
         start_frame_range=[0, 50],  # random_init_range from config
         qvel_init="zeros",
-        keep_clips_idx=None,
+        clip_indices=None,
         # Reward terms configuration.
         # For imitation rewards, the formula is: weight * exp(-((error / exp_scale)^2) / 2)
         # exp_scale acts as a tolerance parameter: larger values = more lenient rewards,
@@ -108,16 +109,13 @@ class Imitation(fruitfly_base.FruitflyEnv):
         self._suffix = ""
         self.compile()
 
-        if clips is not None:
-            self.reference_clips = clips
-        else:
-            self.reference_clips = ReferenceClips(
-                str(self._config.reference_data_path),
-                self._config.clip_length,
-                self._config.keep_clips_idx,
-                joint_names=self._config.joints,
-                body_names=self._config.bodies,
-            )
+        self.reference_clips = prepare_reference_clips(
+            self._config,
+            clips,
+            joint_names=self._config.joints,
+            body_names=self._config.bodies,
+            root_body_name=self._config.root_body,
+        )
 
         max_n_clips = self.reference_clips.joints.shape[0]
         if self._config.clip_set == "all":
