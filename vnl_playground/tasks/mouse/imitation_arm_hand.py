@@ -166,11 +166,81 @@ def default_config() -> config_dict.ConfigDict:
     cfg.solver = "newton"
     cfg.integrator = "euler"
     # imitation.py's base default (clip_length=50, mocap_hz=200) was tuned
-    # for the old single-animal dataset, not this one. Verified from the
-    # original registered-mocap trial's own reprojection video metadata
-    # (fps=25.0, duration=5.04s, 126 frames -- 126/25=5.04 exactly): this
-    # STAC v22-native data is natively 25Hz, 126 frames/clip. clip_length=None uses
+    # for the old single-animal dataset, not this one. clip_length=None uses
     # MouseReferenceClips' native frame count (126) instead of truncating.
+    #
+    # ---------------------------------------------------------------------
+    # WARNING (2026-08-06): mocap_hz = 25 IS WRONG. THE DATA IS 250 Hz.
+    # ---------------------------------------------------------------------
+    # The 25 came from the reprojection clips' own metadata ("fps=25.0,
+    # duration=5.04s, 126 frames"). That is the *container* frame rate: those
+    # clips are written at 25 fps for 10x slow-motion viewing. Acquisition was
+    # 250 Hz and one clip spans ~504 ms, not 5.04 s.
+    #
+    # Two independent confirmations, both reproducible:
+    #   1. The matched-EMG CSVs carry their own `time_ms` and `frame_in_clip`
+    #      columns: 126 frames over 500 ms = 250.0 Hz exactly, on all 15
+    #      trials, zero spread.
+    #   2. The STAC `_ik.h5` files' stored |qvel| against the finite difference
+    #      of the `qpos` in the same file: 21.4x apart at 25 Hz, 2.14x at
+    #      250 Hz.
+    #
+    # THE DEFAULT IS LEFT AT 25 ON PURPOSE. Changing it here would silently
+    # alter every existing checkpoint's environment and break reproduction of
+    # every run trained before 2026-08-06. Override it per run instead:
+    #
+    #     --mocap-hz 250 --ctrl-dt 0.002
+    #
+    # Both must move together. `_get_cur_frame` advances the reference by
+    # `ctrl_dt * mocap_hz` frames per control step, so an episode spans the
+    # clip only when `episode_length == n_frames / that product`. 0.02 x 25 and
+    # 0.002 x 250 both give 0.5, which is why the corrected pair keeps
+    # episode_length at 252 and preserves the 2-control-steps-per-frame ratio
+    # that fixed the staircase artifact described below. The trainer asserts
+    # this invariant and aborts with the corrected value if it is violated.
+    #
+    # What running at 25 Hz costs, and what the correction costs:
+    #
+    #   * At 25 Hz the whole reach is simulated over 5.04 s of physical time
+    #     instead of 0.504 s. Joint velocities are 1/10 the animal's and
+    #     accelerations 1/100. Peak *total* required joint force is only ~2x
+    #     off (this limb has almost no inertia -- the dynamic term is
+    #     dominated by joint damping, not by M*qacc), but the temporal
+    #     structure is stretched 10x.
+    #   * Muscle activation dynamics are effectively bypassed: tau_act = 2 ms
+    #     against a 20 ms control interval means activation fully settles
+    #     between commands, so `act` ~= `ctrl` and the Hill model's own
+    #     low-pass contributes nothing. At ctrl_dt = 0.002 the two are
+    #     comparable and the filter does real work. This matters for anything
+    #     comparing `act` to recorded EMG.
+    #
+    # THROUGHPUT. Retiming makes training substantially faster, and the reason
+    # is worth stating because it is easy to misread. `sim_dt` does NOT change
+    # (contact stability at contact_stiffness_mult=30 is a constraint on
+    # sim_dt itself). What changes is substeps per control step:
+    #
+    #     ctrl_dt / sim_dt :  0.02/0.00025 = 80  ->  0.002/0.00025 = 8
+    #
+    # The env-step count is unchanged, so each env step now does 1/10 the
+    # physics. Measured on this rig, warp backend, 2048 envs, 300M steps:
+    #
+    #     b1 (25 Hz)  :  7,426 sps   300M in 10.9 h
+    #     A2 (250 Hz) : 41,863 sps   300M in  2.03 h      -> 5.64x
+    #
+    # 5.64x rather than 10x because the physics is not all of the per-step
+    # cost. Solving 1/((1-p) + p/10) = 5.64 puts the physics fraction at
+    # p ~= 0.91, so ~9% of per-step wall time (policy forward, observation
+    # assembly, reward, the PPO update) was already elsewhere and is now the
+    # bottleneck. (b1 vs A2 is not a controlled A/B -- A2 also has a 130-dim
+    # observation against b1's 132 and a different reward set -- but neither
+    # is plausibly worth more than a percent of throughput.)
+    #
+    # Note what did NOT get faster: *simulated physical time* per wall-clock
+    # second went DOWN, 7,426 x 0.02 = 148.5 sim-s/s to 41,863 x 0.002 = 83.7.
+    # The run is faster in environment steps, which is what PPO consumes, not
+    # in seconds of simulated physics. Over a fixed 300M-step budget the agent
+    # now experiences 600,000 s of physical time instead of 6,000,000 s --
+    # which is correct, because the reach really is 10x shorter.
     cfg.mocap_hz = 25
     cfg.clip_length = None
     # ctrl_dt=0.02, sim_dt=0.001 (20 substeps/control step) -- 2026-07-17,
