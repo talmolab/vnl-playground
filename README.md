@@ -132,9 +132,14 @@ env = registry.load("RodentJoystick", config=cfg, rng=jax.random.key(0))
 
 # Imitation tasks (require reference clips)
 cfg = registry.get_default_config("RodentImitation")
-clips = registry.load_reference_clips("RodentImitation", data_path, n_frames_per_clip=250)
+clips = registry.load_reference_clips(
+    "RodentImitation", data_path, n_frames_per_clip=250
+)
 env = registry.load("RodentImitation", config=cfg, clips=clips)
 ```
+
+Reference motion uses the native `stac-mjx` HDF5 contract (`qpos`, `qvel`,
+`xpos`, and `xquat`) across all imitation environments.
 
 ## Notes
 

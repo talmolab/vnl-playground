@@ -1,680 +1,753 @@
-"""Unified reference clips loader for motion capture data.
+"""Typed reference-motion data and HDF5 loaders.
 
-This module provides a single `ReferenceClips` class that loads motion capture
-reference data from HDF5 files. It automatically detects the H5 format and
-provides a consistent API regardless of the underlying data structure.
-
-Supported H5 Formats
---------------------
-1. **Named-array format** (preferred, used by fruitfly):
-   - Root state: `position`, `velocity`, `quaternion`, `angular_velocity`
-   - Joint state: `joints`, `joints_velocity`
-   - Body state: `body_positions`, `body_quaternions`
-   - Data may be under `/all_clips/` group or at root level
-
-2. **Legacy flat-array format** (used by rodent):
-   - State vectors: `qpos`, `qvel` (flat arrays containing root + joints)
-   - Body state: `xpos`, `xquat`
-   - Metadata: `names_qpos`, `names_xpos`, `config`
-   - Data requires reshaping from (n_total_frames, ...) to (n_clips, n_frames, ...)
-
-Usage
------
->>> from vnl_playground.tasks.reference_clips import ReferenceClips
->>>
->>> # Load reference clips (format auto-detected)
->>> clips = ReferenceClips(
-...     data_path="path/to/reference_clips.h5",
-...     n_frames_per_clip=250,
-... )
->>>
->>> # Access data using consistent API
->>> clips.qpos.shape  # (n_clips, n_frames, n_dof)
->>> clips.joints.shape  # (n_clips, n_frames, n_joints)
->>> clips.root_position  # (n_clips, n_frames, 3)
->>>
->>> # Slice operations
->>> frame = clips.at(clip=0, frame=10)  # Single frame
->>> seq = clips.slice(clip=0, start_frame=0, length=50)  # Frame sequence
->>>
->>> # Train/test split
->>> train_clips, test_clips = clips.split(train_ratio=0.8, seed=42)
-
-See Also
---------
-- `vnl_playground.tasks.wrappers` : Environment wrappers
-- `vnl_playground.registry` : High-level environment loading API
+Reference files use the native ``stac-mjx`` output contract: ``qpos``, ``qvel``,
+``xpos``, ``xquat``, and their associated state names.
 """
 
-import copy
-import logging
+import os
 import re
 import warnings
-from collections.abc import Mapping
-from ctypes import Array
-from typing import Any, ClassVar
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any, Self
 
 import h5py
 import jax
 import jax.numpy as jp
 import numpy as np
 import yaml
+from jaxtyping import Array, Float, Integer
 
 
+@dataclass(frozen=True, eq=False)
+class ReferenceClipData:
+    """Canonical MuJoCo state arrays with shared leading dimensions."""
+
+    qpos: Float[Array, "*batch nq"]
+    qvel: Float[Array, "*batch nv"]
+    xpos: Float[Array, "*batch nbody 3"]
+    xquat: Float[Array, "*batch nbody 4"]
+
+    def __post_init__(self) -> None:
+        """Validate the shared leading dimensions used by all data views."""
+        leading = self.qpos.shape[:-1]
+        if self.qvel.shape[:-1] != leading:
+            raise ValueError("qpos and qvel must have identical leading dimensions.")
+        if self.xpos.shape[:-2] != leading or self.xquat.shape[:-2] != leading:
+            raise ValueError("All state arrays must have identical leading dimensions.")
+        if self.xpos.shape[-2] != self.xquat.shape[-2]:
+            raise ValueError("xpos and xquat must contain the same number of bodies.")
+        if self.xpos.shape[-1] != 3 or self.xquat.shape[-1] != 4:
+            raise ValueError("xpos and xquat must end in XYZ and WXYZ dimensions.")
+
+
+@dataclass(frozen=True)
+class ReferenceClipMetadata:
+    """Names and producer metadata associated with reference-motion arrays."""
+
+    qpos_names: tuple[str, ...]
+    xpos_names: tuple[str, ...]
+    joint_names: tuple[str, ...]
+    tracked_body_names: tuple[str, ...]
+    joint_qpos_indices: tuple[int, ...]
+    joint_qvel_indices: tuple[int, ...]
+    root_body_name: str | None = None
+    stac_config: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True, eq=False)
 class ReferenceClips:
-    """Reference clips loader for motion capture data.
+    """Immutable reference clips backed by canonical MuJoCo state arrays."""
 
-    This class loads motion capture reference data from HDF5 files and provides
-    a unified API for accessing the data regardless of the underlying format.
-    The format is auto-detected during loading.
-
-    The class supports two H5 formats:
-
-    1. **Named-array format** (preferred):
-       Data stored as separate semantic arrays, optionally under `/all_clips/` group::
-
-           position          (n_clips, n_frames, 3)     - Root XYZ position
-           velocity          (n_clips, n_frames, 3)     - Root velocity
-           quaternion        (n_clips, n_frames, 4)     - Root orientation
-           angular_velocity  (n_clips, n_frames, 3)     - Root angular velocity
-           joints            (n_clips, n_frames, n_j)   - Joint angles
-           joints_velocity   (n_clips, n_frames, n_j)   - Joint velocities
-           body_positions    (n_clips, n_frames, n_b, 3) - Body positions
-           body_quaternions  (n_clips, n_frames, n_b, 4) - Body orientations
-
-    2. **Legacy flat-array format**:
-       Data stored as flat state vectors that need reshaping::
-
-           qpos        (n_total_frames, n_dof)   - Joint positions (root + joints)
-           qvel        (n_total_frames, n_dof-1) - Joint velocities
-           xpos        (n_total_frames, n_b, 3)  - Body world positions
-           xquat       (n_total_frames, n_b, 4)  - Body world orientations
-           names_qpos  (n_dof,)                  - DOF names
-           names_xpos  (n_b,)                    - Body names
-           config      YAML string               - Metadata including clip names
-
-    Attributes
-    ----------
-    clip_names : np.ndarray or None
-        Behavior names for each clip (e.g., "Walk", "Run"). Only available
-        for legacy format files that include config metadata.
-
-    Examples
-    --------
-    >>> clips = ReferenceClips("data.h5", n_frames_per_clip=250)
-    >>> print(f"Loaded {clips.qpos.shape[0]} clips")
-    >>> train, test = clips.split(train_ratio=0.8)
-    """
-
-    # Named-array format keys
-    _NAMED_ARRAYS: ClassVar[list[str]] = [
-        "position",
-        "velocity",
-        "quaternion",
-        "angular_velocity",
-        "joints",
-        "joints_velocity",
-        "body_positions",
-        "body_quaternions",
-    ]
-
-    # Legacy flat-array format keys
-    _LEGACY_ARRAYS: ClassVar[list[str]] = ["qpos", "qvel", "xpos", "xquat"]
-
-    def __init__(
-        self,
-        data_path: str,
-        n_frames_per_clip: int,
-        keep_clips_idx: Array[int] | None = None,
-        joint_names: list[str] | None = None,
-        body_names: list[str] | None = None,
-    ):
-        """Load reference clips from an HDF5 file.
-
-        Parameters
-        ----------
-        data_path : str
-            Path to the HDF5 data file containing motion capture data.
-        n_frames_per_clip : int
-            Number of frames in each clip. For legacy format, this is used
-            to reshape flat arrays into (n_clips, n_frames, ...) shape.
-        keep_clips_idx : array-like of int, optional
-            Indices of clips to keep. If None, all clips are loaded.
-            Useful for loading a subset of data for debugging.
-        joint_names : list of str, optional
-            Override joint names. If None, names are read from H5 metadata
-            (legacy: `names_qpos[7:]`, named: `/metadata/joint_names`)
-            or generated as `joint_0`, `joint_1`, etc.
-        body_names : list of str, optional
-            Override body names. If None, names are read from H5 metadata
-            (legacy: `names_xpos`, named: `/metadata/body_names`)
-            or generated as `body_0`, `body_1`, etc.
-
-        Raises
-        ------
-        FileNotFoundError
-            If data_path does not exist.
-        KeyError
-            If required arrays are missing from the H5 file.
-        """
-        self._data_arrays: dict[str, jp.ndarray] = {}
-        self._joint_names_list: list[str] = []
-        self._body_names_map: dict[str, int] = {}
-        self._is_legacy_format = False
-        self._config: dict | None = None
-        self.clip_names: np.ndarray | None = None
-
-        self._load_from_disk(
-            data_path, n_frames_per_clip, keep_clips_idx, joint_names, body_names
-        )
+    data: ReferenceClipData
+    metadata: ReferenceClipMetadata
+    data_path: str
+    source_clip_indices: Integer[Array, "..."]
+    behaviour_labels: tuple[str, ...] | None = None
 
     def __repr__(self) -> str:
         return (
             "ReferenceClips("
-            f"data_path={self._data_path}, "
-            f"n_clips={self.n_clips},"
+            f"data_path={self.data_path!r}, "
+            f"n_clips={self.n_clips}, "
             f"n_frames_per_clip={self.n_frames})"
         )
 
     def __len__(self) -> int:
         return self.n_clips
 
-    def _load_from_disk(
-        self,
-        data_path: str,
-        n_frames_per_clip: int,
-        keep_clips_idx: Array[int] | None,
-        joint_names: list[str] | None,
-        body_names: list[str] | None,
-    ) -> None:
-        """Load data from H5 file, auto-detecting format.
+    def _require_collection(self) -> None:
+        if self.qpos.ndim < 3:
+            raise IndexError("Cannot slice an already-sliced ReferenceClips object.")
 
-        Args:
-            data_path: Path to the HDF5 file.
-            n_frames_per_clip: Number of frames per clip.
-            keep_clips_idx: Optional array of clip indices to keep.
-            joint_names: Optional list of joint names to override.
-            body_names: Optional list of body names to override.
-        """
-        self._data_path = data_path
-        with h5py.File(data_path, "r") as fid:
-            # Detect format by checking for named arrays
-            group = fid.get("all_clips", fid)
-
-            if "joints" in group or "position" in group:
-                self._load_named_format(
-                    fid, group, keep_clips_idx, joint_names, body_names
-                )
-            else:
-                self._load_legacy_format(
-                    fid, n_frames_per_clip, keep_clips_idx, joint_names, body_names
-                )
-
-    def _load_named_format(
-        self,
-        fid: h5py.File,
-        group: h5py.Group,
-        keep_clips_idx: Array[int] | None,
-        joint_names: list[str] | None,
-        body_names: list[str] | None,
-    ) -> None:
-        """Load named-array format (fruitfly-style)."""
-        self._is_legacy_format = False
-
-        for k in self._NAMED_ARRAYS:
-            if k in group:
-                arr = group[k][()]
-                self._clip_idx = jp.arange(arr.shape[0])
-                self._data_arrays[k] = jp.array(arr)
-                if keep_clips_idx is not None:
-                    logging.info(f"{k}: Keeping {len(keep_clips_idx)} clips")
-                    self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
-                    self._clip_idx = jp.array(keep_clips_idx)
-        # Load joint names
-        if joint_names is not None:
-            self._joint_names_list = list(joint_names)
-        elif "metadata" in fid and "joint_names" in fid["metadata"]:
-            self._joint_names_list = list(
-                fid["metadata"]["joint_names"][()].astype(str)
-            )
-        else:
-            n_joints = self._data_arrays["joints"].shape[-1]
-            self._joint_names_list = [f"joint_{i}" for i in range(n_joints)]
-
-        # Load body names
-        if body_names is not None:
-            self._body_names_map = {name: i for i, name in enumerate(body_names)}
-        elif "metadata" in fid and "body_names" in fid["metadata"]:
-            names = list(fid["metadata"]["body_names"][()].astype(str))
-            self._body_names_map = {name: i for i, name in enumerate(names)}
-        else:
-            n_bodies = self._data_arrays["body_positions"].shape[-2]
-            self._body_names_map = {f"body_{i}": i for i in range(n_bodies)}
-
-    def _load_legacy_format(
-        self,
-        fid: h5py.File,
-        n_frames_per_clip: int,
-        keep_clips_idx: Array[int] | None,
-        joint_names: list[str] | None,
-        body_names: list[str] | None,
-    ) -> None:
-        """Load legacy flat-array format (rodent-style)."""
-        self._is_legacy_format = True
-
-        # Load config if available
-        if "config" in fid:
-            self._config = yaml.safe_load(fid["config"][()])
-            self.clip_names = self._extract_clip_names(self._config)
-
-        # Load and reshape data arrays
-        for k in self._LEGACY_ARRAYS:
-            if k in fid:
-                arr = fid[k][()]
-                n_clips = arr.shape[0] // n_frames_per_clip
-                self._clip_idx = jp.arange(n_clips)
-                arr = arr.reshape(n_clips, n_frames_per_clip, *arr.shape[1:])
-                self._data_arrays[k] = jp.array(arr)
-                if keep_clips_idx is not None:
-                    logging.info(f"{k}: Keeping {len(keep_clips_idx)} clips")
-                    self._data_arrays[k] = self._data_arrays[k][keep_clips_idx]
-
-        # Filter clip names once (outside the loop to avoid repeated indexing)
-        if keep_clips_idx is not None and self.clip_names is not None:
-            self.clip_names = self.clip_names[keep_clips_idx]
-
-        # Load name mappings
-        if "names_qpos" in fid:
-            names_qpos = fid["names_qpos"][()].astype(str)
-            self._qpos_names = {n: i for (i, n) in enumerate(names_qpos)}
-            if joint_names is not None:
-                self._joint_names_list = list(joint_names)
-            else:
-                self._joint_names_list = list(names_qpos)
-        if "names_xpos" in fid:
-            names_xpos = fid["names_xpos"][()].astype(str)
-            self._xpos_names = {n: i for (i, n) in enumerate(names_xpos)}
-            if body_names is not None:
-                self._body_names_map = {name: i for i, name in enumerate(body_names)}
-            else:
-                self._body_names_map = {n: i for (i, n) in enumerate(names_xpos)}
-
-    def _extract_clip_names(self, config: Mapping[str, Any]) -> np.ndarray | None:
-        """Extract behavior names from legacy config metadata."""
-        if "model" not in config or "snips_order" not in config.get("model", {}):
+    def _label_for_clip(self, clip: int | Array) -> tuple[str, ...] | None:
+        if self.behaviour_labels is None or isinstance(clip, jax.core.Tracer):
             return None
-        original_filenames = config["model"]["snips_order"]
-        pattern = r"([A-Za-z]+)_\d+(\.p)?"
-        clip_names = []
-        for fn in original_filenames:
-            m = re.search(pattern, fn)
-            if m is None:
-                raise ValueError(f"Clip name {fn} does not match pattern {pattern}.")
-            clip_names.append(m.group(1))
-        return np.array(clip_names)
+        return (self.behaviour_labels[int(clip)],)
 
-    @property
-    def _shape_check_key(self) -> str:
-        """Key to use for shape checks."""
-        return "qpos" if self._is_legacy_format else "joints"
-
-    @property
-    def _data_array_keys(self) -> list[str]:
-        """List of data array keys based on format."""
-        return self._LEGACY_ARRAYS if self._is_legacy_format else self._NAMED_ARRAYS
-
-    # -------------------------------------------------------------------------
-    # Slicing and splitting operations
-    # -------------------------------------------------------------------------
-
-    def at(self, clip: int, frame: int) -> "ReferenceClips":
-        """Extract a single frame from a specific clip.
-
-        Parameters
-        ----------
-        clip : int
-            Index of the clip to select.
-        frame : int
-            Index of the frame within the selected clip.
-
-        Returns
-        -------
-        ReferenceClips
-            A new instance with data sliced to the specified clip and frame.
-            All array shapes will have their first two dimensions collapsed.
-
-        Raises
-        ------
-        IndexError
-            If called on an already-sliced ReferenceClips instance.
-        """
-        if len(self._data_arrays[self._shape_check_key].shape) < 3:
-            raise IndexError("Trying to slice already sliced ReferenceClip.")
-        subslice = copy.copy(self)
-        subslice._data_arrays = {
-            k: self._data_arrays[k][clip, frame]
-            for k in self._data_array_keys
-            if k in self._data_arrays
-        }
-        return subslice
+    def at(self, clip: int | Array, frame: int | Array) -> Self:
+        """Return one frame from one clip."""
+        self._require_collection()
+        data = ReferenceClipData(
+            qpos=self.qpos[clip, frame],
+            qvel=self.qvel[clip, frame],
+            xpos=self.xpos[clip, frame],
+            xquat=self.xquat[clip, frame],
+        )
+        return replace(
+            self,
+            data=data,
+            source_clip_indices=self.source_clip_indices[clip],
+            behaviour_labels=self._label_for_clip(clip),
+        )
 
     def slice(
-        self, clip: int, start_frame: int, length: int, stride: int = 1
-    ) -> "ReferenceClips":
-        """Extract a slice of frames from a specific clip, optionally strided.
+        self,
+        clip: int | Array,
+        start_frame: int | Array,
+        length: int,
+        stride: int = 1,
+    ) -> Self:
+        """Return a possibly strided sequence from one clip."""
+        self._require_collection()
+        if length <= 0:
+            raise ValueError("length must be positive.")
+        if stride <= 0:
+            raise ValueError("stride must be positive.")
 
-        Parameters
-        ----------
-        clip : int
-            Index of the clip to slice.
-        start_frame : int
-            Starting frame index within the clip.
-        length : int
-            Number of frames to include in the output slice.
-        stride : int, default=1
-            Step size between selected frames. When stride > 1, a contiguous
-            block of ``(length - 1) * stride + 1`` frames is fetched via
-            ``dynamic_slice`` and then subsampled with ``[::stride]``.
-
-        Returns
-        -------
-        ReferenceClips
-            A new instance with data sliced to the specified range.
-            Arrays will have shape (length, ...) instead of (n_clips, n_frames, ...).
-
-        Raises
-        ------
-        IndexError
-            If called on an already-sliced ReferenceClips instance.
-        """
-        if len(self._data_arrays[self._shape_check_key].shape) < 3:
-            raise IndexError("Trying to slice already sliced ReferenceClip.")
         total_length = (length - 1) * stride + 1
-        subslice = copy.copy(self)
-        subslice._data_arrays = {}
-        for key in self._data_array_keys:
-            if key not in self._data_arrays:
-                continue
-            clip_array = self._data_arrays[key][clip]
+
+        def slice_array(array: Array) -> Array:
+            clip_array = array[clip]
             contiguous = jax.lax.dynamic_slice(
                 clip_array,
                 (start_frame, *jp.zeros(clip_array.ndim - 1, dtype=int)),
                 (total_length, *clip_array.shape[1:]),
             )
-            subslice._data_arrays[key] = contiguous[::stride]
-        return subslice
+            return contiguous[::stride]
 
-    def split(
-        self, train_ratio: float = 0.8, seed: int = 0
-    ) -> tuple["ReferenceClips", "ReferenceClips"]:
-        """Split the reference clips into train and test sets.
+        data = ReferenceClipData(
+            qpos=slice_array(self.qpos),
+            qvel=slice_array(self.qvel),
+            xpos=slice_array(self.xpos),
+            xquat=slice_array(self.xquat),
+        )
+        return replace(
+            self,
+            data=data,
+            source_clip_indices=self.source_clip_indices[clip],
+            behaviour_labels=self._label_for_clip(clip),
+        )
 
-        Randomly shuffles clip indices and splits into training and test sets.
-        The split is reproducible given the same seed.
+    def split(self, train_ratio: float = 0.8, seed: int = 0) -> tuple[Self, Self]:
+        """Split clips reproducibly into train and test collections."""
+        self._require_collection()
+        if not 0.0 <= train_ratio <= 1.0:
+            raise ValueError("train_ratio must be between 0 and 1.")
 
-        Parameters
-        ----------
-        train_ratio : float, default=0.8
-            Proportion of clips to use for training (0.0 to 1.0).
-            If this results in an empty test set, both train and test
-            will contain all clips with a warning.
-        seed : int, default=0
-            Random seed for reproducible splits.
-
-        Returns
-        -------
-        train_clips : ReferenceClips
-            Training set containing `int(n_clips * train_ratio)` clips.
-        test_clips : ReferenceClips
-            Test set containing the remaining clips.
-
-        Examples
-        --------
-        >>> clips = ReferenceClips("data.h5", n_frames_per_clip=250)
-        >>> train, test = clips.split(train_ratio=0.8, seed=42)
-        >>> print(f"Train: {train.qpos.shape[0]}, Test: {test.qpos.shape[0]}")
-        """
-        n_clips = self._data_arrays[self._shape_check_key].shape[0]
-        n_train = int(n_clips * train_ratio)
-
-        if n_clips == n_train:
+        n_train = int(self.n_clips * train_ratio)
+        if n_train == self.n_clips:
             warnings.warn(
-                "train_ratio results in empty test set; using full dataset for both.",
+                "train_ratio results in an empty test set; using all clips for both.",
                 stacklevel=2,
             )
-            logging.info(f"Training clips: {n_train}; Test clips: {n_train}")
-            return copy.copy(self), copy.copy(self)
+            return self, self
 
-        logging.info(f"Training clips: {n_train}; Test clips: {n_clips - n_train}")
+        indices = np.random.RandomState(seed).permutation(self.n_clips)
+        return self._select(indices[:n_train]), self._select(indices[n_train:])
 
-        rng = np.random.RandomState(seed)
-        indices = rng.permutation(n_clips)
-        train_indices = indices[:n_train]
-        test_indices = indices[n_train:]
+    def recompute_body_poses(
+        self,
+        mj_model: Any,
+        strip_body_suffix: str = "",
+        tracked_body_names: Sequence[str] | None = None,
+    ) -> Self:
+        """Return a copy whose body states are recomputed from ``qpos``."""
+        self._require_collection()
+        import mujoco
 
-        train_clips = copy.copy(self)
-        train_clips._data_arrays = {
-            k: self._data_arrays[k][train_indices]
-            for k in self._data_array_keys
-            if k in self._data_arrays
-        }
-        train_clips._clip_idx = self._clip_idx[train_indices]
-        if self.clip_names is not None:
-            train_clips.clip_names = self.clip_names[train_indices]
+        qpos = np.asarray(self.qpos)
+        n_clips, n_frames = qpos.shape[:2]
+        xpos = np.empty((n_clips, n_frames, mj_model.nbody, 3), dtype=qpos.dtype)
+        xquat = np.empty((n_clips, n_frames, mj_model.nbody, 4), dtype=qpos.dtype)
+        mj_data = mujoco.MjData(mj_model)
 
-        test_clips = copy.copy(self)
-        test_clips._data_arrays = {
-            k: self._data_arrays[k][test_indices]
-            for k in self._data_array_keys
-            if k in self._data_arrays
-        }
-        test_clips._clip_idx = self._clip_idx[test_indices]
-        if self.clip_names is not None:
-            test_clips.clip_names = self.clip_names[test_indices]
+        for clip_index in range(n_clips):
+            for frame_index in range(n_frames):
+                mj_data.qpos[:] = qpos[clip_index, frame_index]
+                mujoco.mj_kinematics(mj_model, mj_data)
+                xpos[clip_index, frame_index] = mj_data.xpos
+                xquat[clip_index, frame_index] = mj_data.xquat
 
-        return train_clips, test_clips
+        xpos_names = tuple(
+            mj_model.body(i).name.removesuffix(strip_body_suffix)
+            for i in range(mj_model.nbody)
+        )
+        tracked_bodies = (
+            tuple(tracked_body_names)
+            if tracked_body_names is not None
+            else self.metadata.tracked_body_names
+        )
+        missing_bodies = [name for name in tracked_bodies if name not in xpos_names]
+        if missing_bodies:
+            raise ValueError(
+                f"Recomputed model does not contain tracked bodies: {missing_bodies}"
+            )
 
-    # -------------------------------------------------------------------------
-    # Core data properties
-    # -------------------------------------------------------------------------
+        data = replace(self.data, xpos=jp.asarray(xpos), xquat=jp.asarray(xquat))
+        metadata = replace(
+            self.metadata, xpos_names=xpos_names, tracked_body_names=tracked_bodies
+        )
+        return replace(self, data=data, metadata=metadata)
 
-    @property
-    def qpos(self) -> jp.ndarray:
-        """Joint positions array."""
-        if self._is_legacy_format:
-            return self._data_arrays["qpos"]
-        return jp.concatenate([self.position, self.quaternion, self.joints], axis=-1)
+    def bind_model_layout(
+        self,
+        *,
+        joint_names: Sequence[str] | None = None,
+        body_names: Sequence[str] | None = None,
+        root_body_name: str | None = None,
+    ) -> Self:
+        """Validate and bind model-facing names to already-loaded arrays."""
+        metadata = _build_metadata(
+            self.data,
+            qpos_names=self.metadata.qpos_names,
+            xpos_names=self.metadata.xpos_names,
+            stac_config=self.metadata.stac_config,
+            joint_names=_normalize_names(joint_names),
+            body_names=_normalize_names(body_names),
+            root_body_name=root_body_name,
+        )
+        return replace(self, metadata=metadata)
 
-    @property
-    def qvel(self) -> jp.ndarray:
-        """Joint velocities array."""
-        if self._is_legacy_format:
-            return self._data_arrays["qvel"]
-        return jp.concatenate(
-            [self.velocity, self.angular_velocity, self.joints_velocity], axis=-1
+    def _select(self, indices: Sequence[int] | np.ndarray) -> Self:
+        index_array = np.asarray(indices, dtype=int)
+        data = ReferenceClipData(
+            qpos=self.qpos[index_array],
+            qvel=self.qvel[index_array],
+            xpos=self.xpos[index_array],
+            xquat=self.xquat[index_array],
+        )
+        labels = (
+            tuple(self.behaviour_labels[i] for i in index_array)
+            if self.behaviour_labels is not None
+            else None
+        )
+        return replace(
+            self,
+            data=data,
+            source_clip_indices=self.source_clip_indices[index_array],
+            behaviour_labels=labels,
         )
 
     @property
-    def root_position(self) -> jp.ndarray:
-        """Root XYZ position."""
-        if self._is_legacy_format:
-            return self.qpos[..., :3]
-        return self._data_arrays["position"]
+    def qpos(self) -> Float[Array, "*batch nq"]:
+        """Generalized positions."""
+        return self.data.qpos
 
     @property
-    def root_quaternion(self) -> jp.ndarray:
-        """Root orientation quaternion."""
-        if self._is_legacy_format:
-            return self.xquat[..., 1, :]  # Can't assume freejoint
-        return self._data_arrays["quaternion"]
+    def qvel(self) -> Float[Array, "*batch nv"]:
+        """Generalized velocities."""
+        return self.data.qvel
 
     @property
-    def joints(self) -> jp.ndarray:
-        """Joint angles (excluding root)."""
-        if self._is_legacy_format:
-            return self.qpos[
-                ..., [self._qpos_names[name] for name in self._joint_names_list]
-            ]
-        return self._data_arrays["joints"]
+    def xpos(self) -> Float[Array, "*batch nbody 3"]:
+        """World-space body positions."""
+        return self.data.xpos
 
     @property
-    def joints_velocity(self) -> jp.ndarray:
-        """Joint velocities (excluding root)."""
-        if self._is_legacy_format:
-            start_idx = self.qvel.shape[-1] - len(self._joint_names_list)
-            return self.qvel[..., start_idx:]
-        return self._data_arrays["joints_velocity"]
-
-    # Named-array format specific properties
-    @property
-    def position(self) -> jp.ndarray:
-        """Root position (named format) or computed from qpos (legacy)."""
-        if self._is_legacy_format:
-            return self.qpos[..., :3]
-        return self._data_arrays["position"]
+    def xquat(self) -> Float[Array, "*batch nbody 4"]:
+        """World-space body orientations in MuJoCo ``wxyz`` order."""
+        return self.data.xquat
 
     @property
-    def velocity(self) -> jp.ndarray:
-        """Root velocity (named format) or computed from qvel (legacy)."""
-        if self._is_legacy_format:
-            return self.qvel[..., :3]
-        return self._data_arrays["velocity"]
+    def root_position(self) -> Float[Array, "*batch 3"]:
+        """World-space position of the configured root body."""
+        if (
+            root_body_name := self.metadata.root_body_name
+        ) is not None and root_body_name in self.metadata.xpos_names:
+            return self.body_xpos(root_body_name)
+        if self.qpos.shape[-1] < 3:
+            raise ValueError("Reference data does not contain a root position.")
+        return self.qpos[..., :3]
 
     @property
-    def quaternion(self) -> jp.ndarray:
-        """Root quaternion (named format) or computed from qpos (legacy)."""
-        if self._is_legacy_format:
-            return self.xquat[..., 1, :]  # Can't assume freejoint
-        return self._data_arrays["quaternion"]
+    def root_quaternion(self) -> Float[Array, "*batch 4"]:
+        """World-space orientation of the configured root body."""
+        if (
+            root_body_name := self.metadata.root_body_name
+        ) is not None and root_body_name in self.metadata.xpos_names:
+            return self.body_xquat(root_body_name)
+        if self.qpos.shape[-1] < 7:
+            raise ValueError("Reference data does not contain a root quaternion.")
+        return self.qpos[..., 3:7]
 
     @property
-    def angular_velocity(self) -> jp.ndarray:
-        """Root angular velocity (named format) or computed from qvel (legacy)."""
-        if self._is_legacy_format:
-            start_idx = self.qvel.shape[-1] - len(self._joint_names_list)
-            return self.qvel[..., start_idx:]
-        return self._data_arrays["angular_velocity"]
+    def joints(self) -> Float[Array, "*batch njoint"]:
+        """Generalized positions selected as model joints."""
+        return self.qpos[..., jp.asarray(self.metadata.joint_qpos_indices)]
 
     @property
-    def body_positions(self) -> jp.ndarray:
-        """Body positions array."""
-        if self._is_legacy_format:
-            return self._data_arrays["xpos"]
-        return self._data_arrays["body_positions"]
+    def joints_velocity(self) -> Float[Array, "*batch njoint"]:
+        """Generalized velocities selected as model joints."""
+        return self.qvel[..., jp.asarray(self.metadata.joint_qvel_indices)]
 
     @property
-    def body_quaternions(self) -> jp.ndarray:
-        """Body quaternions array."""
-        if self._is_legacy_format:
-            return self._data_arrays["xquat"]
-        return self._data_arrays["body_quaternions"]
-
-    # Legacy format specific properties
-    @property
-    def xpos(self) -> jp.ndarray:
-        """Body positions (legacy name)."""
-        return self.body_positions
+    def velocity(self) -> Float[Array, "*batch 3"]:
+        """Translational free-root velocity."""
+        self._require_free_root_velocity()
+        return self.qvel[..., :3]
 
     @property
-    def xquat(self) -> jp.ndarray:
-        """Body quaternions (legacy name)."""
-        return self.body_quaternions
-
-    # -------------------------------------------------------------------------
-    # Metadata properties
-    # -------------------------------------------------------------------------
+    def angular_velocity(self) -> Float[Array, "*batch 3"]:
+        """Angular free-root velocity."""
+        self._require_free_root_velocity()
+        return self.qvel[..., 3:6]
 
     @property
     def joint_names(self) -> list[str]:
-        """List of joint names."""
-        return self._joint_names_list
+        """Selected model joint names."""
+        return list(self.metadata.joint_names)
 
     @property
     def body_names(self) -> list[str]:
-        """List of body names."""
-        return list(self._body_names_map.keys())
+        """Tracked model body names."""
+        return list(self.metadata.tracked_body_names)
 
-    # -------------------------------------------------------------------------
-    # Body access methods
-    # -------------------------------------------------------------------------
-
-    def body_xpos(self, name: str) -> jp.ndarray:
-        """Get the global position of a body by name."""
-        if name not in self._xpos_names:
-            raise KeyError(
-                f"Body '{name}' not found. Available: {list(self._xpos_names.keys())}"
-            )
-        idx = self._xpos_names[name]
-        return self.body_positions[..., idx, :]
-
-    def body_xquat(self, name: str) -> jp.ndarray:
-        """Get the global orientation of a body by name."""
-        if name not in self._xpos_names:
-            raise KeyError(
-                f"Body '{name}' not found. Available: {list(self._xpos_names.keys())}"
-            )
-        idx = self._xpos_names[name]
-        return self.body_quaternions[..., idx, :]
+    @property
+    def clip_indices(self) -> Integer[Array, "..."]:
+        """Indices of the selected clips in the source dataset."""
+        return self.source_clip_indices
 
     @property
     def n_frames(self) -> int:
-        """Get number of frames in the clips.
-
-        Returns:
-            Number of frames per clip.
-        """
-        return self.qpos.shape[1]
+        """Number of frames represented by this view."""
+        if self.qpos.ndim >= 3:
+            return self.qpos.shape[1]
+        if self.qpos.ndim == 2:
+            return self.qpos.shape[0]
+        return 1
 
     @property
     def n_clips(self) -> int:
-        """Get number of clips in the dataset.
-
-        Returns:
-            Number of clips available.
-        """
+        """Number of clips represented by this view."""
         return self.qpos.shape[0] if self.qpos.ndim >= 3 else 1
 
     @property
-    def data_path(self) -> str:
-        """Get the path to the data file.
-
-        Returns:
-            Path to the HDF5 file containing the motion data.
-        """
-        return self._data_path
-
-    @property
-    def clip_indices(self) -> jp.ndarray:
-        """Get the indices of clips in this dataset.
-
-        Returns:
-            Array of clip indices.
-        """
-        return self._clip_idx
-
-    @property
     def shape(self) -> tuple[int, ...]:
-        """Get the shape of the motion data.
-
-        Returns:
-            Shape tuple of (n_clips, n_frames, ...) or (n_frames, ...) for sliced data.
-        """
+        """Shape of the generalized-position array."""
         return self.qpos.shape
 
     @property
     def is_sliced(self) -> bool:
-        """Check if this is a sliced reference clips object.
-
-        Returns:
-            True if this object represents a single clip/frame slice.
-        """
+        """Whether this view represents fewer than two leading clip axes."""
         return self.qpos.ndim < 3
 
     @property
     def joint_indices(self) -> list[int]:
-        """Get indices of joints.
+        """Generalized-position indices for selected joints."""
+        return list(self.metadata.joint_qpos_indices)
 
-        Returns:
-            List of indices for joints.
-        """
-        return list(self._qpos_names.values())
+    @property
+    def stac_config(self) -> Mapping[str, Any] | None:
+        """Configuration embedded by ``stac-mjx``, when present."""
+        return self.metadata.stac_config
+
+    @property
+    def scale_factor(self) -> float | None:
+        """Model scale factor recorded by ``stac-mjx``, when present."""
+        if self.stac_config is None:
+            return None
+        model_config = self.stac_config.get("model")
+        if not isinstance(model_config, Mapping):
+            return None
+        value = model_config.get("SCALE_FACTOR")
+        return float(value) if value is not None else None
+
+    def body_xpos(self, name: str) -> Float[Array, "*batch 3"]:
+        """Return the world-space position of a named body."""
+        return self.xpos[..., self._body_index(name), :]
+
+    def body_xquat(self, name: str) -> Float[Array, "*batch 4"]:
+        """Return the world-space orientation of a named body."""
+        return self.xquat[..., self._body_index(name), :]
+
+    def _body_index(self, name: str | None) -> int:
+        if name is not None:
+            try:
+                return self.metadata.xpos_names.index(name)
+            except ValueError:
+                pass
+        raise KeyError(
+            f"Body {name!r} not found. Available bodies: "
+            f"{list(self.metadata.xpos_names)}"
+        )
+
+    def _require_free_root_velocity(self) -> None:
+        if self.qpos.shape[-1] != self.qvel.shape[-1] + 1 or self.qvel.shape[-1] < 6:
+            raise ValueError("Reference data does not use a MuJoCo free-root layout.")
+
+
+def load_reference_clips(
+    data_path: str | os.PathLike[str],
+    *,
+    n_frames_per_clip: int | None = None,
+    clip_indices: Sequence[int] | np.ndarray | Array | None = None,
+    joint_names: Sequence[str] | None = None,
+    body_names: Sequence[str] | None = None,
+    root_body_name: str | None = None,
+) -> ReferenceClips:
+    """Load reference motion into the canonical STAC/MuJoCo representation."""
+    if n_frames_per_clip is not None and n_frames_per_clip <= 0:
+        raise ValueError("n_frames_per_clip must be positive.")
+    if (normalized_indices := _normalize_indices(clip_indices)) is not None and any(
+        i < 0 for i in normalized_indices
+    ):
+        raise ValueError("clip_indices cannot contain negative indices.")
+    normalized_joint_names = _normalize_names(joint_names)
+    normalized_body_names = _normalize_names(body_names)
+    path = Path(data_path)
+
+    if not path.exists():
+        raise FileNotFoundError(path)
+    clips = (
+        _load_reference_directory(path, n_frames_per_clip)
+        if path.is_dir()
+        else _load_reference_file(path, n_frames_per_clip)
+    )
+
+    if normalized_indices is not None:
+        selected = np.asarray(normalized_indices, dtype=int)
+        if selected.size and int(selected.max()) >= clips.n_clips:
+            raise IndexError(
+                f"clip_indices contains an index outside [0, {clips.n_clips})."
+            )
+        clips = clips._select(selected)
+    return clips.bind_model_layout(
+        joint_names=normalized_joint_names,
+        body_names=normalized_body_names,
+        root_body_name=root_body_name,
+    )
+
+
+def prepare_reference_clips(
+    config: Mapping[str, Any],
+    clips: ReferenceClips | None,
+    *,
+    joint_names: Sequence[str] | None = None,
+    body_names: Sequence[str] | None = None,
+    root_body_name: str | None = None,
+) -> ReferenceClips:
+    """Load missing clips and bind them to an environment's model layout."""
+    if clips is None:
+        return load_reference_clips(
+            config["reference_data_path"],
+            n_frames_per_clip=config["clip_length"],
+            clip_indices=config.get("clip_indices"),
+            joint_names=joint_names,
+            body_names=body_names,
+            root_body_name=root_body_name,
+        )
+
+    if joint_names is None and body_names is None and root_body_name is None:
+        return clips
+    return clips.bind_model_layout(
+        joint_names=joint_names,
+        body_names=body_names,
+        root_body_name=root_body_name,
+    )
+
+
+def _load_reference_file(path: Path, n_frames_per_clip: int | None) -> ReferenceClips:
+    with h5py.File(path, "r") as h5:
+        required = ("qpos", "xpos", "xquat", "names_qpos", "names_xpos")
+        _require_h5_keys(h5, required)
+        if "qvel" not in h5 or h5["qvel"].size == 0:
+            raise ValueError(
+                f"{path}: reference data has no inferred qvel values; "
+                "rerun stac-mjx with stac.infer_qvels=true."
+            )
+        arrays = {name: h5[name][()] for name in ("qpos", "qvel", "xpos", "xquat")}
+        qpos_names = _decode_names(h5["names_qpos"][()])
+        xpos_names = _decode_names(h5["names_xpos"][()])
+        stac_config = _load_config(h5)
+
+    data = _canonical_data(**arrays, n_frames_per_clip=n_frames_per_clip)
+    if len(qpos_names) != data.qpos.shape[-1]:
+        raise ValueError(
+            f"{path}: names_qpos has {len(qpos_names)} entries; "
+            f"qpos has {data.qpos.shape[-1]} columns."
+        )
+    if len(xpos_names) != data.xpos.shape[-2]:
+        raise ValueError(
+            f"{path}: names_xpos has {len(xpos_names)} entries; "
+            f"xpos has {data.xpos.shape[-2]} bodies."
+        )
+
+    labels = _extract_behaviour_labels(stac_config, data.qpos.shape[0])
+    return _make_reference_clips(
+        path,
+        data,
+        qpos_names=qpos_names,
+        xpos_names=xpos_names,
+        stac_config=stac_config,
+        behaviour_labels=labels,
+    )
+
+
+def _load_reference_directory(
+    path: Path, n_frames_per_clip: int | None
+) -> ReferenceClips:
+    h5_paths = sorted(path.glob("*.h5"))
+    if not h5_paths:
+        raise ValueError(f"No HDF5 files found in {path}.")
+
+    clips: list[ReferenceClips] = []
+    target_frames = n_frames_per_clip
+    for h5_path in h5_paths:
+        clip = _load_reference_file(h5_path, None)
+        if clip.data.qpos.shape[0] != 1:
+            raise ValueError(f"Expected one clip per file in {h5_path}.")
+        native_frames = clip.data.qpos.shape[1]
+        if target_frames is None:
+            target_frames = native_frames
+        if native_frames < target_frames:
+            raise ValueError(
+                f"{h5_path} has {native_frames} frames; expected at least {target_frames}."
+            )
+        clips.append(clip)
+
+    first = clips[0]
+    for clip, h5_path in zip(clips[1:], h5_paths[1:]):
+        if (
+            clip.metadata.qpos_names != first.metadata.qpos_names
+            or clip.metadata.xpos_names != first.metadata.xpos_names
+        ):
+            raise ValueError(f"State names in {h5_path} do not match {h5_paths[0]}.")
+
+    assert target_frames is not None
+    data = ReferenceClipData(
+        qpos=jp.concatenate([clip.data.qpos[:, :target_frames] for clip in clips]),
+        qvel=jp.concatenate([clip.data.qvel[:, :target_frames] for clip in clips]),
+        xpos=jp.concatenate([clip.data.xpos[:, :target_frames] for clip in clips]),
+        xquat=jp.concatenate([clip.data.xquat[:, :target_frames] for clip in clips]),
+    )
+    labels = tuple(re.sub(r"_ik$", "", h5_path.stem) for h5_path in h5_paths)
+    return _make_reference_clips(
+        path,
+        data,
+        qpos_names=first.metadata.qpos_names,
+        xpos_names=first.metadata.xpos_names,
+        stac_config=first.metadata.stac_config,
+        behaviour_labels=labels,
+    )
+
+
+def _make_reference_clips(
+    path: Path,
+    data: ReferenceClipData,
+    *,
+    qpos_names: tuple[str, ...],
+    xpos_names: tuple[str, ...],
+    stac_config: Mapping[str, Any] | None = None,
+    behaviour_labels: tuple[str, ...] | None = None,
+) -> ReferenceClips:
+    metadata = _build_metadata(
+        data,
+        qpos_names=qpos_names,
+        xpos_names=xpos_names,
+        stac_config=stac_config,
+    )
+    return ReferenceClips(
+        data=data,
+        metadata=metadata,
+        data_path=str(path),
+        source_clip_indices=jp.arange(data.qpos.shape[0]),
+        behaviour_labels=behaviour_labels,
+    )
+
+
+def _build_metadata(
+    data: ReferenceClipData,
+    *,
+    qpos_names: tuple[str, ...],
+    xpos_names: tuple[str, ...],
+    stac_config: Mapping[str, Any] | None,
+    joint_names: tuple[str, ...] | None = None,
+    body_names: tuple[str, ...] | None = None,
+    root_body_name: str | None = None,
+) -> ReferenceClipMetadata:
+    requested_joints = joint_names
+    if requested_joints is None:
+        has_free_root = data.qpos.shape[-1] == data.qvel.shape[-1] + 1
+        root_qpos_dims = 7 if has_free_root else 0
+        root_qvel_dims = 6 if has_free_root else 0
+        joint_qpos_indices = tuple(range(root_qpos_dims, data.qpos.shape[-1]))
+        joint_qvel_indices = tuple(range(root_qvel_dims, data.qvel.shape[-1]))
+        requested_joints = tuple(qpos_names[i] for i in joint_qpos_indices)
+    else:
+        joint_qpos_indices = _resolve_unique_names(
+            requested_joints, qpos_names, "joint"
+        )
+        if data.qpos.shape[-1] == data.qvel.shape[-1]:
+            joint_qvel_indices = joint_qpos_indices
+        elif data.qpos.shape[-1] == data.qvel.shape[-1] + 1 and all(
+            index >= 7 for index in joint_qpos_indices
+        ):
+            joint_qvel_indices = tuple(index - 1 for index in joint_qpos_indices)
+        else:
+            raise ValueError(
+                "Cannot infer qvel indices from this qpos/qvel layout. Current "
+                "stac-mjx metadata supports fixed roots or one leading free joint."
+            )
+
+    tracked_bodies = body_names or xpos_names
+    missing_bodies = [name for name in tracked_bodies if name not in xpos_names]
+    if missing_bodies:
+        raise ValueError(f"Bodies not found in reference data: {missing_bodies}")
+
+    return ReferenceClipMetadata(
+        qpos_names=qpos_names,
+        xpos_names=xpos_names,
+        joint_names=requested_joints,
+        tracked_body_names=tracked_bodies,
+        joint_qpos_indices=joint_qpos_indices,
+        joint_qvel_indices=joint_qvel_indices,
+        root_body_name=root_body_name,
+        stac_config=stac_config,
+    )
+
+
+def _canonical_data(
+    qpos: np.ndarray,
+    qvel: np.ndarray,
+    xpos: np.ndarray,
+    xquat: np.ndarray,
+    *,
+    n_frames_per_clip: int | None,
+) -> ReferenceClipData:
+    arrays = {
+        "qpos": np.asarray(qpos),
+        "qvel": np.asarray(qvel),
+        "xpos": np.asarray(xpos),
+        "xquat": np.asarray(xquat),
+    }
+    if arrays["qpos"].ndim == 2:
+        qpos_frames = arrays["qpos"].shape[0]
+        frames_per_clip = n_frames_per_clip or qpos_frames
+        if qpos_frames % frames_per_clip:
+            raise ValueError(
+                f"{qpos_frames} frames is not divisible by "
+                f"n_frames_per_clip={frames_per_clip}."
+            )
+        n_clips = qpos_frames // frames_per_clip
+        for name, array in arrays.items():
+            if array.shape[0] != qpos_frames:
+                raise ValueError(
+                    f"{name} has {array.shape[0]} frames; expected {qpos_frames}."
+                )
+            arrays[name] = array.reshape(n_clips, frames_per_clip, *array.shape[1:])
+
+    leading = arrays["qpos"].shape[:-1]
+    expected_ranks = {"qpos": 3, "qvel": 3, "xpos": 4, "xquat": 4}
+    for name, expected_rank in expected_ranks.items():
+        if arrays[name].ndim != expected_rank:
+            raise ValueError(
+                f"{name} must have rank {expected_rank}, got {arrays[name].shape}."
+            )
+    if arrays["qvel"].shape[:-1] != leading:
+        raise ValueError("qpos and qvel must have identical clip/frame axes.")
+    if arrays["xpos"].shape[:-2] != leading or arrays["xquat"].shape[:-2] != leading:
+        raise ValueError("All state arrays must have identical clip/frame axes.")
+    if arrays["xpos"].shape[-2] != arrays["xquat"].shape[-2]:
+        raise ValueError("xpos and xquat must contain the same number of bodies.")
+    if arrays["xpos"].shape[-1] != 3 or arrays["xquat"].shape[-1] != 4:
+        raise ValueError("xpos and xquat must end in XYZ and WXYZ dimensions.")
+    if n_frames_per_clip is not None and arrays["qpos"].shape[1] != n_frames_per_clip:
+        raise ValueError(
+            f"Reference data contains {arrays['qpos'].shape[1]} frames per clip; "
+            f"expected {n_frames_per_clip}."
+        )
+    return ReferenceClipData(
+        **{name: jp.asarray(array) for name, array in arrays.items()}
+    )
+
+
+def _require_h5_keys(group: h5py.Group, required: Sequence[str]) -> None:
+    missing = [name for name in required if name not in group]
+    if missing:
+        present = list(group.keys())
+        raise ValueError(
+            f"Invalid reference data: missing {missing}; present keys: {present}."
+        )
+
+
+def _decode_names(values: np.ndarray) -> tuple[str, ...]:
+    return tuple(
+        value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        for value in values
+    )
+
+
+def _load_config(h5: h5py.File) -> Mapping[str, Any] | None:
+    if "config" not in h5:
+        return None
+    raw = h5["config"][()]
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    if (config := yaml.safe_load(raw)) is None:
+        return None
+    if not isinstance(config, Mapping):
+        raise TypeError("Reference config must decode to a mapping.")
+    return config
+
+
+def _extract_behaviour_labels(
+    config: Mapping[str, Any] | None, n_clips: int
+) -> tuple[str, ...] | None:
+    if config is None:
+        return None
+    if not isinstance(model_config := config.get("model"), Mapping):
+        return None
+    if (filenames := model_config.get("snips_order")) is None:
+        return None
+    if len(filenames) != n_clips:
+        raise ValueError(
+            f"config.model.snips_order has {len(filenames)} entries; expected {n_clips}."
+        )
+    labels = []
+    for filename in filenames:
+        stem = Path(str(filename)).stem
+        match = re.fullmatch(r"(.+?)_\d+", stem)
+        labels.append(match.group(1) if match else stem)
+    return tuple(labels)
+
+
+def _resolve_unique_names(
+    requested: tuple[str, ...], available: tuple[str, ...], kind: str
+) -> tuple[int, ...]:
+    indices = []
+    for name in requested:
+        matches = [i for i, candidate in enumerate(available) if candidate == name]
+        if not matches:
+            raise ValueError(f"{kind.title()} {name!r} not found in reference data.")
+        if len(matches) > 1:
+            raise ValueError(
+                f"{kind.title()} {name!r} maps to multiple state dimensions: {matches}."
+            )
+        indices.append(matches[0])
+    return tuple(indices)
+
+
+def _normalize_indices(
+    values: Sequence[int] | np.ndarray | Array | None,
+) -> tuple[int, ...] | None:
+    if values is None:
+        return None
+    return tuple(int(value) for value in np.asarray(values).tolist())
+
+
+def _normalize_names(values: Sequence[str] | None) -> tuple[str, ...] | None:
+    if values is None:
+        return None
+    return tuple(str(value) for value in values)

@@ -38,6 +38,7 @@ dependencies = [
     "matplotlib",
     "pandas",
     "numpy",
+    "jaxtyping",
     "playground",
     "dvc",
     ]
@@ -54,6 +55,7 @@ version_file = "vnl_playground/_version.py"
 cuda12 = ["jax[cuda12]>=0.7.2 ; sys_platform == 'linux'"]
 cuda13 = ["jax[cuda13]>=0.7.2 ; sys_platform == 'linux'"]
 dev = [
+    "pytest",
     "ruff>=0.11",
 ]
 
@@ -102,6 +104,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"vnl_playground/tasks/reference_clips.py" = [
+    "F722",  # jaxtyping variadic dimensions such as "*batch nq"
+]
 "vnl_playground/train_*.py" = [
     "E402",  # entrypoints configure rendering/JAX before accelerator imports
 ]

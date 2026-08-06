@@ -8,8 +8,8 @@ on:
       - main
 
 jobs:
-  lint:
-    name: Lint
+  checks:
+    name: Lint and test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -20,14 +20,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install linting tools
+      - name: Install check dependencies
         run: |
-          pip install ruff
+          pip install ruff jax h5py pyyaml jaxtyping pytest
 
       - name: Run Ruff format check
         run: |
-          ruff format --check vnl_playground/
+          ruff format --check vnl_playground/ tests/test_reference_clips.py
 
       - name: Run Ruff lint
         run: |
-          ruff check vnl_playground/
+          ruff check vnl_playground/ tests/test_reference_clips.py
+
+      - name: Test reference data loading
+        run: |
+          pytest -q tests/test_reference_clips.py

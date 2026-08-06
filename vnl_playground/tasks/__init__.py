@@ -16,8 +16,9 @@ from vnl_playground.tasks.fruitfly import (
 )
 from vnl_playground.tasks.mouse import imitation as mouse_imitation
 from vnl_playground.tasks.mouse import mouse_reach
-from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
-from vnl_playground.tasks.reference_clips import ReferenceClips
+from vnl_playground.tasks.reference_clips import (
+    load_reference_clips as load_reference_clip_data,
+)
 from vnl_playground.tasks.rodent import bowl_escape as rodent_bowl_escape
 from vnl_playground.tasks.rodent import imitation as rodent_imitation
 from vnl_playground.tasks.rodent import joystick as rodent_joystick
@@ -64,14 +65,14 @@ _cfgs = {
     "WormImitation": worm_imitation.default_config,
 }
 
-# ReferenceClips class for imitation environments (not all envs use clips)
-_reference_clips_classes = {
-    "RodentImitation": ReferenceClips,
-    "RodentSparseImitation": ReferenceClips,
-    "FruitflyImitation": ReferenceClips,
-    "MouseImitation": MouseReferenceClips,
-    "StickImitation": ReferenceClips,
-    "WormImitation": ReferenceClips,
+# Environments that consume reference clips.
+_reference_clip_envs = {
+    "RodentImitation",
+    "RodentSparseImitation",
+    "FruitflyImitation",
+    "MouseImitation",
+    "StickImitation",
+    "WormImitation",
 }
 
 
@@ -87,13 +88,13 @@ def register_environment(
     env_class: type,
     cfg_class: Callable[[], config_dict.ConfigDict],
     wrapper_class: type | None = None,
-    reference_clips_class: type | None = None,
+    supports_reference_clips: bool = False,
 ) -> None:
     """Register a new environment at runtime."""
     _envs[env_name] = env_class
     _cfgs[env_name] = cfg_class
-    if reference_clips_class:
-        _reference_clips_classes[env_name] = reference_clips_class
+    if supports_reference_clips:
+        _reference_clip_envs.add(env_name)
 
 
 def get_default_config(env_name: str) -> config_dict.ConfigDict:
@@ -131,7 +132,7 @@ def load(
     config = config or get_default_config(env_name)
 
     # Imitation envs use clips, locomotion envs use rng
-    if env_name in _reference_clips_classes:
+    if env_name in _reference_clip_envs:
         env = _envs[env_name](config=config, clips=clips, **kwargs)
     else:
         env = _envs[env_name](config=config, **kwargs)
@@ -146,7 +147,7 @@ def load_reference_clips(
     env_name: str,
     data_path: str,
     n_frames_per_clip: int,
-    keep_clips_idx=None,
+    clip_indices=None,
     **kwargs,
 ):
     """Load reference clips for an environment.
@@ -155,21 +156,29 @@ def load_reference_clips(
         env_name: Environment name (e.g., "RodentImitation").
         data_path: Path to HDF5 reference data.
         n_frames_per_clip: Number of frames per clip.
-        keep_clips_idx: Optional indices to keep.
+        clip_indices: Optional source clip indices to keep.
         **kwargs: Additional arguments forwarded to the clips class
             (e.g., joint_names, body_names for ReferenceClips).
 
     Returns:
         Instantiated ReferenceClips object.
     """
-    if env_name not in _reference_clips_classes:
+    if env_name not in _reference_clip_envs:
         raise ValueError(
-            f"Env '{env_name}' not found in reference clips classes. Available: {list(_reference_clips_classes.keys())}"
+            f"Env '{env_name}' does not support reference clips. "
+            f"Available: {sorted(_reference_clip_envs)}"
         )
-    clips_class = _reference_clips_classes[env_name]
-    return clips_class(
-        data_path=data_path,
+
+    config = get_default_config(env_name)
+    if "joints" in config:
+        kwargs.setdefault("joint_names", config.joints)
+    if "bodies" in config:
+        kwargs.setdefault("body_names", config.bodies)
+    if "root_body" in config:
+        kwargs.setdefault("root_body_name", config.root_body)
+    return load_reference_clip_data(
+        data_path,
         n_frames_per_clip=n_frames_per_clip,
-        keep_clips_idx=keep_clips_idx,
+        clip_indices=clip_indices,
         **kwargs,
     )
