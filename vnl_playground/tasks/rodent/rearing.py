@@ -15,6 +15,7 @@ from mujoco import mjx
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward as reward_fns
 
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.reward_registry import RewardRegistry
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
@@ -268,7 +269,7 @@ class Rearing(rodent_base.RodentEnv):
     @_registry.reward("energy_cost")
     def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
         """Penalize energy consumption."""
-        energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
+        energy_use = math_utils.absolute_actuator_power(data.qvel, data.qfrc_actuator)
         metrics["energy_use"] = energy_use
         cost = weight * jp.minimum(energy_use, max_value)
         metrics["rewards/energy_cost"] = -cost

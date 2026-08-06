@@ -12,6 +12,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.reward_registry import RewardRegistry
 from vnl_playground.tasks.stick import consts
 from vnl_playground.tasks.utils import _recolour_tree, scale_spec
@@ -167,7 +168,9 @@ class StickBugEnv(mjx_env.MjxEnv):
                 self.mjx_model,
                 self._spec.body(f"{appendage_name}{self._suffix}"),
             ).xpos
-            egocentric_xpos = jp.dot(global_xpos - root.xpos, root.xmat)
+            egocentric_xpos = math_utils.world_point_to_local(
+                global_xpos, root.xpos, root.xquat
+            )
             appendages_pos[appendage_name] = egocentric_xpos
         if flatten:
             appendages_pos, _ = jax.flatten_util.ravel_pytree(appendages_pos)
@@ -260,7 +263,7 @@ class StickBugEnv(mjx_env.MjxEnv):
             self.mjx_model,
             self._spec.body(f"reference_base{self._suffix}"),
         )
-        return jp.dot(-root.xpos, root.xmat)
+        return math_utils.world_vector_to_local(-root.xpos, root.xquat)
 
     def get_joint_names(self):
         return map(lambda j: j.name, self._spec.joints[1:])

@@ -20,6 +20,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.reward_registry import RewardRegistry
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
@@ -248,8 +249,7 @@ class Joystick(rodent_base.RodentEnv):
         """
         torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         world_vel = torso.subtree_linvel
-        # Transform to local frame using rotation matrix
-        local_vel = jp.dot(world_vel, torso.xmat.reshape(3, 3))
+        local_vel = math_utils.world_vector_to_local(world_vel, torso.xquat)
         return local_vel
 
     def _get_obs(self, data: mjx.Data, info: dict[str, Any]) -> collections.OrderedDict:
@@ -386,7 +386,7 @@ class Joystick(rodent_base.RodentEnv):
         """
         del data
         action_diff = info["action"] - info["last_act"]
-        action_rate = jp.sum(jp.square(action_diff))
+        action_rate = math_utils.squared_l2_norm(action_diff)
         weighted_cost = weight * action_rate
 
         metrics["rewards/action_rate"] = weighted_cost
@@ -408,7 +408,7 @@ class Joystick(rodent_base.RodentEnv):
             Weighted energy cost.
         """
         del info
-        energy = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
+        energy = math_utils.absolute_actuator_power(data.qvel, data.qfrc_actuator)
         weighted_cost = weight * energy
 
         metrics["rewards/energy"] = weighted_cost
@@ -431,7 +431,7 @@ class Joystick(rodent_base.RodentEnv):
             Weighted acceleration cost.
         """
         del info
-        dof_acc = jp.sum(jp.square(data.qacc))
+        dof_acc = math_utils.squared_l2_norm(data.qacc)
         if max_value is not None:
             dof_acc = jp.minimum(dof_acc, max_value)
         weighted_cost = weight * dof_acc
