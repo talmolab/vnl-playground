@@ -38,6 +38,9 @@ from vnl_playground.tasks.reward_registry import RewardRegistry
 
 _registry = RewardRegistry()
 
+# Name of the texture + material the renderer bakes the thermal field into.
+_FIELD_MATERIAL = "thermal_field"
+
 
 def default_config() -> config_dict.ConfigDict:
     """Returns the default configuration for the Thermotaxis environment."""
@@ -566,6 +569,97 @@ class Thermotaxis(celegans_base.CelegansEnv):
         return jp.any(jp.isnan(data.qpos))
 
     # ---------------------------------------------------------------- rendering
+    def _field_texture(
+        self, info, resolution, cells, checker, fine_subdiv, alpha
+    ) -> np.ndarray:
+        """Bake the thermal field into an ``(N, N, 3)`` uint8 image for the floor.
+
+        Row/column convention (verified empirically, and silently mirror-inverting if
+        got wrong): the column index increases with world **+x**, and the row index
+        increases with world **-y** -- i.e. row 0 is the ``+y`` edge, the usual image
+        convention, matching ``plt.imshow(origin="upper")``.
+
+        The image composites three things: the arena material's own two greys in a
+        coarse checker (so ``alpha=0`` reproduces the plain floor), the temperature
+        colour blended over them by ``alpha``, and a brightness modulation on the same
+        checker plus a fainter sub-checker. The two checker scales exist because one
+        static texture has to serve both the whole-plate overhead view and a tracking
+        camera zoomed to ~2 mm: the coarse cells read at arena scale, the fine ones
+        provide landmarks when zoomed in far enough that a coarse cell fills the frame.
+        """
+        lx, ly = self._region_extent()
+        n = int(resolution)
+        xs = np.linspace(-lx, lx, n, endpoint=False) + lx / n
+        ys = np.linspace(ly, -ly, n, endpoint=False) - ly / n
+        gx, gy = np.meshgrid(xs, ys)  # (n, n): axis 1 -> +x, axis 0 -> -y
+        temps = np.asarray(
+            jax.vmap(
+                lambda p: Gradient.evaluate(
+                    info["shape_id"], jp.asarray(info["temp_field"]), p
+                )
+            )(jp.asarray(np.stack([gx.ravel(), gy.ravel()], axis=-1)))
+        )
+        temp_rgb = self._temperature_colors(temps, 1.0)[:, :3].reshape(n, n, 3)
+
+        idx = np.arange(n)
+        cell = max(1, n // max(int(cells), 1))
+        parity = (idx[:, None] // cell + idx[None, :] // cell) % 2
+        base = np.where(
+            parity[..., None] == 0,
+            np.array([0.1, 0.2, 0.3]),  # arena.xml's grid rgb1 / rgb2
+            np.array([0.2, 0.3, 0.4]),
+        )
+        rgb = (1.0 - alpha) * base + alpha * temp_rgb
+        rgb = rgb * (1.0 + checker * (2.0 * parity - 1.0))[..., None]
+        if int(fine_subdiv) > 1:
+            fine = max(1, cell // int(fine_subdiv))
+            fine_parity = (idx[:, None] // fine + idx[None, :] // fine) % 2
+            rgb = rgb * (1.0 + (checker / 3.0) * (2.0 * fine_parity - 1.0))[..., None]
+        return (np.clip(rgb, 0.0, 1.0) * 255).astype(np.uint8)
+
+    def _render_model(self, info, tex_resolution, **texture_kwargs) -> mujoco.MjModel:
+        """Compile a *render-only* model: floor shrunk to the plate, field baked in.
+
+        Everything happens on a copy of the spec, so the environment's own spec,
+        ``mj_model`` and ``mjx_model`` are untouched and rollouts are unaffected --
+        this is only ever called from :meth:`render`. (Shrinking a plane is visual-only
+        regardless: planes are infinite half-spaces for collision in both MuJoCo and
+        MJX, so contacts and resting height do not depend on the rendered size. There
+        is still no reason to mutate shared state.)
+
+        Colouring the floor geom itself, rather than covering it with a grid of tile
+        geoms, means the texture resolution is decoupled from per-frame cost: a 1024
+        texture over a +/-2 cm plate is ~0.04 mm per texel, against ~0.8 mm tiles
+        before, and costs zero geoms per frame instead of ``grid_resolution ** 2``.
+        """
+        spec = self._spec.copy()
+        lx, ly = self._region_extent()
+        floor = spec.geom("floor")
+        floor.size = [lx, ly, float(floor.size[2])]
+
+        image = self._field_texture(info, tex_resolution, **texture_kwargs)
+        texture = spec.add_texture()
+        texture.name = _FIELD_MATERIAL
+        texture.type = mujoco.mjtTexture.mjTEXTURE_2D
+        texture.width = texture.height = int(tex_resolution)
+        texture.nchannel = 3
+        texture.data = image.reshape(-1).tobytes()
+
+        material = spec.add_material()
+        material.name = _FIELD_MATERIAL
+        material.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = _FIELD_MATERIAL
+        # texrepeat 1 with texuniform off maps exactly one copy across the plane, so
+        # texel (0, 0) lands on the (-x, +y) corner of the plate. Verified, not assumed.
+        material.texrepeat = [1, 1]
+        material.texuniform = False
+        # Kill the specular highlight: on a flat plate it renders as a bright radial
+        # hotspot that reads as part of the temperature field.
+        material.specular = 0.0
+        material.shininess = 0.0
+        material.reflectance = 0.0
+        floor.material = _FIELD_MATERIAL
+        return spec.compile()
+
     @staticmethod
     def _temperature_colors(temps: np.ndarray, alpha: float) -> np.ndarray:
         """Map temperatures to a saturated blue->red RGBA (in [0, 1]).
@@ -657,18 +751,27 @@ class Thermotaxis(celegans_base.CelegansEnv):
         overlay_gradient: bool = True,
         grid_resolution: int = 48,
         overlay_alpha: float = 0.85,
+        grid_checker: float = 0.18,
+        tex_resolution: int = 1024,
+        fine_subdiv: int = 4,
         show_markers: bool = True,
         fps: Optional[float] = None,
         vid_path: Optional[str] = None,
     ) -> List[np.ndarray]:
-        """Render a rollout, overlaying the thermal gradient on the floor.
+        """Render a rollout with the thermal gradient painted onto the floor.
 
-        The thermal field is drawn as a grid of flat colored tiles (blue = cold,
-        red = warm) on the floor, with a green marker at the setpoint location and a
-        black marker at the worm (the ~mm worm is otherwise sub-pixel in the ±10 cm
-        arena). When ``annotate`` is set, each frame is captioned with the episode
-        step, per-step reward, cumulative reward, ``current_temp / setpoint``, and any
-        terminations that have fired.
+        The field is baked into a texture on the floor geom itself (blue = cold, red =
+        warm) rather than drawn as an overlay of tile geoms, so the plate is colored
+        *and* keeps a real checker, at a resolution independent of per-frame cost.
+        A green marker sits at the setpoint and a black one at the worm (the ~mm worm
+        is otherwise sub-pixel at arena scale). When ``annotate`` is set, each frame is
+        captioned with the episode step, per-step reward, cumulative reward,
+        ``current_temp / setpoint``, and any terminations that have fired.
+
+        Rendering uses a private copy of the spec with the floor shrunk to the plate;
+        the environment's own model is untouched, so this cannot affect a rollout.
+        Beyond the plate nothing is drawn, which makes the out-of-bounds boundary
+        visible.
 
         Args:
             trajectory: Sequence of single-environment states (one per control step),
@@ -683,10 +786,20 @@ class Thermotaxis(celegans_base.CelegansEnv):
                 is ``width`` px wide, so the composed frame is ``width * n_cameras``.
             scene_option: Optional MjvOption for the scene.
             annotate: Overlay the text stats described above.
-            overlay_gradient: Draw the thermal field on the floor.
-            grid_resolution: Tiles per axis for the gradient overlay (higher = smoother
-                but more geoms / slower).
-            overlay_alpha: Opacity of the gradient tiles.
+            overlay_gradient: Paint the thermal field onto the floor. When False the
+                environment's own model is used as-is (full-size checkered arena).
+            grid_resolution: Coarse checker cells per axis. 48 over a ±2 cm plate is a
+                ~0.8 mm cell, i.e. about one worm length -- readable in the overhead
+                view. This no longer costs anything per frame.
+            overlay_alpha: How far the temperature colour is blended over the arena's
+                own checker greys (0 = plain floor, 1 = pure temperature colour).
+            grid_checker: Brightness contrast of the checker, as a fraction of the cell
+                colour (0 disables).
+            tex_resolution: Texels per axis in the baked texture. 1024 over ±2 cm is
+                ~0.04 mm/texel, sharp even on a camera zoomed to the worm.
+            fine_subdiv: Sub-checker subdivisions inside each coarse cell, drawn at a
+                third of the contrast (0 or 1 disables). This is what gives a tracking
+                camera visible landmarks once a coarse cell fills the frame.
             show_markers: Draw the worm and setpoint position markers.
             fps: Video frame rate (defaults to ``1 / ctrl_dt``).
             vid_path: If given, also write the frames to this path.
@@ -697,7 +810,26 @@ class Thermotaxis(celegans_base.CelegansEnv):
         if len(trajectory) == 0:
             return []
 
-        mj_model = self.mj_model
+        # Episode-constant gradient params (from the first state).
+        info0 = trajectory[0].info
+        params = np.asarray(info0["temp_field"], dtype=np.float32)
+        setpoint = float(np.asarray(info0["setpoint"]))
+        setpoint_loc = (float(params[1]), float(params[2]))  # lx, ly packed in params
+
+        # Frame the thermal region, not the (much larger) arena plane.
+        arena_lx, arena_ly = self._region_extent()
+
+        if overlay_gradient:
+            mj_model = self._render_model(
+                info0,
+                tex_resolution,
+                cells=grid_resolution,
+                checker=grid_checker,
+                fine_subdiv=fine_subdiv,
+                alpha=overlay_alpha,
+            )
+        else:
+            mj_model = self.mj_model
         mj_model.vis.global_.offwidth = max(int(mj_model.vis.global_.offwidth), width)
         mj_model.vis.global_.offheight = max(
             int(mj_model.vis.global_.offheight), height
@@ -705,13 +837,8 @@ class Thermotaxis(celegans_base.CelegansEnv):
         mj_data = mujoco.MjData(mj_model)
         # Head body: the temperature annotation reflects what the worm senses there.
         head_bid = mj_model.body(f"{self._config.sensor_body}{self.suffix}").id
-        floor_size = mj_model.geom("floor").size
-        arena_lx, arena_ly = float(floor_size[0]), float(floor_size[1])
 
-        max_geom = int(grid_resolution) ** 2 + 2000
-        renderer = mujoco.Renderer(
-            mj_model, height=height, width=width, max_geom=max_geom
-        )
+        renderer = mujoco.Renderer(mj_model, height=height, width=width, max_geom=2000)
 
         # Resolve camera(s). Passing a list renders each view and tiles them
         # horizontally (e.g. ["overhead", "track-worm"] for arena + zoomed gait).
@@ -720,37 +847,9 @@ class Thermotaxis(celegans_base.CelegansEnv):
             self._resolve_camera(c, arena_lx, arena_ly) for c in cam_specs
         ]
 
-        # Episode-constant gradient params (from the first state).
-        info0 = trajectory[0].info
-        shape_id = int(np.asarray(info0["shape_id"]))
-        params = np.asarray(info0["temp_field"], dtype=np.float32)
-        setpoint = float(np.asarray(info0["setpoint"]))
-        setpoint_loc = (float(params[1]), float(params[2]))  # lx, ly packed in params
-
-        sid_jp = jp.int32(shape_id)
-        params_jp = jp.asarray(params)
-
         def field_temp(xy: np.ndarray) -> float:
-            return float(Gradient.evaluate(sid_jp, params_jp, jp.asarray(xy)))
-
-        # Precompute gradient tiles (constant across the episode).
-        if overlay_gradient:
-            r = int(grid_resolution)
-            xs = np.linspace(-arena_lx, arena_lx, r, endpoint=False) + arena_lx / r
-            ys = np.linspace(-arena_ly, arena_ly, r, endpoint=False) + arena_ly / r
-            gx, gy = np.meshgrid(xs, ys, indexing="xy")
-            grid_xy = np.stack([gx.ravel(), gy.ravel()], axis=-1)
-            temps = np.asarray(
-                jax.vmap(lambda p: Gradient.evaluate(sid_jp, params_jp, p))(
-                    jp.asarray(grid_xy)
-                )
-            )
-            tiles_rgba = self._temperature_colors(temps, overlay_alpha)
-            tiles_pos = np.column_stack(
-                [grid_xy, np.full(len(grid_xy), 0.001)]
-            ).astype(np.float64)
-            tile_size = np.array([arena_lx / r, arena_ly / r, 0.0005])
-            eye = np.eye(3).flatten()
+            """Sensed temperature (region-clamped, as the env reads it)."""
+            return float(self._temperature_at(jp.asarray(xy), info0))
 
         term_names = list(self.config.termination_criteria.keys())
         frames: List[np.ndarray] = []
@@ -776,17 +875,6 @@ class Thermotaxis(celegans_base.CelegansEnv):
                     view_opt.sitegroup[:] = [0, 0, 0, 1 if show_site else 0, 0, 0]
                 renderer.update_scene(mj_data, camera=cam, scene_option=view_opt)
                 scene = renderer.scene
-
-                if overlay_gradient:
-                    for pos, rgba in zip(tiles_pos, tiles_rgba):
-                        if scene.ngeom >= scene.maxgeom:
-                            break
-                        mujoco.mjv_initGeom(
-                            scene.geoms[scene.ngeom],
-                            mujoco.mjtGeom.mjGEOM_BOX,
-                            tile_size, pos, eye, rgba,
-                        )
-                        scene.ngeom += 1
 
                 # setpoint marker (green, semi-transparent) on the overhead view only.
                 if show_markers and is_overhead and scene.ngeom < scene.maxgeom:
@@ -845,6 +933,7 @@ class Thermotaxis(celegans_base.CelegansEnv):
         gait_width: int = 480,
         gait_camera: Union[str, int] = "track-worm",
         gait_overlay: bool = True,
+        gait_grid_resolution: int = 48,
         fps: Optional[float] = None,
         vid_path: Optional[str] = None,
     ) -> List[np.ndarray]:
@@ -860,7 +949,13 @@ class Thermotaxis(celegans_base.CelegansEnv):
             traj_width, gait_width: Per-panel widths.
             gait_camera: MuJoCo camera for the gait panel (e.g. ``"top-worm"`` for the
                 top-down body wave, ``"track-worm"`` for a profile).
-            gait_overlay: Draw the gradient tiles on the gait panel's floor too.
+            gait_overlay: Draw the checkered gradient tiles on the gait panel's floor
+                too -- they are what makes the worm's motion legible on a *tracking*
+                camera, where the worm stays centered and only the floor moves.
+            gait_grid_resolution: Tiles per axis for that overlay. The gait camera is
+                zoomed to ~mm, so the default 48 (~0.8 mm cells over a ±2 cm region)
+                shows only ~3 cells across the panel; raise it to 96 or 160 for a finer
+                reference grid, at ``resolution**2`` geoms per frame.
             fps: Video frame rate (defaults to ``1 / ctrl_dt``).
             vid_path: If given, also write the composed frames to this path.
 
@@ -872,7 +967,8 @@ class Thermotaxis(celegans_base.CelegansEnv):
         )
         gait_frames = self.render(
             trajectory, height=height, width=gait_width, camera=gait_camera,
-            overlay_gradient=gait_overlay, annotate=False, show_markers=False,
+            overlay_gradient=gait_overlay, grid_resolution=gait_grid_resolution,
+            annotate=False, show_markers=False,
         )
         combined = [
             np.concatenate([t, g], axis=1)
@@ -935,7 +1031,7 @@ class Thermotaxis(celegans_base.CelegansEnv):
         params = jp.asarray(np.asarray(info0["temp_field"], dtype=np.float32))
         setpoint = float(np.asarray(info0["setpoint"]))
         setpoint_loc = (float(params[1]), float(params[2]))
-        arena_lx, arena_ly = self._floor_extent()
+        arena_lx, arena_ly = self._region_extent()
 
         # Smooth temperature field for imshow / contour (evaluated at the exact
         # continuous grid of sample points -- this is display only).
