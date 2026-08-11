@@ -77,10 +77,59 @@ def default_config() -> config_dict.ConfigDict:
         max_obs_delay=4,
         sensor_tau=0.0,
         reward_terms={
-            # Dense guidance as potential-based *progress* (change in gaussian
-            # proximity per step). Telescopes over a trajectory -> cannot be farmed by
-            # loitering. exp_scale widened so the gaussian isn't flat at the cold start.
-            "progress": {"weight": 1.0, "exp_scale": 2.0},
+            # Dense guidance as a per-step gaussian on the temperature error:
+            # reward = weight * exp(-(err / exp_scale)^2 / 2), i.e. `weight` at the
+            # setpoint decaying with a width of `exp_scale` degrees. Being a per-step
+            # *level* (not a difference), it is far less sensitive to the undulation
+            # noise in err than a step-to-step delta is -- but it is farmable, see the
+            # bonus ordering note under `termination_bonus`.
+            #
+            # exp_scale trades the reward LEVEL far from the goal against the reward
+            # SLOPE there, and the slope is what actually teaches. For a fixed error e,
+            # d/de of the gaussian is maximized at exp_scale = e / sqrt(2), so tightening
+            # the width past that point loses guidance *and* level together -- it only
+            # makes the idle reward look smaller.
+            #
+            # Measured start error on the default field is 2.625 C (the reward is scored
+            # at the body centroid, which rests ~0.05 cm behind the root at spawn; the
+            # nominal root figure is 2.5 = the 2.5 C/cm slope over the 1 cm
+            # init_x -> setpoint_loc traverse). That puts the slope optimum at ~1.86, and
+            # 2.0 is within 1% of it:
+            #     exp_scale   r(start)   slope(start)   r(plate edge, 6.25)
+            #       2.5         0.576       0.242            0.044
+            #       2.0         0.423       0.277            0.008    <- default
+            #       1.86        0.369       0.280            0.004
+            #       1.3         0.130       0.202            ~0
+            # So 2.0 idles at 0.42/step instead of 0.58 while pulling ~15% harder on the
+            # approach, and still leaves a non-zero signal at the coldest reachable
+            # corner for a worm that has wandered off. Note the idle level itself is
+            # advantage-invariant (a constant offset adds c/(1-gamma) to V everywhere and
+            # cancels in r + gamma*V' - V); what it costs is critic precision, since the
+            # per-step signal is ~0.0014 against a mean of 0.42, and it is what a
+            # terminating success forfeits.
+            #
+            # Retune if you change gradient steepness (min_temp/max_temp/arena_size) or
+            # the start->setpoint distance: the rule is exp_scale ~= start error / 1.4.
+            "temperature": {"weight": 1.0, "exp_scale": 2.0},
+            # Alternative dense channel (registered, off by default): potential-based
+            # *progress*, the per-step change in a potential of the error. Telescopes
+            # over a trajectory, so unlike `temperature` it cannot be farmed by
+            # loitering and is worth at most `weight` over an entire episode. Swap it in
+            # by replacing the "temperature" entry above with:
+            #   "progress": {
+            #       "weight": 20.0,
+            #       # "linear"   -> phi = 1 - err/max_err: constant-magnitude guidance.
+            #       # "gaussian" -> phi = exp(-(err/exp_scale)^2/2): peaks near the goal,
+            #       #               weakest where a lost worm needs it most.
+            #       "mode": "linear",
+            #       "max_err": 0.0,  # 0 = auto (max reachable error, per episode)
+            #       "exp_scale": 2.5,  # only used by mode="gaussian"
+            #   },
+            # If you do, drop reached_setpoint back to ~30 (just above the progress
+            # weight) -- see the ordering note below.
+            # Graded cost for sitting outside the thermal tolerance band (see
+            # `thermal` above). OFF by default.
+            "thermal_stress": {"weight": 0.0},
             # Configurable terminal reward/penalty added on the step a termination
             # fires. Keys must be termination names; +ve = bonus, -ve = penalty. This
             # is the single place to tune per-termination bonuses.
@@ -251,10 +300,42 @@ class Thermotaxis(celegans_base.CelegansEnv):
             ]
         )
 
-        self.max_reward = sum(
-            params["weight"]
-            for params in self._config.reward_terms.values()
-            if "weight" in params
+        # Normalizer for the base class's `rewards/normalized` metric. Brax's
+        # EvalWrapper SUMS metrics over an episode, so that metric accumulates to
+        # (episode return) / max_reward -- meaningful only if max_reward is the best
+        # achievable *episode* return.
+        #
+        # Summing the raw term weights (what the imitation env does) is right when every
+        # term is a per-step gaussian in [0, weight], but the two dense channels here
+        # differ in kind and cannot share one rule: `temperature` is per-step, so it is
+        # worth up to weight * episode_length; `progress` is a potential difference, so
+        # it telescopes to weight * (phi_end - phi_start) <= weight over an entire
+        # episode, however long. Each is scaled by its own horizon before being added to
+        # the best terminal bonus. Both terms are read (rather than just the enabled one)
+        # so the normalizer follows whichever dense channel the config selects.
+        temperature_weight = float(
+            self._config.reward_terms.get("temperature", {}).get("weight", 0.0)
+        )
+        progress_weight = float(
+            self._config.reward_terms.get("progress", {}).get("weight", 0.0)
+        )
+        bonuses = (
+            self._config.reward_terms.get("termination_bonus", {})
+            .get("bonuses", {})
+            .values()
+        )
+        self.max_reward = (
+            temperature_weight * int(self._config.episode_length)
+            + progress_weight
+            + max([0.0] + [float(bonus) for bonus in bonuses])
+        )
+
+        # The in-band counter is advanced in step() (terminations are pure reads of
+        # info), so the success epsilon is cached here.
+        self._success_eps = float(
+            self._config.termination_criteria.get("reached_setpoint", {}).get(
+                "epsilon", 0.0
+            )
         )
 
         # First-order RC sensor-response lag (opt-in; sensor_tau <= 0 disables it).
@@ -423,8 +504,11 @@ class Thermotaxis(celegans_base.CelegansEnv):
         init_temp = self._temperature_at(self._sensor_xy(data), info)
         info["temp_history"] = jp.full_like(info["temp_history"], init_temp)
         info["sensor_state"] = init_temp
-        # Baseline for the progress reward so the first-step reward is exactly 0.
-        info["prev_err"] = jp.abs(init_temp - info["setpoint"])
+        # Potential normalizer for this episode's field, then the baseline error so the
+        # first-step progress reward is exactly 0. Both read at the reward point (the
+        # body), not the head, matching what the term will measure.
+        info["max_err"] = self._field_max_error(info)
+        info["prev_err"] = self._temp_error(data, info)
 
         metrics: Dict[str, Any] = {}
         obs = self._get_obs(data, info)
@@ -513,24 +597,51 @@ class Thermotaxis(celegans_base.CelegansEnv):
 
     # ------------------------------------------------------------------ rewards
     @staticmethod
-    def _proximity(err, exp_scale):
-        """Gaussian proximity potential in [0, 1] (1.0 at the setpoint)."""
-        return jp.exp(-((err / exp_scale) ** 2) / 2)
+    def _proximity(err, max_err, mode="linear", exp_scale=2.0):
+        """Shaping potential in [0, 1]: 1 at the setpoint, 0 at ``max_err``.
+
+        ``linear`` has a constant slope, so guidance is as strong at 5 degrees of error
+        as at 0.5. ``gaussian`` is a bump of width ``exp_scale`` centred on the
+        setpoint, whose slope decays away from it (kept for ablation).
+
+        NOTE for non-linear fields: on a planar gradient ``err`` is proportional to
+        distance, so the linear potential is linear in space too. On a radial
+        (gaussian) field ``1 - err/max_err`` is itself gaussian in space and its slope
+        does vanish far from the peak -- when you start using those, normalize by
+        ``||grad T||`` here to recover uniform spatial guidance.
+        """
+        if mode == "linear":
+            return 1.0 - jp.clip(err / max_err, 0.0, 1.0)
+        if mode == "gaussian":
+            return jp.exp(-((err / exp_scale) ** 2) / 2)
+        raise ValueError(f"Unknown progress mode '{mode}'; expected linear | gaussian.")
 
     @_registry.reward("progress")
-    def _progress_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Potential-based progress: change in gaussian proximity vs. the last step.
+    def _progress_reward(
+        self, data, info, metrics, weight, mode="linear", max_err=0.0, exp_scale=2.0
+    ) -> float:
+        """Potential-based progress toward the target isotherm.
 
         ``reward = weight * (phi(err_t) - phi(err_{t-1}))``. Positive when the worm
-        moves up the gradient toward the setpoint, negative when it moves away. Because
-        it is a difference of a potential, it telescopes over any trajectory to
-        ``phi_final - phi_start`` regardless of length -- so it cannot be farmed by
-        loitering just outside the success region.
+        closes on the isotherm, negative when it retreats. Being a difference of a
+        potential it telescopes over any trajectory to ``phi_final - phi_start``
+        regardless of length, so it cannot be farmed by loitering just outside the
+        success region, and ``weight`` bounds the dense channel for a whole episode.
+
+        ``max_err <= 0`` uses this episode's auto normalizer (:meth:`_field_max_error`),
+        which keeps the potential -- and therefore ``weight`` -- meaningful when the
+        gradient steepness changes. Pass a fixed value to pin it.
+
+        Measured at ``config.reward_body`` (the body centroid by default), NOT at the
+        thermosensory head: the head's gait sweep swings its temperature by ~0.01-0.03
+        degrees per control step against a net progress of ~0.0025-0.0075, so scoring
+        there drowns the signal in undulation.
         """
         err = self._temp_error(data, info)
+        scale = info["max_err"] if max_err <= 0.0 else jp.asarray(max_err)
         reward = weight * (
-            self._proximity(err, exp_scale)
-            - self._proximity(info["prev_err"], exp_scale)
+            self._proximity(err, scale, mode, exp_scale)
+            - self._proximity(info["prev_err"], scale, mode, exp_scale)
         )
         metrics["rewards/progress"] = metrics["rewards/progress/per_step"] = reward
         metrics["magnitudes/temp_error"] = metrics[
@@ -557,13 +668,23 @@ class Thermotaxis(celegans_base.CelegansEnv):
         return cost
 
     @_registry.reward("temperature")
-    def _temperature_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        """Gaussian reward on the temperature error (1.0 at zero error).
+    def _temperature_reward(self, data, info, metrics, weight, exp_scale=2.5) -> float:
+        """Gaussian proximity reward on the temperature error (``weight`` at zero error).
 
-        NOTE: this is a *positive per-step proximity* reward and is farmable by
-        loitering just outside the success region (early termination forfeits the
-        remaining per-step reward). It is kept registered for reference/ablation but is
-        NOT in the default reward set; use ``progress`` instead.
+        ``reward = weight * exp(-(err / exp_scale)^2 / 2)``, a per-step *level*: the
+        default dense channel. ``exp_scale`` is the width in degrees and should be set
+        near the typical start error so the gaussian's steepest region covers the
+        approach (see ``default_config``).
+
+        NOTE: being a positive per-step reward it is farmable by loitering just outside
+        the success region, since terminating forfeits the remaining per-step reward.
+        The ``reached_setpoint`` termination bonus has to exceed ``weight / (1 - gamma)``
+        to close that -- see the ordering note in ``default_config``. The non-farmable
+        alternative is the potential-based ``progress`` term.
+
+        Measured at ``config.reward_body`` (the body centroid by default), NOT at the
+        thermosensory head, so the reward tracks where the worm is rather than the
+        head's gait sweep.
         """
         err = self._temp_error(data, info)
         reward = weight * jp.exp(-((err / exp_scale) ** 2) / 2)
