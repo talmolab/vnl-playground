@@ -5,11 +5,24 @@ the arena floor. The worm senses only the local temperature and must locomote to
 location whose temperature matches a target ``setpoint`` (biologically, its preferred
 cultivation temperature).
 
-Reward is a Gaussian on the temperature error ``|T(worm) - setpoint|`` with a large
-bonus for being within ``epsilon`` of the setpoint; optional control/energy costs are
-available. Episodes terminate when the worm reaches the setpoint, drifts too far (in
-temperature), walks off the finite floor and falls, or produces NaNs. The training
-harness enforces the fixed step budget via ``episode_length``.
+Reward is a per-step gaussian proximity on the temperature error
+``|T(worm) - setpoint|`` plus a large bonus for holding the setpoint; a
+potential-based *progress* term and optional thermal-stress/control/energy costs are
+available. Episodes terminate when the worm holds the setpoint for
+``hold_steps``, leaves the thermal region (out of bounds), or produces NaNs. The
+training harness enforces the fixed step budget via ``episode_length``.
+
+Two asymmetries are deliberate. The agent *senses* temperature at the head, as the
+animal does, but the reward and the success test are evaluated at the body centroid --
+the head's gait sweep moves its temperature several times faster than the worm's net
+progress, so head-scored shaping is mostly undulation noise and lets a nose flick count
+as reaching the goal. And thermal *dose* (stress integrated over time) is always
+accumulated and observed, but by default costs nothing and ends nothing.
+
+The arena is the shared :data:`consts.ARENA_XML_PATH` plane, so contact geometry,
+resting height and every proprioceptive input are identical to the other C. elegans
+tasks; the worm cannot fall off, hence the planar out-of-bounds termination rather
+than a z-threshold one.
 
 This is the deterministic v1: a fixed left start, a fixed setpoint anchored on the
 right, and a linear left->right gradient the worm traverses. The config /
@@ -68,6 +81,27 @@ def default_config() -> config_dict.ConfigDict:
         # Thermosensory body: C. elegans senses temperature at the head, so the
         # gradient is read at this body's position (not the mid-body root).
         sensor_body="torso1_body",
+        # Where the *reward* and the success criterion are evaluated. The agent always
+        # OBSERVES the temperature at ``sensor_body`` (the head, as the animal does),
+        # but the head's fore-aft gait sweep changes its temperature several times
+        # faster than the worm's net progress does, so scoring there buys a per-step
+        # signal-to-noise ratio well below 1 -- and lets the worm "succeed" by flicking
+        # its nose across the isotherm while its body is still ~0.125 C away. Scoring
+        # at the body centroid removes both problems. "centroid" | "root" | "head".
+        reward_body="centroid",
+        # Thermal stress / dose. Stress is a dimensionless hinge that is 0 while the
+        # body stays within [setpoint - cold_tol, setpoint + hot_tol] and grows linearly
+        # outside it (asymmetric: heat is the noxious side for C. elegans). Its integral
+        # over time is the "dose", an interoceptive state variable that is always
+        # accumulated and exposed in the observation. Turning it into behavior is opt-in:
+        # give the ``thermal_stress`` reward a nonzero weight for a graded cost, and/or
+        # add a ``thermal_dose`` entry to termination_criteria to end episodes that
+        # spend too long outside the tolerance band. Both are OFF by default.
+        thermal=config_dict.create(
+            hot_tol=2.0,
+            cold_tol=4.0,
+            dose_scale=30.0,  # divides the dose to make the observed value O(1)
+        ),
         # observation realism knobs (all OFF by default, and independent of each
         # other): obs_noise_std = additive white noise; obs_delay = pure transport
         # delay in control steps (<= max_obs_delay); sensor_tau = first-order thermal
@@ -76,6 +110,23 @@ def default_config() -> config_dict.ConfigDict:
         obs_delay=0,
         max_obs_delay=4,
         sensor_tau=0.0,
+        # How many PAST temperature readings to append to the observation, on top of
+        # the current one: 0 = current reading only (default, Markov in the sensor),
+        # 1 = current + previous control step, k = current + k previous steps. The
+        # readings are the same delayed/lagged/noisy values the current channel goes
+        # through, taken from the same ring buffer, and each is reported relative to
+        # the setpoint. Ordering is most-recent-first, so index 0 is always "now" and
+        # the observation grows by appending older samples -- a policy trained at
+        # obs_history=k keeps the same meaning for its first k+1 inputs.
+        #
+        # This is what makes temporal differentiation possible from a single
+        # observation: C. elegans thermotaxis is driven by dT/dt (AFD is a temporal
+        # differentiator; the worm biases turns on whether it is warming or cooling
+        # along its path), and with obs_history=0 a memoryless policy sees only a
+        # level and cannot tell the two apart -- it has to infer motion from
+        # proprioception or carry it in an RNN state. 1-3 steps (0.1-0.3 s at the
+        # default ctrl_dt) covers a finite difference and a little smoothing.
+        obs_history=0,
         reward_terms={
             # Dense guidance as a per-step gaussian on the temperature error:
             # reward = weight * exp(-(err / exp_scale)^2 / 2), i.e. `weight` at the
@@ -347,6 +398,30 @@ class Thermotaxis(celegans_base.CelegansEnv):
             min(float(self.ctrl_dt) / self._sensor_tau, 1.0) if self._rc_lag else 1.0
         )
 
+        # One ring buffer of past sensor readings serves both the transport delay and
+        # the observation history: the delay picks the read offset, the history reads
+        # `obs_history` further offsets behind it. It therefore has to hold
+        # obs_delay + obs_history + 1 samples, and at least max_obs_delay + 1 so the
+        # buffer stays the size the delay knob is specified against (obs_delay itself
+        # may be raised up to max_obs_delay without resizing anything).
+        self._obs_delay = int(self._config.obs_delay)
+        self._obs_history = int(self._config.obs_history)
+        self._obs_noise_std = float(self._config.obs_noise_std)
+        if self._obs_delay < 0 or self._obs_history < 0:
+            raise ValueError(
+                f"obs_delay ({self._obs_delay}) and obs_history "
+                f"({self._obs_history}) must be non-negative."
+            )
+        if self._obs_delay > int(self._config.max_obs_delay):
+            raise ValueError(
+                f"obs_delay ({self._obs_delay}) exceeds max_obs_delay "
+                f"({int(self._config.max_obs_delay)})."
+            )
+        self._buf_len = (
+            max(int(self._config.max_obs_delay), self._obs_delay + self._obs_history)
+            + 1
+        )
+
     # ----------------------------------------------------------------- helpers
     def _region_extent(self) -> tuple:
         """Concrete thermal-region half-extents (Lx, Ly) from ``gradient_cfg.arena_size``.
@@ -380,13 +455,49 @@ class Thermotaxis(celegans_base.CelegansEnv):
         )
         return head.xpos[: self.config.dim]
 
+    def _body_xy(self, data: mjx.Data) -> jp.ndarray:
+        """Planar position the *reward* is scored at (see ``config.reward_body``).
+
+        ``centroid`` is the mean over all body segments -- the best rejection of the
+        undulation, and the closest thing to "where the worm is". ``root`` is the
+        mid-body segment (one lookup, still much quieter than the head) and ``head``
+        reproduces the old head-scored behavior.
+        """
+        where = str(self._config.reward_body).lower()
+        if where == "head":
+            return self._sensor_xy(data)
+        if where == "root":
+            return self._worm_xy(data)
+        if where != "centroid":
+            raise ValueError(
+                f"Unknown reward_body '{where}'; expected centroid | root | head."
+            )
+        bodies = self._get_bodies_pos(data, flatten=False)
+        return jp.mean(
+            jp.stack([p[: self.config.dim] for p in bodies.values()]), axis=0
+        )
+
+    def _clamp_to_region(self, xy: jp.ndarray) -> jp.ndarray:
+        """Clamp a planar position into the thermal region."""
+        lx, ly = self._region_extent()
+        bounds = jp.array([lx, ly], dtype=jp.float32)
+        return jp.clip(xy, -bounds, bounds)
+
     def _temperature_at(self, xy: jp.ndarray, info: Mapping[str, Any]) -> jp.ndarray:
-        """Temperature at the worm's exact (continuous) planar position ``xy``."""
-        return Gradient.evaluate(info["shape_id"], info["temp_field"], xy)
+        """Temperature at the worm's exact (continuous) planar position ``xy``.
+
+        The gradient covers only the thermal region, so ``xy`` is clamped to it before
+        evaluation: outside the region the field is flat at its boundary value (the
+        plate's edge temperature). Without this, an unbounded shape like ``linear``
+        would keep ramping over the infinite arena plane.
+        """
+        return Gradient.evaluate(
+            info["shape_id"], info["temp_field"], self._clamp_to_region(xy)
+        )
 
     def _temp_error(self, data: mjx.Data, info: Mapping[str, Any]) -> jp.ndarray:
-        """Absolute temperature error ``|T(head) - setpoint|`` (sensed at the head)."""
-        temp = self._temperature_at(self._sensor_xy(data), info)
+        """Absolute temperature error ``|T(body) - setpoint|`` at the reward point."""
+        temp = self._temperature_at(self._body_xy(data), info)
         return jp.abs(temp - info["setpoint"])
 
     def _field_max_error(self, info: Mapping[str, Any]) -> jp.ndarray:
@@ -422,24 +533,28 @@ class Thermotaxis(celegans_base.CelegansEnv):
     def _sense_temperature(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> jp.ndarray:
-        """The temperature the agent observes: the sensor state (after any RC lag),
-        optionally read ``obs_delay`` steps ago, plus optional white noise.
+        """The temperature readings the agent observes, most recent first.
 
-        ``sensor_tau`` / ``obs_delay`` / ``obs_noise_std`` / ``max_obs_delay`` are
-        static config, so every branch resolves at trace time and is zero-cost when
-        disabled. ``sensor_state`` equals the true temperature when ``sensor_tau<=0``.
+        Returns shape ``(obs_history + 1,)``. Element 0 is the current reading -- the
+        sensor state after any RC lag and measurement noise, as it stood ``obs_delay``
+        control steps ago -- and element k is that same channel k control steps further
+        back. With the default ``obs_history=0`` this is a single-element vector, i.e.
+        the pre-history behavior.
+
+        Both knobs are read offsets into the one ring buffer :meth:`step` writes: the
+        delay picks the newest offset, the history walks back from it. The buffer stores
+        readings *after* noise (see :meth:`step`), so a remembered sample is the value
+        that was actually measured -- re-drawing noise per read would let the policy
+        average the noise away over the history, and would mean the same measurement
+        jitters as it ages.
+
+        ``sensor_tau`` / ``obs_delay`` / ``obs_history`` / ``obs_noise_std`` are static
+        config, so the shapes and offsets resolve at trace time.
         """
         del data
-        sensed = info["sensor_state"]
-        delay = int(self._config.obs_delay)
-        if delay > 0:
-            buf_len = int(self._config.max_obs_delay) + 1
-            read_idx = (info["hist_index"] - 1 - delay) % buf_len
-            sensed = info["temp_history"][read_idx]
-        noise_std = float(self._config.obs_noise_std)
-        if noise_std > 0.0:
-            sensed = sensed + noise_std * jax.random.normal(info["noise_key"], ())
-        return sensed
+        offsets = jp.arange(self._obs_history + 1, dtype=jp.int32)
+        read_idx = (info["hist_index"] - 1 - self._obs_delay - offsets) % self._buf_len
+        return info["temp_history"][read_idx]
 
     def _init_info(self, rng: jax.Array) -> Dict[str, Any]:
         """Build the per-episode ``info`` dict (gradient, setpoint, buffers, rng)."""
@@ -459,9 +574,9 @@ class Thermotaxis(celegans_base.CelegansEnv):
             "shape_id": shape_id,
             "rng": stream_key,  # persistent obs-noise stream
             "noise_key": noise_key,  # refreshed each step
-            "temp_history": jp.zeros(
-                int(self._config.max_obs_delay) + 1, dtype=jp.float32
-            ),
+            # Ring buffer of past sensor readings, shared by the obs delay and the obs
+            # history (see __init__ for its length).
+            "temp_history": jp.zeros(self._buf_len, dtype=jp.float32),
             "hist_index": jp.asarray(0, dtype=jp.int32),
             "sensor_state": jp.asarray(0.0, dtype=jp.float32),  # RC-lag filtered temp
             "prev_err": jp.asarray(0.0, dtype=jp.float32),  # progress-reward baseline
@@ -499,8 +614,10 @@ class Thermotaxis(celegans_base.CelegansEnv):
         )
         data = self._set_root_xy(data, info["start_xy"][0], info["start_xy"][1])
 
-        # Prefill the obs-delay ring buffer and settle the sensor at the initial
-        # (head-sensed) temperature.
+        # Prefill the ring buffer (delay + history) and settle the sensor at the initial
+        # (head-sensed) temperature. The prefill is the clean temperature: the episode
+        # opens with the worm at rest, so its "memory" of the steps before t=0 is a flat
+        # history at the true starting temperature rather than a stack of noise samples.
         init_temp = self._temperature_at(self._sensor_xy(data), info)
         info["temp_history"] = jp.full_like(info["temp_history"], init_temp)
         info["sensor_state"] = init_temp
@@ -540,8 +657,12 @@ class Thermotaxis(celegans_base.CelegansEnv):
         info["rng"] = rng
         info["noise_key"] = noise_key
 
-        # Sensor response: first-order thermal lag (RC low-pass) toward the true
-        # head temperature, then push the lagged value into the obs-delay buffer.
+        # Sensor response: first-order thermal lag (RC low-pass) toward the true head
+        # temperature, then push this step's *reading* into the ring buffer the delay
+        # and history read from. Measurement noise is added on the way in, not on the
+        # way out, so a sample is drawn once and then remembered as measured;
+        # ``sensor_state`` itself stays clean, since noise is readout error and must not
+        # feed back into the filter's recursion.
         true_temp = self._temperature_at(self._sensor_xy(data), info)
         if self._rc_lag:
             info["sensor_state"] = info["sensor_state"] + self._rc_coeff * (
@@ -549,6 +670,11 @@ class Thermotaxis(celegans_base.CelegansEnv):
             )
         else:
             info["sensor_state"] = true_temp
+        reading = info["sensor_state"]
+        if self._obs_noise_std > 0.0:
+            reading = reading + self._obs_noise_std * jax.random.normal(
+                info["noise_key"], ()
+            )
         idx = info["hist_index"]
         info["temp_history"] = info["temp_history"].at[idx].set(reading)
         info["hist_index"] = (idx + 1) % self._buf_len
@@ -579,7 +705,38 @@ class Thermotaxis(celegans_base.CelegansEnv):
         )
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> collections.OrderedDict:
-        """Observation: temperature-only task obs plus the standard proprioception.
+        """Observation: exteroceptive temperature + interoceptive dose, plus proprioception.
+
+        ``task_obs`` is ``[prev_action, kinematic_sensors, origin, T_t - setpoint, ...,
+        T_{t-obs_history} - setpoint, dose / dose_scale]``. The leading block is the same
+        self-state prefix the other walker tasks concatenate (see e.g.
+        :mod:`vnl_playground.tasks.rodent.bowl_escape`), minus touch sensors, which this
+        walker does not have yet; the thermosensory block follows it, newest temperature
+        first and dose last, so a given index inside that block keeps its meaning when
+        ``obs_history`` changes.
+
+        ``origin`` is the world origin expressed in the root frame, so its bearing and
+        length together encode the worm's world position *and* heading. That is
+        allocentric content in egocentric form -- useful for checking whether learning is
+        limited by partial observability, but it is not a signal the animal has, so a run
+        meant to stand up biologically should drop it.
+
+        The temperature is reported *relative to the setpoint*, signed, rather than as
+        an absolute value. That matches the biology -- AFD's response threshold is
+        plastic and tracks the cultivation temperature over hours, so the animal's
+        sensory representation is already referenced to its memorized setpoint rather
+        than to an absolute scale -- and it is what keeps this observation sufficient
+        once the setpoint is randomized. Passing absolute temperature would then force a
+        second channel carrying the setpoint, i.e. the same information with an extra
+        input and a subtraction for the network to learn. The sign matters: it tells the
+        worm which side of the isotherm it is on.
+
+        The dose belongs in the observation because it is hidden state that (once
+        ``thermal_dose`` is enabled) determines termination -- a policy that cannot see
+        it has no way to predict when the episode ends, and the value function inherits
+        that noise. Note that under
+        :class:`~vnl_playground.tasks.wrappers.HighLevelWrapper` this is the *entire*
+        input to the high-level policy.
 
         Args:
             data: The simulation data.
@@ -588,7 +745,20 @@ class Thermotaxis(celegans_base.CelegansEnv):
         Returns:
             OrderedDict with a ``state`` key wrapping ``task_obs`` and ``proprioception``.
         """
-        task_obs = jp.atleast_1d(self._sense_temperature(data, info))
+        task_obs = jp.concatenate(
+            [
+                info["prev_action"],
+                self._get_kinematic_sensors(data),
+                # Not implemented for this walker: consts.TOUCH_SENSORS is empty, so
+                # this contributes zero dimensions. Uncomment once the model has them.
+                # self._get_touch_sensors(data),
+                self._get_origin(data),
+                self._sense_temperature(data, info) - info["setpoint"],
+                jp.reshape(
+                    info["dose"] / float(self._config.thermal.dose_scale), (1,)
+                ),
+            ]
+        )
         obs = collections.OrderedDict(
             task_obs=task_obs,
             proprioception=self._get_proprioception(data, info, flatten=False),
