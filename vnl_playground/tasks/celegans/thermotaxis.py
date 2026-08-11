@@ -1,9 +1,10 @@
 """Thermotaxis task for virtual C. elegans.
 
-A thermal gradient (see :mod:`vnl_playground.tasks.celegans.gradients`) is laid over
-the arena floor. The worm senses only the local temperature and must locomote to the
-location whose temperature matches a target ``setpoint`` (biologically, its preferred
-cultivation temperature).
+A thermal gradient (see :mod:`vnl_playground.tasks.celegans.gradients`) is laid over a
+*subregion* of the standard (infinite-plane) arena floor -- think of a temperature-
+controlled plate sitting on a much larger table. The worm senses only the local
+temperature and must locomote to the location whose temperature matches a target
+``setpoint`` (biologically, its preferred cultivation temperature).
 
 Reward is a per-step gaussian proximity on the temperature error
 ``|T(worm) - setpoint|`` plus a large bonus for holding the setpoint; a
@@ -45,7 +46,6 @@ from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
 from vnl_playground.tasks.celegans import base as celegans_base
-from vnl_playground.tasks.celegans import consts
 from vnl_playground.tasks.celegans.gradients import Gradient
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
