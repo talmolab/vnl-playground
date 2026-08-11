@@ -84,32 +84,51 @@ def default_config() -> config_dict.ConfigDict:
             # Configurable terminal reward/penalty added on the step a termination
             # fires. Keys must be termination names; +ve = bonus, -ve = penalty. This
             # is the single place to tune per-termination bonuses.
+            #
+            # KEEP reached_setpoint >= temperature weight / (1 - gamma). `temperature`
+            # is a positive per-step reward, so hovering just OUTSIDE the success band
+            # collects ~weight every remaining step (err 0.6 pays 0.997 of what err 0
+            # does) while succeeding ENDS the episode and forfeits the rest. Hovering is
+            # worth weight/(1-gamma) in discounted return -- 20 at gamma=0.95, 100 at
+            # gamma=0.99 -- so a smaller bonus pays the agent to dither in and out of the
+            # band, resetting the hold counter to avoid ever terminating. 100 keeps
+            # "succeed" the better option for every discount used in this repo; raise it
+            # if you train with gamma > 0.99, and drop it to ~30 if you switch the dense
+            # channel back to the (non-farmable) `progress` term.
             "termination_bonus": {
                 "bonuses": {
-                    "reached_setpoint": 10.0,  # success
-                    "too_far": -10.0,  # gave up (too cold)
-                    "fell_off": -10.0,  # walked off the floor
+                    "reached_setpoint": 100.0,  # success
+                    "out_of_bounds": -10.0,  # left the thermal region
                     "nan": 0.0,
                 }
             },
-            # Per-step time cost -> reach the setpoint ASAP. Off for now (tune later);
-            # the loiter exploit stays closed at weight 0 because `progress` is
-            # non-farmable -- this term only adds "finish sooner" pressure.
+            # Per-step time cost -> reach the setpoint ASAP. Off for now (tune later):
+            # the loiter exploit is closed by the reached_setpoint bonus above, not by
+            # this term. A nonzero weight here just subtracts a constant from every
+            # step, which shrinks the hovering payoff to (weight_temp - weight_time) per
+            # step; keep the bonus >= that difference / (1 - gamma) if you enable it.
             "time": {"weight": 0.0},
             "control": {"weight": 0.0},
             "energy": {"weight": 0.0, "max_value": 50.0},
         },
         termination_criteria={
-            "reached_setpoint": {"epsilon": 0.5},
-            "too_far": {"max_temp_error": 5.0},
-            "fell_off": {"min_z": -0.5},
+            # Success = the body centroid holds within `epsilon` degrees of the
+            # setpoint for `hold_steps` consecutive control steps, i.e. the worm has to
+            # *track* the isotherm rather than brush across it once. hold_steps=0 or 1
+            # both reduce to the old fire-on-first-contact behavior.
+            "reached_setpoint": {"epsilon": 0.5, "hold_steps": 20},
+            # Left the thermal region. With require_all_bodies the episode only ends
+            # once EVERY body segment is outside |x| > Lx + margin / |y| > Ly + margin
+            # (with (Lx, Ly) = gradient_cfg.arena_size), so a worm hanging half off the
+            # plate keeps going; margin adds further slack on top of that.
+            # NOTE: the field is clamped outside the region, so an escaped worm has no
+            # gradient to navigate back with -- keep the margin modest.
+            "out_of_bounds": {"margin": 0.0, "require_all_bodies": True},
             "nan": {},
+            # "thermal_dose": {"max_dose": 30.0},  # opt-in: see `thermal` above
         },
         **celegans_base.default_config(),
     )
-    # Override the base (infinite plane) arena with the bounded box floor so the worm
-    # can fall off the edge. Keep it an epath.Path to satisfy ConfigDict type checks.
-    config.arena_xml_path = consts.CELEGANS_PATH / "xmls" / "arena_bounded.xml"
     return config
 
 
@@ -124,8 +143,9 @@ class Thermotaxis(celegans_base.CelegansEnv):
     If you change ``init_x`` / ``setpoint_loc`` / ``arena_size`` / ``episode_length``,
     keep a direct traversal comfortably inside the episode -- otherwise every step is
     net-negative and the agent's best move becomes ending the episode early by failing
-    (the negative fell_off / too_far entries in the ``termination_bonus`` reward
-    discourage that; keep their magnitude >= ``time`` * ``episode_length``).
+    (the negative out_of_bounds entry in the ``termination_bonus`` reward discourages
+    that; keep its magnitude >= ``time`` * ``episode_length``). With ``time`` at 0,
+    discounting already supplies the "sooner is better" pressure.
     """
 
     _registry = _registry
@@ -288,6 +308,36 @@ class Thermotaxis(celegans_base.CelegansEnv):
         temp = self._temperature_at(self._sensor_xy(data), info)
         return jp.abs(temp - info["setpoint"])
 
+    def _field_max_error(self, info: Mapping[str, Any]) -> jp.ndarray:
+        """Largest ``|T - setpoint|`` reachable on the plate, for this episode's field.
+
+        Evaluated at the region corners, which hold the extremes for every shape
+        implemented so far (a plane is extremal at a corner; a radial peak is coldest
+        at the farthest point). Because :meth:`_temperature_at` clamps to the region,
+        this bounds the error *everywhere in the world*, so the normalized potential
+        stays in [0, 1] without the clip ever binding -- no flat dead zone outside.
+        """
+        lx, ly = self._region_extent()
+        corners = jp.array(
+            [[-lx, -ly], [-lx, ly], [lx, -ly], [lx, ly]], dtype=jp.float32
+        )
+        temps = jax.vmap(lambda p: self._temperature_at(p, info))(corners)
+        return jp.max(jp.abs(temps - info["setpoint"]))
+
+    def _thermal_stress(self, data: mjx.Data, info: Mapping[str, Any]) -> jp.ndarray:
+        """Dimensionless thermal stress at the body: 0 inside the tolerance band.
+
+        A one-sided hinge per side, each normalized by its own tolerance, so 1.0 means
+        "one full tolerance beyond the band". Asymmetric by default because heat is the
+        noxious side for C. elegans.
+        """
+        temp = self._temperature_at(self._body_xy(data), info)
+        hot = float(self._config.thermal.hot_tol)
+        cold = float(self._config.thermal.cold_tol)
+        over = jp.maximum(temp - (info["setpoint"] + hot), 0.0) / hot
+        under = jp.maximum((info["setpoint"] - cold) - temp, 0.0) / cold
+        return over + under
+
     def _sense_temperature(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> jp.ndarray:
@@ -334,6 +384,12 @@ class Thermotaxis(celegans_base.CelegansEnv):
             "hist_index": jp.asarray(0, dtype=jp.int32),
             "sensor_state": jp.asarray(0.0, dtype=jp.float32),  # RC-lag filtered temp
             "prev_err": jp.asarray(0.0, dtype=jp.float32),  # progress-reward baseline
+            # Per-episode normalizer for the progress potential (see _field_max_error).
+            "max_err": jp.asarray(0.0, dtype=jp.float32),
+            # Accumulated thermal dose (stress integrated over time) and the run of
+            # consecutive control steps spent inside the success band.
+            "dose": jp.asarray(0.0, dtype=jp.float32),
+            "in_band_steps": jp.asarray(0, dtype=jp.int32),
             "prev_action": self.null_action(),
             "action": self.null_action(),
         }
@@ -410,8 +466,17 @@ class Thermotaxis(celegans_base.CelegansEnv):
         else:
             info["sensor_state"] = true_temp
         idx = info["hist_index"]
-        info["temp_history"] = info["temp_history"].at[idx].set(info["sensor_state"])
-        info["hist_index"] = (idx + 1) % (int(self._config.max_obs_delay) + 1)
+        info["temp_history"] = info["temp_history"].at[idx].set(reading)
+        info["hist_index"] = (idx + 1) % self._buf_len
+
+        # Interoceptive state, updated before obs/terminations read it: integrate the
+        # thermal dose, and advance the run of consecutive in-band steps (reset to 0 the
+        # moment the body leaves the band, so `hold_steps` means *consecutive*).
+        info["dose"] = info["dose"] + self._thermal_stress(data, info) * self.ctrl_dt
+        in_band = self._temp_error(data, info) < self._success_eps
+        info["in_band_steps"] = jp.where(in_band, info["in_band_steps"] + 1, 0).astype(
+            jp.int32
+        )
 
         obs = self._get_obs(data, info)
         done = self._is_done(data, info, state.metrics)
@@ -472,6 +537,24 @@ class Thermotaxis(celegans_base.CelegansEnv):
             "magnitudes/temp_error/per_step"
         ] = err
         return reward
+
+    @_registry.reward("thermal_stress")
+    def _thermal_stress_cost(self, data, info, metrics, weight) -> float:
+        """Graded cost for holding the body outside the thermal tolerance band.
+
+        A soft replacement for the old ``too_far`` termination: it pushes back toward
+        tolerable temperatures instead of ending the episode at a cliff edge, so the
+        down-gradient excursions that real worms make while searching stay affordable.
+        The dose it integrates is accumulated (and observed) whatever this weight is.
+        """
+        stress = self._thermal_stress(data, info)
+        cost = -weight * stress
+        metrics["costs/thermal_stress"] = metrics["costs/thermal_stress/per_step"] = cost
+        metrics["magnitudes/thermal_stress"] = metrics[
+            "magnitudes/thermal_stress/per_step"
+        ] = stress
+        metrics["magnitudes/dose"] = metrics["magnitudes/dose/per_step"] = info["dose"]
+        return cost
 
     @_registry.reward("temperature")
     def _temperature_reward(self, data, info, metrics, weight, exp_scale) -> float:
@@ -548,14 +631,30 @@ class Thermotaxis(celegans_base.CelegansEnv):
 
     # ------------------------------------------------------------- terminations
     @_registry.termination("reached_setpoint")
-    def _reached_setpoint(self, data, info, epsilon) -> bool:
-        """Success: within ``epsilon`` (temperature) of the setpoint."""
-        return self._temp_error(data, info) < epsilon
+    def _reached_setpoint(self, data, info, epsilon, hold_steps=0) -> bool:
+        """Success: the body held within ``epsilon`` of the setpoint for ``hold_steps``.
 
-    @_registry.termination("too_far")
-    def _too_far(self, data, info, max_temp_error) -> bool:
-        """Give up: temperature error exceeds ``max_temp_error``."""
-        return self._temp_error(data, info) > max_temp_error
+        Reads the consecutive in-band counter advanced in :meth:`step` (``epsilon`` is
+        applied there, to the reward-point error). Requiring a run of steps turns the
+        task from "brush across the isotherm once" into isothermal *tracking*, and
+        closes the exploit where a single head flick through the band ends the episode
+        with the body still outside it. ``hold_steps`` of 0 or 1 both reduce to
+        terminating on first contact.
+        """
+        del data, epsilon
+        return info["in_band_steps"] >= max(int(hold_steps), 1)
+
+    @_registry.termination("thermal_dose")
+    def _thermal_dose(self, data, info, max_dose) -> bool:
+        """Gave up: accumulated thermal dose exceeded ``max_dose``.
+
+        The graded counterpart of the old ``too_far`` cliff -- the worm may go as cold
+        or as hot as it likes, but not for arbitrarily long. Not enabled by default;
+        add a ``thermal_dose`` entry to ``termination_criteria`` to switch it on (and
+        give it a ``termination_bonus`` entry if you want a penalty with it).
+        """
+        del data
+        return info["dose"] > max_dose
 
     @_registry.termination("out_of_bounds")
     def _out_of_bounds(self, data, info, margin, require_all_bodies=True) -> bool:
