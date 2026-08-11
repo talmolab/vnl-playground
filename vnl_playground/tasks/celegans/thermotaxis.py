@@ -60,7 +60,10 @@ def default_config() -> config_dict.ConfigDict:
             setpoint_loc=(0.5, 0.0),  # (x, y) anchor; each element scalar or [lo, hi]
             min_temp=15.0,
             max_temp=25.0,
-            arena_size=(2.0, 2.0),  # (Lx, Ly); the floor is auto-resized to this
+            # (Lx, Ly) half-extents of the *thermal region*, a subregion of the
+            # (effectively infinite) arena plane. The gradient is only defined here;
+            # outside, the temperature is held at the value on the region boundary.
+            arena_size=(2.0, 2.0),
         ),
         # Thermosensory body: C. elegans senses temperature at the head, so the
         # gradient is read at this body's position (not the mid-body root).
@@ -193,15 +196,11 @@ class Thermotaxis(celegans_base.CelegansEnv):
 
         self._spec.worldbody.add_light(pos=[0, 0, 10], dir=[0, 0, -1])
 
-        # Resize the floor to the configured arena extent so the worm can reach an edge
-        # and fall off within an episode. Only the x,y extent changes; the top surface
-        # stays at z=0 (thickness kept below it), so resting height / proprioception are
-        # unchanged.
-        floor = self._spec.geom("floor")
-        thickness = float(floor.size[2])
-        lx, ly = self._floor_extent()
-        floor.size = [lx, ly, thickness]
-        floor.pos = [0.0, 0.0, -thickness]
+        # NOTE: the floor geom is deliberately left exactly as the shared arena defines
+        # it. The thermal region is a task-level construct (a gradient plus an
+        # out-of-bounds boundary), not a physical edge, so contact geometry, resting
+        # height and every proprioceptive input match the other C. elegans tasks.
+        lx, ly = self._region_extent()
 
         # Visual marker site on the worm so a top-down MuJoCo render still shows the
         # ~mm worm. In a dedicated group (3, hidden by default) so render() can isolate
@@ -248,11 +247,13 @@ class Thermotaxis(celegans_base.CelegansEnv):
         )
 
     # ----------------------------------------------------------------- helpers
-    def _floor_extent(self) -> tuple:
-        """Concrete floor half-extents (Lx, Ly) from ``gradient_cfg.arena_size``.
+    def _region_extent(self) -> tuple:
+        """Concrete thermal-region half-extents (Lx, Ly) from ``gradient_cfg.arena_size``.
 
-        Uses the upper bound if an axis is given as sampling bounds, so the (static)
-        physical floor always contains any per-episode sampled gradient extent.
+        This is the subregion of the arena plane the gradient is defined over (and,
+        plus ``margin``, the out-of-bounds boundary). Uses the upper bound if an axis
+        is given as sampling bounds, so the (static) region always contains any
+        per-episode sampled gradient extent.
         """
         arena_size = self._config.gradient_cfg.arena_size
 
@@ -556,11 +557,24 @@ class Thermotaxis(celegans_base.CelegansEnv):
         """Give up: temperature error exceeds ``max_temp_error``."""
         return self._temp_error(data, info) > max_temp_error
 
-    @_registry.termination("fell_off")
-    def _fell_off(self, data, info, min_z) -> bool:
-        """Walked off the finite floor and fell below ``min_z``."""
+    @_registry.termination("out_of_bounds")
+    def _out_of_bounds(self, data, info, margin, require_all_bodies=True) -> bool:
+        """Left the thermal region: outside ``|x| > Lx + margin`` / ``|y| > Ly + margin``.
+
+        Replaces the old fall-off-the-floor check: the arena is an infinite plane, so
+        the region boundary is a task-level rectangle rather than a physical edge. With
+        ``require_all_bodies`` the episode ends only once *every* segment is outside, so
+        a worm hanging half off the plate keeps going and a head flick across the
+        boundary costs nothing; otherwise the reward point alone is tested.
+        """
         del info
-        return self._get_root_pos(data)[2] < min_z
+        lx, ly = self._region_extent()
+        bounds = jp.array([lx + margin, ly + margin], dtype=jp.float32)
+        if not require_all_bodies:
+            return jp.any(jp.abs(self._body_xy(data)) > bounds)
+        bodies = self._get_bodies_pos(data, flatten=False)
+        xy = jp.stack([p[: self.config.dim] for p in bodies.values()])
+        return jp.all(jp.any(jp.abs(xy) > bounds, axis=-1))
 
     @_registry.termination("nan")
     def _nan_termination(self, data, info) -> bool:
