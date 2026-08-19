@@ -106,6 +106,26 @@ def _build_env(hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size)
         action_repeat=action_repeat,
         full_reset=False,
     )
+    # Optional per-episode info reset. full_reset=False above leaves
+    # state.info untouched across auto-resets, which turns info-derived
+    # rewards (gap_crossing_bonus via info["gaps_crossed"]) into cross-episode
+    # ratchets during training — see wrappers_info_reset.py for the full
+    # mechanism. Opt-in via a top-level `wrappers:` block so that completed
+    # arms (m1..m8) stay bit-reproducible.
+    wrap_cfg = hydra_cfg.get("wrappers", None)
+    if wrap_cfg is not None and bool(wrap_cfg.get("info_reset_on_done", False)):
+        from vnl_playground.tasks.wrappers_info_reset import (
+            DEFAULT_RUN_GAP_KEYS,
+            InfoResetOnDoneWrapper,
+        )
+
+        keys = tuple(wrap_cfg.get("info_reset_keys", None) or DEFAULT_RUN_GAP_KEYS)
+        base_env = InfoResetOnDoneWrapper(base_env, keys=keys)
+        log.info(
+            "InfoResetOnDoneWrapper ACTIVE: restoring info keys %s to their "
+            "reset-time values on every done (fixes the full_reset=False "
+            "gap_crossing_bonus ratchet)", keys,
+        )
     base_env = BinocularVisionRenderWrapper(
         base_env,
         mj_model=mj_model,
@@ -302,6 +322,59 @@ def main(hydra_cfg: DictConfig):
         float(state.normalizer_params.proprioception.std.std()),
     )
 
+    # ---- DMPO warm start from ANOTHER run's checkpoint ------------------------
+    # transfer.warm_start_dmpo_checkpoint points at a DMPONetwork_<step> dir of a
+    # previous DMPO run. Grafts policy_params + target_policy_params +
+    # normalizer_params into the fresh state (critic/duals/optimizers stay
+    # fresh -- the critic may have a different atom count than the source run,
+    # and DMPOConfig.critic_warmup_sgd_steps exists precisely so the fresh
+    # critic can fit before the warm policy is allowed to move). The grafted
+    # policy also becomes frozen_behavior_params for behavior mixing
+    # (cfg.behavior_mix_init). Done BEFORE restore_ckpt so that resuming a
+    # warm-started run restores its own state over the graft, and AFTER the
+    # normalizer seeding, which it supersedes (the source run's normalizer is
+    # the converged version of the seeded one).
+    frozen_behavior_params = None
+    ws_path = None
+    if "transfer" in hydra_cfg:
+        ws_path = hydra_cfg.transfer.get("warm_start_dmpo_checkpoint", None)
+    if ws_path:
+        import flax.serialization as _flax_ser
+        from track_mjx.agent.dmpo.checkpoint import load_train_state_items_numpy
+
+        ws = load_train_state_items_numpy(str(ws_path))
+        ws_policy = _flax_ser.from_state_dict(state.policy_params, ws["policy_params"])
+        ws_target = _flax_ser.from_state_dict(
+            state.target_policy_params, ws["target_policy_params"]
+        )
+        ws_norm = _flax_ser.from_state_dict(
+            state.normalizer_params, ws["normalizer_params"]
+        )
+        state = state._replace(
+            policy_params=ws_policy,
+            target_policy_params=ws_target,
+            normalizer_params=ws_norm,
+        )
+        # Optimizer state must be re-initialized on the grafted params (Adam
+        # moments start at zero for the trainable blocks, as intended).
+        state = state._replace(policy_opt_state=pol_opt_kl.init(state.policy_params))
+        frozen_behavior_params = ws_policy
+        n_params = sum(x.size for x in jax.tree.leaves(ws_policy))
+        log.info(
+            "DMPO WARM START: grafted policy(+target)+normalizer from %s "
+            "(%d policy params). Critic/duals/optimizers are FRESH; "
+            "critic_warmup_sgd_steps=%d behavior_mix_init=%.2f",
+            ws_path, n_params,
+            int(getattr(cfg, "critic_warmup_sgd_steps", 0)),
+            float(getattr(cfg, "behavior_mix_init", 0.0)),
+        )
+    elif float(getattr(cfg, "behavior_mix_init", 0.0)) > 0.0:
+        raise ValueError(
+            "train_config.behavior_mix_init > 0 requires "
+            "transfer.warm_start_dmpo_checkpoint (the frozen behavior policy "
+            "is the warm-start policy)."
+        )
+
     ckpt_mgr = make_checkpointer(ckpt_dir)
     restored = restore_ckpt(ckpt_mgr, state_template=state)
     # Checkpoints are saved at `step=total_env_steps`, so the manager's latest
@@ -332,6 +405,11 @@ def main(hydra_cfg: DictConfig):
             if restored is not None
             else "anchor_invariant_probe"
         )
+        if ws_path and restored is None:
+            # A DMPO-warm-started policy head has learned away from the
+            # anchor BY DESIGN -- r_anchor < 1 here is expected, not a
+            # regression of the prior/decoder warm-start splice.
+            probe_label = "anchor_invariant_probe_dmpo_warmstart(r_anchor<1 expected)"
         rng_probe, k_probe = jax.random.split(rng)
         keys = jax.random.split(k_probe, cfg.num_envs)
         st0 = env.reset(keys)
@@ -484,6 +562,7 @@ def main(hydra_cfg: DictConfig):
         cfg_dict=cfg_dict,
         extra_state_extras=("anchor_mu_imit", "anchor_log_std_imit"),
         start_env_steps=start_env_steps,
+        frozen_behavior_params=frozen_behavior_params,
     )
 
     ckpt_mgr.wait_until_finished()
