@@ -790,6 +790,91 @@ class RunGap(rodent_base.RodentEnv):
 
         return weighted_reward
 
+    def _upright_factor(self, data, deviation_angle: float = 30.0):
+        """dm_control's ``_upright_reward``, ported exactly.
+
+        Reference: dm_control/locomotion/tasks/escape.py:_upright_reward, which the
+        vnl-ray rodent gaps task multiplies into its velocity term. It reads
+        ``xmat[-1]`` -- flat index 8, i.e. R[2,2], the world-z component of the
+        body's own z-axis -- for the root body AND (when the walker defines one,
+        which the rodent does) the pelvis, takes the MIN of the two, then applies
+        ``rewards.tolerance(u, bounds=(d, inf), sigmoid='linear', margin=1+d,
+        value_at_margin=0)`` with ``d = cos(deviation_angle)``. That tolerance call
+        reduces in closed form to::
+
+            1                    if u >= d
+            (1 + u) / (1 + d)    otherwise
+
+        so the factor is 1 while the body is within ``deviation_angle`` of vertical
+        and decays linearly to 0 only when fully inverted (u = -1). Range [0, 1].
+
+        Taking the min BEFORE the ramp (as dm_control does) is equivalent to
+        ramping each and taking the min, since the ramp is monotone increasing --
+        but this follows the reference ordering so the two cannot drift apart.
+        """
+        cos_dev = float(np.cos(np.deg2rad(deviation_angle)))
+        torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
+        pelvis = data.bind(self.mjx_model, self._spec.body(f"pelvis{self._suffix}"))
+        upright = jp.minimum(torso.xmat[-1, -1], pelvis.xmat[-1, -1])
+        return jp.where(upright >= cos_dev, 1.0, (1.0 + upright) / (1.0 + cos_dev))
+
+    @_registry.reward("forward_velocity_upright")
+    def _forward_velocity_upright_reward(
+        self, data, info, metrics, weight, target_speed=1.0, deviation_angle=30.0
+    ) -> float:
+        """Ray/dm_control-parity reward: ``tent(x_velocity) * upright``.
+
+        This is the reward the vnl-ray rodent gaps run actually optimised
+        (rodent_tasks_modified.py:246-266), and it differs from this file's
+        ``forward_velocity`` in two ways that both matter:
+
+        1. VELOCITY SHAPE. Ray uses
+           ``rewards.tolerance(v, (target, target), margin=target,
+           sigmoid='linear', value_at_margin=0)``, which is a TENT:
+           ``max(0, 1 - |v - target| / target)`` -- zero at v=0 AND at v=2*target,
+           peaking at target. ``forward_velocity`` is a one-sided saturating RAMP,
+           ``clip(v / target, 0, 1)``, which never penalises overspeed. Under the
+           ramp, sprinting past the target is free; under the tent it is punished
+           as hard as being equally slow.
+        2. UPRIGHT COUPLING. Ray MULTIPLIES by the upright factor, so speed earned
+           while tipped over is discounted continuously. This file's reward terms
+           are summed additively (base.py:313-320), so an additive upright term
+           could not reproduce this -- hence one fused term rather than two.
+
+        Ray's gaps task uses target_velocity=1.0 (basic_rodent_2020.py:104), NOT
+        the class default 3.0 and NOT this repo's 0.8.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            metrics: Metrics dict for logging.
+            weight: Reward weight multiplier.
+            target_speed: Tent peak, in m/s.
+            deviation_angle: Half-width of the upright dead-zone, in degrees.
+
+        Returns:
+            Weighted ``tent(v) * upright`` reward.
+        """
+        del info
+
+        body = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
+        forward_vel = body.subtree_linvel[0]
+
+        vel_term = jp.clip(
+            1.0 - jp.abs(forward_vel - target_speed) / target_speed, 0.0, 1.0
+        )
+        upright = self._upright_factor(data, deviation_angle)
+
+        weighted_reward = vel_term * upright * weight
+        metrics["rewards/forward_velocity_upright"] = weighted_reward
+        # Logged separately because the product hides which factor is binding:
+        # a policy that is fast but tipped and one that is upright but slow score
+        # the same, and only the split tells them apart.
+        metrics["rewards/fvu_vel_term"] = vel_term
+        metrics["rewards/fvu_upright"] = upright
+
+        return weighted_reward
+
     @_registry.reward("forward_velocity_range")
     def _forward_velocity_range_reward(
         self,
@@ -993,6 +1078,63 @@ class RunGap(rodent_base.RodentEnv):
         too_tilted = upright_z < max_cos_angle
 
         return jp.logical_or(below_ground, too_tilted)
+
+    @_registry.termination("end_effector_height")
+    def _end_effector_height_termination(
+        self,
+        data: mjx.Data,
+        info,
+        min_height: float = -0.3,
+        bodies: tuple = ("lower_arm_R", "lower_arm_L", "foot_R", "foot_L"),
+    ) -> bool:
+        """Ray's ONLY live termination, ported: an end effector drops below the floor.
+
+        The vnl-ray gaps task nominally has two failure conditions, but only one
+        of them actually fires:
+
+        * ``contact_termination=True`` is a SILENT NO-OP. The vnl-ray override
+          filters walker geoms by the names {'pelvis', 'torso', 'vertebra_C1',
+          'vertebra_C3'} (rodent_tasks_modified.py:204), which are BODY names and
+          match zero geoms in dm_control's rodent.xml. dm_control binds the empty
+          set to an ``_EmptyBinding`` rather than raising, so the check silently
+          always returns False. Verified at runtime on dm_control 1.0.40/1.0.41.
+        * ``terminate_at_height=-0.3`` (basic_rodent_2020.py:104, NOT the class
+          default -0.5) IS live: any of the four end-effector body origins falling
+          below world z = -0.3 ends the episode.
+
+        The consequence is that Ray's MDP is FAR more permissive than this file's
+        ``fallen``. A rat lying flat on a platform never terminates in Ray -- it
+        just earns little reward for 30 s -- whereas ``fallen`` with the live
+        config (min_torso_z=0.0325 against a ~0.0586 m standing torso height, plus
+        an 85 deg tilt gate) ends the episode in about 1.25 s. Ray therefore gets
+        long continuous trajectories before it has learned to locomote at all;
+        this port has to learn stability from short fragments.
+
+        The threshold ports across directly because both arenas put the platform
+        top surface at world z = 0 (slab centred at -half_thickness with half-size
+        half_thickness; _WALL_THICKNESS = 0.16 here). There is no floor beneath the
+        gaps in either arena, so a limb entering a gap keeps descending and the
+        threshold is reachable.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+            min_height: World-z below which an end effector counts as fallen.
+            bodies: End-effector body names (suffix is appended automatically).
+                Defaults to Rat.end_effectors from dm_control.
+
+        Returns:
+            Boolean indicating whether any end effector is below ``min_height``.
+        """
+        del info
+
+        heights = jp.array(
+            [
+                data.bind(self.mjx_model, self._spec.body(f"{name}{self._suffix}")).xpos[2]
+                for name in bodies
+            ]
+        )
+        return jp.any(heights < min_height)
 
     @_registry.termination("stale_location")
     def _stale_location_termination(
