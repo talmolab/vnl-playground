@@ -287,15 +287,49 @@ def main(hydra_cfg: DictConfig):
         },
         "action_size": action_size,
     }
+    # Replay schema, shaped by the compression flags (see DMPOConfig).
+    obs_template = env_spec["obs_template"]
+    if bool(getattr(cfg, "vision_uint8_storage", False)):
+        if not (isinstance(obs_template, dict) and "vision" in obs_template):
+            raise ValueError(
+                "vision_uint8_storage=true but the obs template has no "
+                f"'vision' key: {type(obs_template).__name__}"
+            )
+        obs_template = {
+            **obs_template,
+            "vision": jnp.zeros(obs_template["vision"].shape, dtype=jnp.uint8),
+        }
     transition_template = {
-        "observation": env_spec["obs_template"],
+        "observation": obs_template,
         "action": jnp.zeros((action_size,), dtype=jnp.float32),
         "reward": jnp.zeros((), dtype=jnp.float32),
         "discount": jnp.zeros((), dtype=jnp.float32),
-        "next_observation": env_spec["obs_template"],
         "anchor_mu_imit": jnp.zeros((action_size,), dtype=jnp.float32),
         "anchor_log_std_imit": jnp.zeros((action_size,), dtype=jnp.float32),
     }
+    if bool(getattr(cfg, "store_next_observation", True)):
+        transition_template["next_observation"] = obs_template
+    else:
+        eff_n = min(int(cfg.n_step), int(cfg.sequence_length) - 1)
+        log.info(
+            "Compressed replay schema: next_observation dropped "
+            "(bootstrap from observation[:, n]; effective n-step = "
+            "min(n_step=%d, sequence_length-1=%d) = %d), vision_uint8=%s",
+            int(cfg.n_step), int(cfg.sequence_length) - 1, eff_n,
+            bool(getattr(cfg, "vision_uint8_storage", False)),
+        )
+    # Per-transition storage cost, for buffer sizing against GPU memory.
+    _tx_bytes = sum(
+        x.size * x.dtype.itemsize for x in jax.tree.leaves(transition_template)
+    )
+    log.info(
+        "Replay transition size: %.2f KB -> max_replay_size=%d is %.2f GB "
+        "(%d steps/env deep at num_envs=%d = %.1f rollouts)",
+        _tx_bytes / 1024, cfg.max_replay_size,
+        _tx_bytes * (cfg.max_replay_size // cfg.num_envs) * cfg.num_envs / 2**30,
+        cfg.max_replay_size // cfg.num_envs, cfg.num_envs,
+        (cfg.max_replay_size // cfg.num_envs) / cfg.unroll_length,
+    )
     rng, k_state = jax.random.split(rng)
     state = init_training_state(k_state, nets, env_spec, cfg)
     # init_training_state builds state with the DEFAULT optimizer; replace
