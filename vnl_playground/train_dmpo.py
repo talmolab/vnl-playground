@@ -48,11 +48,13 @@ from track_mjx.agent.dmpo.train import (
     _filter_dmpo_kwargs,
 )
 from track_mjx.agent.dmpo.train_dmpo_eval import (
+    compute_batch_rollout_metrics,
     compute_rollout_metrics,
     compute_vision_sensitivity,
     render_eval_video,
     run_eval_rollout_envzero,
 )
+from track_mjx.agent.dmpo.schedules import env_steps_estimate, reward_anneal_lambda
 from track_mjx.agent.dmpo.train_dmpo_logging import (
     detect_git_sha,
     load_wandb_state as load_dmpo_wandb_state,
@@ -343,9 +345,11 @@ def main(hydra_cfg: DictConfig):
             erc_raw = hydra_cfg.get("eval_render_config", {})
             erc = OmegaConf.to_container(erc_raw, resolve=True) if erc_raw else {}
             eval_episode_length = int(erc.get("episode_length", 1000))
-            # 3-tuple since 2026-08-17: the third element is the all-env batch metric
-            # dict (see compute_batch_rollout_metrics). This entry does not consume it yet.
-            rollout, term_events, _batch_rm = run_eval_rollout_envzero(
+            # 4-tuple since 2026-08-19: [2] is the UN-remixed all-env batch metric
+            # dict, [3] is the raw allenv arrays. We recompute the batch metrics
+            # from allenv with the reward-anneal lambda so the reported reward is
+            # the one the replay buffer stored (see remix_eval_reward).
+            rollout, term_events, _batch_rm_unmixed, allenv = run_eval_rollout_envzero(
                 env=base_env if use_vision else env,
                 policy_apply=nets.policy.apply,
                 params=state.policy_params,
@@ -353,8 +357,20 @@ def main(hydra_cfg: DictConfig):
                 episode_length=eval_episode_length,
                 num_envs=cfg.num_envs,
             )
+            # lambda from state.steps via the SAME expression the fused training
+            # step uses (train_dmpo_step.py:98-99) -- the host env_steps int is a
+            # different quantity and would drift from the buffer.
+            remix_key = getattr(cfg, "reward_anneal_sparse_key", None)
+            remix_lambda = (
+                float(reward_anneal_lambda(env_steps_estimate(state.steps, cfg, K), cfg))
+                if remix_key is not None
+                else None
+            )
             if rollout and _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
-                rollout_metrics = compute_rollout_metrics(rollout)
+                rollout_metrics = compute_rollout_metrics(rollout, remix_key, remix_lambda)
+                rollout_metrics.update(
+                    compute_batch_rollout_metrics(allenv, remix_key, remix_lambda)
+                )
                 wandb.log({f"eval/{k}": v for k, v in rollout_metrics.items()}
                           | {"env_steps": int(env_steps)},
                           step=int(env_steps), commit=False)
@@ -380,6 +396,11 @@ def main(hydra_cfg: DictConfig):
                     camera=str(erc.get("camera", "close_profile-rodent")),
                     hud_config=hud_cfg, reward_config=rew_cfg,
                     termination_events=term_events,
+                    reward_remix=(
+                        {"sparse_key": remix_key, "lambda": remix_lambda}
+                        if remix_key is not None
+                        else None
+                    ),
                 )
                 if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
                     wandb.log({"videos/eval": wandb.Video(str(video_path), format="mp4")},

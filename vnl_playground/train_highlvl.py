@@ -293,6 +293,7 @@ def render_video(
     reward_config=None,
     use_obs_vision=False,
     eye_qpos_indices=None,
+    reward_remix=None,
 ):
     """Render a rollout to an MP4 video file with tracking camera.
 
@@ -321,6 +322,13 @@ def render_video(
     metrics (speed, reward breakdown, cumulative reward, gap crossing
     indicator, torso height, heading, etc.).  ``reward_config`` supplies
     the reward term parameters (e.g. target_speed) for display.
+
+    ``reward_remix`` is an optional ``{"sparse_key": str, "lambda": float}``.
+    When given, the HUD's reward and cumulative-reward lines report the reward
+    the replay buffer STORED, ``sparse + lambda*(total - sparse)``
+    (rollout.py:200-207), with the raw env total shown alongside. The per-term
+    breakdown stays raw -- lambda scales the whole dense remainder uniformly,
+    so the single displayed lambda covers it.
     """
     import math
 
@@ -448,6 +456,7 @@ def render_video(
 
         # HUD accumulators
         cumulative_reward = 0.0
+        cumulative_reward_env = 0.0
         gap_crossed_persistent = False
         gap_flash_secs = (
             hud_config.get("gap_flash_duration", 1.5) if hud_config else 1.5
@@ -491,6 +500,7 @@ def render_video(
                 # Reset accumulators on episode boundary
                 if i > 0 and (i - 1) in termination_frame_set:
                     cumulative_reward = 0.0
+                    cumulative_reward_env = 0.0
                     gap_crossed_persistent = False
                     gap_crossed_display_frames = 0
                     episode_step = 0
@@ -510,8 +520,22 @@ def render_video(
 
                 # Read reward components from state.metrics
                 gap_bonus = float(state.metrics.get("rewards/gap_crossing_bonus", 0.0))
-                step_reward = float(state.reward)
+                step_reward_env = float(state.reward)
+                # The replay buffer stores sparse + lambda*(total - sparse)
+                # (rollout.py:200-207), not the env total. Report what the
+                # learner is actually paid; keep the env total alongside.
+                if reward_remix is not None:
+                    _sk = reward_remix.get("sparse_key")
+                    _lam = float(reward_remix.get("lambda") or 0.0)
+                    _sparse = float(
+                        np.nan_to_num(np.asarray(state.metrics.get(_sk, 0.0)))
+                    )
+                    step_reward = _sparse + _lam * (step_reward_env - _sparse)
+                else:
+                    _lam = None
+                    step_reward = step_reward_env
                 cumulative_reward += step_reward
+                cumulative_reward_env += step_reward_env
                 episode_step += 1
 
                 # Gap crossing persistence
@@ -570,10 +594,21 @@ def render_video(
                             val = float(mv)
                             if val != 0 or short == "gap_crossing_bonus":
                                 parts.append(f"{short}={val:.3f}")
-                    hud_lines.append((f"Reward: {step_reward:.3f}  ({', '.join(parts)})", CYAN))
+                    _lam_txt = (
+                        "" if _lam is None
+                        else f" lam={_lam:.2f} env={step_reward_env:.3f}"
+                    )
+                    hud_lines.append(
+                        (f"Reward: {step_reward:.3f}{_lam_txt}  ({', '.join(parts)})", CYAN)
+                    )
 
                 if _hud_on("show_cumulative_reward"):
-                    hud_lines.append((f"Cumulative: {cumulative_reward:.1f}", YELLOW))
+                    _cum_txt = (
+                        "" if _lam is None else f" (env {cumulative_reward_env:.1f})"
+                    )
+                    hud_lines.append(
+                        (f"Cumulative: {cumulative_reward:.1f}{_cum_txt}", YELLOW)
+                    )
 
                 if _hud_on("show_gap_crossing"):
                     if gap_crossed_display_frames > 0:

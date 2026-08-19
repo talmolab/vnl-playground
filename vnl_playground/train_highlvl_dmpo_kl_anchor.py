@@ -36,10 +36,12 @@ from track_mjx.agent.dmpo.train import (
     _filter_dmpo_kwargs,
 )
 from track_mjx.agent.dmpo.train_dmpo_eval import (
+    compute_batch_rollout_metrics,
     compute_rollout_metrics,
     render_eval_video,
     run_eval_rollout_envzero,
 )
+from track_mjx.agent.dmpo.schedules import env_steps_estimate, reward_anneal_lambda
 from track_mjx.agent.dmpo.train_dmpo_logging import (
     detect_git_sha,
     load_wandb_state as load_dmpo_wandb_state,
@@ -528,7 +530,7 @@ def main(hydra_cfg: DictConfig):
             erc_raw = hydra_cfg.get("eval_render_config", {})
             erc = OmegaConf.to_container(erc_raw, resolve=True) if erc_raw else {}
             eval_episode_length = int(erc.get("episode_length", 1000))
-            rollout, term_events, batch_rm = run_eval_rollout_envzero(
+            rollout, term_events, _batch_rm_unmixed, allenv = run_eval_rollout_envzero(
                 env=base_env_wrapped,
                 policy_apply=nets.policy.apply,
                 params=state.policy_params,
@@ -537,13 +539,23 @@ def main(hydra_cfg: DictConfig):
                 num_envs=cfg.num_envs,
                 normalizer_params=state.normalizer_params,
             )
+            # Rebuild the reward the replay buffer actually stored. lambda comes
+            # from state.steps via the SAME expression the fused training step
+            # uses (train_dmpo_step.py:98-99) -- the host env_steps int is a
+            # different quantity and would drift from the buffer.
+            remix_key = getattr(cfg, "reward_anneal_sparse_key", None)
+            remix_lambda = (
+                float(reward_anneal_lambda(env_steps_estimate(state.steps, cfg, K), cfg))
+                if remix_key is not None
+                else None
+            )
             if rollout:
-                rm = compute_rollout_metrics(rollout)
+                rm = compute_rollout_metrics(rollout, remix_key, remix_lambda)
                 # All-env estimator. `rm` is the legacy env-0 statistic, kept so
                 # the new arms stay comparable to the 08-11 runs; `batch_rm` is
                 # the one to actually judge arms on (env-0 had sd 35.3 over the
                 # baseline's own flat window -- see compute_batch_rollout_metrics).
-                rm.update(batch_rm)
+                rm.update(compute_batch_rollout_metrics(allenv, remix_key, remix_lambda))
                 # Mirror eval metrics to stdout. Previously these were computed
                 # ONLY inside the wandb guard and written ONLY into wandb's
                 # binary log -- which is why earlier sessions could not answer
@@ -575,6 +587,11 @@ def main(hydra_cfg: DictConfig):
                     camera=str(erc.get("camera", "close_profile-rodent")),
                     hud_config=hud_cfg, reward_config=rew_cfg,
                     termination_events=term_events,
+                    reward_remix=(
+                        {"sparse_key": remix_key, "lambda": remix_lambda}
+                        if remix_key is not None
+                        else None
+                    ),
                 )
                 if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
                     wandb.log({"videos/eval": wandb.Video(str(video_path), format="mp4")},
