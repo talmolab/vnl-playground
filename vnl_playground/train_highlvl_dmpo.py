@@ -32,7 +32,11 @@ from track_mjx.agent.dmpo.checkpoint import (
     restore as restore_ckpt,
     save as save_ckpt,
 )
-from track_mjx.agent.dmpo.config import DMPOConfig
+from track_mjx.agent.dmpo.config import (
+    DMPOConfig,
+    realized_ratios,
+    resolve_sgd_steps_per_rollout,
+)
 from track_mjx.agent.dmpo.learner import init_training_state, make_optimizers
 from track_mjx.agent.dmpo.networks_vision_bottleneck import (
     make_dmpo_bottleneck_vision_networks,
@@ -318,14 +322,17 @@ def main(hydra_cfg: DictConfig):
     )
     rb_state = rb.init(transition_template)
 
-    K = max(
-        1,
-        int(cfg.unroll_length * cfg.num_envs / (cfg.batch_size * cfg.samples_per_insert)),
-    )
+    K = resolve_sgd_steps_per_rollout(cfg)
     log.info(
-        "DMPO highlvl: K=%d SGD updates per rollout (target ~50 for 5090 saturation)", K,
+        "DMPO highlvl: K=%d SGD updates per rollout | %s",
+        K,
+        " ".join(f"{k}={v:.4g}" for k, v in realized_ratios(cfg, K).items()),
     )
-    if K > 80 or K < 30:
+    # Only warn when K was DERIVED. A pinned `sgd_steps_per_rollout` outside the
+    # 30..80 band is the whole point of arms like the Ray-throughput-parity one
+    # (K=324 at batch 1024), and telling the user to "check samples_per_insert"
+    # there would be actively misleading -- that knob is unread when K is pinned.
+    if cfg.sgd_steps_per_rollout is None and (K > 80 or K < 30):
         log.warning(
             "K=%d outside the validated 30..80 band. Check num_envs / batch_size / "
             "samples_per_insert / unroll_length consistency.", K,
@@ -348,7 +355,9 @@ def main(hydra_cfg: DictConfig):
             erc_raw = hydra_cfg.get("eval_render_config", {})
             erc = OmegaConf.to_container(erc_raw, resolve=True) if erc_raw else {}
             eval_episode_length = int(erc.get("episode_length", 1000))
-            rollout, term_events = run_eval_rollout_envzero(
+            # 3-tuple since 2026-08-17: the third element is the all-env batch metric
+            # dict (see compute_batch_rollout_metrics). This entry does not consume it yet.
+            rollout, term_events, _batch_rm = run_eval_rollout_envzero(
                 env=base_env,
                 policy_apply=nets.policy.apply,
                 params=state.policy_params,

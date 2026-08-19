@@ -21,7 +21,11 @@ from track_mjx.agent.dmpo.checkpoint import (
     restore as restore_ckpt,
     save as save_ckpt,
 )
-from track_mjx.agent.dmpo.config import DMPOConfig
+from track_mjx.agent.dmpo.config import (
+    DMPOConfig,
+    realized_ratios,
+    resolve_sgd_steps_per_rollout,
+)
 from track_mjx.agent.dmpo.learner import init_training_state
 from track_mjx.agent.dmpo.networks_kl_anchor import make_dmpo_kl_anchor_networks
 from track_mjx.agent.dmpo.normalizer_seeding import seed_proprio_from_imit
@@ -138,6 +142,9 @@ def main(hydra_cfg: DictConfig):
     cfg.kl_anchor_alpha = float(hydra_cfg.kl_anchor.alpha_anchor)
     cfg.kl_anchor_w = float(hydra_cfg.kl_anchor.w_anchor)
     cfg.kl_anchor_w_floor = float(hydra_cfg.kl_anchor.get("w_anchor_floor", 0.0))
+    cfg.kl_anchor_beta_linear = float(
+        hydra_cfg.kl_anchor.get("beta_linear", 0.0)
+    )
     cfg.kl_anchor_decay_sgd_steps = int(
         hydra_cfg.kl_anchor.get("decay_sgd_steps", 0)
     )
@@ -230,6 +237,17 @@ def main(hydra_cfg: DictConfig):
         ),
         warm_start_prior_params=prior_params,
         warm_start_decoder_params=decoder_params,
+        residual_mode=str(hydra_cfg.network_config.get("residual_mode", "sigma_tanh")),
+        residual_scale=float(hydra_cfg.network_config.get("residual_scale", 2.0)),
+        critic_use_proprio=bool(
+            hydra_cfg.network_config.get("critic_use_proprio", False)
+        ),
+    )
+    log.info(
+        "latent residual: mode=%s scale=%.3g | critic_use_proprio=%s",
+        str(hydra_cfg.network_config.get("residual_mode", "sigma_tanh")),
+        float(hydra_cfg.network_config.get("residual_scale", 2.0)),
+        bool(hydra_cfg.network_config.get("critic_use_proprio", False)),
     )
 
     # --- 4. Asymmetric optimizers ---
@@ -286,8 +304,18 @@ def main(hydra_cfg: DictConfig):
 
     ckpt_mgr = make_checkpointer(ckpt_dir)
     restored = restore_ckpt(ckpt_mgr, state_template=state)
+    # Checkpoints are saved at `step=total_env_steps`, so the manager's latest
+    # step IS the env-step count to resume the training-loop counter from. Without
+    # this the loop restarted counting at 0 and a resumed run would train
+    # `num_timesteps` MORE steps under colliding checkpoint names.
+    start_env_steps = 0
     if restored is not None:
-        log.info("Restored DMPO checkpoint at step %d", int(restored.steps))
+        start_env_steps = int(ckpt_mgr.latest_step() or 0)
+        log.info(
+            "Restored DMPO checkpoint: sgd_step=%d env_steps=%d (resuming counter)",
+            int(restored.steps),
+            start_env_steps,
+        )
         state = restored
 
     # ---- Startup invariant probe -------------------------------------------------
@@ -344,7 +372,21 @@ def main(hydra_cfg: DictConfig):
     )
     rb_state = rb.init(transition_template)
 
-    K = max(1, int(cfg.unroll_length * cfg.num_envs / (cfg.batch_size * cfg.samples_per_insert)))
+    # SGD updates per rollout. `sgd_steps_per_rollout`, when set, pins K directly;
+    # otherwise fall back to the historical expression so every completed arm stays
+    # bit-reproducible. NOTE that historical expression DIVIDES by
+    # samples_per_insert, inverting the Acme/Reverb meaning of the knob -- see the
+    # long note on DMPOConfig.sgd_steps_per_rollout. Do not "fix" it in place.
+    K = resolve_sgd_steps_per_rollout(cfg)
+    log.info(
+        "K=%d SGD updates/rollout via %s | %s "
+        "(Ray reference that SOLVES this task: realized_samples_per_insert=3.236)",
+        K,
+        "sgd_steps_per_rollout (explicit; samples_per_insert is unread)"
+        if cfg.sgd_steps_per_rollout is not None
+        else f"legacy inverted formula from samples_per_insert={cfg.samples_per_insert}",
+        " ".join(f"{k}={v:.4g}" for k, v in realized_ratios(cfg, K).items()),
+    )
     log.info("DMPO kl-anchor: K=%d SGD updates per rollout", K)
 
     # --- 6. Callbacks ---
@@ -374,7 +416,7 @@ def main(hydra_cfg: DictConfig):
             erc_raw = hydra_cfg.get("eval_render_config", {})
             erc = OmegaConf.to_container(erc_raw, resolve=True) if erc_raw else {}
             eval_episode_length = int(erc.get("episode_length", 1000))
-            rollout, term_events = run_eval_rollout_envzero(
+            rollout, term_events, batch_rm = run_eval_rollout_envzero(
                 env=base_env_wrapped,
                 policy_apply=nets.policy.apply,
                 params=state.policy_params,
@@ -383,10 +425,30 @@ def main(hydra_cfg: DictConfig):
                 num_envs=cfg.num_envs,
                 normalizer_params=state.normalizer_params,
             )
-            if rollout and _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
+            if rollout:
                 rm = compute_rollout_metrics(rollout)
-                wandb.log({f"eval/{k}": v for k, v in rm.items()} | {"env_steps": int(env_steps)},
-                          step=int(env_steps), commit=False)
+                # All-env estimator. `rm` is the legacy env-0 statistic, kept so
+                # the new arms stay comparable to the 08-11 runs; `batch_rm` is
+                # the one to actually judge arms on (env-0 had sd 35.3 over the
+                # baseline's own flat window -- see compute_batch_rollout_metrics).
+                rm.update(batch_rm)
+                # Mirror eval metrics to stdout. Previously these were computed
+                # ONLY inside the wandb guard and written ONLY into wandb's
+                # binary log -- which is why earlier sessions could not answer
+                # "did it ever cross a gap?" from the run logs, and why
+                # total_gap_crossings had to be recovered by parsing .wandb
+                # protobufs after the fact.
+                log.info(
+                    "eval env_steps=%d %s",
+                    int(env_steps),
+                    " ".join(
+                        f"{k}={v:.6g}" if isinstance(v, (int, float)) else f"{k}={v}"
+                        for k, v in sorted(rm.items())
+                    ),
+                )
+                if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
+                    wandb.log({f"eval/{k}": v for k, v in rm.items()} | {"env_steps": int(env_steps)},
+                              step=int(env_steps), commit=False)
             if mj_model is not None and rollout:
                 video_path = Path(ckpt_dir) / f"eval_{int(env_steps)}.mp4"
                 hud_cfg = erc.get("hud") if isinstance(erc, dict) else None
@@ -421,6 +483,7 @@ def main(hydra_cfg: DictConfig):
         ckpt_mgr=ckpt_mgr, ckpt_save_callback=ckpt_save_cb,
         cfg_dict=cfg_dict,
         extra_state_extras=("anchor_mu_imit", "anchor_log_std_imit"),
+        start_env_steps=start_env_steps,
     )
 
     ckpt_mgr.wait_until_finished()
