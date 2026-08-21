@@ -42,28 +42,28 @@ env_config:
     # maze_cells up narrows the corridors instead of growing the arena.
     # env.maze_extent re-derives the realised footprint off the geometry and
     # __init__ raises if it does not match this number.
-    maze_extent: 2.0        # m, outer extent of the maze footprint (square)
-    maze_cells: 5           # -> 11 x 11 character grid, cell_size = 2/11
+    maze_extent: 6.46       # m, outer extent of the maze footprint (square)
+    maze_cells: 10          # -> 21 x 21 character grid, cell_size = 6.46/21
     # Corridor width is 2*cell_size - wall_thickness (env.corridor_width),
-    # NOT cell_size. At maze_cells=5 that is 0.334 m against a rat measured
+    # NOT cell_size. At maze_cells=10 that is 0.465 m against a rat measured
     # 0.308 m long x 0.080 m wide x 0.092 m tall (AABB over the rodent geoms
     # at rescale_factor 0.9), so a corridor clears the body length and the rat
     # can turn around without relying on spine flexion. Alternatives in the
-    # same 2.0 m arena: maze_cells 4 -> 0.414 m / 16 cells,
-    # 6 -> 0.278 m / 36 cells (below body length: turning needs flexion).
+    # same 6.46 m arena: maze_cells 8 -> 0.610 m / 127 cells,
+    # 12 -> 0.367 m / 287 cells (above body length, but only just).
     # NOTE corridor segments flanked by a multi-cell wall rectangle are not
-    # thinned on that axis and measure 1.5*cell_size - wall_thickness/2
-    # (0.258 m at maze_cells=5) -- see test_corridor_width_*.
+    # thinned on that axis; the narrowest one in the shipped maze is 0.386 m
+    # -- see test_corridor_width_*.
     # Leave cell_size unset (null) unless you also set a matching maze_extent.
     cell_size: null
     wall_height: 0.3        # m; occludes and cannot be climbed
-    wall_thickness: 0.03    # m
+    wall_thickness: 0.15    # m
     maze_seed: 0
     maze_loop_fraction: 0.0
     # -- Treats (resampled without replacement every reset)
-    n_treats: 4
-    treat_radius: 0.03
-    treat_height: 0.05
+    n_treats: 20
+    treat_radius: 0.05
+    treat_height: 0.125
     treat_reach_threshold: 0.1
     park_depth: 1.0         # collected treats slide this far underground
     # -- Spawn

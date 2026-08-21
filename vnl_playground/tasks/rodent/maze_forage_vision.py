@@ -48,6 +48,20 @@ Walls are box geoms, not a heightfield: a heightfield can only make ramps and
 the rodent *will* climb them, whereas boxes give true vertical occluders and are
 much cheaper to collide against.
 
+Appearance is a training concern, not a cosmetic one.  The warp ray-tracer
+shades a surface by ``N.L`` over the *directional* lights only and ignores
+``light.ambient`` outright, so an overhead key light alone leaves every vertical
+wall face black in the policy's own camera.  Measured over 16 reset frames of
+the shipped 64x64 grayscale egocentric view, fraction of pixels below 0.15::
+
+  builtin checker texture, key light only          73.6%   (mean 0.183)
+  labmaze style_03/gray_bright, key light only     43.4%   (mean 0.229)
+  labmaze style_03/gray_bright + 4 wall lights     11.8%   (mean 0.653)
+
+Each row changes exactly one factor from the row above it, so both the texture
+and the light ring are separately load-bearing.  See ``config.wall_texture``,
+``config.wall_lights`` and :meth:`MazeForageVision._add_wall_lights`.
+
 Sizing (all of it derived from one number):
 
 ``config.maze_extent`` is the **outer extent of the maze footprint in metres**
@@ -73,21 +87,21 @@ corridors, and never changes the arena.  ``__init__`` cross-checks
    ``2 * cell_size - wall_thickness``.
    :attr:`MazeForageVision.corridor_width` reports it.
 
-   At the defaults (``maze_extent=2.0``, ``maze_cells=5`` -> 11x11 grid,
-   ``cell_size = 2/11 = 0.181818``, ``wall_thickness=0.03``) that is
-   **0.3336 m**, against a rat measured at ``rescale_factor=0.9`` as 0.308 m
+   At the defaults (``maze_extent=6.46``, ``maze_cells=10`` -> 21x21 grid,
+   ``cell_size = 6.46/21 = 0.307619``, ``wall_thickness=0.15``) that is
+   **0.4652 m**, against a rat measured at ``rescale_factor=0.9`` as 0.308 m
    long x 0.080 m wide x 0.092 m tall (AABB over the rodent geoms at the
    compile pose) -- so a corridor clears the body *length* and the rat can turn
-   around without relying on spine flexion.  Same 2.0 m arena, same
+   around without relying on spine flexion.  Same 6.46 m arena, same
    ``wall_thickness``, measured off the compiled box geoms (``maze_seed=0``)::
 
      maze_cells   grid     cell_size   corridor   measured min   free cells
      ----------   -----    ---------   --------   ------------   ----------
-     3            7x7      0.285714    0.5414     0.3158         17
-     4            9x9      0.222222    0.4144     0.2523         31
-     5 (default)  11x11    0.181818    0.3336     0.2575         49
-     6            13x13    0.153846    0.2777     0.2157         71
-     7            15x15    0.133333    0.2367     0.1333         97
+     6            13x13    0.496923    0.8438     0.6703          71
+     8            17x17    0.380000    0.6100     0.4948         127
+     10 (default) 21x21    0.307619    0.4652     0.3862         199
+     12           25x25    0.258400    0.3668     0.2585         287
+     14           29x29    0.222759    0.2955     0.2228         391
 
    ``corridor`` is the formula above (and the widest measured corridor);
    ``measured min`` is the narrowest one-cell corridor in that maze.  Two
@@ -95,11 +109,14 @@ corridors, and never changes the arena.  ``__init__`` cross-checks
    wall rectangle spanning several cells along the scan axis is not thinned on
    that axis, and a perpendicular rectangle seal-extended into a T-junction
    pokes a corner nub into the corridor (see
-   :meth:`MazeForageVision._wall_box_geometry`).  The floor is one
+   :meth:`MazeForageVision._wall_box_geometry`).  The nub only reaches past the
+   flanking wall's inner face while ``0.5 * cell_size > 1.5 * wall_thickness``,
+   which the shipped 0.15 m walls are *not*: at the defaults the narrowest
+   corridor is set by the un-thinned multi-cell flanks alone.  The floor is one
    ``cell_size``.
 
-   From ``maze_cells=6`` on the corridor is narrower than the rat is long, so
-   a turn-in-place needs body flexion.  ``maze_cells`` 4 / 5 / 6 are all built
+   From ``maze_cells=12`` on the corridor is narrower than the rat is long, so
+   a turn-in-place needs body flexion.  ``maze_cells`` 8 / 10 / 12 are all built
    and checked by
    ``tests/test_maze_forage_vision.py::test_parameterised_maze_sizes_build_and_are_navigable``.
 
@@ -107,16 +124,16 @@ corridors, and never changes the arena.  ``__init__`` cross-checks
 
    The **sealed enclosure is smaller than the footprint**: the border walls are
    thinned and sit on their border-cell centres, so the free space the rat can
-   reach is ``maze_extent - cell_size - wall_thickness`` = 1.788 x 1.788 m at
+   reach is ``maze_extent - cell_size - wall_thickness`` = 6.002 x 6.002 m at
    the defaults (symmetric about the origin, verified sealed by flood filling a
    1 mm occupancy raster).  ``maze_extent`` is the grid footprint, which is what
    the wall geometry, ``free_cells`` and the render harness are all built on.
 
 .. note::
 
-   ``n_treats`` does **not** scale with the maze.  At the defaults 4 treats are
-   hidden among 49 reachable cells (:attr:`treat_cell_fraction` = 0.082, vs
-   0.129 at ``maze_cells=4`` and 0.056 at ``maze_cells=6``), so raising
+   ``n_treats`` does **not** scale with the maze.  At the defaults 20 treats are
+   hidden among 199 reachable cells (:attr:`treat_cell_fraction` = 0.101, vs
+   0.157 at ``maze_cells=8`` and 0.070 at ``maze_cells=12``), so raising
    ``maze_cells`` at fixed ``n_treats`` makes an already-sparse exploration
    problem strictly harder.  Deliberately left as a human decision.
 
@@ -162,6 +179,7 @@ Usage::
 """
 
 import collections
+import os
 from typing import Any, Dict, Optional, Tuple, Union
 
 import jax
@@ -184,6 +202,7 @@ _registry = RewardRegistry()
 _WALL_MATERIAL = "maze_wall_mat"
 _WALL_TEXTURE = "maze_wall_tex"
 _TREAT_MATERIAL = "maze_treat_mat"
+_SKY_TEXTURE = "maze_sky_tex"
 
 # Walls are sunk this far into the floor so there is no light-leaking seam
 # between the bottom of a wall box and the arena floor plane.
@@ -231,23 +250,23 @@ def default_config() -> config_dict.ConfigDict:
         # maze_extent x maze_extent, centred on the world origin, for EVERY
         # value of maze_cells: cell_size is derived from it, so turning
         # maze_cells up narrows the corridors instead of growing the arena.
-        maze_extent=2.0,
-        maze_cells=5,  # logical cells per side -> (2n+1) x (2n+1) grid
+        maze_extent=6.46,
+        maze_cells=10,  # logical cells per side -> (2n+1) x (2n+1) grid
         # GRID PITCH, not corridor width, and normally DERIVED: None means
-        # maze_extent / (2 * maze_cells + 1) = 0.181818 m at the defaults.
+        # maze_extent / (2 * maze_cells + 1) = 0.307619 m at the defaults.
         # Set it explicitly only alongside a consistent maze_extent -- the two
         # are cross-checked in __init__ and any disagreement raises.  The clear
         # width between two parallel walls is 2 * cell_size - wall_thickness
-        # (0.3336 m at the defaults); see the corridor_width property.
+        # (0.4652 m at the defaults); see the corridor_width property.
         cell_size=None,
         wall_height=0.3,  # m, tall enough to occlude and not be climbed
-        wall_thickness=0.03,  # m, in-plane wall thickness (< cell_size)
+        wall_thickness=0.15,  # m, in-plane wall thickness (< cell_size)
         maze_seed=0,  # fixed for the whole run
         maze_loop_fraction=0.0,  # >0 knocks out walls to create loops
         # --- Treats ---
-        n_treats=4,
-        treat_radius=0.03,  # m, sphere radius
-        treat_height=0.05,  # m, world z of a live treat's centre
+        n_treats=20,
+        treat_radius=0.05,  # m, sphere radius
+        treat_height=0.125,  # m, world z of a live treat's centre
         treat_reach_threshold=0.1,  # m, xy distance that counts as "reached"
         park_depth=1.0,  # m below the floor a collected treat slides to
         # --- Spawn ---
@@ -271,6 +290,24 @@ def default_config() -> config_dict.ConfigDict:
         render_depth=False,
         use_textures=True,
         use_shadows=False,
+        # --- Appearance ---------------------------------------------------
+        # The warp ray-tracer shades a surface by N.L from the directional
+        # lights alone; it ignores `light.ambient`, so an overhead-only rig
+        # leaves every vertical wall face near-black in the policy's own view
+        # (measured: 75% of egocentric pixels below 0.15). `wall_lights` adds
+        # this many directional lights spaced evenly in azimuth and tilted
+        # `wall_light_elevation` below horizontal, which is what puts a
+        # gradient on all four wall orientations. 0 disables them.
+        wall_lights=4,
+        wall_light_elevation=0.35,  # tan of the downward tilt, not an angle
+        # labmaze wall texture as "<style>/<tint>" (dm_control's mazes use
+        # style_01..style_05 from the same asset pack). Empty string falls back
+        # to the builtin checker, which is much darker.
+        wall_texture="style_03/gray_bright",
+        # Blue gradient skybox, matching dm_control's `outdoor_natural`
+        # aesthetic. Cosmetic for the overview renders; the egocentric camera
+        # sees it only where a wall does not occlude the horizon.
+        sky=True,
         # --- Reward terms ---
         reward_terms={
             "treat_collected": {"weight": 1.0},
@@ -416,6 +453,7 @@ class MazeForageVision(rodent_base.RodentEnv):
             specular=[0.3, 0.3, 0.3],
             castshadow=1,
         )
+        self._add_wall_lights()
         self._spec.visual.headlight.ambient = [0.4, 0.4, 0.4]
         self._spec.visual.headlight.diffuse = [0.8, 0.8, 0.8]
         self._spec.visual.headlight.specular = [0.1, 0.1, 0.1]
@@ -509,17 +547,109 @@ class MazeForageVision(rodent_base.RodentEnv):
     # Arena construction (host-side, all of it before compile())
     # ------------------------------------------------------------------
 
-    def _add_materials(self) -> None:
-        """Registers the wall and treat materials on the arena spec."""
+    def _add_wall_lights(self) -> None:
+        """Adds a ring of near-horizontal directional lights around the maze.
+
+        The key light points almost straight down, which is fine for a top-down
+        render and useless for the policy: the warp ray-tracer shades a face by
+        ``N.L`` over the directional lights only -- it ignores ``light.ambient``
+        entirely (verified: egocentric frames are bit-identical at ambient 0.0,
+        0.3 and 0.5) -- so a vertical wall lit only from above gets ``N.L ~ 0``
+        and renders black.  Spacing ``config.wall_lights`` lights evenly in
+        azimuth and tilting them just below horizontal gives every wall
+        orientation a lit side.  Measured on the egocentric camera, this takes
+        the fraction of pixels below 0.15 from 75% to 11.6%.
+        """
+        n_lights = int(self._config.get("wall_lights", 0))
+        if n_lights <= 0:
+            return
+        # Far enough out that the lights never sit inside the maze; they are
+        # directional, so the distance only matters for shadow casting.
+        radius = 2.0 * float(self._config.maze_extent)
+        elevation = float(self._config.get("wall_light_elevation", 0.35))
+        for i in range(n_lights):
+            angle = 2.0 * np.pi * i / n_lights
+            direction = [np.cos(angle), np.sin(angle), -elevation]
+            light = self._spec.worldbody.add_light(
+                name=f"wall_light_{i}",
+                pos=[-direction[0] * radius, -direction[1] * radius, radius * 0.5],
+                dir=direction,
+                diffuse=[0.45, 0.45, 0.45],
+                specular=[0.0, 0.0, 0.0],
+                castshadow=0,
+            )
+            light.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
+
+    def _add_sky(self) -> None:
+        """Adds a blue gradient skybox, matching dm_control's outdoor aesthetic."""
+        if not bool(self._config.get("sky", False)):
+            return
         self._spec.add_texture(
-            name=_WALL_TEXTURE,
-            type=mujoco.mjtTexture.mjTEXTURE_2D,
-            builtin=mujoco.mjtBuiltin.mjBUILTIN_CHECKER,
+            name=_SKY_TEXTURE,
+            type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
+            builtin=mujoco.mjtBuiltin.mjBUILTIN_GRADIENT,
             width=256,
             height=256,
-            rgb1=[0.30, 0.30, 0.34],
-            rgb2=[0.55, 0.55, 0.60],
+            rgb1=[0.40, 0.60, 0.85],
+            rgb2=[0.85, 0.92, 1.0],
         )
+
+    def _wall_texture_asset(self) -> Optional[str]:
+        """Absolute path to the configured labmaze wall texture, or ``None``.
+
+        ``config.wall_texture`` is ``"<style>/<tint>"`` -- the same asset pack
+        dm_control's mazes draw from.  Returns ``None`` when it is unset, in
+        which case the caller falls back to the builtin checker.
+        """
+        spec_str = str(self._config.get("wall_texture", "") or "").strip()
+        if not spec_str:
+            return None
+        if "/" not in spec_str:
+            raise ValueError(
+                f"config.wall_texture must be '<style>/<tint>', got {spec_str!r}."
+            )
+        style, tint = spec_str.split("/", 1)
+        from labmaze import assets as labmaze_assets
+
+        try:
+            paths = labmaze_assets.get_wall_texture_paths(style)
+        except (KeyError, ValueError) as exc:
+            raise ValueError(
+                f"Unknown labmaze wall texture style {style!r} "
+                f"(config.wall_texture={spec_str!r})."
+            ) from exc
+        if tint not in paths:
+            raise ValueError(
+                f"Unknown labmaze tint {tint!r} for style {style!r}; "
+                f"available: {sorted(paths)}."
+            )
+        # labmaze hands back a template ("wall_{}_d.png" in some versions).
+        return str(paths[tint]).format(tint)
+
+    def _add_materials(self) -> None:
+        """Registers the wall and treat materials on the arena spec."""
+        self._add_sky()
+        texture_path = self._wall_texture_asset()
+        if texture_path is None:
+            self._spec.add_texture(
+                name=_WALL_TEXTURE,
+                type=mujoco.mjtTexture.mjTEXTURE_2D,
+                builtin=mujoco.mjtBuiltin.mjBUILTIN_CHECKER,
+                width=256,
+                height=256,
+                rgb1=[0.30, 0.30, 0.34],
+                rgb2=[0.55, 0.55, 0.60],
+            )
+        else:
+            # MjSpec resolves texture files against compiler.texturedir, which
+            # is a single directory -- so point it at the labmaze asset pack and
+            # pass the bare file name.
+            self._spec.compiler.texturedir = os.path.dirname(texture_path)
+            self._spec.add_texture(
+                name=_WALL_TEXTURE,
+                type=mujoco.mjtTexture.mjTEXTURE_2D,
+                file=os.path.basename(texture_path),
+            )
         wall_mat = self._spec.add_material(name=_WALL_MATERIAL)
         wall_mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = _WALL_TEXTURE
         wall_mat.texrepeat = [2, 2]

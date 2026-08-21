@@ -19,7 +19,7 @@ corridor width vs ``cell_size`` mismatch, the one-frame ghost of a collected
 treat, and the two observation-contract claims (``origin``,
 ``privileged_state``),
 
-plus section 10, the 2026-08-21 resize: the arena is a fixed 2.0 m x 2.0 m
+plus section 10, the 2026-08-21 resize: the arena is a fixed 6.46 m x 6.46 m
 square for every ``maze_cells``, ``cell_size`` is derived from it, and
 ``task_obs`` no longer carries the allocentric ``origin`` fix by default.
 
@@ -55,11 +55,13 @@ N_ORIGIN = 3  # origin in the torso frame
 
 # The arena is this many metres across, for every maze_cells (config
 # `maze_extent`; `cell_size` is derived as maze_extent / (2*maze_cells + 1)).
-MAZE_EXTENT_M = 2.0
+MAZE_EXTENT_M = 6.46
 
 # Maze sizes the renders in the next phase will choose between.  All three must
 # build, be fully connected, and admit the rat.
-PARAMETERISED_MAZE_CELLS = (4, 5, 6)
+DEFAULT_MAZE_CELLS = 10
+PARAMETERISED_MAZE_CELLS = (8, 10, 12)
+_DEFAULT_GRID = 2 * DEFAULT_MAZE_CELLS + 1
 
 _HAS_GPU = any(d.platform == "gpu" for d in jax.devices())
 
@@ -140,7 +142,9 @@ def test_requires_warp_backend():
 
 def test_maze_grid_matches_configured_size(env):
     n_cells = int(env._config.maze_cells)
-    assert n_cells == 5, "default maze_cells changed; update the sizing tests"
+    assert n_cells == DEFAULT_MAZE_CELLS, (
+        "default maze_cells changed; update the sizing tests"
+    )
     expected = 2 * n_cells + 1
     assert env.maze_grid.shape == (expected, expected)
     # Fixed maze: rebuilding with the same seed reproduces it exactly.
@@ -921,8 +925,8 @@ def test_default_config_is_not_poisoned_by_config_overrides():
     """
     poisoner = MazeForageVision(config_overrides={"n_treats": 6})
     assert poisoner.n_treats == 6
-    assert default_config().n_treats == 4
-    assert MazeForageVision().n_treats == 4
+    assert default_config().n_treats == 20
+    assert MazeForageVision().n_treats == 20
 
 
 # --- Geometry: cell_size is the grid pitch, not the corridor width ---------
@@ -1125,11 +1129,39 @@ def test_corridor_width_is_two_cells_minus_thickness(env):
     for gap in clean:
         assert gap == pytest.approx(expected, abs=2e-3)
     # The T-junction nub is a known, bounded loss -- pin its size so it cannot
-    # grow silently into a real narrowing.
+    # grow silently into a real narrowing.  A nub can only ever *remove* floor,
+    # so its reach is `min(clean corridor, nub face)`: once the walls are thick
+    # enough that `0.5 * cell < 1.5 * thickness` the seal extension no longer
+    # reaches past the flanking wall's inner face and costs nothing at all,
+    # which is the regime the shipped 0.15 m walls are in.
     for gap in nubbed:
-        assert gap == pytest.approx(1.5 * cell + thickness / 2.0, abs=2e-3)
+        assert gap == pytest.approx(
+            min(expected, 1.5 * cell + thickness / 2.0), abs=2e-3
+        )
     assert max(measured) == pytest.approx(expected, abs=2e-3)
     assert min(measured) >= cell - 2e-3
+
+
+def test_t_junction_nub_still_bites_with_thin_walls():
+    """The nub bound is only slack at the shipped thickness -- pin the thin case.
+
+    At the pre-2026-08-21 geometry (11x11 grid in the same square arena, 0.03 m
+    walls) the seal extension does poke into the corridor, costing
+    `0.5 * cell - 1.5 * thickness` of clear width.  Without this the generalised
+    `min(...)` bound above would silently accept a nub of any size.
+    """
+    thin = _build_env(maze_cells=5, wall_thickness=0.03, n_treats=4)
+    cell, thickness = thin.cell_size, 0.03
+    nubbed = [
+        scan["gap"]
+        for scan in _corridor_scans(thin)
+        if scan["both_flanks_thinned"] and scan["n_boxes_on_line"] > 2
+    ]
+    assert nubbed, "no T-junction nub in the thin-wall maze"
+    assert 0.5 * cell > 1.5 * thickness  # i.e. the nub really does intrude
+    for gap in nubbed:
+        assert gap == pytest.approx(1.5 * cell + thickness / 2.0, abs=2e-3)
+        assert gap < 2.0 * cell - thickness
 
 
 # --- Collected treats must vanish on the step they stop paying -------------
@@ -1182,11 +1214,20 @@ def _task_obs_shift_when_translated(env, dx=0.5):
     ``origin`` is ``-torso_pos`` rotated into the torso frame, so a rigid world
     translation of ``dx`` changes it by a vector of norm exactly ``dx`` (spread
     over the three components by the current heading).
+
+    The rodent is lifted clear of the walls FIRST, and both the before and the
+    after pose are measured up there.  A translation at floor level walks the
+    body into a wall box -- the touch sensors then fire on the penetration and
+    ``task_obs`` moves for a reason that has nothing to do with allocentric
+    leakage (it swamps it: ~245 at the shipped 0.15 m walls).  Comparing two
+    contact-free poses isolates the question this test is actually asking.
     """
     state = jax.jit(env.reset)(jax.random.PRNGKey(0))
-    data = state.data
     root = env._rodent_root_qpos
-    moved = mjx.forward(env.mjx_model, data.replace(qpos=data.qpos.at[root].add(dx)))
+    lift = float(env._config.wall_height) + 1.0
+    qpos = state.data.qpos.at[root + 2].add(lift)
+    data = mjx.forward(env.mjx_model, state.data.replace(qpos=qpos))
+    moved = mjx.forward(env.mjx_model, data.replace(qpos=qpos.at[root].add(dx)))
     before = np.asarray(env._get_obs(data, state.info)["state"]["task_obs"])
     after = np.asarray(env._get_obs(moved, state.info)["state"]["task_obs"])
     return float(np.linalg.norm(after - before))
@@ -1282,7 +1323,7 @@ def test_highlvl_wrapper_drops_privileged_state_in_vision_mode(env):
 
 
 # ===========================================================================
-# 10. SIZING: fixed 2.0 m x 2.0 m arena, derived cell_size (2026-08-21)
+# 10. SIZING: fixed 6.46 m x 6.46 m arena, derived cell_size (2026-08-21)
 # ===========================================================================
 # `maze_extent` is now what stays fixed and `cell_size` is derived from it, so
 # turning `maze_cells` up narrows the corridors instead of growing the arena.
@@ -1366,7 +1407,7 @@ def _rodent_aabb(env) -> np.ndarray:
 
 
 def test_maze_extent_is_exactly_two_metres(env):
-    """The headline number: a 2.0 m x 2.0 m square arena, measured three ways."""
+    """The headline number: a 6.46 m x 6.46 m square arena, measured three ways."""
     grid_size = _grid_size(int(env._config.maze_cells))
     assert env.maze_grid.shape == (grid_size, grid_size)
 
@@ -1384,7 +1425,7 @@ def test_maze_extent_is_exactly_two_metres(env):
     )
 
     # ...and 4: every compiled wall box lies inside that footprint.  NOTE the
-    # box bounding box is not itself exactly 2.0 m and is not symmetric -- the
+    # box bounding box is not itself exactly 6.46 m and is not symmetric -- the
     # greedy covering hands the top border row to a one-row rectangle, which is
     # then thinned, so its outer face sits at +0.924 m while the un-thinned
     # border column reaches -1.0 m.  Pre-existing geometry, unrelated to the
@@ -1422,8 +1463,8 @@ def test_corridor_width_matches_the_formula(env):
     assert 0.0 < thickness < cell  # else the thinning falls back to full cells
     assert env.cell_size == pytest.approx(cell, abs=1e-12)
     assert env.corridor_width == pytest.approx(2.0 * cell - thickness, abs=1e-12)
-    # 2/11 m pitch, 0.03 m walls -> 0.3336 m of clear corridor.
-    assert env.corridor_width == pytest.approx(0.333636, abs=1e-6)
+    # 6.46/21 m pitch, 0.15 m walls -> 0.4652 m of clear corridor.
+    assert env.corridor_width == pytest.approx(0.465238, abs=1e-6)
 
 
 def test_cell_size_is_derived_and_scales_with_maze_cells():
@@ -1438,7 +1479,7 @@ def test_cell_size_is_derived_and_scales_with_maze_cells():
         )
     for extent in extents:
         assert extent == pytest.approx((MAZE_EXTENT_M, MAZE_EXTENT_M), abs=1e-9)
-    # Strictly decreasing pitch: 0.2222 -> 0.1818 -> 0.1538.
+    # Strictly decreasing pitch: 0.3800 -> 0.3076 -> 0.2584.
     assert cells == sorted(cells, reverse=True)
     assert len(set(cells)) == len(cells)
 
@@ -1446,13 +1487,15 @@ def test_cell_size_is_derived_and_scales_with_maze_cells():
 def test_explicit_cell_size_must_agree_with_maze_extent():
     """A stale ``cell_size:`` in a yaml must raise, not silently resize the arena."""
     with pytest.raises(ValueError, match="maze_extent"):
-        _build_env(cell_size=0.35)  # the pre-resize default: a 3.85 m maze
+        _build_env(cell_size=0.35)  # inconsistent with the 21x21 grid
     with pytest.raises(ValueError, match="maze_extent"):
-        _build_env(maze_cells=4, cell_size=MAZE_EXTENT_M / 11)  # right size, wrong grid
+        _build_env(  # right size, wrong grid
+            maze_cells=DEFAULT_MAZE_CELLS - 1, cell_size=MAZE_EXTENT_M / _DEFAULT_GRID
+        )
 
     # A consistent explicit value is accepted and honoured.
-    explicit = _build_env(cell_size=MAZE_EXTENT_M / 11)
-    assert explicit.cell_size == pytest.approx(MAZE_EXTENT_M / 11, abs=1e-12)
+    explicit = _build_env(cell_size=MAZE_EXTENT_M / _DEFAULT_GRID)
+    assert explicit.cell_size == pytest.approx(MAZE_EXTENT_M / _DEFAULT_GRID, abs=1e-12)
     assert explicit.maze_extent == pytest.approx(
         (MAZE_EXTENT_M, MAZE_EXTENT_M), abs=1e-9
     )
@@ -1465,7 +1508,7 @@ def test_non_positive_maze_extent_raises():
 
 @pytest.mark.parametrize("maze_cells", PARAMETERISED_MAZE_CELLS)
 def test_parameterised_maze_sizes_build_and_are_navigable(maze_cells):
-    """maze_cells 4 / 5 / 6 all build, keep the 2.0 m arena, and are navigable.
+    """maze_cells 8 / 10 / 12 all build, keep the 6.46 m arena, and are navigable.
 
     "Navigable" here is three concrete checks, not a vibe:
 
@@ -1486,7 +1529,7 @@ def test_parameterised_maze_sizes_build_and_are_navigable(maze_cells):
     sized = _build_env(maze_cells=maze_cells)
     grid_size = _grid_size(maze_cells)
 
-    # -- 2.0 m arena, derived pitch --------------------------------------
+    # -- 6.46 m arena, derived pitch -------------------------------------
     assert sized.maze_grid.shape == (grid_size, grid_size)
     assert sized.maze_extent == pytest.approx(
         (MAZE_EXTENT_M, MAZE_EXTENT_M), abs=1e-9
@@ -1542,9 +1585,9 @@ def test_treat_density_is_reported_by_the_env(env):
     """``treat_cell_fraction`` is the sparsity of the exploration problem.
 
     Not a threshold -- ``n_treats`` is a human decision that this pins the
-    consequences of: at ``maze_cells=5`` the shipped ``n_treats=4`` covers 4/49
-    of the reachable cells, and it gets strictly sparser as ``maze_cells`` grows
-    because the arena size is fixed.
+    consequences of: at the shipped ``maze_cells=10`` / ``n_treats=20`` that is
+    20/199 of the reachable cells, and it gets strictly sparser as
+    ``maze_cells`` grows because the arena size is fixed.
     """
     assert env.n_free_cells == int(np.sum(env.maze_grid != maze_utils.WALL_CHAR))
     assert env.treat_cell_fraction == pytest.approx(
@@ -1553,8 +1596,8 @@ def test_treat_density_is_reported_by_the_env(env):
     assert env.open_cell_fraction == pytest.approx(
         env.n_free_cells / env.maze_grid.size
     )
-    denser = _build_env(maze_cells=4)
-    sparser = _build_env(maze_cells=6)
+    denser = _build_env(maze_cells=DEFAULT_MAZE_CELLS - 2)
+    sparser = _build_env(maze_cells=DEFAULT_MAZE_CELLS + 2)
     assert (
         sparser.treat_cell_fraction
         < env.treat_cell_fraction
