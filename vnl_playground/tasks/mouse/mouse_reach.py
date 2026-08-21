@@ -60,6 +60,7 @@ class MouseReach(MouseBaseEnv):
         self,
         config: config_dict.ConfigDict = default_config(),
         config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """Initialize the mouse reaching environment.
 
@@ -70,7 +71,7 @@ class MouseReach(MouseBaseEnv):
             config: Configuration dictionary with reaching task parameters.
             config_overrides: Optional overrides for config fields.
         """
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
 
         # Add mouse model (no freejoint - fixed base arm)
         # Spawn at origin to match target positions from original XML
@@ -163,7 +164,12 @@ class MouseReach(MouseBaseEnv):
             target_position = self._sample_target_from_list(key)
 
         # Initialize physics data (pass impl for warp/jax compatibility)
-        data = mjx.make_data(self.mj_model, impl=self._config.mujoco_impl)
+        data = mjx.make_data(
+            self.mj_model,
+            impl=self._config.mujoco_impl,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
+        )
 
         # Set mocap target position
         data = data.replace(

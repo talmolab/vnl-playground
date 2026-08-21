@@ -33,7 +33,8 @@ def default_config() -> config_dict.ConfigDict:
         root_body="thorax",
         end_effectors=consts.END_EFFECTORS,
         mujoco_impl="warp",  # Use warp backend for faster testing
-        naconmax=1024 * 10,
+        contacts_per_world=16,
+        constraints_per_world=64,
         sim_dt=0.0002,  # 5000 Hz physics
         ctrl_dt=0.002,  # 500 Hz control
         solver="newton",
@@ -91,6 +92,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
         config: config_dict.ConfigDict = default_config(),
         config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
         clips: ReferenceClips | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """
         Initialize the fruitfly imitation environment.
@@ -100,7 +102,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
             config_overrides: Dictionary of configuration overrides.
             clips: Pre-loaded ReferenceClips object.
         """
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
         # self.add_fly(
         #     rescale_factor=self._config.rescale_factor,
         #     torque_actuators=self._config.torque_actuators,
@@ -226,7 +228,10 @@ class Imitation(fruitfly_base.FruitflyEnv):
 
     def _reset_data(self, clip_idx: int, start_frame: int) -> mjx.Data:
         data = mjx.make_data(
-            self.mj_model, impl=self._config.mujoco_impl, naconmax=self._config.naconmax
+            self.mj_model,
+            impl=self._config.mujoco_impl,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
 

@@ -34,13 +34,13 @@ def default_config() -> config_dict.ConfigDict:
         end_effectors=consts.END_EFFECTORS,
         touch_sensors=consts.TOUCH_SENSORS,
         mujoco_impl="jax",
+        contacts_per_world=32,
+        constraints_per_world=256,
         sim_dt=0.002,
         ctrl_dt=0.01,
         solver="newton",
         iterations=5,
         ls_iterations=5,
-        naconmax=90 * 1024,
-        njmax=1200,
         noslip_iterations=0,
         torque_actuators=True,
         rescale_factor=0.9,
@@ -95,6 +95,7 @@ class Imitation(rodent_base.RodentEnv):
         config: config_dict.ConfigDict = default_config(),
         config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
         clips: ReferenceClips | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """
         Initialize the rodent imitation environment.
@@ -106,8 +107,10 @@ class Imitation(rodent_base.RodentEnv):
             clips (optional):
                 Pre-loaded ReferenceClips object. If provided, it overrides
                 loading from `config.reference_data_path`.
+            num_worlds: Number of environments that will share the MJX-Warp
+                contact buffer after vectorization.
         """
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
         self.add_rodent(
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
@@ -243,8 +246,8 @@ class Imitation(rodent_base.RodentEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            njmax=self._config.njmax,
-            naconmax=self._config.naconmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         _assert_all_are_prefix(

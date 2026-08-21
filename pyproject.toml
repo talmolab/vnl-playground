@@ -20,14 +20,14 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",]
 dependencies = [
-    "brax==0.14.0",
+    "brax @ git+https://github.com/google/brax.git@303d89dfac42919e5fde7c91f24c28a505373b24",
     "wandb",
-    "mujoco",
+    "mujoco==3.11.0",
     "dm_control",
-    "mujoco-mjx[warp]>=3.4.0",
-    "warp-lang>=1.11.0",
+    "mujoco-mjx[warp]==3.11.0",
+    "warp-lang==1.14.0",
     "mediapy",
-    "jax>=0.7.2",
+    "jax==0.10.2",
     "flax",
     "imageio[ffmpeg]",
     "hydra-core",
@@ -52,8 +52,8 @@ readme = {file = ["README.md"], content-type="text/markdown"}
 version_file = "vnl_playground/_version.py"
 
 [project.optional-dependencies]
-cuda12 = ["jax[cuda12]>=0.7.2 ; sys_platform == 'linux'"]
-cuda13 = ["jax[cuda13]>=0.7.2 ; sys_platform == 'linux'"]
+cuda12 = ["jax[cuda12]==0.10.2 ; sys_platform == 'linux'"]
+cuda13 = ["jax[cuda13]==0.10.2 ; sys_platform == 'linux'"]
 dev = [
     "pytest",
     "ruff>=0.11",
@@ -62,7 +62,7 @@ dev = [
 with-cuda = [
     "vnl-playground[dev]",
     "flax[all]",
-    "jax[cuda12]>=0.7.2",
+    "jax[cuda12]==0.10.2",
 ]
 
 [project.urls]

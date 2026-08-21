@@ -81,6 +81,7 @@ class MouseImitation(MouseBaseEnv):
         config: config_dict.ConfigDict = default_config(),
         config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
         clips: ReferenceClips | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """Initialize the mouse arm imitation environment.
 
@@ -89,7 +90,7 @@ class MouseImitation(MouseBaseEnv):
             config_overrides: Optional overrides for config fields.
             clips: Pre-loaded ReferenceClips. If None, loads from config path.
         """
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
 
         # Add mouse arm (no freejoint - fixed base)
         self.add_mouse(freejoint=False, pos=(0.0, 0.0, 0.0))
@@ -269,6 +270,8 @@ class MouseImitation(MouseBaseEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
 
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)

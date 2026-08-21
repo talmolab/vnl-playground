@@ -40,8 +40,8 @@ def default_config() -> config_dict.ConfigDict:
         sim_dt=0.002,
         solver="newton",
         mujoco_impl="jax",
-        naconmax=90 * 1024,
-        njmax=1200,
+        contacts_per_world=80,
+        constraints_per_world=320,
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
@@ -77,6 +77,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
         rng: jax.Array = jax.random.PRNGKey(0),
         config: config_dict.ConfigDict = default_config(),
         config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """Initialize the MaintainVelocity environment.
 
@@ -85,7 +86,7 @@ class MaintainVelocity(rodent_base.RodentEnv):
             config: Configuration dictionary.
             config_overrides: Optional configuration overrides.
         """
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
         self._rng = rng
 
         # Initialize rodent at origin facing forward (+x direction)
@@ -119,8 +120,8 @@ class MaintainVelocity(rodent_base.RodentEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            naconmax=self._config.naconmax,
-            njmax=self._config.njmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
 
         metrics = {}

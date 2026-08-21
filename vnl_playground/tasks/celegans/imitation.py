@@ -102,6 +102,7 @@ class Imitation(worm_base.CelegansEnv):
         config_overrides: dict[str, str | int | list[Any] | dict[str, Any]]
         | None = None,
         clips: ReferenceClips | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """Initialize the imitation environment.
 
@@ -109,7 +110,7 @@ class Imitation(worm_base.CelegansEnv):
             config: Configuration dictionary for the environment.
             config_overrides: Optional overrides for the configuration.
         """
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
 
         # ConfigDict annoyingly sorts dictionary by keys
         friction = [
@@ -418,8 +419,8 @@ class Imitation(worm_base.CelegansEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            naconmax=self._config.naconmax,
-            njmax=self._config.njmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         data = data.replace(qpos=reference.qpos)

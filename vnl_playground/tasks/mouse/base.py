@@ -47,6 +47,8 @@ def default_config() -> config_dict.ConfigDict:
         Kd=0.5,
         episode_length=150,
         mujoco_impl="jax",
+        contacts_per_world=8,
+        constraints_per_world=32,
     )
 
 
@@ -60,6 +62,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
         self,
         config: config_dict.ConfigDict = default_config(),
         config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """
         Initialize with arena-only MjSpec; add mouse(s) later via add_mouse().
@@ -69,6 +72,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
             config_overrides: Optional overrides for fields in `config`.
         """
         super().__init__(config, config_overrides)
+        self._num_worlds = num_worlds
         self._walker_xml_path = str(config.walker_xml_path)
         self._arena_xml_path = str(config.arena_xml_path)
 

@@ -82,8 +82,8 @@ def default_config() -> config_dict.ConfigDict:
         noslip_iterations=0,
         ccd_iterations=35,
         impratio=0.1,
-        naconmax=16 * 256,
-        njmax=256,
+        contacts_per_world=64,
+        constraints_per_world=256,
         mujoco_impl="jax",
     )
 
@@ -102,6 +102,7 @@ class CelegansEnv(mjx_env.MjxEnv):
         self,
         config: config_dict.ConfigDict = default_config(),
         config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """Initialize the CelegansEnv class with only arena.
 
@@ -110,6 +111,7 @@ class CelegansEnv(mjx_env.MjxEnv):
             config_overrides: Optional overrides for the configuration.
         """
         super().__init__(config, config_overrides)
+        self._num_worlds = num_worlds
         self._walker_xml_path = str(self.get_param("walker_xml_path"))
         self._arena_xml_path = str(self.get_param("arena_xml_path"))
         self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
@@ -146,8 +148,8 @@ class CelegansEnv(mjx_env.MjxEnv):
                     "solver": self.get_param("solver"),
                     "ls_iterations": self.get_param("ls_iterations"),
                     "noslip_iterations": self.get_param("noslip_iterations"),
-                    "naconmax": self.get_param("naconmax"),
-                    "njmax": self.get_param("njmax"),
+                    "contacts_per_world": self.get_param("contacts_per_world"),
+                    "constraints_per_world": self.get_param("constraints_per_world"),
                 },
                 "mujoco_impl": self.get_param("mujoco_impl"),
             }
