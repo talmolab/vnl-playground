@@ -1,0 +1,365 @@
+# @package _global_
+# =============================================================================
+# ARM maze_a1_sparse_vision  --  VISION-ONLY SPARSE MAZE FORAGING (DMPO)
+#
+# The rat is dropped into a fixed 6.46 m, 21x21 maze at a random free cell with
+# a random heading, and 20 treats are scattered over the other free cells. Each
+# treat pays +1 the first time the rat gets within 0.1 m of it (xy), then slides
+# 1 m underground so it can be neither seen nor re-collected. The episode ends
+# when all 20 are collected, on a fall, or at the 2000-step time limit.
+#
+# WHY THIS IS A VISION EXPERIMENT AND NOT A NAVIGATION ONE
+#   task_obs = [prev_action, IMU(9), touch(4)] and NOTHING else. There is no
+#   egocentric treat vector, and `include_origin` is OFF, so the observation
+#   carries no allocentric position or heading fix. The ONLY channel that can
+#   say where a treat is, is the 32x32 binocular camera pair. That is enforced
+#   by tests (test_task_obs_is_invariant_to_a_global_translation) rather than
+#   asserted here. Note the critic is exactly as blind as the policy: the
+#   shipped arch rebuilds the network observation from obs['state'] alone and
+#   drops privileged_state entirely.
+#
+# WHAT THIS IS ALIGNED TO
+#   arm_m9_m7_inforeset -- the pure-sparse, COLD-START gap arm. Every DMPO
+#   parameter below is m9's, unchanged: K=50, min_log_temperature=-7.0,
+#   n_step=100, gamma=0.995, C51 [0,20]x101, num_envs=2048,
+#   max_replay_size=400k, action_penalization off, epsilon_stddev=1e-3.
+#   m9 rather than w2 on purpose: w2's warm start, reward anneal and behavior
+#   mixing all need a dense reference checkpoint FOR THIS TASK, and none
+#   exists. Those three levers are the obvious follow-ups if this arm starves.
+#
+#   C51 [0, 20] needs no rescaling: n_treats=20 at weight 1.0 makes the
+#   undiscounted return literally "treats collected", exactly as n_platforms=20
+#   did for gap crossings. batch/mean_episode_reward and the collected count
+#   are the same quantity and disagree only if something is miswired.
+#
+# WHAT IS DIFFERENT FROM EVERY GAP ARM, AND WHY IT MATTERS
+#   wrappers.full_reset: true  -- LOAD-BEARING, NOT COSMETIC.
+#   The spawn cell, heading and all 20 treat cells live in Data (the root free
+#   joint's qpos and the treats' slide-joint qpos), because the warp backend
+#   silently ignores per-world Model edits. They are written by env.reset().
+#   The default BraxAutoResetWrapper(full_reset=False) never calls env.reset()
+#   again -- it restores the FIRST reset's data -- which would freeze one
+#   layout per env index for the entire run and turn a randomised-placement
+#   task into 2048 fixed problems the policy can memorise. MazeForageVision
+#   sets requires_per_episode_reset=True and the entry point REFUSES to launch
+#   without this opt-in, so the failure is loud rather than silent.
+#   info_reset_on_done is NOT set: full_reset=True rebuilds state.info from
+#   scratch anyway, so the ratchet m9 was fixing cannot occur here.
+#
+# KNOWN RISK, STATED UP FRONT
+#   This is sparse from step 0 with no dense phase and no warm start, so the
+#   only thing standing between the policy and zero signal is the frozen prior
+#   already knowing how to walk. First-eval treats/episode is the number to
+#   watch: > 0 means random-walk collection is seeding the buffer.
+#
+# LAUNCH (note the PYTHONPATH -- DMPO's venv otherwise resolves vnl_playground
+# to _implementation_log/DMPO/vnl-playground, which has neither this env nor
+# the full_reset port):
+#   cd /home/talmolab/Desktop/SalkResearch/scratch/maze-forage-vnl
+#   PYTHONPATH=$PWD \
+#     /home/talmolab/Desktop/SalkResearch/_implementation_log/DMPO/dmpo-env/bin/python \
+#     -m vnl_playground.train_highlvl_dmpo_kl_anchor \
+#     --config-name=maze_forage_vision/dmpo_maze_forage
+# =============================================================================
+defaults:
+  - /rodent-dmpo-base
+  - _self_
+
+env_name: RodentMazeForageVision
+walker: rodent_no_tail_collisions
+
+env_config:
+  env_name: RodentMazeForageVision
+  task_name: maze_forage_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  # -- Vision. 32x32 per eye, binocular, matching the gap arms exactly. The
+  #    DMPO entry point ALWAYS wraps in BinocularVisionRenderWrapper and always
+  #    renders eye_left-rodent / eye_right-rodent; there is no monocular path.
+  #    These keys must agree with that or the env's zeros placeholder is the
+  #    wrong shape.
+  vision: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  binocular: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  eye_dropout_rate: 0.0
+  eval_eye_mode: "binocular"
+  render_depth: false
+  use_textures: true
+  use_shadows: true
+  flatten_obs: false
+  # -- 2000 steps at ctrl_dt 0.01 = 20 s, DOUBLE the gap arms' 1000. The gap
+  #    task is a 4 m corridor; this maze has ~60 m of corridor, and at the
+  #    prior's ~0.8 m/s a 10 s episode could not physically reach most of it.
+  #    Costs nothing in throughput (same env steps/s), only reset frequency.
+  episode_length: 2000
+  action_repeat: 1
+  # ctrl_dt 0.01 is NOT free to change: the frozen decoder was trained at
+  # 100 Hz control, and the env's own 0.02 default would evaluate it at half
+  # its training rate.
+  ctrl_dt: 0.01
+  sim_dt: 0.002
+  solver: "newton"
+  mujoco_impl: "warp"
+  naconmax: 65536
+  njmax: 400
+  iterations: 5
+  ls_iterations: 5
+  noslip_iterations: 0
+  torque_actuators: true
+  rescale_factor: 0.9
+  # -- Maze geometry. See maze_forage_vision.py's module docstring for the
+  #    measured sizing table; these are its defaults, restated so a run's
+  #    config.json records the geometry it actually trained on.
+  maze_extent: 6.46       # m, square footprint
+  maze_cells: 10          # -> 21 x 21 grid, cell_size = 6.46/21 = 0.307619
+  cell_size: null         # DERIVED; setting it needs a matching maze_extent
+  wall_height: 0.3
+  wall_thickness: 0.15    # -> 0.465 m corridors vs a 0.308 m rat
+  maze_seed: 0            # the maze is FIXED for the whole run
+  maze_loop_fraction: 0.0
+  # -- Appearance is load-bearing for a vision task. The warp ray-tracer
+  #    shades by N.L over directional lights only and ignores light.ambient,
+  #    so without the light ring the walls render black to the policy:
+  #    73.6% of egocentric pixels below 0.15 with the builtin checker and no
+  #    ring, 43.4% with the labmaze texture alone, 11.8% with both.
+  wall_texture: "style_03/gray_bright"
+  wall_lights: 4
+  wall_light_elevation: 0.35
+  sky: true
+  # -- Treats
+  n_treats: 20
+  treat_radius: 0.05
+  treat_height: 0.125
+  treat_reach_threshold: 0.1
+  park_depth: 1.0
+  spawn_height: 0.005
+  # -- THE vision-only switch. `origin` is the world origin in the torso frame,
+  #    i.e. an exact allocentric position + heading fix against a FIXED maze --
+  #    self-localisation handed over for free. Turning it on would make any
+  #    "the CNN learned to navigate" reading unsupportable, so it stays off.
+  include_origin: false
+  # SPARSE REGIME. The only reward is +1 the first time a treat is reached, so
+  # the undiscounted episode return IS the number of treats collected. It
+  # cannot be farmed: a collected treat is flagged in state.info['collected']
+  # and slid park_depth below the floor on the same step.
+  reward_terms:
+    treat_collected:
+      weight: 1.0
+  # fallen thresholds are m9's permissive pair (0.0325 / 85), not the env's
+  # stricter defaults: under sparse reward an over-eager fall termination
+  # truncates the exploration that has to happen before any reward exists.
+  # all_treats_collected ends the episode on success, matching dm_control's
+  # ManyGoalsMaze.
+  termination_criteria:
+    fallen:
+      min_torso_z: 0.0325
+      max_torso_angle: 85
+    all_treats_collected: {}
+    nan_termination: {}
+
+network_config:
+  arch_name: dmpo_kl_anchor_b_aggressive
+  binocular_mode: shared
+  critic_use_proprio: true
+  # ---- latent residual bound (added 2026-08-11 after the OOD diagnosis) -----
+  # MEASURED on the unbounded run at 116.5M steps: |residual| max 172.9,
+  # 96.2% of dims past 1.0, z sitting 203x Mahalanobis off the prior manifold
+  # at 100% of frames, var(z)/var(prior) = 22,714x. The frozen decoder was
+  # being evaluated astronomically outside its training domain. See DIAGNOSIS.md.
+  #
+  # sigma_tanh:  z = prior_mean + residual_scale * sigma_prior(s) * tanh(raw)
+  # The imitation decoder was trained on z = mu(s) + sigma(s)*eps, eps~N(0,I),
+  # and the prior's logvar is fit by KL to that same encoder posterior -- so
+  # `residual_scale * tanh(raw)` IS eps, restricted to (-k, k). k=2 covers
+  # 95.4% of the noise the decoder actually saw. This is in-distribution by
+  # construction and correctly anisotropic, unlike a fixed +-1 box (the latent's
+  # natural per-dim scale is ~0.83 sigma, and marginal std varies 12x across
+  # dims: 0.10 to 1.21).
+  #   "tanh" reproduces the PPO wrapper exactly (isotropic, scale in raw units)
+  #   "none" is the old unbounded behaviour -- kept only to reproduce this bug
+  # sigma_ball (2026-08-11, supersedes sigma_tanh): constrain the JOINT radius
+  # ||eps|| <= r, not each dim. MEASURED on the sigma_tanh run at 191M: per-dim
+  # |eps| median sat exactly on the k=2 ceiling and ||eps|| reached 7.39 vs a
+  # training radius of 4.0 -- the policy exploited the corner of the box. r is
+  # read off chi^2_16: 4.00 = median training radius, 5.13 = 95th, 5.66 = 99th.
+  residual_mode: sigma_ball
+  residual_scale: 5.0
+  vision_feature_size: 32
+  vision_channels: [4, 8, 16, 32]
+  policy_head_layer_sizes: [256, 256, 256]
+  value_hidden_layer_sizes: [512, 512, 512, 512]
+  # prior_layer_sizes / decoder_layer_sizes / intention_size are NOT set here --
+  # train_highlvl_dmpo_kl_anchor.py reads them from the prior checkpoint's own
+  # config (lines 186-190), so the spliced param tree always matches.
+  # For 260407_183223_056788 those are:
+  #   intention_size=16  prior=[1536,1024,512]  decoder=[512,512,512,256,256]
+  #   action_size=38     obs={imitation_target:640, proprioception:277}
+
+transfer:
+  mode: kl_anchor_b_aggressive
+  # CHANGED: the "combined prior" -- the exact prior the PPO reference run
+  # 260408_082253 froze (its config.json transfer.prior_checkpoint_path).
+  # Previous value was /home/talmolab/Desktop/SalkResearch/data/prior/default.
+  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/SCAMPER/model_checkpoints/260407_183223_056788
+  prior_checkpoint_step: null
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+kl_anchor:
+  # CHANGED 1.0 -> 0.0: DISABLE the KL-in-loss anchor.
+  # The anchor exists to stop a TRAINABLE prior+decoder from drifting off the
+  # imitation manifold. Freezing them achieves that structurally. With both
+  # frozen, pi_imit is the same network with residual=0, so
+  # KL(pi_theta || pi_imit) is a pure function of the residual and the anchor
+  # term degenerates into a penalty on the one thing being trained.
+  # NOT 0.0: `learner.py:306` gates the whole anchor branch on
+  # `if cfg.kl_anchor_alpha != 0.0`, a trace-time Python branch, so alpha=0
+  # leaves anchor_kl_mean / anchor_reward_mean pinned at 0 for the entire run
+  # and we lose the ONLY continuous measure of how far z has drifted from the
+  # frozen prior. 1e-6 against a policy loss of ~5 is 7 orders down, so the
+  # gradient contribution is negligible while the diagnostic stays alive.
+  # Caveat when reading it: the wrapper recomputes pi_imit under its own
+  # normalizer, so anchor_kl also charges for DMPO normalizer drift -- read it
+  # as "policy moved OR normalizer moved", not as a pure residual measure.
+  alpha_anchor: 1.0e-6
+  w_anchor: 0.5
+  w_anchor_floor: 0.0
+  decay_sgd_steps: 0
+  # CHANGED 0.1 -> 0.0 : freeze the combined prior.
+  prior_lr_mult: 0.0
+  # CHANGED 1.0 -> 0.0 : freeze the decoder.
+  decoder_lr_mult: 0.0
+  # The only trainable block (includes the binocular CNN encoder).
+  policy_head_lr_mult: 1.0
+
+train_config:
+  num_envs: 2048
+  num_timesteps: 300_000_000
+  unroll_length: 50
+  batch_size: 1024
+  min_replay_size: 50_000
+  max_replay_size: 400_000
+  sequence_length: 100
+  samples_per_insert: 2.0
+  # Ray parity on learner throughput (arm_j1). Under sparse reward this is
+  # load-bearing rather than a tuning knob: at the frozen prior's initial
+  # crossing rate the replay holds only a handful of rewarding transitions,
+  # and K is how many times each one is revisited before eviction.
+  sgd_steps_per_rollout: 50
+  # K = unroll * num_envs / (batch * spi) = 50*2048/(1024*2) = 50 SGD updates
+  # per rollout; x iters_per_chunk. K=200 (batch=256) stalled the 2026-05-04 run.
+  iters_per_chunk: 8
+  log_every_steps: 1_000_000
+  eval_every_steps: 10_000_000
+
+  # ---- MPO overrides of /rodent-dmpo-base (measured 2026-05-07) -------------
+  # vnl-ray's MO-MPO penalty is `-||a||` over ALL action magnitudes, not just
+  # the out-of-bound part as in Acme (losses.py:274). Its normalized weights are
+  # ADDED to the MPO weights (losses.py:291), so ~half the cross-entropy weight
+  # mass pushes actions toward zero -- directly anti-correlated with the
+  # large-amplitude torques a gap jump needs.
+  use_n_step: true
+  # n_step stays 100 -- NOT raised to match gamma's 200-step horizon. n_step is
+  # how far value propagates per update; gamma is how far it looks. They need
+  # not be equal, and raising it here would be actively harmful: sequence_length
+  # must be >= n_step, and max_size = max(sequence_length+1, max_replay_size /
+  # num_envs) = max(201, 195) = 201 at seq=200, leaving 201-200+1 = 2 valid
+  # sampling start positions per env against 96 today. Restoring 96 would need
+  # max_replay_size ~604k, i.e. +51% replay memory on a run already at 28.4 GB
+  # of 32.6 GB. Cheap in principle, OOM in practice.
+  n_step: 100
+  min_log_temperature: -7.0
+
+  # ---- gamma: 0.97 -> 0.995 -------------------------------------------------
+  # gamma IS a speed prior, which is exactly what this experiment removes. It
+  # discounts a later crossing relative to an earlier one, so a small gamma
+  # smuggles "hurry up" back into a reward that no longer says it.
+  #
+  # Numerically, at arm_i1's measured pace of one crossing per 73.6 steps:
+  #     gamma   horizon   Q(crosses forever)   Q(crosses once, then falls)
+  #     0.97     0.33 s        1.119                    1.0
+  #     0.99     1.00 s        1.913                    1.0
+  #     0.995    2.00 s        3.242                    1.0
+  # At 0.97 the critic can barely separate a rat that runs the whole corridor
+  # from one that clears a single gap and dies -- 12% of value. At 0.995 it is
+  # 224%. Q is MPO's ENTIRE policy-improvement signal, so that separation is the
+  # experiment.
+  #
+  # KNOWN BIAS, accepted: rollout.py:139 stores discount = 1 - done, and brax's
+  # EpisodeWrapper folds the 1000-step time limit into `done`, so truncation is
+  # bootstrapped as if terminal. At gamma=0.97 that touches the last ~33 steps
+  # (3%); at 0.995 the last ~200 (20%). It is tolerable here because the bias is
+  # ~state-additive and MPO's E-step is a softmax over actions AT THE SAME
+  # STATE, where an additive term cancels. It still costs critic fit quality.
+  # Proper fix (own arm, not this one): bootstrap on truncation. Note that a
+  # naive fix breaks the n-step mask -- `_alive = cumprod(discount)` is what
+  # stops post-autoreset rewards leaking into R_n -- so it needs two separate
+  # masks, and the true terminal obs is already overwritten by BraxAutoReset.
+  discount: 0.995
+
+  # ---- C51 support: [-150,150]x51 -> [0,20]x101 -----------------------------
+  # The dense support was calibrated for ~1 reward/step over ~1000 steps. The
+  # sparse return maxes out at 20 (n_platforms=20) and is never negative (the
+  # only reward term is a non-negative bonus), so [0, 20] are HARD bounds, not
+  # estimates, and no atom is wasted.
+  #
+  # Leaving it alone would have been fatal, not merely suboptimal: 300/50 = 6.0
+  # per atom, so the entire realistic value range (0 to ~3.2) would live inside
+  # ONE atom of a 51-atom head. 101 atoms over [0,20] gives 0.2. Atom count
+  # matters less than it looks -- learner.py:285 feeds `dist.mean()` to the
+  # E-step, and the categorical mean is continuous in the target regardless of
+  # spacing -- so 101 is chosen for distribution shape, not for the mean.
+  vmin: 0.0
+  vmax: 20.0
+  num_atoms: 101
+  action_penalization: false
+  # softplus(1000) ~= 1000 makes the stddev-KL Lagrange multiplier enormous at
+  # init, so the policy cannot widen. Start it small instead.
+  init_log_alpha_stddev: 1.0
+  # 1e-7 freezes the stddev update budget outright.
+  epsilon_stddev: 1.0e-3
+
+logging_config:
+  project_name: dmpo-rodent
+  exp_name: maze_a1_sparse_vision
+  group_name: RodentMazeForageVision-frozen-prior
+  notes: "maze_a1_sparse_vision: first DMPO arm on the vision-only sparse maze forage task. 6.46 m / 21x21 maze, 20 treats, random spawn cell + heading and random treat cells EVERY episode (wrappers.full_reset=true; the layout lives in Data because warp ignores per-world Model edits). task_obs carries no treat vector and include_origin is off, so the 32x32 binocular pair is the only channel that can locate a treat. All DMPO parameters are arm_m9_m7_inforeset's, unchanged: cold start on the frozen combined prior 260407_183223_056788, pure sparse from step 0, K=50, temperature floor -7, n_step=100, gamma=0.995, C51 [0,20]x101 (n_treats=20 at weight 1.0 makes the undiscounted return literally treats-collected). No warm start, no reward anneal, no behavior mixing -- none of the three has a dense reference checkpoint for this task; they are the follow-ups if this starves."
+
+# ABSOLUTE, deliberately. A relative './checkpoints/...' resolves against the
+# launch cwd; a 2026-05-07 launch fired from the SalkResearch root instead of
+# the repo root silently wrote to an empty dir, logged "Found 0 checkpoint
+# steps", skipped auto-resume and died ~10 s in, leaving a stub wandb run that
+# looked like a completed experiment.
+checkpoint_dir: /home/talmolab/Desktop/SalkResearch/_implementation_log/DMPO/checkpoints/maze_a1_sparse_vision
+
+# See the header: this is the one setting that silently voids the experiment if
+# it is missing, and the entry point refuses to launch this env without it.
+wrappers:
+  full_reset: true
+
+eval_render_config:
+  # 50 fps against a 100 Hz control rate = half-speed playback, as in the gap
+  # arms. episode_length matches env_config.episode_length so a rendered
+  # episode is the same length as a trained one.
+  fps: 50
+  height: 480
+  width: 640
+  camera: close_profile-rodent
+  episode_length: 2000
+  # The gap-specific readouts (show_gap_crossing, show_distance_to_gap,
+  # gap_flash_duration) are OFF: they read state.info keys this env does not
+  # write.
+  hud:
+    enabled: true
+    show_speed: true
+    show_reward_breakdown: true
+    show_cumulative_reward: true
+    show_height: true
+    show_heading: true
+    show_step_counter: true
+    show_action_magnitude: true
