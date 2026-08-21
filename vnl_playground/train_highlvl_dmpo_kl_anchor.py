@@ -733,6 +733,15 @@ def main(hydra_cfg: DictConfig):
                     height=int(erc.get("height", 480)),
                     width=int(erc.get("width", 640)),
                     camera=str(erc.get("camera", "close_profile-rodent")),
+                    # `camera` above is a dead parameter (never forwarded --
+                    # render_video builds its own tracking camera). `cameras`
+                    # is the live one: a list of panel specs rendered side by
+                    # side. Absent -> the historical single camera, unchanged.
+                    cameras=(
+                        OmegaConf.to_container(erc.get("cameras"), resolve=True)
+                        if erc.get("cameras", None) is not None
+                        else None
+                    ),
                     hud_config=hud_cfg, reward_config=rew_cfg,
                     termination_events=term_events,
                     reward_remix=(

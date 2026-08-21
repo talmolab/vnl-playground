@@ -452,6 +452,7 @@ def render_video(
     use_obs_vision=False,
     eye_qpos_indices=None,
     reward_remix=None,
+    cameras=None,
 ):
     """Render a rollout to an MP4 video file with tracking camera.
 
@@ -481,6 +482,27 @@ def render_video(
     indicator, torso height, heading, etc.).  ``reward_config`` supplies
     the reward term parameters (e.g. target_speed) for display.
 
+    ``cameras`` is an optional list of panel specs, rendered left to right and
+    concatenated into one frame.  Each spec is a dict of
+    ``{distance, azimuth, elevation, lookat_z, label}``, all optional; every
+    panel is a ``mjCAMERA_TRACKING`` camera on the walker torso.  ``None``
+    (the default) means the single historical camera
+    ``distance=1.0, azimuth=90, elevation=-20, lookat_z=0.3`` and produces
+    byte-identical video to before, which is what the run-gap and PPO callers
+    rely on.
+
+    Multiple panels each get the full ``renderer`` width, so an N-panel video is
+    N times as wide as a single-panel one.  The vision strip and the HUD are
+    drawn ONCE, on the composite, not per panel.
+
+    Why this exists: the historical camera sits ~0.34 m above the torso and
+    ~0.94 m from it horizontally, which is fine in an open arena and useless
+    inside a maze -- the walls are 0.30 m tall and the corridors 0.465 m wide,
+    so the eye is barely above wall height with a wall between it and the
+    walker.  Measured on three random maze resets, the walker was fully
+    occluded in two of them.  A top-down panel (``elevation=-90``) cannot be
+    occluded at all.
+
     ``reward_remix`` is an optional ``{"sparse_key": str, "lambda": float}``.
     When given, the HUD's reward and cumulative-reward lines report the reward
     the replay buffer STORED, ``sparse + lambda*(total - sparse)``
@@ -489,9 +511,6 @@ def render_video(
     so the single displayed lambda covers it.
     """
     import math
-
-    camera = mujoco.MjvCamera()
-    camera.type = mujoco.mjtCamera.mjCAMERA_TRACKING
 
     # Try common body names across walkers (rodent, sprout, stick, etc.)
     track_body_names = [
@@ -502,17 +521,28 @@ def render_video(
     ]
     for name in track_body_names:
         try:
-            camera.trackbodyid = mj_model.body(name).id
+            track_body_id = mj_model.body(name).id
             break
         except Exception:
             continue
     else:
-        camera.trackbodyid = 1
+        track_body_id = 1
 
-    camera.distance = 1.0
-    camera.azimuth = 90
-    camera.elevation = -20
-    camera.lookat[:] = [0, 0, 0.3]
+    def _make_camera(spec):
+        """Tracking camera from a panel spec; unset keys keep the old defaults."""
+        cam = mujoco.MjvCamera()
+        cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        cam.trackbodyid = track_body_id
+        cam.distance = float(spec.get("distance", 1.0))
+        cam.azimuth = float(spec.get("azimuth", 90))
+        cam.elevation = float(spec.get("elevation", -20))
+        cam.lookat[:] = [0, 0, float(spec.get("lookat_z", 0.3))]
+        return cam
+
+    # `None` -> one panel with exactly the historical parameters.
+    camera_specs = [dict(spec) for spec in cameras] if cameras else [{}]
+    panel_cameras = [_make_camera(spec) for spec in camera_specs]
+    panel_labels = [str(spec.get("label", "")) for spec in camera_specs]
 
     scene_option = mujoco.MjvOption()
 
@@ -639,8 +669,18 @@ def render_video(
         for i, state in enumerate(rollout):
             mj_data.qpos = np.array(state.data.qpos)
             mujoco.mj_forward(mj_model, mj_data)
-            renderer.update_scene(mj_data, camera, scene_option=scene_option)
-            frame = renderer.render()
+            # `renderer.render()` hands back its own reusable buffer, so each
+            # panel has to be copied out before the next update_scene call.
+            panels = []
+            for cam, label in zip(panel_cameras, panel_labels):
+                renderer.update_scene(mj_data, cam, scene_option=scene_option)
+                panel = renderer.render().copy()
+                if label:
+                    cv2.putText(panel, label, (10, panel.shape[0] - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1,
+                                cv2.LINE_AA)
+                panels.append(panel)
+            frame = panels[0] if len(panels) == 1 else np.concatenate(panels, axis=1)
 
             # Overlay egocentric vision in upper-left corner
             if ego_overlay_np is not None:

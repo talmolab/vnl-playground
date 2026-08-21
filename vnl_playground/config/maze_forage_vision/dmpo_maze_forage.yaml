@@ -398,12 +398,44 @@ eval_render_config:
   fps: 50
   height: 480
   width: 640
-  # top-rodent, NOT close_profile-rodent. close_profile is a TRACKCOM camera at
-  # a fixed side offset from the torso; inside a maze that offset puts it behind
-  # a wall, and the first smoke run's eval video is 2000 frames of wall texture
-  # with the rat never visible. top-rodent looks down (fovy 100) and shows the
-  # rat, the corridor it is in, and any treat nearby.
-  camera: top-rodent
+  # `camera:` is a DEAD KEY -- render_eval_video accepts it and never forwards
+  # it, and render_video builds its own tracking camera. Naming an MJCF camera
+  # here does nothing. Left at the historical value so nobody reads a change
+  # into it; `cameras:` below is the one that works.
+  camera: close_profile-rodent
+  # TWO PANELS, side by side. The historical single camera
+  # (elevation -20, distance 1.0) puts the eye ~0.34 m above the torso and
+  # ~0.94 m from it horizontally. That is fine in an open arena and useless
+  # here: the walls are 0.30 m tall and the corridors 0.465 m wide, so the eye
+  # is barely above wall height with a wall in the way.
+  #
+  # MEASURED over 24 random resets by segmentation render, counting frames
+  # with at least one rat pixel on screen:
+  #
+  #   camera                          visible   mean rat px
+  #   HISTORICAL dist 1.0  el -20      33.3%           577
+  #   close      dist 0.8  el -45     100.0%          2566
+  #   close      dist 0.8  el -55     100.0%          3894
+  #   close      dist 0.6  el -55     100.0%          6938
+  #   close      dist 0.6  el -70     100.0%          7130   <- shipped
+  #   close      dist 0.45 el -60     100.0%         12438
+  #   top        dist 2.2  el -90     100.0%           564   <- shipped
+  #   top        dist 1.6  el -90     100.0%          1062
+  #
+  # The historical camera shows the rat in one frame in three. Every candidate
+  # is 100%, so the choice below is framing, not occlusion:
+  #   - top (elevation -90) cannot be occluded by a 0.3 m wall at all; at
+  #     distance 2.2 it shows ~7 cells of local maze plus usually 2-3 treats,
+  #     so you can see what the rat is navigating toward.
+  #   - close at distance 0.6 gives 12x the historical rat-pixel count. -70
+  #     rather than -55 because at -55 the top face of the near wall fills the
+  #     bottom quarter of the frame in 2 of 3 sampled states; -70 is clean and
+  #     centred for the same rat-pixel count. Posture is still readable, and
+  #     the HUD reports height and speed numerically anyway.
+  # Each panel gets the full `width` below, so the video is 2 x 640 wide.
+  cameras:
+    - {label: "top",   elevation: -90, azimuth: 90, distance: 2.2}
+    - {label: "close", elevation: -70, azimuth: 90, distance: 0.6}
   episode_length: 2000
   # The gap-specific readouts (show_gap_crossing, show_distance_to_gap,
   # gap_flash_duration) are OFF: they read state.info keys this env does not
