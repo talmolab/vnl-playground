@@ -46,11 +46,16 @@
 #   info_reset_on_done is NOT set: full_reset=True rebuilds state.info from
 #   scratch anyway, so the ratchet m9 was fixing cannot occur here.
 #
-# KNOWN RISK, STATED UP FRONT
+# KNOWN RISK, MEASURED
 #   This is sparse from step 0 with no dense phase and no warm start, so the
 #   only thing standing between the policy and zero signal is the frozen prior
 #   already knowing how to walk. First-eval treats/episode is the number to
-#   watch: > 0 means random-walk collection is seeding the buffer.
+#   watch. MEASURED at 1.126M steps: 0.053 treats/episode (std 0.228), i.e.
+#   about 5% of episodes collect one treat by wandering into it. Non-zero, so
+#   the buffer does receive rewarding transitions -- but thin, and the whole
+#   arm rests on it growing. If it is still ~0.05 by 30M, the levers in order
+#   are: raise the treat material's emission (it is NOT the brightest thing in
+#   the scene -- see the analysis README), then n_treats, then a dense phase.
 #
 # LAUNCH (note the PYTHONPATH -- DMPO's venv otherwise resolves vnl_playground
 # to _implementation_log/DMPO/vnl-playground, which has neither this env nor
@@ -150,15 +155,39 @@ env_config:
   reward_terms:
     treat_collected:
       weight: 1.0
-  # fallen thresholds are m9's permissive pair (0.0325 / 85), not the env's
-  # stricter defaults: under sparse reward an over-eager fall termination
-  # truncates the exploration that has to happen before any reward exists.
-  # all_treats_collected ends the episode on success, matching dm_control's
-  # ManyGoalsMaze.
+  # NO `fallen` TERMINATION. This is the reference task's own choice and it is
+  # the difference between a learnable task and a dead one -- measured, one
+  # factor apart, at 1.126M env steps on this exact config:
+  #
+  #   fallen {0.0325, 85 deg}   avg_episode_length  119.7 / 2000
+  #                             100% of episodes end `fallen`
+  #                             treats/episode      0.000   (exactly zero)
+  #   no fallen                 avg_episode_length  2000 / 2000
+  #                             0% terminate early
+  #                             treats/episode      0.053   (std 0.228)
+  #
+  # 119 steps is under a metre of travel at the prior's pace, in a maze with
+  # ~60 m of corridor: the agent physically cannot reach a treat, so the sparse
+  # reward is identically zero and there is nothing for the E-step to improve
+  # on. The eval HUD shows the rat at 0.105 m -- well above the 0.0325 m floor
+  # -- when it terminates, so it is the TILT arm firing: the rat walks into a
+  # wall, rears against it and tips past 85 deg. m9's thresholds are permissive
+  # for a corridor; they are not permissive for a maze.
+  #
+  # dm_control does the same thing deliberately. In
+  # locomotion/examples/basic_rodent_2020.py, `rodent_maze_forage` constructs
+  # ManyGoalsMaze with `contact_termination=False`, and `rodent.Rat` does not
+  # override `legacy_base.Walker.aliveness`, which returns 0.0 against an
+  # `aliveness_threshold` of -0.5. So `should_terminate_episode` is ALWAYS
+  # False there: the reference episode has no failure termination at all and
+  # always runs its full 30 s time limit.
+  #
+  # There is no reward-hacking risk in dropping it. The only reward is +1 per
+  # treat, so an episode spent lying down scores 0 either way; the cost is
+  # wasted simulation, not a corrupted objective. If dead episodes turn out to
+  # dominate the replay, the next lever is a height-only guard
+  # (min_torso_z ~0.015, no angle term), NOT m9's pair.
   termination_criteria:
-    fallen:
-      min_torso_z: 0.0325
-      max_torso_angle: 85
     all_treats_collected: {}
     nan_termination: {}
 
@@ -369,7 +398,12 @@ eval_render_config:
   fps: 50
   height: 480
   width: 640
-  camera: close_profile-rodent
+  # top-rodent, NOT close_profile-rodent. close_profile is a TRACKCOM camera at
+  # a fixed side offset from the torso; inside a maze that offset puts it behind
+  # a wall, and the first smoke run's eval video is 2000 frames of wall texture
+  # with the rat never visible. top-rodent looks down (fovy 100) and shows the
+  # rat, the corridor it is in, and any treat nearby.
+  camera: top-rodent
   episode_length: 2000
   # The gap-specific readouts (show_gap_crossing, show_distance_to_gap,
   # gap_flash_duration) are OFF: they read state.info keys this env does not
