@@ -38,7 +38,14 @@ env_config:
     rescale_factor: 0.9
     # -- Maze (fixed for the whole run; regenerated only if maze_seed changes)
     maze_cells: 3           # -> 7 x 7 character grid
-    cell_size: 0.35         # m corridor width; rat is ~0.2 m at rescale 0.9
+    # GRID PITCH, not corridor width. Wall rectangles are thinned to
+    # wall_thickness, so a nominally one-cell corridor is really
+    # 2*cell_size - wall_thickness = 0.65 m wide here (env.corridor_width
+    # reports it; the rat is ~0.2 m at rescale 0.9, so this is roomy). For a
+    # corridor of width W set cell_size = (W + wall_thickness)/2 -- e.g.
+    # cell_size: 0.20 gives the 0.35 m corridor DESIGN.md 3b asks for, in a
+    # 1.4 m arena instead of a 2.45 m one.
+    cell_size: 0.35
     wall_height: 0.3        # m; occludes and cannot be climbed
     wall_thickness: 0.05    # m
     maze_seed: 0
@@ -51,16 +58,24 @@ env_config:
     park_depth: 1.0         # collected treats slide this far underground
     # -- Spawn
     spawn_height: 0.005
+    # -- Observation. `origin` is the world origin in the torso frame, i.e. an
+    #    exact allocentric position + heading fix in a FIXED maze. It is part
+    #    of go_to_target_vision's task_obs contract (DESIGN.md 3e) so it is on
+    #    by default, but set it false to remove the place-code confound when
+    #    asking whether the CNN itself learned to localise.
+    include_origin: true
     # -- Reward: SPARSE, +1 per treat on first reach. Nothing else. Adding a
     #    dense shaping term here would defeat the point of the task.
     reward_terms:
       treat_collected:
         weight: 1.0
     # -- Termination. NOTE: the `timeout` termination is registered by the env
-    #    but deliberately left out: info["step_count"] is not cleared by
-    #    BraxAutoResetWrapper(full_reset=False), so once it latches the env
-    #    collapses into 1-step episodes. Truncation is EpisodeWrapper's job
-    #    (train_config.episode_length below).
+    #    but deliberately left out. Truncation is EpisodeWrapper's job
+    #    (train_config.episode_length below); a second, env-side step budget
+    #    would only be a way to get the two out of sync. It is also the one
+    #    termination that hard-depends on info["step_count"] being cleared at
+    #    every episode boundary -- true only because of `wrappers.full_reset`
+    #    at the bottom of this file.
     termination_criteria:
       fallen:
         min_torso_z: 0.01
@@ -139,16 +154,18 @@ render_config:
   render_height: 480
   render_width: 640
 
-# WARNING -- info ratchet. The `collected` bitmask lives in state.info, and
-# BraxAutoResetWrapper(full_reset=False) does NOT clear info across episodes,
-# so each treat would be collectable exactly once per *environment*, forever
-# (this shape already invalidated eight DMPO gap-jump runs). The fix is
-# tasks/wrappers_info_reset.InfoResetOnDoneWrapper with
-# maze_forage_vision.INFO_RESET_KEYS -- but train_highlvl.py does not read a
-# `wrappers:` block yet (verified: no InfoReset reference in that file; only
-# train_highlvl_dmpo_kl_anchor.py wires it). Port the opt-in block into the
-# entry point before training, then uncomment:
-#
-# wrappers:
-#   info_reset_on_done: true
-#   info_reset_keys: [prev_action, action, step_count, collected, n_collected]
+# MANDATORY for this task. With the historical full_reset=False,
+# BraxAutoResetWrapper restores data/obs from the FIRST reset and never clears
+# state.info, so:
+#   * env.reset() runs exactly ONCE per env index for the whole run -- each of
+#     the 1024 workers replays one frozen (spawn, heading, treat layout)
+#     forever, which voids the design's central premise, and
+#   * the `collected` bitmask ratchets, so after a worker first clears its maze
+#     it emits done=1 / reward=0 one-step episodes forever (the shape that
+#     invalidated eight DMPO gap-jump runs).
+# Both were reproduced on the real stack; full_reset=True fixes both (verified:
+# layout and `collected` both refresh across the done boundary) for ~7%
+# throughput at batch 64. train_highlvl.py raises unless this block is present,
+# because MazeForageVision sets requires_per_episode_reset=True.
+wrappers:
+  full_reset: true

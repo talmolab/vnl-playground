@@ -88,6 +88,164 @@ def _add_batch_dim_for_warp(data):
     return jax.tree.map_with_path(_maybe_expand, data)
 
 
+# ---------------------------------------------------------------------------
+# Optional top-level `wrappers:` block
+# ---------------------------------------------------------------------------
+# Two knobs, both default-off so every existing config keeps its exact
+# behaviour:
+#
+#   wrappers:
+#     full_reset: true                 # BraxAutoResetWrapper calls env.reset()
+#     info_reset_on_done: true         # InfoResetOnDoneWrapper (info keys only)
+#     info_reset_keys: [a, b, ...]
+#
+# `full_reset: false` (the historical hardcoded value) makes
+# BraxAutoResetWrapper restore `data`/`obs` from the FIRST reset and never
+# touch `state.info`.  For an env whose per-episode variation lives in `Data`
+# (spawn pose, object positions written into qpos) that means `env.reset` runs
+# exactly once per env index for the whole run: every worker replays one frozen
+# layout, and info-derived masks/counters ratchet forever.  See
+# tasks/wrappers_info_reset.py for the ratchet half of that story, and
+# tasks/rodent/maze_forage_vision.py for the frozen-layout half.
+
+
+def _wrapper_settings(cfg):
+    """Reads the optional top-level ``wrappers:`` block.
+
+    Args:
+        cfg: The hydra config.
+
+    Returns:
+        ``(full_reset, info_reset_on_done, info_reset_keys)``; the keys tuple is
+        ``None`` when the config does not name any.
+    """
+    wrap_cfg = cfg.get("wrappers", None)
+    if not wrap_cfg:
+        return False, False, None
+    keys = wrap_cfg.get("info_reset_keys", None)
+    return (
+        bool(wrap_cfg.get("full_reset", False)),
+        bool(wrap_cfg.get("info_reset_on_done", False)),
+        tuple(keys) if keys else None,
+    )
+
+
+def _wrap_for_brax_training(
+    environment,
+    cfg,
+    *,
+    episode_length: int = 1000,
+    action_repeat: int = 1,
+    randomization_fn=None,
+):
+    """``mp_wrapper.wrap_for_brax_training`` honouring the ``wrappers:`` block.
+
+    ``InfoResetOnDoneWrapper`` is applied OUTSIDE the brax wrappers on purpose:
+    it has to see the post-swap ``done`` flag.
+
+    Args:
+        environment: Env to wrap.
+        cfg: The hydra config (read for the ``wrappers:`` block).
+        episode_length: Truncation horizon for ``EpisodeWrapper``.
+        action_repeat: Action repeat for ``EpisodeWrapper``.
+        randomization_fn: Optional domain-randomization function.
+
+    Returns:
+        The wrapped environment.
+    """
+    full_reset, info_reset_on_done, info_reset_keys = _wrapper_settings(cfg)
+    brax_env = mp_wrapper.wrap_for_brax_training(
+        environment,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+        randomization_fn=randomization_fn,
+        full_reset=full_reset,
+    )
+    if full_reset:
+        logging.info(
+            "BraxAutoResetWrapper full_reset=True: env.reset() runs on every "
+            "done, so Data-side per-episode randomisation and state.info both "
+            "reset properly (costs one extra reset per step)."
+        )
+    if info_reset_on_done:
+        from vnl_playground.tasks.wrappers_info_reset import (
+            DEFAULT_RUN_GAP_KEYS,
+            InfoResetOnDoneWrapper,
+        )
+
+        keys = info_reset_keys or DEFAULT_RUN_GAP_KEYS
+        brax_env = InfoResetOnDoneWrapper(brax_env, keys=keys)
+        logging.info(
+            "InfoResetOnDoneWrapper ACTIVE: restoring info keys %s to their "
+            "reset-time values on every done.",
+            keys,
+        )
+    return brax_env
+
+
+def _validate_reset_requirements(cfg, env, env_name: str) -> None:
+    """Refuses to launch an env that needs real resets inside a cached-reset stack.
+
+    An env opts in by setting ``requires_per_episode_reset = True`` (and,
+    optionally, ``info_reset_keys``).  Without ``wrappers.full_reset`` such an
+    env trains on one frozen layout per worker and its ``info`` masks ratchet --
+    a silently dead run rather than a crash, which is exactly the failure this
+    guard exists to convert into an exception.
+
+    Args:
+        cfg: The hydra config.
+        env: The loaded (possibly wrapped) environment.
+        env_name: Env name, for the error message.
+
+    Raises:
+        ValueError: If the env demands per-episode resets and the config does
+            not provide them.
+    """
+    raw_env = env
+    while hasattr(raw_env, "env"):
+        raw_env = raw_env.env
+    if not bool(getattr(raw_env, "requires_per_episode_reset", False)):
+        return
+
+    full_reset, info_reset_on_done, info_reset_keys = _wrapper_settings(cfg)
+    if full_reset:
+        return
+
+    required_keys = tuple(getattr(raw_env, "info_reset_keys", ()) or ())
+    wrap_cfg = cfg.get("wrappers", None) or {}
+    allow_frozen = bool(wrap_cfg.get("allow_frozen_layout", False))
+    covered = info_reset_on_done and not (
+        set(required_keys) - set(info_reset_keys or ())
+    )
+    if allow_frozen and covered:
+        logging.warning(
+            "%s: wrappers.allow_frozen_layout=true -- env.reset() will run "
+            "ONCE per env index for the whole run, so every worker replays a "
+            "single frozen layout. Only the info ratchet is fixed. This is an "
+            "ablation setting, not the intended training recipe.",
+            env_name,
+        )
+        return
+
+    raise ValueError(
+        f"{env_name} sets requires_per_episode_reset=True, but this config "
+        "does not enable per-episode resets.\n"
+        "BraxAutoResetWrapper(full_reset=False) restores data/obs from the "
+        "FIRST reset and never clears state.info, so env.reset() would run "
+        "exactly once per env index for the entire run: every worker replays "
+        "one frozen spawn/object layout and info masks ratchet until the env "
+        "emits 1-step, zero-reward episodes forever.\n"
+        "Add to the config:\n"
+        "  wrappers:\n"
+        "    full_reset: true\n"
+        "Deliberate frozen-layout ablation instead? Set\n"
+        "  wrappers:\n"
+        "    allow_frozen_layout: true\n"
+        "    info_reset_on_done: true\n"
+        f"    info_reset_keys: {list(required_keys)}"
+    )
+
+
 @functools.lru_cache(maxsize=4)
 def _make_render_all_fn(renderer_id, renderer):
     """Return a cached JIT-compiled scan-render function for a given renderer.
@@ -1036,7 +1194,9 @@ def _train_mlp_highlvl(
         network_factory=network_factory,
         restore_checkpoint_path=None,
         progress_fn=progress_fn,
-        wrap_env_fn=functools.partial(mp_wrapper.wrap_for_brax_training),
+        # Honours the top-level `wrappers:` block (full_reset / info reset);
+        # with no such block this is exactly mp_wrapper.wrap_for_brax_training.
+        wrap_env_fn=functools.partial(_wrap_for_brax_training, cfg=cfg),
         policy_params_fn=functools.partial(
             mlp_policy_params_fn, jit_logging_inference_fn=jit_logging_inference_fn
         ),
@@ -1387,12 +1547,12 @@ def _train_vision_task_obs_highlvl(
         randomization_fn=None,
     ):
         """Wrap env for brax training, then add vision rendering."""
-        brax_env = mp_wrapper.wrap_for_brax_training(
+        brax_env = _wrap_for_brax_training(
             environment,
+            cfg,
             episode_length=episode_length,
             action_repeat=action_repeat,
             randomization_fn=randomization_fn,
-            full_reset=False,
         )
         return VisionRenderWrapper(
             brax_env,
@@ -1865,12 +2025,12 @@ def _train_shared_vision_task_obs_highlvl(
         randomization_fn=None,
     ):
         """Wrap env for brax training, then add vision rendering."""
-        brax_env = mp_wrapper.wrap_for_brax_training(
+        brax_env = _wrap_for_brax_training(
             environment,
+            cfg,
             episode_length=episode_length,
             action_repeat=action_repeat,
             randomization_fn=randomization_fn,
-            full_reset=False,
         )
         return VisionRenderWrapper(
             brax_env,
@@ -2542,12 +2702,12 @@ def _train_binocular_shared_vision_task_obs_highlvl(
         randomization_fn=None,
     ):
         """Wrap env for brax training, then add binocular vision rendering."""
-        brax_env = mp_wrapper.wrap_for_brax_training(
+        brax_env = _wrap_for_brax_training(
             environment,
+            cfg,
             episode_length=episode_length,
             action_repeat=action_repeat,
             randomization_fn=randomization_fn,
-            full_reset=False,
         )
         return BinocularVisionRenderWrapper(
             brax_env,
@@ -3087,12 +3247,12 @@ def _train_recurrent_vision_task_obs_highlvl(
         randomization_fn=None,
     ):
         """Wrap env for brax training, then add vision rendering."""
-        brax_env = mp_wrapper.wrap_for_brax_training(
+        brax_env = _wrap_for_brax_training(
             environment,
+            cfg,
             episode_length=episode_length,
             action_repeat=action_repeat,
             randomization_fn=randomization_fn,
-            full_reset=False,
         )
         return VisionRenderWrapper(
             brax_env,
@@ -3802,12 +3962,12 @@ def _train_recurrent_binocular_vision_task_obs_highlvl(
         randomization_fn=None,
     ):
         """Wrap env for brax training, then add binocular vision rendering."""
-        brax_env = mp_wrapper.wrap_for_brax_training(
+        brax_env = _wrap_for_brax_training(
             environment,
+            cfg,
             episode_length=episode_length,
             action_repeat=action_repeat,
             randomization_fn=randomization_fn,
-            full_reset=False,
         )
         return BinocularVisionRenderWrapper(
             brax_env,
@@ -4083,6 +4243,8 @@ def main(cfg: DictConfig):
     eval_env = tasks.load(
         env_name, flatten_obs=False, config_overrides=eval_env_args if eval_env_args else None
     )
+
+    _validate_reset_requirements(cfg, env, env_name)
 
     logging.info(f"Loaded environment: {env_name}")
     logging.info(f"Action size: {env.action_size}")

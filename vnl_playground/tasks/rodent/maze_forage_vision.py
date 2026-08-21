@@ -13,8 +13,17 @@ carries **no** treat vector.  Every other vision task in this repo leaks an
 egocentric target vector into ``task_obs``; this one deliberately does not, so
 the only channel that can tell the policy where a treat is, is the egocentric
 camera image (a zeros placeholder here, filled in by ``VisionRenderWrapper``).
-``privileged_state`` does carry egocentric treat vectors and the collected mask
-for the critic / for offline analysis.
+``privileged_state`` also carries egocentric treat vectors and the collected
+mask.  Read the next paragraph before relying on that: with the shipped
+``arch_name: shared_vision_task_obs`` those two entries reach **nothing** --
+``tasks.wrappers.HighLevelWrapper._process_state`` rebuilds the network
+observation from ``obs['state']`` alone in its vision+task_obs branch and drops
+the whole ``privileged_state`` subtree, so the value function is exactly as
+blind as the policy.  They are kept because they are the natural offline-
+analysis channel (rollout scripts read them straight off the state) and because
+the MLP arch's ``privileged_state['task_obs']`` path still needs the key to
+exist.  If you want a genuinely asymmetric critic you have to teach the network
+factory to consume ``privileged_state`` first -- do not assume it already does.
 
 What is randomised, and what is not:
 
@@ -28,9 +37,26 @@ What is randomised, and what is not:
   lives in ``Data`` (root free-joint ``qpos`` and treat slide-joint ``qpos``),
   which is the only per-world route that works.
 
+  "Every episode" is a property of ``reset()``, and it only survives into
+  training if the auto-reset actually *calls* ``reset()`` -- see the
+  ``full_reset`` warning below.  This env therefore sets
+  :attr:`MazeForageVision.requires_per_episode_reset`, and
+  ``train_highlvl.py`` refuses to launch it without ``wrappers.full_reset``.
+
 Walls are box geoms, not a heightfield: a heightfield can only make ramps and
 the rodent *will* climb them, whereas boxes give true vertical occluders and are
 much cheaper to collide against.
+
+.. note::
+
+   ``cell_size`` is the **grid pitch**, not the corridor width.  Wall
+   rectangles are thinned to ``wall_thickness`` (see
+   :meth:`MazeForageVision._wall_box_geometry`), which hands back
+   ``cell_size - wall_thickness`` of floor on each side of a corridor, so the
+   clear width between two parallel walls is
+   ``2 * cell_size - wall_thickness`` -- 0.65 m at the defaults, not 0.35 m.
+   :attr:`MazeForageVision.corridor_width` reports it.  To *ask* for a corridor
+   of width ``W`` set ``cell_size = (W + wall_thickness) / 2``.
 
 Dynamic geometry follows ``run_gap.py`` exactly: each treat is a body carrying
 three slide joints (x, y, z) with ``damping=1e8, stiffness=0``, whose ``qpos`` is
@@ -47,12 +73,24 @@ written at ``reset()`` and followed by a mandatory ``mjx.forward``.
 
 .. warning::
 
-   **``info`` does not reset across auto-resets.**  ``BraxAutoResetWrapper``
-   with ``full_reset=False`` swaps ``data``/``obs`` back but leaves
-   ``state.info`` alone, so the ``collected`` bitmask would ratchet across
-   episodes and every treat would be collectable exactly once per *environment*,
-   forever.  Wrap with ``wrappers_info_reset.InfoResetOnDoneWrapper`` and pass
-   :data:`INFO_RESET_KEYS`.
+   **``BraxAutoResetWrapper(full_reset=False)`` breaks this task in two ways.**
+   In that mode the auto-reset restores ``data``/``obs`` from the *first*
+   reset and never touches ``state.info``, so ``env.reset`` is called exactly
+   once per env index for the whole run.  Measured on the real stack (batch 3,
+   ``episode_length=4``): after ``done`` the treat ``xpos`` and the 7-element
+   root ``qpos`` are bit-identical to episode 1, and ``collected`` stays
+   all-True -- the env then reports ``done=1, reward=0`` on step 1 of every
+   subsequent episode, forever (the ratchet shape that invalidated eight DMPO
+   gap-jump runs).
+
+   The fix used by the entry point is ``full_reset=True``, which calls
+   ``env.reset`` on ``done``: measured on the same stack it re-randomises the
+   layout *and* returns ``collected`` to all-False, for ~7% throughput at
+   batch 64 (1770 -> 1649 env-steps/s on a contended 5090).  Enable it with a
+   top-level ``wrappers: {full_reset: true}`` block; ``train_highlvl.py``
+   raises if it is missing.  ``wrappers_info_reset.InfoResetOnDoneWrapper``
+   with :data:`INFO_RESET_KEYS` fixes *only* the ``info`` half and leaves the
+   layout frozen, so it is not sufficient on its own.
 
 Usage::
 
@@ -128,7 +166,10 @@ def default_config() -> config_dict.ConfigDict:
         action_repeat=1,
         # --- Maze ---
         maze_cells=3,  # logical cells per side -> (2n+1) x (2n+1) grid
-        cell_size=0.35,  # m, corridor width
+        # GRID PITCH, not corridor width: wall rectangles are thinned to
+        # wall_thickness, so the clear width between two parallel walls is
+        # 2 * cell_size - wall_thickness (0.65 m here).  See corridor_width.
+        cell_size=0.35,
         wall_height=0.3,  # m, tall enough to occlude and not be climbed
         wall_thickness=0.05,  # m, in-plane wall thickness (< cell_size)
         maze_seed=0,  # fixed for the whole run
@@ -141,6 +182,13 @@ def default_config() -> config_dict.ConfigDict:
         park_depth=1.0,  # m below the floor a collected treat slides to
         # --- Spawn ---
         spawn_height=0.005,  # m of clearance above the floor at spawn
+        # --- Observation ---
+        # `origin` is the world origin expressed in the torso frame, i.e. an
+        # exact allocentric position + heading fix relative to a FIXED maze.
+        # It is part of go_to_target_vision's task_obs contract (DESIGN.md 3e)
+        # and is kept on by default, but it is a real confound for any
+        # "the CNN had to learn place coding" claim, so it is switchable.
+        include_origin=True,
         # --- Vision (rendered by VisionRenderWrapper, not by this env) ---
         vision=True,
         vision_width=64,
@@ -169,15 +217,28 @@ class MazeForageVision(rodent_base.RodentEnv):
 
     The maze is built once at construction; only ``Data`` changes per episode.
     See the module docstring for the observation contract and the two gotchas
-    (qpos shift, ``info`` ratchet).
+    (qpos shift, ``full_reset``).
     """
 
     _registry = _registry
 
+    #: Declares that ``env.reset`` must run at every episode boundary.  The
+    #: spawn cell, heading and treat cells live in ``Data``, so
+    #: ``BraxAutoResetWrapper(full_reset=False)`` -- which restores the FIRST
+    #: reset's ``data`` -- freezes one layout per env index for the whole run
+    #: and never clears ``collected``.  ``train_highlvl.py`` reads this flag
+    #: and refuses to launch without ``wrappers.full_reset: true``.
+    requires_per_episode_reset = True
+
+    #: ``state.info`` keys a per-episode info reset has to restore if you run
+    #: with ``full_reset=False`` on purpose (ablation only -- it leaves the
+    #: layout frozen).
+    info_reset_keys = INFO_RESET_KEYS
+
     def __init__(
         self,
         rng: jax.Array = jax.random.PRNGKey(0),
-        config: config_dict.ConfigDict = default_config(),
+        config: Optional[config_dict.ConfigDict] = None,
         config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
     ) -> None:
         """Initializes the MazeForageVision environment.
@@ -185,7 +246,12 @@ class MazeForageVision(rodent_base.RodentEnv):
         Args:
             rng: Random number generator key (kept for API parity with the other
                 rodent tasks; the maze itself is seeded by ``config.maze_seed``).
-            config: Configuration dictionary.
+            config: Configuration dictionary.  Defaults to a **freshly built**
+                ``default_config()``: ``MjxEnv.__init__`` calls
+                ``update_from_flattened_dict(config_overrides)``, which mutates
+                the dict in place, so a ``config=default_config()`` default
+                argument (evaluated once at class-definition time) would leak
+                one instance's overrides into every later instance.
             config_overrides: Optional configuration overrides.
 
         Raises:
@@ -193,6 +259,9 @@ class MazeForageVision(rodent_base.RodentEnv):
                 requires it), or if the maze has too few free cells to place the
                 spawn plus every treat.
         """
+        # NOT a default argument: see the `config` docstring above.
+        if config is None:
+            config = default_config()
         super().__init__(config, config_overrides)
         self._rng = rng
 
@@ -211,6 +280,7 @@ class MazeForageVision(rodent_base.RodentEnv):
         self._park_depth = float(self._config.park_depth)
         self._treat_reach_threshold = float(self._config.treat_reach_threshold)
         self._spawn_height = float(self._config.spawn_height)
+        self._include_origin = bool(self._config.get("include_origin", True))
 
         # --- Host-side maze construction (runs once, never under trace) ---
         self._maze_grid = maze_utils.generate_maze(
@@ -432,15 +502,22 @@ class MazeForageVision(rodent_base.RodentEnv):
     # ------------------------------------------------------------------
 
     def _cache_treat_indices(self) -> None:
-        """Caches treat slide-joint qpos addresses and treat body ids.
+        """Caches treat slide-joint qpos addresses, body ids and geom ids.
+
+        The geom ids and the bodies' inertial z offsets are what let
+        :meth:`_park_collected_treats` keep ``xpos`` / ``xipos`` / ``geom_xpos``
+        in step with the ``qpos`` it writes without paying for an
+        ``mjx.forward``.
 
         Raises:
-            ValueError: If a treat joint or body name is missing.  ``mj_name2id``
-                returns ``-1`` rather than raising, and ``-1`` would silently
-                index the *last* joint (i.e. one of the rodent's).
+            ValueError: If a treat joint, body or geom name is missing.
+                ``mj_name2id`` returns ``-1`` rather than raising, and ``-1``
+                would silently index the *last* joint (i.e. one of the
+                rodent's).
         """
         qpos_idxs = np.zeros((self._n_treats, 3), dtype=np.int32)
         body_ids = np.zeros((self._n_treats,), dtype=np.int32)
+        geom_ids = np.zeros((self._n_treats,), dtype=np.int32)
         for i in range(self._n_treats):
             for a, axis_name in enumerate(("x", "y", "z")):
                 name = f"treat_{i}_slide_{axis_name}"
@@ -456,11 +533,35 @@ class MazeForageVision(rodent_base.RodentEnv):
             if body_id < 0:
                 raise ValueError(f"Body 'treat_{i}' not found in compiled model.")
             body_ids[i] = body_id
+            geom_id = mujoco.mj_name2id(
+                self._mj_model, mujoco.mjtObj.mjOBJ_GEOM, f"treat_{i}_geom"
+            )
+            if geom_id < 0:
+                raise ValueError(
+                    f"Geom 'treat_{i}_geom' not found in compiled model."
+                )
+            geom_ids[i] = geom_id
 
         self._treat_slide_qpos_idxs_np = qpos_idxs
         self._treat_slide_qpos_idxs = jp.array(qpos_idxs)
         self._treat_z_qpos_idxs = jp.array(qpos_idxs[:, 2])
+        self._treat_body_ids_np = body_ids
         self._treat_body_ids = jp.array(body_ids)
+        self._treat_geom_ids_np = geom_ids
+        self._treat_geom_ids = jp.array(geom_ids)
+        # Treat bodies hang off worldbody with identity orientation and their
+        # geoms sit at the body origin, so world z is just the body reference z
+        # plus the z slide offset (plus the inertial/geom local offsets, which
+        # are 0 here but are read rather than assumed).
+        self._treat_body_ref_z = jp.array(
+            self._mj_model.body_pos[body_ids, 2], dtype=jp.float32
+        )
+        self._treat_body_ipos_z = jp.array(
+            self._mj_model.body_ipos[body_ids, 2], dtype=jp.float32
+        )
+        self._treat_geom_local_z = jp.array(
+            self._mj_model.geom_pos[geom_ids, 2], dtype=jp.float32
+        )
 
     def _cache_rodent_qpos_layout(self) -> None:
         """Caches where the rodent's own dofs start in ``qpos`` / ``qvel``.
@@ -569,10 +670,17 @@ class MazeForageVision(rodent_base.RodentEnv):
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
         """Steps physics, then scores and updates the collected mask.
 
-        Ordering mirrors ``go_to_target``: observation, termination and reward
-        are all computed against the mask as it stood *entering* this step, and
-        the mask is advanced afterwards -- so the step on which the last treat is
-        reached pays out, and ``all_treats_collected`` fires one step later.
+        Ordering mirrors ``go_to_target``: termination and reward are computed
+        against the mask as it stood *entering* this step, and the mask is
+        advanced afterwards -- so the step on which the last treat is reached
+        pays out, and ``all_treats_collected`` fires one step later.
+
+        The observation is built *last*, from the post-park data and the
+        advanced mask, so that a treat collected on this step is already
+        underground in the frame ``VisionRenderWrapper`` renders from
+        ``state.data`` and in ``privileged_state``.  Building it earlier left
+        the treat visibly floating for exactly one control step after it had
+        stopped paying.
 
         Args:
             state: Current environment state.
@@ -589,7 +697,6 @@ class MazeForageVision(rodent_base.RodentEnv):
         info["action"] = action
         info["step_count"] = info["step_count"] + 1
 
-        obs = self._get_obs(data, info)
         done = self._is_done(data, info, state.metrics)
         reward = self._get_reward(data, info, state.metrics)
         reward = jp.nan_to_num(reward)
@@ -600,10 +707,12 @@ class MazeForageVision(rodent_base.RodentEnv):
         info["n_collected"] = jp.sum(collected).astype(jp.int32)
 
         # Collected treats slide underground so they vanish from the camera and
-        # cannot re-trigger.  Only qpos is written here; xpos catches up on the
-        # next physics step, i.e. a treat disappears one control step after it
-        # is collected.
+        # cannot re-trigger.  This also rewrites the derived kinematics, so the
+        # treat is gone from `data` (and therefore from the render) on the same
+        # step it stops paying.
         data = self._park_collected_treats(data, collected)
+
+        obs = self._get_obs(data, info)
 
         state = state.replace(
             data=data,
@@ -621,9 +730,17 @@ class MazeForageVision(rodent_base.RodentEnv):
 
         ``task_obs`` is ``[prev_action, kinematic_sensors, touch_sensors,
         origin]`` and carries **no** treat information -- that is the entire
-        point of the task, so do not add an ``ego_target`` here.  ``vision`` is a
-        zeros placeholder that ``VisionRenderWrapper`` overwrites with real
-        pixels; drop it and the wrapper silently no-ops.
+        point of the task, so do not add an ``ego_target`` here.  ``origin``
+        (an exact allocentric position/heading fix in a fixed maze) can be
+        dropped with ``config.include_origin=False``; see that config key.
+        ``vision`` is a zeros placeholder that ``VisionRenderWrapper``
+        overwrites with real pixels; drop it and the wrapper silently no-ops.
+
+        ``privileged_state`` mirrors ``task_obs`` (``HighLevelWrapper`` sizes
+        its privileged branch off it) and adds the treat vectors + collected
+        mask for offline analysis.  It carries no ``vision`` entry: the shipped
+        vision architectures read pixels from ``state`` only, so a second
+        placeholder would just be filled in and thrown away.
 
         Args:
             data: Simulation data.
@@ -634,16 +751,15 @@ class MazeForageVision(rodent_base.RodentEnv):
         """
         kinematic_sensors = self._get_kinematic_sensors(data)
         touch_sensors = self._get_touch_sensors(data)
-        origin = self._get_origin(data)
 
-        task_obs = jp.concatenate(
-            [
-                info["prev_action"],
-                kinematic_sensors,
-                touch_sensors,
-                origin,
-            ]
-        )
+        components = [
+            info["prev_action"],
+            kinematic_sensors,
+            touch_sensors,
+        ]
+        if self._include_origin:
+            components.append(self._get_origin(data))
+        task_obs = jp.concatenate(components)
 
         proprioception = self._get_proprioception(data, info, flatten=False)
         vision = jp.zeros(self.vision_shape)
@@ -654,13 +770,14 @@ class MazeForageVision(rodent_base.RodentEnv):
             vision=vision,
         )
 
-        # The critic (and offline analysis) may see where the treats are; the
-        # policy may not.  'task_obs' must stay present here -- HighLevelWrapper
-        # indexes privileged_state[highlvl_obs_key].
+        # Offline analysis may see where the treats are; the policy may not.
+        # NOTE the shipped `shared_vision_task_obs` arch drops this whole
+        # subtree in HighLevelWrapper._process_state, so nothing here reaches
+        # the value head today (module docstring).  'task_obs' must stay
+        # present -- HighLevelWrapper sizes privileged_state[highlvl_obs_key].
         privileged_obs = collections.OrderedDict(
             task_obs=task_obs,
             proprioception=proprioception,
-            vision=vision,
             treat_vectors=self._egocentric_treat_vectors(data).ravel(),
             collected=info["collected"].astype(jp.float32),
         )
@@ -701,19 +818,40 @@ class MazeForageVision(rodent_base.RodentEnv):
     def _park_collected_treats(
         self, data: mjx.Data, collected: jp.ndarray
     ) -> mjx.Data:
-        """Writes the z slide offset that hides every collected treat.
+        """Hides every collected treat, in ``qpos`` *and* in the derived pose.
+
+        Writing ``qpos`` alone would leave ``xpos`` / ``geom_xpos`` stale until
+        the next physics step, and ``mjx.render`` reads ``geom_xpos`` -- so the
+        camera kept showing a treat that had already been collected for one
+        control step (measured: ``r=1.0`` with ``geom_xpos z=+0.05``, only
+        reaching ``-park_depth`` on the following step).  The treat bodies hang
+        off ``worldbody`` with identity orientation and only translate, so the
+        exact world z is available in closed form and no ``mjx.forward`` is
+        needed.
 
         Args:
             data: Simulation data.
             collected: Boolean ``(n_treats,)`` mask.
 
         Returns:
-            ``data`` with the treat z slide qpos rewritten (idempotent).
+            ``data`` with the treat z slide qpos and the treat rows of
+            ``xpos`` / ``xipos`` / ``geom_xpos`` rewritten (idempotent).
         """
         parked_offset = -(self._park_depth + self._treat_height)
         z_offsets = jp.where(collected, parked_offset, 0.0)
         qpos = data.qpos.at[self._treat_z_qpos_idxs].set(z_offsets)
-        return data.replace(qpos=qpos)
+
+        body_z = self._treat_body_ref_z + z_offsets
+        xpos = data.xpos.at[self._treat_body_ids, 2].set(body_z)
+        xipos = data.xipos.at[self._treat_body_ids, 2].set(
+            body_z + self._treat_body_ipos_z
+        )
+        geom_xpos = data.geom_xpos.at[self._treat_geom_ids, 2].set(
+            body_z + self._treat_geom_local_z
+        )
+        return data.replace(
+            qpos=qpos, xpos=xpos, xipos=xipos, geom_xpos=geom_xpos
+        )
 
     # ------------------------------------------------------------------
     # Proprioception overrides (qpos/qvel shift from the treat slide joints)
@@ -835,12 +973,15 @@ class MazeForageVision(rodent_base.RodentEnv):
         """Terminate if the step count exceeds ``max_steps``.
 
         Registered but deliberately NOT in ``default_config``'s
-        ``termination_criteria``: ``info["step_count"]`` is not cleared by
-        ``BraxAutoResetWrapper(full_reset=False)``, so once it latches past
-        ``max_steps`` the env collapses into one-step episodes.  Truncation is
-        ``EpisodeWrapper``'s job (``train_config.episode_length``).  Only enable
-        this alongside ``InfoResetOnDoneWrapper`` with ``step_count`` listed in
-        its keys (:data:`INFO_RESET_KEYS` includes it).
+        ``termination_criteria``: truncation is ``EpisodeWrapper``'s job
+        (``train_config.episode_length``), and a second env-side budget is just
+        a way for the two to drift apart.  It also depends entirely on
+        ``info["step_count"]`` being cleared at every episode boundary -- true
+        under ``wrappers.full_reset`` (or ``InfoResetOnDoneWrapper`` with
+        ``step_count`` in its keys, which :data:`INFO_RESET_KEYS` has), and
+        false under a bare ``BraxAutoResetWrapper(full_reset=False)``, where it
+        latches past ``max_steps`` and collapses the env into one-step
+        episodes.
 
         Args:
             data: Simulation data (unused).
@@ -877,6 +1018,24 @@ class MazeForageVision(rodent_base.RodentEnv):
     def maze_walls(self) -> tuple:
         """The covering rectangles the wall geoms were built from."""
         return self._maze_walls
+
+    @property
+    def corridor_width(self) -> float:
+        """Clear width in metres between two parallel maze walls.
+
+        ``cell_size`` is the grid *pitch*, not this.  ``_wall_box_geometry``
+        thins every single-cell-wide wall rectangle down to ``wall_thickness``,
+        which frees ``cell_size - wall_thickness`` of floor on each side of the
+        wall, so a nominally one-cell corridor is really
+        ``2 * cell_size - wall_thickness`` wide (0.65 m at the defaults, not
+        0.35 m).  If the thinning is disabled (a degenerate ``wall_thickness``
+        outside ``(0, cell_size)`` falls back to dm_control's full-cell walls)
+        the corridor is exactly one cell.
+        """
+        thickness = float(self._config.wall_thickness)
+        if not 0.0 < thickness < self._cell_size:
+            return self._cell_size
+        return 2.0 * self._cell_size - thickness
 
     @property
     def free_cell_positions(self) -> np.ndarray:
