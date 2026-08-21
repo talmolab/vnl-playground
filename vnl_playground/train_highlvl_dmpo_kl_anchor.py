@@ -28,6 +28,9 @@ from track_mjx.agent.dmpo.config import (
 )
 from track_mjx.agent.dmpo.learner import init_training_state
 from track_mjx.agent.dmpo.networks_kl_anchor import make_dmpo_kl_anchor_networks
+from track_mjx.agent.dmpo.networks_kl_anchor_rnn import (
+    make_dmpo_kl_anchor_rnn_networks,
+)
 from track_mjx.agent.dmpo.normalizer_seeding import seed_proprio_from_imit
 from track_mjx.agent.dmpo.optim_kl_anchor import make_kl_anchor_optimizers
 from track_mjx.agent.dmpo.replay import make_replay
@@ -38,6 +41,7 @@ from track_mjx.agent.dmpo.train import (
 from track_mjx.agent.dmpo.train_dmpo_eval import (
     compute_batch_rollout_metrics,
     compute_rollout_metrics,
+    compute_vision_sensitivity,
     render_eval_video,
     run_eval_rollout_envzero,
 )
@@ -142,6 +146,9 @@ def _build_env(hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size)
         use_shadows=bool(hydra_cfg.env_config.get("use_shadows", False)),
         eye_dropout_rate=float(hydra_cfg.env_config.get("eye_dropout_rate", 0.0)),
         eval_eye_mode=str(hydra_cfg.env_config.get("eval_eye_mode", "binocular")),
+        # E3: Gaussian sensor noise on the rendered image. Default 0.0 keeps
+        # every pre-E3 arm (w2 and earlier) bit-identical.
+        vision_noise_std=float(hydra_cfg.env_config.get("vision_noise_std", 0.0)),
     )
     env_adapter = _VnlPlaygroundEnvAdapter(base_env, pre_batched=True)
     vision_shape = tuple(
@@ -170,6 +177,75 @@ def main(hydra_cfg: DictConfig):
     cfg.kl_anchor_decay_sgd_steps = int(
         hydra_cfg.kl_anchor.get("decay_sgd_steps", 0)
     )
+
+    # ---- Recurrent (GRU) policy head: config surface + fail-loud guards ----
+    # network_config.policy_head_rnn absent/null => FF path, byte-identical
+    # (every completed arm resolves `recurrent = False` here and no branch
+    # below changes anything). All guards fire BEFORE the env is built so a
+    # miswired arm dies in seconds, not after warp compilation.
+    rnn_head_cfg = hydra_cfg.network_config.get("policy_head_rnn", None)
+    if rnn_head_cfg is not None:
+        rnn_head_cfg = OmegaConf.to_container(rnn_head_cfg, resolve=True)
+    recurrent = rnn_head_cfg is not None
+    if recurrent:
+        rnn_L, rnn_n = int(cfg.rnn_bptt_length), int(cfg.n_step)
+        if rnn_L <= 0:
+            raise ValueError(
+                "network_config.policy_head_rnn is set but "
+                f"train_config.rnn_bptt_length={rnn_L}. The recurrent policy "
+                "head requires the recurrent learner (rnn_bptt_length > 0): "
+                "a GRU trained with the FF single-point loss would never "
+                "learn what to remember."
+            )
+        if int(cfg.sequence_length) != rnn_L + rnn_n:
+            raise ValueError(
+                f"sequence_length={int(cfg.sequence_length)} != "
+                f"rnn_bptt_length + n_step = {rnn_L} + {rnn_n} = "
+                f"{rnn_L + rnn_n}. The recurrent learner needs every loss "
+                "point t < L to have a full n-step window and a bootstrap "
+                "state at observation[:, t + n]."
+            )
+        if bool(getattr(cfg, "store_next_observation", True)):
+            raise ValueError(
+                "policy_head_rnn requires the compressed replay schema: set "
+                "train_config.store_next_observation=false (the recurrent "
+                "learner bootstraps from observation[:, t + n])."
+            )
+        if not bool(getattr(cfg, "use_n_step", False)):
+            raise ValueError(
+                "policy_head_rnn requires train_config.use_n_step=true (the "
+                "recurrent learner's per-point returns are n-step by "
+                "construction; there is no single-step fallback)."
+            )
+        _ws_probe = (
+            hydra_cfg.transfer.get("warm_start_dmpo_checkpoint", None)
+            if "transfer" in hydra_cfg
+            else None
+        )
+        if _ws_probe:
+            raise ValueError(
+                "transfer.warm_start_dmpo_checkpoint is set together with "
+                "network_config.policy_head_rnn. An FF policy param tree "
+                "cannot be grafted into a recurrent one (the policy_head "
+                "subtree has a different structure) -- unset the warm start "
+                "for RNN arms."
+            )
+        if float(getattr(cfg, "behavior_mix_init", 0.0)) > 0.0:
+            raise ValueError(
+                "train_config.behavior_mix_init > 0 with policy_head_rnn: "
+                "behavior mixing is not supported with a recurrent policy "
+                "(v1) -- the frozen behavior policy is FF and the rollout "
+                "would need a second, per-policy hidden stream."
+            )
+    elif int(getattr(cfg, "rnn_bptt_length", 0)) > 0:
+        raise ValueError(
+            f"train_config.rnn_bptt_length={int(cfg.rnn_bptt_length)} but "
+            "network_config.policy_head_rnn is absent/null. The recurrent "
+            "learner needs the recurrent policy head (stored hidden + "
+            "raw(obs, hidden) apply); set both or neither."
+        )
+    # -----------------------------------------------------------------------
+
     iters_per_chunk = int(hydra_cfg.train_config.get("iters_per_chunk", 32))
     cfg_dict = OmegaConf.to_container(hydra_cfg, resolve=True)
     seed = int(hydra_cfg.get("seed", 0))
@@ -190,8 +266,13 @@ def main(hydra_cfg: DictConfig):
             wandb.init(
                 project=str(hydra_cfg.get("logging_config", {}).get("project_name", "dmpo-rodent")),
                 config=cfg_dict, mode=os.environ.get("WANDB_MODE", "online"),
+                # id keeps the sha-bearing run_id: it is the resume key and the
+                # provenance record (the config commit is embedded in it).
+                # name is the human-facing label and is just exp_name, so a
+                # config called `sweep_noise_sig_0.1_sparse_seed_0` shows up in
+                # wandb under exactly that, not with a `_seed0_g1234567` tail.
                 id=existing["wandb_run_id"] if existing else run_id,
-                name=existing["wandb_run_id"] if existing else run_id,
+                name=config_name,
                 resume="must" if existing else "allow",
                 group=str(hydra_cfg.get("logging_config", {}).get("group_name", "kl-anchor")),
                 notes=str(hydra_cfg.get("logging_config", {}).get("notes", "")),
@@ -238,7 +319,10 @@ def main(hydra_cfg: DictConfig):
     )
 
     # --- 3. Build B-aggressive networks (warm-started) ---
-    nets = make_dmpo_kl_anchor_networks(
+    # FF and recurrent factories share every size source; the recurrent one
+    # swaps policy_head_layer_sizes for the policy_head_rnn block (pre-RNN
+    # mixing MLP + stacked GRU cells + replay dtype for the stored hidden).
+    _shared_net_kwargs = dict(
         proprio_size=proprio_size,
         task_obs_size=task_obs_size,
         action_size=action_size,
@@ -247,9 +331,6 @@ def main(hydra_cfg: DictConfig):
         cfg=cfg,
         prior_layer_sizes=prior_layer_sizes,
         decoder_layer_sizes=decoder_layer_sizes,
-        policy_head_layer_sizes=tuple(
-            hydra_cfg.network_config.get("policy_head_layer_sizes", [256, 256, 256])
-        ),
         cnn_feature_size=int(hydra_cfg.network_config.get("vision_feature_size", 32)),
         cnn_channels=tuple(hydra_cfg.network_config.get("vision_channels", [4, 8, 16, 32])),
         mono_channels=1 if hydra_cfg.env_config.get("grayscale", True) else 3,
@@ -265,6 +346,46 @@ def main(hydra_cfg: DictConfig):
             hydra_cfg.network_config.get("critic_use_proprio", False)
         ),
     )
+    if recurrent:
+        nets = make_dmpo_kl_anchor_rnn_networks(
+            rnn_cell=str(rnn_head_cfg.get("cell", "gru")),
+            rnn_mlp_layers=tuple(rnn_head_cfg.get("mlp_layers", [256])),
+            rnn_hidden_sizes=tuple(rnn_head_cfg.get("hidden_sizes", [256])),
+            rnn_store_dtype=str(rnn_head_cfg.get("store_dtype", "float16")),
+            **_shared_net_kwargs,
+        )
+        # init_training_state calls `nets.policy.init(rng, obs)` — the FF
+        # signature. Adapt with a default zero hidden rather than forking
+        # init_training_state: GRU param shapes do not depend on hidden
+        # VALUES, and the zero-init residual makes the resulting params
+        # correct for any hidden (the step-0 invariant). Same init-wrapping
+        # precedent as the factory's own warm-start splice.
+        _rnn_policy_init = nets.policy.init
+
+        def _policy_init_default_hidden(rng, obs, hidden=None):
+            if hidden is None:
+                hidden = nets.recurrent_meta.init_hidden()
+            return _rnn_policy_init(rng, obs, hidden)
+
+        nets.policy.init = _policy_init_default_hidden  # type: ignore[method-assign]
+        # Startup validation marker (smoke gates grep for the echo).
+        log.info(
+            "RECURRENT policy head ACTIVE: cell=%s mlp_layers=%s "
+            "hidden_sizes=%s store_dtype=%s | rnn_bptt_length=%d n_step=%d "
+            "sequence_length=%d (= L + n)",
+            nets.recurrent_meta.cell_type,
+            tuple(rnn_head_cfg.get("mlp_layers", [256])),
+            nets.recurrent_meta.hidden_sizes,
+            nets.recurrent_meta.store_dtype,
+            int(cfg.rnn_bptt_length), int(cfg.n_step), int(cfg.sequence_length),
+        )
+    else:
+        nets = make_dmpo_kl_anchor_networks(
+            policy_head_layer_sizes=tuple(
+                hydra_cfg.network_config.get("policy_head_layer_sizes", [256, 256, 256])
+            ),
+            **_shared_net_kwargs,
+        )
     log.info(
         "latent residual: mode=%s scale=%.3g | critic_use_proprio=%s",
         str(hydra_cfg.network_config.get("residual_mode", "sigma_tanh")),
@@ -319,6 +440,17 @@ def main(hydra_cfg: DictConfig):
             "min(n_step=%d, sequence_length-1=%d) = %d), vision_uint8=%s",
             int(cfg.n_step), int(cfg.sequence_length) - 1, eff_n,
             bool(getattr(cfg, "vision_uint8_storage", False)),
+        )
+    if recurrent:
+        # Per-step PRE-step hidden (the state the policy consumed at this
+        # obs) — collect_rollout stores it, the learner unrolls BPTT from
+        # it. Unbatched leaf shapes like every other template leaf;
+        # store_dtype (f16) so a GRU-256 hidden costs 512 B/transition
+        # instead of 1 KB. Added BEFORE the _tx_bytes line so the replay
+        # sizing log below accounts for it.
+        transition_template["policy_hidden"] = jax.tree.map(
+            lambda h: h.astype(nets.recurrent_meta.store_dtype),
+            nets.recurrent_meta.init_hidden(),
         )
     # Per-transition storage cost, for buffer sizing against GPU memory.
     _tx_bytes = sum(
@@ -412,7 +544,21 @@ def main(hydra_cfg: DictConfig):
         )
 
     ckpt_mgr = make_checkpointer(ckpt_dir)
-    restored = restore_ckpt(ckpt_mgr, state_template=state)
+    try:
+        restored = restore_ckpt(ckpt_mgr, state_template=state)
+    except Exception as exc:
+        if recurrent:
+            # The most likely cause: checkpoint_dir points at an FF run's
+            # checkpoints and policy_head_rnn was newly enabled — orbax
+            # cannot match the FF param tree to the recurrent template.
+            raise ValueError(
+                f"Failed to restore from checkpoint_dir={ckpt_dir} with "
+                "policy_head_rnn enabled. An FF run's checkpoints cannot be "
+                "restored into a recurrent param tree; point checkpoint_dir "
+                "at a fresh directory for RNN arms (or disable the RNN head "
+                f"to resume the FF run). Original error: {exc}"
+            ) from exc
+        raise
     # Checkpoints are saved at `step=total_env_steps`, so the manager's latest
     # step IS the env-step count to resume the training-loop counter from. Without
     # this the loop restarted counting at 0 and a resumed run would train
@@ -451,7 +597,15 @@ def main(hydra_cfg: DictConfig):
         st0 = env.reset(keys)
         norm_obs = _normalize_obs(st0.obs, state.normalizer_params)
         # Online policy distribution at the spawn obs.
-        dist0 = jax.vmap(lambda o: nets.policy.apply(state.policy_params, o))(norm_obs)
+        if recurrent:
+            # Per-env zeros hidden, matching what the first rollout will
+            # consume. The invariant is hidden-AGNOSTIC by design (zero-init
+            # residual), so probing at zeros loses no coverage.
+            dist0, _ = jax.vmap(
+                lambda o, h: nets.policy.apply(state.policy_params, o, h)
+            )(norm_obs, nets.recurrent_meta.init_hidden(cfg.num_envs))
+        else:
+            dist0 = jax.vmap(lambda o: nets.policy.apply(state.policy_params, o))(norm_obs)
         mu_theta = dist0.mean()
         log_std_theta = jnp.log(dist0.stddev())
         # Anchor distribution from state.info — populated by the wrapper.
@@ -506,6 +660,17 @@ def main(hydra_cfg: DictConfig):
     # --- 6. Callbacks ---
     def wandb_log_cb(payload, env_steps):
         if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
+            # `num_steps_thousands` mirrors the track-mjx PPO convention
+            # (agent/wandb_logging.py:319, where PPO's env_steps is ALREADY in
+            # thousands) so DMPO and PPO runs can share an x-axis in wandb.
+            # It is added as a METRIC, exactly as PPO does -- the wandb `step=`
+            # stays raw env_steps on purpose: wandb steps must increase
+            # monotonically, and a RESUMED run (e.g. arm_e3_noise010 resuming
+            # at 297.7M) has already logged steps up to 297,676,800. Switching
+            # the step counter to thousands would emit 297,676 next and wandb
+            # would drop or misorder every subsequent point.
+            payload = dict(payload)
+            payload["num_steps_thousands"] = float(env_steps) / 1000.0
             wandb.log(payload, step=int(env_steps))
         # Also mirror the anchor metric to stdout so non-wandb runs (smoke
         # tests, offline) can verify the warm-start invariant without
@@ -538,6 +703,10 @@ def main(hydra_cfg: DictConfig):
                 episode_length=eval_episode_length,
                 num_envs=cfg.num_envs,
                 normalizer_params=state.normalizer_params,
+                # None on every FF arm (DMPONetworks default) => byte-identical
+                # eval; a RecurrentPolicyMeta switches the eval scan to the
+                # threaded-hidden recurrent apply (PLAN section 7).
+                recurrent_meta=nets.recurrent_meta,
             )
             # Rebuild the reward the replay buffer actually stored. lambda comes
             # from state.steps via the SAME expression the fused training step
@@ -571,8 +740,29 @@ def main(hydra_cfg: DictConfig):
                     ),
                 )
                 if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
-                    wandb.log({f"eval/{k}": v for k, v in rm.items()} | {"env_steps": int(env_steps)},
+                    wandb.log({f"eval/{k}": v for k, v in rm.items()}
+                              | {"env_steps": int(env_steps),
+                                 "num_steps_thousands": float(env_steps) / 1000.0},
                               step=int(env_steps), commit=False)
+            if recurrent and rollout and "vision" in rollout[0].obs:
+                # Recurrent-only (FF kl-anchor arms never logged this key, so
+                # adding it unguarded would break FF log-identity). Mirrors the
+                # train_highlvl_dmpo.py probe, with the recurrent apply.
+                mid = len(rollout) // 2
+                sens = compute_vision_sensitivity(
+                    nets.policy.apply, state.policy_params, rollout[mid].obs, k_eval,
+                    # Zeros hidden: a step-0 approximation under recurrence (the mid-rollout hidden is not retained by the env-0 slice).
+                    hidden=nets.recurrent_meta.init_hidden(),
+                )
+                log.info(
+                    "eval env_steps=%d vision_sensitivity=%.6g",
+                    int(env_steps), sens,
+                )
+                if _WANDB_IMPORTED and wandb is not None and wandb.run is not None:
+                    wandb.log(
+                        {"eval/vision_sensitivity": sens, "env_steps": int(env_steps)},
+                        step=int(env_steps), commit=False,
+                    )
             if mj_model is not None and rollout:
                 video_path = Path(ckpt_dir) / f"eval_{int(env_steps)}.mp4"
                 hud_cfg = erc.get("hud") if isinstance(erc, dict) else None
