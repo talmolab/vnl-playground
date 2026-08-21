@@ -1,0 +1,340 @@
+# @package _global_
+# ARM arm_r2_rnn_k50  (RNN head, LEARNER CLOCK RESTORED + 95% VRAM TARGET)
+#
+#   r1 with two changes (2026-08-20, post-r1 analysis):
+#     1. sgd_steps_per_rollout 10 -> 50. r1's takeoff waited for the MPO
+#        temperature to descend into its productive band (logT ~ -3.5), and
+#        the temperature clock ticks per SGD STEP: r1 and w4b both took off
+#        at ~18-20k SGD steps and their crossings curves OVERLAY in SGD-step
+#        time (r1 1.45 @29k vs w4b 1.68 @36k), while in env steps r1 was 5x
+#        late (180M vs 42M) -- exactly the K=10/K=50 ratio. K=50 restores
+#        the FF learner clock; it costs zero memory (lax.scan over K).
+#     2. batch_size 256 -> 512, spending the freed VRAM (r1 peaked 24.1 GiB
+#        = 74%; user directive: target ~95%). Halves per-update gradient
+#        noise. B*L = 10,240 loss points/update; K=50 x 512 x 20 = 512,000
+#        loss-state visits per rollout = 10x the FF w4 rate.
+#   NOT one-factor vs r1 (K and batch); the takeoff-TIME prediction tests
+#   the temperature-clock hypothesis regardless of batch (batch does not
+#   set the dual-descent rate).
+#
+#   PRE-REGISTERED PREDICTIONS:
+#   - logT reaches ~ -3.5 by ~40M env steps (~19.5k SGD steps at K=50);
+#     kl_q_rel lifts off 0 at the same point.
+#   - crossings/ep > 0.5 by ~45M (w4b hit 0.6 @42M); thereafter tracks
+#     w4b's env-step curve within ~1.5x. w4b reference: 1.68 @74M,
+#     4.1 @106M, 7.7 @138M, 10.4 @170M, 11.6 @297M (ep_len 936).
+#   - KILL: if crossings/ep < 0.1 at 100M with logT already < -3.5, the
+#     K-clock hypothesis is WRONG (BPTT/architecture factors back on the
+#     table) -- stop and re-diagnose rather than extending.
+#   - Peak GPU: smoke-gated; accept <= ~31 GiB (95%). If over, drop
+#     batch_size to 384 before touching anything else.
+#
+defaults:
+  - /rodent-dmpo-base
+  - _self_
+
+env_name: RodentRunGapBinocularVision
+walker: rodent_no_tail_collisions
+
+env_config:
+  env_name: RodentRunGapBinocularVision
+  task_name: run_gap_binocular_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  vision: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  binocular: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  eye_dropout_rate: 0.0
+  eval_eye_mode: "binocular"
+  render_depth: false
+  use_textures: true
+  use_shadows: true
+  flatten_obs: false
+  episode_length: 1000
+  action_repeat: 1
+  ctrl_dt: 0.01
+  sim_dt: 0.002
+  solver: "newton"
+  mujoco_impl: "warp"
+  # naconmax bumped 32768 -> 65536 (32 contacts/env at 2048 envs).
+  # kl_a_v1 hit broadphase overflow at ~61740 (~31 contacts/env) at 159M steps
+  # once behaviour diversified; contact truncation in mid-air / takeoff phases
+  # silently breaks physics and would prevent learning ballistic moves.
+  naconmax: 65536
+  njmax: 400
+  iterations: 5
+  ls_iterations: 5
+  noslip_iterations: 0
+  torque_actuators: true
+  rescale_factor: 0.9
+  corridor_length: 4.0
+  corridor_width: 2.0
+  platform_length_range: [0.3, 0.6]
+  gap_length_range: [0.03, 0.2]
+  n_platforms: 20
+  spawn_x: 0.5
+  randomize_gaps: true
+  aesthetic: "outdoor_natural"
+  use_mesh_platforms: true
+  # SPARSE REGIME (2026-08-18, inherited from w4 unchanged). forward_velocity
+  # REMOVED; the only reward is a +1 the step the agent clears a new gap.
+  # `weight: 1.0` is deliberate -- it makes the undiscounted episode return
+  # literally "gaps crossed", so `batch/mean_episode_reward` and
+  # `batch/gap_crossings_per_episode` are the same quantity and disagree only
+  # if something is miswired.
+  #
+  # The bonus cannot be farmed: run_gap.py:546 keeps a high-water mark
+  # (`gaps_crossed = max(new, old)`), so rocking backward and forward over one
+  # boundary pays once. Confirmed not to fire spuriously at spawn either --
+  # arm_i1 reports 0.043 crossings/episode at 10M, which would be >= 1.0 if
+  # step 1 always counted the platforms already behind spawn_x=0.5.
+  reward_terms:
+    gap_crossing_bonus:
+      weight: 1.0
+  termination_criteria:
+    fallen:
+      min_torso_z: 0.0325
+      max_torso_angle: 85
+    nan_termination: {}
+
+network_config:
+  arch_name: dmpo_kl_anchor_b_aggressive
+  binocular_mode: shared
+  critic_use_proprio: true
+  # ---- latent residual bound (added 2026-08-11 after the OOD diagnosis) -----
+  # MEASURED on the unbounded run at 116.5M steps: |residual| max 172.9,
+  # 96.2% of dims past 1.0, z sitting 203x Mahalanobis off the prior manifold
+  # at 100% of frames, var(z)/var(prior) = 22,714x. The frozen decoder was
+  # being evaluated astronomically outside its training domain. See DIAGNOSIS.md.
+  #
+  # sigma_ball (2026-08-11, supersedes sigma_tanh): constrain the JOINT radius
+  # ||eps|| <= r, not each dim. MEASURED on the sigma_tanh run at 191M: per-dim
+  # |eps| median sat exactly on the k=2 ceiling and ||eps|| reached 7.39 vs a
+  # training radius of 4.0 -- the policy exploited the corner of the box. r is
+  # read off chi^2_16: 4.00 = median training radius, 5.13 = 95th, 5.66 = 99th.
+  residual_mode: sigma_ball
+  residual_scale: 5.0
+  vision_feature_size: 32
+  vision_channels: [4, 8, 16, 32]
+  # R1 DELTA 1: recurrent policy head. REPLACES policy_head_layer_sizes
+  # [256,256,256] (which is unread on the RNN path -- deleted here so this
+  # file cannot mislead). The head is CNN + task_obs + proprio ->
+  # Dense(256)+LayerNorm+silu (mlp_layers) -> GRU(256) (hidden_sizes) ->
+  # zero-init residual Dense; the zero-init keeps the step-0 warm-start
+  # invariant (anchor_invariant_probe r_anchor=1.0000) for ANY hidden state.
+  # store_dtype float16 is the REPLAY dtype for the stored per-step hidden
+  # (512 B/transition); the live hidden runs f32 end to end.
+  policy_head_rnn:
+    cell: gru
+    mlp_layers: [256]
+    hidden_sizes: [256]
+    store_dtype: float16
+  value_hidden_layer_sizes: [512, 512, 512, 512]
+  # prior_layer_sizes / decoder_layer_sizes / intention_size are NOT set here --
+  # train_highlvl_dmpo_kl_anchor.py reads them from the prior checkpoint's own
+  # config (lines 186-190), so the spliced param tree always matches.
+  # For 260407_183223_056788 those are:
+  #   intention_size=16  prior=[1536,1024,512]  decoder=[512,512,512,256,256]
+  #   action_size=38     obs={imitation_target:640, proprioception:277}
+
+transfer:
+  mode: kl_anchor_b_aggressive
+  # The "combined prior" -- the exact prior the PPO reference run
+  # 260408_082253 froze (its config.json transfer.prior_checkpoint_path).
+  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/SCAMPER/model_checkpoints/260407_183223_056788
+  # NO warm start -- doubly mandatory here: (a) R1 is pure-sparse-from-scratch
+  # like w4; (b) an FF policy tree CANNOT be grafted into the recurrent one
+  # (the entry point raises a ValueError if this is set with policy_head_rnn).
+  warm_start_dmpo_checkpoint: null
+  prior_checkpoint_step: null
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+kl_anchor:
+  # 1e-6, not 0.0: `learner.py` gates the whole anchor branch on
+  # `if cfg.kl_anchor_alpha != 0.0` (a trace-time Python branch), so alpha=0
+  # would pin anchor_kl_mean / anchor_reward_mean at 0 for the entire run and
+  # we would lose the ONLY continuous measure of how far z has drifted from
+  # the frozen prior. 1e-6 against a policy loss of ~5 is 7 orders down, so
+  # the gradient contribution is negligible while the diagnostic stays alive.
+  # Caveat when reading it: the wrapper recomputes pi_imit under its own
+  # normalizer, so anchor_kl also charges for DMPO normalizer drift -- read it
+  # as "policy moved OR normalizer moved", not as a pure residual measure.
+  alpha_anchor: 1.0e-6
+  w_anchor: 0.5
+  w_anchor_floor: 0.0
+  decay_sgd_steps: 0
+  # Freeze the combined prior and the decoder; the trainable block is the
+  # recurrent policy head (includes the binocular CNN encoder + GRU).
+  prior_lr_mult: 0.0
+  decoder_lr_mult: 0.0
+  policy_head_lr_mult: 1.0
+
+train_config:
+  num_envs: 2048
+  # R1: 300M first (extend on health) -- the plan's launch budget, not w4's
+  # 1B. Matched-step readouts vs w4/m9 all live inside 300M.
+  num_timesteps: 300_000_000
+  unroll_length: 50
+  # R1 DELTA (post-smoke, 2026-08-20): 1024 -> 256. With the [B, L] loss
+  # points folded into the batch, every learner intermediate scales with
+  # B*L: at B=1024 that is 20,480 loss points -- 20x the FF path's batch --
+  # and the first two smokes OOMed (8.96 then 7.19 GiB allocations; the
+  # sequential-map fix for the E-step/bootstrap cut forward peaks but
+  # cannot cut BACKWARD storage for the critic-loss grad and the BPTT
+  # unroll). B=256 divides all of it by 4: B*L = 5,120 loss points/update,
+  # and K=10 x 256 x L=20 = 51,200 loss-state visits per rollout = EXACTLY
+  # the FF w4 baseline's K=50 x 1024 revisit rate.
+  batch_size: 512
+  min_replay_size: 50_000
+  # R1 DELTA 4 -- replay depth under the fatter transition. f16 GRU-256
+  # hidden adds 512 B: 3.75 -> 4.25 KB/transition (+13.3%, pre-smoke
+  # estimate; verify against the startup "Replay transition size" line).
+  # 1,945,600 = 950 steps/env x 2048 envs EXACTLY = 19 rollouts of history
+  # (w4: 23) at ~8.5 GB, leaving 950 - 120 + 1 = 831 valid sequence starts
+  # per env (w4: 1050). Same ~8-9 GB buffer budget as w4 on the 32.6 GiB
+  # card; measure at smoke and shrink first if the non-buffer side grew.
+  max_replay_size: 1_945_600
+  # R1 DELTA 3: L + n = 20 + 100. The entry point RAISES unless
+  # sequence_length == rnn_bptt_length + n_step: every loss point t < L
+  # needs a full n-step reward window plus the bootstrap state (and its
+  # stored hidden) at observation[:, t + n].
+  sequence_length: 120
+  samples_per_insert: 2.0
+  # R1 DELTA 5: K 50 -> 10. Each recurrent update costs ~L x the FF E-step
+  # (num_samples=20 critic-CNN applies PER loss point: 20 x 1024 x 20 ~ 410k
+  # critic forwards/update at L=20). K=10 holds per-rollout loss-point
+  # visits to 10 x 1024 x 20 = 204,800 = 4x the FF baseline's 51,200 at ~4x
+  # the SGD FLOPs -- reuse per rare rewarding transition goes UP while
+  # wall-clock stays bounded. Reserve lever (NOT this arm): split the critic
+  # into encode(obs)/head(emb, a) so the 20 samples share one CNN embedding.
+  sgd_steps_per_rollout: 50
+  # R1 DELTA 2: BPTT unroll depth L = the MEMORY horizon (~200 ms at 100 Hz),
+  # not the reward horizon (n_step stays 100). >0 switches the learner to the
+  # R2D2-style stored-state + short-BPTT path; requires the recurrent head
+  # (policy_head_rnn above), use_n_step=true and the compressed schema --
+  # the entry point raises on any mismatch.
+  rnn_bptt_length: 20
+  iters_per_chunk: 8
+  log_every_steps: 1_000_000
+  eval_every_steps: 10_000_000
+
+  # ---- MPO overrides of /rodent-dmpo-base (measured 2026-05-07) -------------
+  # vnl-ray's MO-MPO penalty is `-||a||` over ALL action magnitudes, not just
+  # the out-of-bound part as in Acme (losses.py:274). Its normalized weights are
+  # ADDED to the MPO weights (losses.py:291), so ~half the cross-entropy weight
+  # mass pushes actions toward zero -- directly anti-correlated with the
+  # large-amplitude torques a gap jump needs.
+  use_n_step: true
+  # n_step stays 100 -- the reward horizon is untouched by the RNN package
+  # (see rnn_bptt_length above for why the two horizons are different knobs).
+  n_step: 100
+  min_log_temperature: -7.0
+  # ---- Compressed replay (see DMPOConfig) --------------------------------
+  # next_observation dropped (observation[:, t+n] bootstraps -- with the
+  # recurrent learner this is REQUIRED, not optional) and vision stored uint8
+  # (renderer unpacks 8-bit channels; error <=1/510). Sizing under the +512 B
+  # hidden: see max_replay_size above.
+  store_next_observation: false
+  vision_uint8_storage: true
+  # No warm-start machinery: cold critic, no phase-P gate (as w4).
+  critic_warmup_sgd_steps: 0
+  # forward_velocity was deleted from reward_terms, so the env total already
+  # IS the sparse bonus: no anneal, stored == env reward (as w4).
+  reward_anneal_sparse_key: null
+  reward_anneal_env_steps: 0
+  # No behavior mixing -- and additionally unsupported with a recurrent
+  # policy (v1); the entry point raises if > 0 with policy_head_rnn.
+  behavior_mix_init: 0.0
+  behavior_mix_hold_env_steps: 0
+  behavior_mix_end_env_steps: 0
+  # Cold start: base default (as w4; w2's +1.0 was justified BY its warm
+  # start, a premise that does not hold here).
+  init_log_temperature: 10.0
+
+  # ---- gamma: 0.97 -> 0.995 -------------------------------------------------
+  # gamma IS a speed prior, which is exactly what this experiment removes. It
+  # discounts a later crossing relative to an earlier one, so a small gamma
+  # smuggles "hurry up" back into a reward that no longer says it.
+  #
+  # Numerically, at arm_i1's measured pace of one crossing per 73.6 steps:
+  #     gamma   horizon   Q(crosses forever)   Q(crosses once, then falls)
+  #     0.97     0.33 s        1.119                    1.0
+  #     0.99     1.00 s        1.913                    1.0
+  #     0.995    2.00 s        3.242                    1.0
+  # At 0.97 the critic can barely separate a rat that runs the whole corridor
+  # from one that clears a single gap and dies -- 12% of value. At 0.995 it is
+  # 224%. Q is MPO's ENTIRE policy-improvement signal, so that separation is the
+  # experiment.
+  #
+  # KNOWN BIAS, accepted: rollout.py stores discount = 1 - done, and brax's
+  # EpisodeWrapper folds the 1000-step time limit into `done`, so truncation is
+  # bootstrapped as if terminal. At gamma=0.995 that touches the last ~200
+  # steps (20%). Tolerable here because the bias is ~state-additive and MPO's
+  # E-step is a softmax over actions AT THE SAME STATE, where an additive term
+  # cancels. It still costs critic fit quality. Proper fix (own arm, not this
+  # one): bootstrap on truncation -- but note `_alive = cumprod(discount)` is
+  # what stops post-autoreset rewards leaking into R_n, so it needs two masks.
+  discount: 0.995
+
+  # ---- C51 support: [0,50]x201 (kept at w2/w4's values) ---------------------
+  # Support brackets the historical MIXED return; with the dense term gone
+  # vmax 50 is slack (nothing can exceed 20 undiscounted), which wastes atoms
+  # but cannot bias the mean the E-step reads. Kept for comparability with
+  # w2/w4; 201 atoms -> delta=0.25, memory-proven (m3b; 501 OOMs).
+  vmin: 0.0
+  vmax: 50.0
+  num_atoms: 201
+  action_penalization: false
+  # softplus(1000) ~= 1000 makes the stddev-KL Lagrange multiplier enormous at
+  # init, so the policy cannot widen. Start it small instead.
+  init_log_alpha_stddev: 1.0
+  # 1e-7 freezes the stddev update budget outright.
+  epsilon_stddev: 1.0e-3
+
+logging_config:
+  project_name: dmpo-rodent
+  exp_name: arm_r2_rnn_k50
+  group_name: RodentRunGapBinocularVision-frozen-prior
+  notes: "arm_r2_rnn_k50: r1 with the learner clock restored (K 10->50; the MPO temperature/dual/target clocks tick per SGD step -- r1 and w4b took off at the same ~19k SGD steps, 5x apart in env steps) and batch 256->512 to spend the VRAM headroom (r1 peaked 74%). Predictions: logT ~ -3.5 and klq liftoff by ~40M; crossings>0.5 by ~45M; tracks w4b env-step curve within ~1.5x. See arm_r1 lineage header + PLAN_rnn_policy_head.md."
+
+wrappers:
+  info_reset_on_done: true
+
+# ABSOLUTE, deliberately. A relative './checkpoints/...' resolves against the
+# launch cwd; a 2026-05-07 launch fired from the SalkResearch root instead of
+# the repo root silently wrote to an empty dir, logged "Found 0 checkpoint
+# steps", skipped auto-resume and died ~10 s in, leaving a stub wandb run that
+# looked like a completed experiment. Must also be FRESH for R1: restoring an
+# FF run's checkpoints into the recurrent param tree fails (the entry point
+# wraps that failure in a pointed error).
+checkpoint_dir: /home/talmolab/Desktop/SalkResearch/_implementation_log/DMPO/checkpoints/arm_r2_rnn_k50
+
+eval_render_config:
+  # 50 fps against a 100 Hz control rate (ctrl_dt: 0.01) = deliberate HALF-SPEED
+  # playback (see w4). With policy_head_rnn the eval rollout threads the hidden
+  # through run_eval_rollout_envzero (zeros-init at eval start, zeroed where
+  # done), so this block is live from the first eval.
+  fps: 50
+  height: 480
+  width: 640
+  camera: close_profile-rodent
+  episode_length: 1000
+  hud:
+    enabled: true
+    show_speed: true
+    show_reward_breakdown: true
+    show_cumulative_reward: true
+    show_gap_crossing: true
+    show_height: true
+    show_heading: true
+    show_step_counter: true
+    show_distance_to_gap: true
+    show_lateral_deviation: true
+    show_action_magnitude: true
+    gap_flash_duration: 1.5
