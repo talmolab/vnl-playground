@@ -1294,10 +1294,30 @@ class MazeForageVision(rodent_base.RodentEnv):
 
     @_registry.termination("nan_termination")
     def _nan_termination(self, data, info) -> bool:
-        """Terminate on NaN values in simulation data."""
+        """Terminate on NaN values in the simulation state.
+
+        Checks ``qpos`` and ``qvel`` only, NOT ``ravel_pytree(data)``.  On the
+        warp backend ``data`` carries contact buffers sized O(naconmax), and
+        flattening it under ``vmap`` materialises a copy of them per world: at
+        2048 envs and ``naconmax=65536`` that is a single 21.7 GiB allocation
+        and the run dies before its first step.  ``run_gap.py`` hit the same
+        wall (PR #67) and does the same thing; this env is doubly exposed
+        because ``wrappers.full_reset=true`` puts a whole ``reset()`` -- and
+        therefore this check -- inside the fused training step as well.
+
+        Checking both integrator states rather than just ``qpos`` costs
+        nothing and catches a NaN one step earlier, since a NaN reaches
+        ``qvel`` before it is integrated into ``qpos``.
+
+        Args:
+            data: Simulation data.
+            info: State info (unused).
+
+        Returns:
+            Boolean indicating whether a NaN was detected.
+        """
         del info
-        flattened_vals, _ = flatten_util.ravel_pytree(data)
-        return jp.sum(jp.isnan(flattened_vals)) > 0
+        return jp.any(jp.isnan(data.qpos)) | jp.any(jp.isnan(data.qvel))
 
     # ------------------------------------------------------------------
     # Utility methods and observation-size contract

@@ -244,7 +244,27 @@ train_config:
   batch_size: 1024
   min_replay_size: 50_000
   max_replay_size: 400_000
-  sequence_length: 100
+  # 101 = n_step + 1, REQUIRED by store_next_observation: false below --
+  # the bootstrap state is read from observation[:, 100] instead of from a
+  # stored next_observation, and DMPOConfig raises if the two disagree.
+  sequence_length: 101
+  # ---- Compressed replay (w2's storage format, on m9's algorithm) ---------
+  # NOT optional here, unlike on the gap task: at 2048 envs the buffer is
+  # [num_envs, max_size, obs] = [2048, 195, 2048] per observation field, and
+  # storing next_observation as well at fp32 makes that 6.5 GB of vision
+  # alone. The first launch died in the replay scatter with
+  #   INTERNAL: Autotuning failed for HLO %loop_transpose_fusion
+  #   f32[2048,195,2048] ... NOT_FOUND: No valid config found!
+  # which is an out-of-memory in autotuner clothing. Dropping
+  # next_observation and storing vision as uint8 is 5.08x (measured on w2)
+  # and takes it to ~0.8 GB. m9 got away with the uncompressed format because
+  # the gap env's model is far smaller and full_reset=False keeps only one
+  # env state live; this maze holds a second full mjx.Data for the per-step
+  # reset path.
+  # Quantisation error on the stored image is <= 1/510 -- the renderer
+  # unpacks 8-bit channels -- so this is a storage change, not a learning one.
+  store_next_observation: false
+  vision_uint8_storage: true
   samples_per_insert: 2.0
   # Ray parity on learner throughput (arm_j1). Under sparse reward this is
   # load-bearing rather than a tuning knob: at the frozen prior's initial

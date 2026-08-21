@@ -355,6 +355,38 @@ def test_joint_angle_slice_covers_exactly_the_rodent_hinges(env):
     assert list(range(env._rodent_qvel_start, model.nv)) == hinge_dof
 
 
+def test_nan_termination_watches_qpos_and_qvel_only(env):
+    """The NaN tripwire reads the integrator state, deliberately not all of ``data``.
+
+    The obvious implementation -- ``ravel_pytree(data)`` -- is what this env
+    shipped with, and on the warp backend it is fatal rather than merely slow:
+    ``data`` carries contact buffers sized O(naconmax), and flattening it under
+    ``vmap`` copies them per world. At the shipped 2048 envs / naconmax=65536
+    that is a single 21.7 GiB allocation and the DMPO run dies before its first
+    step. ``run_gap.py`` narrowed the same check for the same reason (PR #67).
+
+    The narrowing is safe because qpos and qvel ARE the integrator state: a NaN
+    anywhere in the pipeline reaches qvel on the step it is produced. The third
+    assertion pins the accepted cost -- a NaN confined to a non-integrator field
+    is not caught on that step -- so nobody "fixes" it back to a full ravel.
+    """
+    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    data = state.data
+    info, metrics = state.info, dict(state.metrics)
+
+    assert not bool(env._is_done(data, info, metrics))
+    assert bool(
+        env._is_done(data.replace(qpos=data.qpos.at[0].set(jp.nan)), info, metrics)
+    )
+    assert bool(
+        env._is_done(data.replace(qvel=data.qvel.at[0].set(jp.nan)), info, metrics)
+    )
+    # Accepted blind spot, stated rather than hidden.
+    assert not bool(
+        env._is_done(data.replace(xpos=data.xpos.at[0, 0].set(jp.nan)), info, metrics)
+    )
+
+
 def test_proprioception_ignores_the_treat_slide_joints(env):
     """Writing garbage into the treat dofs must not leak into proprioception.
 
@@ -825,11 +857,23 @@ def test_layout_freezes_without_full_reset(env, info_reset):
     )
 
 
-def test_entry_point_refuses_a_frozen_layout_config(env):
-    """``train_highlvl`` must raise rather than launch a silently dead run."""
+@pytest.mark.parametrize(
+    "entry_point_module",
+    ["train_highlvl", "train_highlvl_dmpo_kl_anchor"],
+)
+def test_entry_point_refuses_a_frozen_layout_config(env, entry_point_module):
+    """Both entry points must raise rather than launch a silently dead run.
+
+    The DMPO one is the launcher this task actually ships with
+    (``config/maze_forage_vision/dmpo_maze_forage.yaml``), and it had the
+    frozen-layout auto-reset hardcoded until the ``wrappers:`` block was ported
+    into it -- so it needs the same coverage as the PPO one, not less.
+    """
+    import importlib
+
     from omegaconf import OmegaConf
 
-    from vnl_playground import train_highlvl
+    train_highlvl = importlib.import_module(f"vnl_playground.{entry_point_module}")
 
     assert env.requires_per_episode_reset is True
     assert tuple(env.info_reset_keys) == tuple(INFO_RESET_KEYS)
