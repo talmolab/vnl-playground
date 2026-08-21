@@ -68,6 +68,170 @@ except ImportError:
     wandb = None  # type: ignore
 
 
+# ---------------------------------------------------------------------------
+# Optional top-level `wrappers:` block
+# ---------------------------------------------------------------------------
+# Mirrors `train_highlvl._wrapper_settings` / `_wrap_for_brax_training` /
+# `_validate_reset_requirements` exactly, so the two entry points share one
+# vocabulary.  Every knob is default-off: a config with no `wrappers:` block
+# gets `full_reset=False` and no info wrapper, i.e. bit-identical behaviour to
+# the hardcoded stack the in-flight arms (m1..m9, w1, w2) were launched on.
+#
+#   wrappers:
+#     full_reset: true                 # BraxAutoResetWrapper calls env.reset()
+#     info_reset_on_done: true         # InfoResetOnDoneWrapper (info keys only)
+#     info_reset_keys: [a, b, ...]
+#     allow_frozen_layout: true        # deliberate ablation; skips the guard
+#
+# `full_reset: false` (the historical hardcoded value) makes
+# BraxAutoResetWrapper restore `data`/`obs` from the FIRST reset and never
+# touch `state.info`.  For an env whose per-episode variation lives in `Data`
+# (spawn pose, object positions written into qpos) that means `env.reset` runs
+# exactly once per env index for the whole run: every worker replays one frozen
+# layout, and info-derived masks/counters ratchet forever.  See
+# tasks/wrappers_info_reset.py for the ratchet half of that story, and
+# tasks/rodent/maze_forage_vision.py for the frozen-layout half.
+
+
+def _wrapper_settings(cfg):
+    """Reads the optional top-level ``wrappers:`` block.
+
+    Args:
+        cfg: The hydra config.
+
+    Returns:
+        ``(full_reset, info_reset_on_done, info_reset_keys)``; the keys tuple is
+        ``None`` when the config does not name any.
+    """
+    wrap_cfg = cfg.get("wrappers", None)
+    if not wrap_cfg:
+        return False, False, None
+    keys = wrap_cfg.get("info_reset_keys", None)
+    return (
+        bool(wrap_cfg.get("full_reset", False)),
+        bool(wrap_cfg.get("info_reset_on_done", False)),
+        tuple(keys) if keys else None,
+    )
+
+
+def _wrap_for_brax_training(
+    environment,
+    cfg,
+    *,
+    episode_length: int = 1000,
+    action_repeat: int = 1,
+    randomization_fn=None,
+):
+    """``mp_wrapper.wrap_for_brax_training`` honouring the ``wrappers:`` block.
+
+    ``InfoResetOnDoneWrapper`` is applied OUTSIDE the brax wrappers on purpose:
+    it has to see the post-swap ``done`` flag.
+
+    Args:
+        environment: Env to wrap.
+        cfg: The hydra config (read for the ``wrappers:`` block).
+        episode_length: Truncation horizon for ``EpisodeWrapper``.
+        action_repeat: Action repeat for ``EpisodeWrapper``.
+        randomization_fn: Optional domain-randomization function.
+
+    Returns:
+        The wrapped environment.
+    """
+    from mujoco_playground._src import wrapper as mp_wrapper
+
+    full_reset, info_reset_on_done, info_reset_keys = _wrapper_settings(cfg)
+    brax_env = mp_wrapper.wrap_for_brax_training(
+        environment,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+        randomization_fn=randomization_fn,
+        full_reset=full_reset,
+    )
+    if full_reset:
+        log.info(
+            "BraxAutoResetWrapper full_reset=True: env.reset() runs on every "
+            "done, so Data-side per-episode randomisation and state.info both "
+            "reset properly (costs one extra reset per step)."
+        )
+    if info_reset_on_done:
+        from vnl_playground.tasks.wrappers_info_reset import (
+            DEFAULT_RUN_GAP_KEYS,
+            InfoResetOnDoneWrapper,
+        )
+
+        keys = info_reset_keys or DEFAULT_RUN_GAP_KEYS
+        brax_env = InfoResetOnDoneWrapper(brax_env, keys=keys)
+        log.info(
+            "InfoResetOnDoneWrapper ACTIVE: restoring info keys %s to their "
+            "reset-time values on every done.",
+            keys,
+        )
+    return brax_env
+
+
+def _validate_reset_requirements(cfg, env, env_name: str) -> None:
+    """Refuses to launch an env that needs real resets inside a cached-reset stack.
+
+    An env opts in by setting ``requires_per_episode_reset = True`` (and,
+    optionally, ``info_reset_keys``).  Without ``wrappers.full_reset`` such an
+    env trains on one frozen layout per worker and its ``info`` masks ratchet --
+    a silently dead run rather than a crash, which is exactly the failure this
+    guard exists to convert into an exception.
+
+    Args:
+        cfg: The hydra config.
+        env: The loaded (possibly wrapped) environment.
+        env_name: Env name, for the error message.
+
+    Raises:
+        ValueError: If the env demands per-episode resets and the config does
+            not provide them.
+    """
+    raw_env = env
+    while hasattr(raw_env, "env"):
+        raw_env = raw_env.env
+    if not bool(getattr(raw_env, "requires_per_episode_reset", False)):
+        return
+
+    full_reset, info_reset_on_done, info_reset_keys = _wrapper_settings(cfg)
+    if full_reset:
+        return
+
+    required_keys = tuple(getattr(raw_env, "info_reset_keys", ()) or ())
+    wrap_cfg = cfg.get("wrappers", None) or {}
+    allow_frozen = bool(wrap_cfg.get("allow_frozen_layout", False))
+    covered = info_reset_on_done and not (
+        set(required_keys) - set(info_reset_keys or ())
+    )
+    if allow_frozen and covered:
+        log.warning(
+            "%s: wrappers.allow_frozen_layout=true -- env.reset() will run "
+            "ONCE per env index for the whole run, so every worker replays a "
+            "single frozen layout. Only the info ratchet is fixed. This is an "
+            "ablation setting, not the intended training recipe.",
+            env_name,
+        )
+        return
+
+    raise ValueError(
+        f"{env_name} sets requires_per_episode_reset=True, but this config "
+        "does not enable per-episode resets.\n"
+        "BraxAutoResetWrapper(full_reset=False) restores data/obs from the "
+        "FIRST reset and never clears state.info, so env.reset() would run "
+        "exactly once per env index for the entire run: every worker replays "
+        "one frozen spawn/object layout and info masks ratchet until the env "
+        "emits 1-step, zero-reward episodes forever.\n"
+        "Add to the config:\n"
+        "  wrappers:\n"
+        "    full_reset: true\n"
+        "Deliberate frozen-layout ablation instead? Set\n"
+        "  wrappers:\n"
+        "    allow_frozen_layout: true\n"
+        "    info_reset_on_done: true\n"
+        f"    info_reset_keys: {list(required_keys)}"
+    )
+
+
 def _build_env(hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size):
     """Load registry env, wrap in KLAnchorPriorDecoderWrapper +
     brax wrap_for_brax_training + BinocularVisionRenderWrapper.
@@ -78,6 +242,7 @@ def _build_env(hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size)
     valid_keys = set(tasks.get_default_config(env_name).keys())
     env_args = {k: v for k, v in env_args.items() if k in valid_keys}
     base_env = tasks.load(env_name, flatten_obs=False, config_overrides=env_args)
+    _validate_reset_requirements(hydra_cfg, base_env, env_name)
     raw_env = base_env.env if hasattr(base_env, "env") else base_env
     mj_model = getattr(raw_env, "mj_model", None)
     mjx_model = getattr(raw_env, "mjx_model", None)
@@ -93,7 +258,6 @@ def _build_env(hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size)
         alpha_anchor=float(hydra_cfg.kl_anchor.alpha_anchor),
     )
 
-    from mujoco_playground._src import wrapper as mp_wrapper
     from vnl_playground.tasks.rodent.vision_jax import BinocularVisionRenderWrapper
 
     episode_length = int(
@@ -102,32 +266,16 @@ def _build_env(hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size)
         )
     )
     action_repeat = int(hydra_cfg.env_config.get("action_repeat", 1))
-    base_env = mp_wrapper.wrap_for_brax_training(
+    # Optional per-episode resets, read from the top-level `wrappers:` block.
+    # With no such block this is exactly the historical
+    # mp_wrapper.wrap_for_brax_training(..., full_reset=False) with no info
+    # wrapper, so the in-flight arms (m1..m9, w1, w2) stay bit-reproducible.
+    base_env = _wrap_for_brax_training(
         base_env,
+        hydra_cfg,
         episode_length=episode_length,
         action_repeat=action_repeat,
-        full_reset=False,
     )
-    # Optional per-episode info reset. full_reset=False above leaves
-    # state.info untouched across auto-resets, which turns info-derived
-    # rewards (gap_crossing_bonus via info["gaps_crossed"]) into cross-episode
-    # ratchets during training — see wrappers_info_reset.py for the full
-    # mechanism. Opt-in via a top-level `wrappers:` block so that completed
-    # arms (m1..m8) stay bit-reproducible.
-    wrap_cfg = hydra_cfg.get("wrappers", None)
-    if wrap_cfg is not None and bool(wrap_cfg.get("info_reset_on_done", False)):
-        from vnl_playground.tasks.wrappers_info_reset import (
-            DEFAULT_RUN_GAP_KEYS,
-            InfoResetOnDoneWrapper,
-        )
-
-        keys = tuple(wrap_cfg.get("info_reset_keys", None) or DEFAULT_RUN_GAP_KEYS)
-        base_env = InfoResetOnDoneWrapper(base_env, keys=keys)
-        log.info(
-            "InfoResetOnDoneWrapper ACTIVE: restoring info keys %s to their "
-            "reset-time values on every done (fixes the full_reset=False "
-            "gap_crossing_bonus ratchet)", keys,
-        )
     base_env = BinocularVisionRenderWrapper(
         base_env,
         mj_model=mj_model,
