@@ -428,6 +428,7 @@ class BinocularVisionRenderWrapper:
         right_camera_name="eye_right-rodent",
         eye_dropout_rate=0.0,
         eval_eye_mode="binocular",
+        vision_noise_std=0.0,
     ):
         self.env = env
         self._mj_model = mj_model
@@ -436,6 +437,7 @@ class BinocularVisionRenderWrapper:
         self._right_camera_name = right_camera_name
         self._eye_dropout_rate = eye_dropout_rate
         self._eval_eye_mode = eval_eye_mode
+        self._vision_noise_std = vision_noise_std
         self._renderer_kwargs = dict(
             width=width,
             height=height,
@@ -498,6 +500,46 @@ class BinocularVisionRenderWrapper:
         left = self._left_renderer.render(data)  # (nworld, H, W, C)
         right = self._right_renderer.render(data)  # (nworld, H, W, C)
         return jnp.concatenate([left, right], axis=-1)  # (nworld, H, W, 2C)
+
+    def _apply_vision_noise(self, vision, rng):
+        """Add per-step i.i.d. Gaussian sensor noise: ``v + sigma*N(0,1)``.
+
+        E3 (`_implementation_log/DMPO/NEXT_EXPERIMENTS.md`): degrade vision to
+        see whether the rat starts deliberating at gap edges instead of
+        committing ballistically.
+
+        Clipped to [0, 1] because that is the renderer's range -- the packed
+        RGB is divided by 255.0 at the top of this module -- so the noisy image
+        stays in the same domain the CNN encoder was trained on.
+
+        i.i.d. over (world, row, col, channel): one `jax.random.normal` call
+        over the full shape, so the two eyes are independent and there is no
+        spatial correlation. Applied to BOTH training and eval, since
+        deliberation has to be trained under noise, not merely probed under it.
+
+        Noise is added BEFORE `_apply_eye_mask`, so a dropped-out eye still
+        reads exactly 0 rather than acquiring a noise floor.
+
+        NOTE ON QUANTIZATION: with `vision_uint8_storage: true` the replay
+        buffer stores 8-bit pixels, so noise below 1/255 ~ 0.004 is quantized
+        away. The E3 ladder starts at sigma=0.05, an order of magnitude above
+        that, so the stored noise is faithful.
+
+        Args:
+            vision: (nworld, H, W, 2*C) rendered binocular images in [0, 1].
+            rng: JAX PRNG key for this step's draw.
+
+        Returns:
+            Noisy vision, same shape/dtype, still within [0, 1].
+        """
+        # <= 0 rather than == 0: sigma=0 is the E3 control arm and must be a
+        # bit-identical no-op, and a negative sigma is a config typo, not a
+        # request to flip the sign of the noise.
+        if self._vision_noise_std <= 0.0:
+            return vision
+
+        noise = jax.random.normal(rng, vision.shape, dtype=vision.dtype)
+        return jnp.clip(vision + self._vision_noise_std * noise, 0.0, 1.0)
 
     def _apply_eye_mask(self, vision, rng):
         """Stochastically zero out one eye's channels for monocular dropout.
@@ -588,6 +630,15 @@ class BinocularVisionRenderWrapper:
         self._ensure_renderers(rng.shape[0])
         vision = self._render_binocular(state.data)
 
+        # Sensor noise FIRST, so a dropped eye below still reads exactly 0.
+        # The immediate draw uses split[0] while the stream stored for future
+        # steps is split[1]: reusing one key for both would make the reset
+        # frame and the first step frame carry identical noise.
+        if self._vision_noise_std > 0.0:
+            noise_rng, _ = jax.random.split(rng[0])
+            vision = self._apply_vision_noise(vision, noise_rng)
+            state.info["vision_noise_rng"] = jax.vmap(jax.random.split)(rng)[:, 1]
+
         # Stochastic eye dropout (training) or deterministic masking (eval)
         if self._eye_dropout_rate > 0.0:
             mask_rng, _ = jax.random.split(rng[0])
@@ -603,6 +654,17 @@ class BinocularVisionRenderWrapper:
     def step(self, state, action):
         state = self.env.step(state, action)
         vision = self._render_binocular(state.data)
+
+        # Sensor noise FIRST (see reset). World 0's key seeds the whole batch's
+        # draw -- jax.random.normal over the full (nworld, H, W, C) shape still
+        # gives every world independent pixels -- then every world's key is
+        # advanced, mirroring the eye-dropout stream.
+        if self._vision_noise_std > 0.0:
+            noise_rng = state.info["vision_noise_rng"][0]
+            vision = self._apply_vision_noise(vision, noise_rng)
+            state.info["vision_noise_rng"] = jax.vmap(
+                lambda k: jax.random.split(k)[0]
+            )(state.info["vision_noise_rng"])
 
         # Stochastic eye dropout (training) or deterministic masking (eval)
         if self._eye_dropout_rate > 0.0:

@@ -74,6 +74,10 @@ def default_config() -> config_dict.ConfigDict:
     # Stochastic eye dropout (for binocular training fairness)
     cfg.eye_dropout_rate = 0.0  # probability of masking one eye per step (0=disabled)
     cfg.eval_eye_mode = "binocular"  # eval mode: "binocular", "left_only", "right_only"
+    # E3 degraded vision: per-step i.i.d. Gaussian on the rendered grayscale,
+    # v + sigma*N(0,1) clipped to [0,1]. Continuous noise, as opposed to the
+    # intermittent blindness of eye_dropout_rate. 0 = disabled (pre-E3 default).
+    cfg.vision_noise_std = 0.0
     # Eye camera yaw offset from center (radians). Controls binocular overlap:
     #   overlap_deg ≈ fovy - 2 * degrees(eye_angle_offset)  [square aspect ratio]
     # Default 0.2 rad ≈ 11.5° offset → ~57° overlap (matches original XML).
