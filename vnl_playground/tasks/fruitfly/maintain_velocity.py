@@ -99,6 +99,7 @@ class MaintainVelocity(fruitfly_base.FruitflyEnv):
             impl=self._config.mujoco_impl,
             naconmax=self._config.naconmax,
         )
+        data = mjx.forward(self.mjx_model, data)
 
         metrics = {}
         obs = self._get_obs(data, info)
