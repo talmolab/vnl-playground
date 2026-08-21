@@ -309,7 +309,29 @@ train_config:
   # two anchor_* extras): 5,456 B. Steady-state total at 400_000 was 13.2 GB, so
   # non-buffer is ~11.0 GB, leaving ~21.5 GB for the buffer at 95%:
   #
-  #   3_932_160 = 1920 steps/env x 2048 envs = 21.45 GB  -> ~32.5 GB total
+  #   1920 steps/env = 3_932_160 -> 21.45 GB buffer, ~32.5 GB steady
+  #
+  # 1920 was TRIED AND OOMed. Steady footprint is not the binding constraint:
+  # XLA needs ~4.07 GB of scratch while compiling the fused step, and the run
+  # died asking for exactly that at 25.4 GB already resident (~29.5 GB), well
+  # under the card's nominal 34.19 GB -- so fragmentation eats the rest. The
+  # ceiling to design against is `steady + ~4.1 GB transient`, not `steady`.
+  #
+  #   1400 steps/env = 2_867_200 -> ALSO OOMed.
+  #
+  # WHY ~95% IS NOT REACHABLE, and it is not the steady footprint: the replay
+  # INSERT materialises a transposed scratch copy of each buffer field, shape
+  # [num_envs, max_size, dim]. At 1400 steps/env that is
+  #   f32[2048, 1400, 277] = 3.18 GB   for proprioception alone
+  # -- the exact HLO the run died on -- with a comparable uint8 copy for
+  # vision. Peak therefore scales with depth ON TOP OF the steady buffer, and
+  # bytes-per-transition only predicts the steady half. Design against peak.
+  #
+  #   1150 steps/env = 2_355_200 -> 12.85 GB buffer, ~23.9 GB steady
+  #
+  # w2's value: the only depth with prior evidence of working on this card.
+  # Still 5.9x the original 195 steps/env. Going deeper needs the insert-path
+  # transient measured, not the steady footprint.
   #
   # THIS IS AN ALGORITHM CHANGE, not just a memory one. The buffer is 9.8x
   # deeper at fixed sgd_steps_per_rollout=50, so each transition is revisited
@@ -318,7 +340,7 @@ train_config:
   # far longer (the reason w2 wanted depth), but the critic trains on older
   # policy data. If learning slows versus the a1 curve, this is the first
   # suspect, and sgd_steps_per_rollout is the knob that compensates.
-  max_replay_size: 3_932_160
+  max_replay_size: 2_355_200
   # 101 = n_step + 1, REQUIRED by store_next_observation: false below --
   # the bootstrap state is read from observation[:, 100] instead of from a
   # stored next_observation, and DMPOConfig raises if the two disagree.
