@@ -199,7 +199,12 @@ train_config:
   # (w4: 23) at ~8.5 GB, leaving 950 - 120 + 1 = 831 valid sequence starts
   # per env (w4: 1050). Same ~8-9 GB buffer budget as w4 on the 32.6 GiB
   # card; measure at smoke and shrink first if the non-buffer side grew.
-  max_replay_size: 1_945_600
+  # r2 post-smoke bump (2026-08-20): batch 512 peaked only 25.2 GiB (77%),
+  # so the remaining ~6 GiB of the user's 95% target goes to replay depth:
+  # 3,072,000 = 1500 steps/env x 2048 = 30.0 rollouts (~66 s) at 4.25 KB
+  # = 13.1 GB buffer; projected peak ~30.2 GiB (93%). Valid window starts
+  # per env: 1500 - 120 + 1 = 1381.
+  max_replay_size: 3_072_000
   # R1 DELTA 3: L + n = 20 + 100. The entry point RAISES unless
   # sequence_length == rnn_bptt_length + n_step: every loss point t < L
   # needs a full n-step reward window plus the bootstrap state (and its
