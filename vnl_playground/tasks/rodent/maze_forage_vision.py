@@ -656,11 +656,32 @@ class MazeForageVision(rodent_base.RodentEnv):
         wall_mat.texuniform = True
         wall_mat.reflectance = 0.0
 
-        # Treats are deliberately much brighter than anything else in the scene
-        # so they survive the grayscale conversion the renderer applies.
+        # Treats are DARK, not bright, and that is dm_control's own choice:
+        # `basic_rodent_2020.rodent_maze_forage` builds its TargetSphere with
+        # `rgb1=(0, 0, 0.4)`.  This env shipped a bright yellow instead, on the
+        # theory that a treat should be the brightest thing in the frame.  It
+        # cannot be: once the wall lights are on, the walls sit at ~0.72 and
+        # the floor at ~0.90 grayscale, so a bright treat competes with a
+        # bright floor while a dark one has the whole range to itself.
+        # Measured over 48 reset frames of the 32x32 policy view, by rendering
+        # each frame with treats live and again with them parked underground
+        # and looking only at the pixels that changed:
+        #
+        #   treat rgba              luminance  |contrast|  outside frame p1/p99
+        #   yellow 1, 0.85, 0.1       0.679       0.295          39.5%
+        #   white  1, 1, 1            0.757       0.324          50.1%
+        #   blue   0, 0, 0.4          0.212       0.496          60.7%
+        #   black  0, 0, 0            0.161       0.502          68.2%
+        #
+        # 1.7x the contrast for one line. Black is marginally more extreme but
+        # 0,0,0.4 is what the reference uses and is within noise of it.
+        #
+        # `emission` is NOT set: the warp ray-tracer ignores it outright, the
+        # same way it ignores `light.ambient`. Verified bit-identical treat
+        # pixels at emission 0.0, 0.4 and 1.0 (0.679 / 0.659 / 0.295 in all
+        # three). Setting it would look like a knob and do nothing.
         treat_mat = self._spec.add_material(name=_TREAT_MATERIAL)
-        treat_mat.rgba = [1.0, 0.85, 0.1, 1.0]
-        treat_mat.emission = 0.4
+        treat_mat.rgba = [0.0, 0.0, 0.4, 1.0]
         treat_mat.reflectance = 0.0
 
     def _wall_box_geometry(self) -> Tuple[np.ndarray, np.ndarray]:
