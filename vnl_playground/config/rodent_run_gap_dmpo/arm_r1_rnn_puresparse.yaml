@@ -405,7 +405,16 @@ train_config:
   # 1B. Matched-step readouts vs w4/m9 all live inside 300M.
   num_timesteps: 300_000_000
   unroll_length: 50
-  batch_size: 1024
+  # R1 DELTA (post-smoke, 2026-08-20): 1024 -> 256. With the [B, L] loss
+  # points folded into the batch, every learner intermediate scales with
+  # B*L: at B=1024 that is 20,480 loss points -- 20x the FF path's batch --
+  # and the first two smokes OOMed (8.96 then 7.19 GiB allocations; the
+  # sequential-map fix for the E-step/bootstrap cut forward peaks but
+  # cannot cut BACKWARD storage for the critic-loss grad and the BPTT
+  # unroll). B=256 divides all of it by 4: B*L = 5,120 loss points/update,
+  # and K=10 x 256 x L=20 = 51,200 loss-state visits per rollout = EXACTLY
+  # the FF w4 baseline's K=50 x 1024 revisit rate.
+  batch_size: 256
   min_replay_size: 50_000
   # R1 DELTA 4 -- replay depth under the fatter transition. f16 GRU-256
   # hidden adds 512 B: 3.75 -> 4.25 KB/transition (+13.3%, pre-smoke
