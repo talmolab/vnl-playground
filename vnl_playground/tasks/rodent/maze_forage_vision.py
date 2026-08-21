@@ -8,7 +8,8 @@ every treat has been collected, or on a fall / NaN (dm_control ``ManyGoalsMaze``
 semantics).
 
 What makes this task *pure vision*:
-``task_obs`` is ``[prev_action, kinematic_sensors, touch_sensors, origin]`` and
+``task_obs`` is ``[prev_action, kinematic_sensors, touch_sensors]`` (plus an
+optional ``origin``, **off** by default -- see ``config.include_origin``) and
 carries **no** treat vector.  Every other vision task in this repo leaks an
 egocentric target vector into ``task_obs``; this one deliberately does not, so
 the only channel that can tell the policy where a treat is, is the egocentric
@@ -47,6 +48,21 @@ Walls are box geoms, not a heightfield: a heightfield can only make ramps and
 the rodent *will* climb them, whereas boxes give true vertical occluders and are
 much cheaper to collide against.
 
+Sizing (all of it derived from one number):
+
+``config.maze_extent`` is the **outer extent of the maze footprint in metres**
+and is what stays fixed -- the arena is ``maze_extent`` x ``maze_extent``,
+centred on the world origin, for *every* value of ``maze_cells``.  The grid is
+``(2 * maze_cells + 1)`` square, so the grid pitch is
+
+    ``cell_size = maze_extent / (2 * maze_cells + 1)``
+
+and ``config.cell_size`` is ``None`` (= derive) by default.  Turning
+``maze_cells`` up therefore buys more maze structure at the cost of narrower
+corridors, and never changes the arena.  ``__init__`` cross-checks
+``grid_size * cell_size`` against ``maze_extent`` and raises if they disagree;
+:attr:`MazeForageVision.maze_extent` reports the realised extent.
+
 .. note::
 
    ``cell_size`` is the **grid pitch**, not the corridor width.  Wall
@@ -54,9 +70,55 @@ much cheaper to collide against.
    :meth:`MazeForageVision._wall_box_geometry`), which hands back
    ``cell_size - wall_thickness`` of floor on each side of a corridor, so the
    clear width between two parallel walls is
-   ``2 * cell_size - wall_thickness`` -- 0.65 m at the defaults, not 0.35 m.
-   :attr:`MazeForageVision.corridor_width` reports it.  To *ask* for a corridor
-   of width ``W`` set ``cell_size = (W + wall_thickness) / 2``.
+   ``2 * cell_size - wall_thickness``.
+   :attr:`MazeForageVision.corridor_width` reports it.
+
+   At the defaults (``maze_extent=2.0``, ``maze_cells=5`` -> 11x11 grid,
+   ``cell_size = 2/11 = 0.181818``, ``wall_thickness=0.03``) that is
+   **0.3336 m**, against a rat measured at ``rescale_factor=0.9`` as 0.308 m
+   long x 0.080 m wide x 0.092 m tall (AABB over the rodent geoms at the
+   compile pose) -- so a corridor clears the body *length* and the rat can turn
+   around without relying on spine flexion.  Same 2.0 m arena, same
+   ``wall_thickness``, measured off the compiled box geoms (``maze_seed=0``)::
+
+     maze_cells   grid     cell_size   corridor   measured min   free cells
+     ----------   -----    ---------   --------   ------------   ----------
+     3            7x7      0.285714    0.5414     0.3158         17
+     4            9x9      0.222222    0.4144     0.2523         31
+     5 (default)  11x11    0.181818    0.3336     0.2575         49
+     6            13x13    0.153846    0.2777     0.2157         71
+     7            15x15    0.133333    0.2367     0.1333         97
+
+   ``corridor`` is the formula above (and the widest measured corridor);
+   ``measured min`` is the narrowest one-cell corridor in that maze.  Two
+   bounded effects make the minimum smaller and neither is a bug: a flanking
+   wall rectangle spanning several cells along the scan axis is not thinned on
+   that axis, and a perpendicular rectangle seal-extended into a T-junction
+   pokes a corner nub into the corridor (see
+   :meth:`MazeForageVision._wall_box_geometry`).  The floor is one
+   ``cell_size``.
+
+   From ``maze_cells=6`` on the corridor is narrower than the rat is long, so
+   a turn-in-place needs body flexion.  ``maze_cells`` 4 / 5 / 6 are all built
+   and checked by
+   ``tests/test_maze_forage_vision.py::test_parameterised_maze_sizes_build_and_are_navigable``.
+
+.. note::
+
+   The **sealed enclosure is smaller than the footprint**: the border walls are
+   thinned and sit on their border-cell centres, so the free space the rat can
+   reach is ``maze_extent - cell_size - wall_thickness`` = 1.788 x 1.788 m at
+   the defaults (symmetric about the origin, verified sealed by flood filling a
+   1 mm occupancy raster).  ``maze_extent`` is the grid footprint, which is what
+   the wall geometry, ``free_cells`` and the render harness are all built on.
+
+.. note::
+
+   ``n_treats`` does **not** scale with the maze.  At the defaults 4 treats are
+   hidden among 49 reachable cells (:attr:`treat_cell_fraction` = 0.082, vs
+   0.129 at ``maze_cells=4`` and 0.056 at ``maze_cells=6``), so raising
+   ``maze_cells`` at fixed ``n_treats`` makes an already-sparse exploration
+   problem strictly harder.  Deliberately left as a human decision.
 
 Dynamic geometry follows ``run_gap.py`` exactly: each treat is a body carrying
 three slide joints (x, y, z) with ``damping=1e8, stiffness=0``, whose ``qpos`` is
@@ -165,13 +227,21 @@ def default_config() -> config_dict.ConfigDict:
         episode_length=1000,
         action_repeat=1,
         # --- Maze ---
-        maze_cells=3,  # logical cells per side -> (2n+1) x (2n+1) grid
-        # GRID PITCH, not corridor width: wall rectangles are thinned to
-        # wall_thickness, so the clear width between two parallel walls is
-        # 2 * cell_size - wall_thickness (0.65 m here).  See corridor_width.
-        cell_size=0.35,
+        # Outer extent of the maze footprint, in metres.  The arena is
+        # maze_extent x maze_extent, centred on the world origin, for EVERY
+        # value of maze_cells: cell_size is derived from it, so turning
+        # maze_cells up narrows the corridors instead of growing the arena.
+        maze_extent=2.0,
+        maze_cells=5,  # logical cells per side -> (2n+1) x (2n+1) grid
+        # GRID PITCH, not corridor width, and normally DERIVED: None means
+        # maze_extent / (2 * maze_cells + 1) = 0.181818 m at the defaults.
+        # Set it explicitly only alongside a consistent maze_extent -- the two
+        # are cross-checked in __init__ and any disagreement raises.  The clear
+        # width between two parallel walls is 2 * cell_size - wall_thickness
+        # (0.3336 m at the defaults); see the corridor_width property.
+        cell_size=None,
         wall_height=0.3,  # m, tall enough to occlude and not be climbed
-        wall_thickness=0.05,  # m, in-plane wall thickness (< cell_size)
+        wall_thickness=0.03,  # m, in-plane wall thickness (< cell_size)
         maze_seed=0,  # fixed for the whole run
         maze_loop_fraction=0.0,  # >0 knocks out walls to create loops
         # --- Treats ---
@@ -184,11 +254,13 @@ def default_config() -> config_dict.ConfigDict:
         spawn_height=0.005,  # m of clearance above the floor at spawn
         # --- Observation ---
         # `origin` is the world origin expressed in the torso frame, i.e. an
-        # exact allocentric position + heading fix relative to a FIXED maze.
-        # It is part of go_to_target_vision's task_obs contract (DESIGN.md 3e)
-        # and is kept on by default, but it is a real confound for any
-        # "the CNN had to learn place coding" claim, so it is switchable.
-        include_origin=True,
+        # exact allocentric position + heading fix relative to a FIXED maze --
+        # global self-localisation handed to the policy for free.  That both
+        # defeats the vision-only premise of this task and confounds any
+        # "the CNN had to learn place coding" claim, so it is OFF by default.
+        # go_to_target_vision's task_obs contract (DESIGN.md 3e) includes it;
+        # set this true to recover that contract exactly.
+        include_origin=False,
         # --- Vision (rendered by VisionRenderWrapper, not by this env) ---
         vision=True,
         vision_width=64,
@@ -256,8 +328,9 @@ class MazeForageVision(rodent_base.RodentEnv):
 
         Raises:
             ValueError: If ``mujoco_impl`` is not ``"warp"`` (the vision renderer
-                requires it), or if the maze has too few free cells to place the
-                spawn plus every treat.
+                requires it), if an explicit ``cell_size`` disagrees with
+                ``maze_extent / grid_size``, or if the maze has too few free
+                cells to place the spawn plus every treat.
         """
         # NOT a default argument: see the `config` docstring above.
         if config is None:
@@ -275,12 +348,11 @@ class MazeForageVision(rodent_base.RodentEnv):
         self._grayscale = bool(self._config.get("grayscale", False))
 
         self._n_treats = int(self._config.n_treats)
-        self._cell_size = float(self._config.cell_size)
         self._treat_height = float(self._config.treat_height)
         self._park_depth = float(self._config.park_depth)
         self._treat_reach_threshold = float(self._config.treat_reach_threshold)
         self._spawn_height = float(self._config.spawn_height)
-        self._include_origin = bool(self._config.get("include_origin", True))
+        self._include_origin = bool(self._config.get("include_origin", False))
 
         # --- Host-side maze construction (runs once, never under trace) ---
         self._maze_grid = maze_utils.generate_maze(
@@ -288,6 +360,8 @@ class MazeForageVision(rodent_base.RodentEnv):
             seed=int(self._config.maze_seed),
             loop_fraction=float(self._config.maze_loop_fraction),
         )
+        # cell_size is DERIVED from the arena extent; see _resolve_cell_size.
+        self._cell_size = self._resolve_cell_size(self._maze_grid.shape)
         self._maze_walls = maze_utils.make_walls(self._maze_grid)
         free_xy = maze_utils.free_cells(self._maze_grid, self._cell_size)
         if free_xy.shape[0] < self._n_treats + 1:
@@ -303,6 +377,9 @@ class MazeForageVision(rodent_base.RodentEnv):
 
         half_x, half_y = maze_utils.maze_extent(self._cell_size, self._maze_grid.shape)
         self._maze_half_extent = (float(half_x), float(half_y))
+        # Independent re-derivation of the footprint (maze_utils' own formula),
+        # so a drift in either half of the geometry is caught, not averaged.
+        self._check_realised_extent()
         # One generous symmetric range shared by all three treat slide axes.
         # MuJoCo does NOT clamp a directly written qpos to a joint range -- it
         # fights it with a limit constraint instead -- so the range has to cover
@@ -350,6 +427,85 @@ class MazeForageVision(rodent_base.RodentEnv):
         self._cache_rodent_qpos_layout()
 
     # ------------------------------------------------------------------
+    # Sizing (host-side, before anything geometric is built)
+    # ------------------------------------------------------------------
+
+    def _resolve_cell_size(self, grid_shape: Tuple[int, int]) -> float:
+        """Derives the grid pitch from ``config.maze_extent``, or checks it.
+
+        The invariant this enforces is the whole point of ``maze_extent``::
+
+            grid_size * cell_size == maze_extent
+
+        with ``grid_size = 2 * maze_cells + 1``.  ``config.cell_size`` is
+        ``None`` by default, in which case the pitch is derived and the
+        invariant holds by construction; if it is set explicitly the two are
+        cross-checked so a stale ``cell_size:`` in a yaml cannot silently
+        resize the arena.
+
+        Args:
+            grid_shape: ``(height, width)`` of the generated maze grid.
+
+        Returns:
+            The grid pitch in metres.
+
+        Raises:
+            ValueError: If the grid is not square, if ``maze_extent`` is not
+                positive, or if an explicit ``cell_size`` deviates from
+                ``maze_extent / grid_size`` by more than 1e-9 m.
+        """
+        height, width = int(grid_shape[0]), int(grid_shape[1])
+        if height != width:
+            raise ValueError(
+                f"Maze grid must be square, got {grid_shape}. maze_cells has "
+                "to be a single int for a fixed-extent arena."
+            )
+        extent = float(self._config.maze_extent)
+        if not extent > 0.0:
+            raise ValueError(f"maze_extent must be > 0, got {extent}.")
+
+        derived = extent / float(width)
+        configured = self._config.get("cell_size", None)
+        if configured is None:
+            return derived
+
+        cell_size = float(configured)
+        realised = cell_size * width
+        if abs(realised - extent) > 1e-9:
+            raise ValueError(
+                f"cell_size={cell_size!r} gives a {realised:.6f} m maze on a "
+                f"{width}x{width} grid, but maze_extent={extent} m was asked "
+                f"for (off by {realised - extent:+.6f} m). Either drop "
+                f"cell_size (it is derived: {derived:.6f} m for "
+                f"maze_cells={int(self._config.maze_cells)}) or set a "
+                "maze_extent that matches."
+            )
+        return cell_size
+
+    def _check_realised_extent(self) -> None:
+        """Re-checks the compiled footprint against ``config.maze_extent``.
+
+        ``_resolve_cell_size`` guarantees the invariant arithmetically; this
+        re-derives the same number through ``maze_utils.maze_extent`` (the
+        function the wall geometry and the render harness actually use), so a
+        divergence between the two code paths raises here rather than shipping
+        a maze that is not the size it claims to be.
+
+        Raises:
+            ValueError: If either realised extent differs from
+                ``config.maze_extent`` by more than 1e-9 m.
+        """
+        extent = float(self._config.maze_extent)
+        x_extent, y_extent = self.maze_extent
+        for axis, value in (("x", x_extent), ("y", y_extent)):
+            if abs(value - extent) > 1e-9:
+                raise ValueError(
+                    f"Realised maze {axis} extent is {value:.9f} m but "
+                    f"maze_extent={extent} m was configured (cell_size="
+                    f"{self._cell_size!r}, grid {self._maze_grid.shape})."
+                )
+
+    # ------------------------------------------------------------------
     # Arena construction (host-side, all of it before compile())
     # ------------------------------------------------------------------
 
@@ -381,18 +537,29 @@ class MazeForageVision(rodent_base.RodentEnv):
         """Computes ``(pos, size)`` for one box geom per covering rectangle.
 
         ``maze_utils.wall_boxes`` gives dm_control's geometry, where every wall
-        cell is filled edge to edge.  With ``cell_size=0.35`` that would make the
-        walls as thick as the corridors are wide, so each rectangle is thinned to
-        ``wall_thickness`` along any axis it spans a *single* cell on.
+        cell is filled edge to edge.  That would make the walls as thick as the
+        grid pitch (0.1818 m at the defaults, i.e. as wide as the corridors), so
+        each rectangle is thinned to ``wall_thickness`` along any axis it spans
+        a *single* cell on.
 
         Thinning alone would leave diagonal holes where a thin wall meets a
         perpendicular one, so each side of a rectangle is then extended by
         ``cell_size - wall_thickness`` **iff every grid cell just beyond that
-        side is also a wall**.  That extension always reaches the neighbouring
-        rectangle's near face and never reaches past the neighbouring wall
-        cell, so it can seal a junction but can never intrude into a corridor.
-        Overlapping wall boxes are free: they all live on ``worldbody``, and
-        MuJoCo never generates contact pairs within one body.
+        side is also a wall**.  The extension never reaches past the
+        neighbouring wall *cell*, so the maze stays sealed and no corridor cell
+        is ever entered.  Overlapping wall boxes are free: they all live on
+        ``worldbody``, and MuJoCo never generates contact pairs within one body.
+
+        .. note::
+
+           The neighbouring wall cell is itself only ``wall_thickness`` full
+           once *it* has been thinned, so at a T-junction the extension does
+           poke a nub ``cell_size / 2 - 1.5 * wall_thickness`` into the free
+           space that thinning had handed back (0.046 m at the defaults).  It
+           is a corner nub, not a narrowing of the corridor along its length:
+           the corridor still measures ``1.5 * cell_size + wall_thickness / 2``
+           there (0.288 m) instead of 0.334 m.  Measured and pinned in
+           ``test_corridor_width_is_two_cells_minus_thickness``.
 
         Returns:
             ``(pos, size)``, each ``(n_walls, 3)``; ``size`` is MuJoCo's
@@ -728,11 +895,12 @@ class MazeForageVision(rodent_base.RodentEnv):
     ) -> collections.OrderedDict:
         """Builds the observation tree.
 
-        ``task_obs`` is ``[prev_action, kinematic_sensors, touch_sensors,
-        origin]`` and carries **no** treat information -- that is the entire
-        point of the task, so do not add an ``ego_target`` here.  ``origin``
-        (an exact allocentric position/heading fix in a fixed maze) can be
-        dropped with ``config.include_origin=False``; see that config key.
+        ``task_obs`` is ``[prev_action, kinematic_sensors, touch_sensors]``
+        (plus ``origin`` iff ``config.include_origin``) and carries **no** treat
+        information -- that is the entire point of the task, so do not add an
+        ``ego_target`` here.  ``origin`` (an exact allocentric position/heading
+        fix in a fixed maze, i.e. free global self-localisation) is **off** by
+        default; see that config key.
         ``vision`` is a zeros placeholder that ``VisionRenderWrapper``
         overwrites with real pixels; drop it and the wrapper silently no-ops.
 
@@ -1020,6 +1188,52 @@ class MazeForageVision(rodent_base.RodentEnv):
         return self._maze_walls
 
     @property
+    def cell_size(self) -> float:
+        """Grid pitch in metres: ``maze_extent / (2 * maze_cells + 1)``.
+
+        Derived, not configured (see ``_resolve_cell_size``).  This is NOT the
+        corridor width -- see :attr:`corridor_width`.
+        """
+        return self._cell_size
+
+    @property
+    def maze_extent(self) -> Tuple[float, float]:
+        """Realised outer extent ``(x, y)`` of the maze footprint, in metres.
+
+        Read straight off the compiled grid geometry, so it is a check on
+        ``config.maze_extent`` rather than a copy of it (``__init__`` raises if
+        they disagree).  2.0 x 2.0 m at the defaults, for every ``maze_cells``.
+        """
+        half_x, half_y = self._maze_half_extent
+        return (2.0 * half_x, 2.0 * half_y)
+
+    @property
+    def maze_half_extent(self) -> Tuple[float, float]:
+        """Half-extent ``(x, y)`` of the maze footprint, in metres."""
+        return self._maze_half_extent
+
+    @property
+    def n_free_cells(self) -> int:
+        """Number of open (non-wall) grid cells -- the spawn/treat sample pool."""
+        return self._n_free_cells
+
+    @property
+    def open_cell_fraction(self) -> float:
+        """Fraction of the ``(2n+1)^2`` grid cells that are floor, not wall."""
+        return self._n_free_cells / float(self._maze_grid.size)
+
+    @property
+    def treat_cell_fraction(self) -> float:
+        """Fraction of the maze's free cells that hold a treat at reset.
+
+        Sparsity of the exploration problem in one number: ``n_treats`` treats
+        hidden among :attr:`n_free_cells` reachable cells, resampled every
+        episode.  A larger ``maze_cells`` at fixed ``n_treats`` makes this
+        strictly smaller, i.e. strictly harder under an already-sparse reward.
+        """
+        return self._n_treats / float(self._n_free_cells)
+
+    @property
     def corridor_width(self) -> float:
         """Clear width in metres between two parallel maze walls.
 
@@ -1027,10 +1241,11 @@ class MazeForageVision(rodent_base.RodentEnv):
         thins every single-cell-wide wall rectangle down to ``wall_thickness``,
         which frees ``cell_size - wall_thickness`` of floor on each side of the
         wall, so a nominally one-cell corridor is really
-        ``2 * cell_size - wall_thickness`` wide (0.65 m at the defaults, not
-        0.35 m).  If the thinning is disabled (a degenerate ``wall_thickness``
-        outside ``(0, cell_size)`` falls back to dm_control's full-cell walls)
-        the corridor is exactly one cell.
+        ``2 * cell_size - wall_thickness`` wide -- 0.3336 m at the defaults
+        (``cell_size = 2/11``, ``wall_thickness = 0.03``), against a 0.295 m
+        long, 0.072 m wide rat.  If the thinning is disabled (a degenerate
+        ``wall_thickness`` outside ``(0, cell_size)`` falls back to
+        dm_control's full-cell walls) the corridor is exactly one cell.
         """
         thickness = float(self._config.wall_thickness)
         if not 0.0 < thickness < self._cell_size:

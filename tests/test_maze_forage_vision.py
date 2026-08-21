@@ -17,7 +17,11 @@ frozen-layout / ratcheting-``info`` pair that ``full_reset=False`` causes and
 the entry-point guard against it, the poisoned mutable default config, the
 corridor width vs ``cell_size`` mismatch, the one-frame ghost of a collected
 treat, and the two observation-contract claims (``origin``,
-``privileged_state``).
+``privileged_state``),
+
+plus section 10, the 2026-08-21 resize: the arena is a fixed 2.0 m x 2.0 m
+square for every ``maze_cells``, ``cell_size`` is derived from it, and
+``task_obs`` no longer carries the allocentric ``origin`` fix by default.
 
 These tests touch the GPU (``mujoco_impl="warp"`` is mandatory for this env),
 so run them serially::
@@ -42,11 +46,20 @@ from vnl_playground.tasks.rodent.maze_forage_vision import (
     default_config,
 )
 
-# --- Declared task_obs components (DESIGN.md 3e) ---------------------------
-# task_obs = [prev_action, kinematic_sensors, touch_sensors, origin]
+# --- Declared task_obs components ------------------------------------------
+# task_obs = [prev_action, kinematic_sensors, touch_sensors] (+ origin iff
+# config.include_origin, which is OFF by default since the 2026-08-21 resize).
 N_KINEMATIC_SENSORS = 9  # accelerometer(3) + velocimeter(3) + gyro(3)
 N_TOUCH_SENSORS = 4  # consts.TOUCH_SENSORS
 N_ORIGIN = 3  # origin in the torso frame
+
+# The arena is this many metres across, for every maze_cells (config
+# `maze_extent`; `cell_size` is derived as maze_extent / (2*maze_cells + 1)).
+MAZE_EXTENT_M = 2.0
+
+# Maze sizes the renders in the next phase will choose between.  All three must
+# build, be fully connected, and admit the rat.
+PARAMETERISED_MAZE_CELLS = (4, 5, 6)
 
 _HAS_GPU = any(d.platform == "gpu" for d in jax.devices())
 
@@ -69,6 +82,12 @@ def env() -> MazeForageVision:
 def small_env() -> MazeForageVision:
     """Control env with a different treat count, for delta assertions."""
     return _build_env(n_treats=2)
+
+
+@pytest.fixture(scope="module")
+def origin_env() -> MazeForageVision:
+    """Ablation env with the allocentric ``origin`` fix switched back on."""
+    return _build_env(include_origin=True)
 
 
 def _joint_names(model: mujoco.MjModel) -> list:
@@ -121,6 +140,7 @@ def test_requires_warp_backend():
 
 def test_maze_grid_matches_configured_size(env):
     n_cells = int(env._config.maze_cells)
+    assert n_cells == 5, "default maze_cells changed; update the sizing tests"
     expected = 2 * n_cells + 1
     assert env.maze_grid.shape == (expected, expected)
     # Fixed maze: rebuilding with the same seed reproduces it exactly.
@@ -445,10 +465,15 @@ def test_vmap_step_runs(env):
 
 
 def test_task_obs_size_equals_declared_components(env):
-    """[prev_action, kinematic_sensors, touch, origin] and nothing else."""
-    expected = (
-        env.action_size + N_KINEMATIC_SENSORS + N_TOUCH_SENSORS + N_ORIGIN
-    )
+    """[prev_action, kinematic_sensors, touch] and nothing else.
+
+    ``origin`` is NOT in the default contract any more: it is an exact
+    allocentric position + heading fix in a maze that never changes, i.e. free
+    global self-localisation, which both defeats the vision-only premise and
+    confounds any place-coding claim.  ``include_origin=True`` puts it back.
+    """
+    assert bool(env._config.include_origin) is False
+    expected = env.action_size + N_KINEMATIC_SENSORS + N_TOUCH_SENSORS
     state = jax.jit(env.reset)(jax.random.PRNGKey(0))
     assert state.obs["state"]["task_obs"].shape == (expected,)
     declared = env.non_flattened_observation_size["state"]["task_obs"]
@@ -944,53 +969,165 @@ def _covering_rect(env, row, col):
     return None
 
 
+def _one_cell_corridor_cells(env):
+    """``(row, col)`` of every wall / floor / wall triple down a grid column."""
+    grid = env.maze_grid
+    wall = grid == maze_utils.WALL_CHAR
+    return [
+        (row, col)
+        for col in range(grid.shape[1])
+        for row in range(grid.shape[0] - 2)
+        if wall[row, col] and not wall[row + 1, col] and wall[row + 2, col]
+    ]
+
+
+def _corridor_scans(env):
+    """Per one-cell corridor: clear width, and whether anything else is in it.
+
+    ``n_boxes_on_line`` counts the compiled wall boxes that the scan line
+    actually passes through inside the corridor.  Two is the clean case (just
+    the pair of flanking walls); three means a *perpendicular* wall rectangle
+    has been seal-extended into the corridor at a T-junction, which narrows the
+    measured width to ``1.5 * cell_size + wall_thickness / 2`` -- see
+    ``test_corridor_width_is_two_cells_minus_thickness``.
+    """
+    grid = env.maze_grid
+    cell = env.cell_size
+    pos, half = _wall_boxes_from_model(env)
+    scans = []
+    for row, col in _one_cell_corridor_cells(env):
+        near = maze_utils.grid_to_world((row, col), cell, grid.shape)
+        far = maze_utils.grid_to_world((row + 2, col), cell, grid.shape)
+        x, y_hi, y_lo = float(near[0]), float(near[1]), float(far[1])
+        on_line = int(
+            np.sum(
+                (np.abs(pos[:, 0] - x) <= half[:, 0] + 1e-9)
+                & (pos[:, 1] + half[:, 1] > y_lo)
+                & (pos[:, 1] - half[:, 1] < y_hi)
+            )
+        )
+        near_rect = _covering_rect(env, row, col)
+        far_rect = _covering_rect(env, row + 2, col)
+        scans.append(
+            dict(
+                row=row,
+                col=col,
+                gap=_free_run_along_y(env, x, y_lo, y_hi),
+                n_boxes_on_line=on_line,
+                both_flanks_thinned=(
+                    int(near_rect.end.y) - int(near_rect.start.y) == 1
+                    and int(far_rect.end.y) - int(far_rect.start.y) == 1
+                ),
+            )
+        )
+    return scans
+
+
+def _measured_one_cell_corridors(env) -> np.ndarray:
+    """Clear width of every one-cell corridor, rasterised off the box geoms."""
+    return np.asarray([scan["gap"] for scan in _corridor_scans(env)], dtype=float)
+
+
+def _occupancy_raster(env, step=1e-3, pad=0.3):
+    """Wall-occupancy raster over the maze footprint plus a ``pad`` margin.
+
+    Returns ``(xs, ys, occupied)``; ``occupied[i, j]`` is True where the point
+    ``(xs[i], ys[j])`` is inside a compiled maze wall box.
+    """
+    pos, half = _wall_boxes_from_model(env)
+    half_x, half_y = env.maze_half_extent
+    xs = np.arange(-half_x - pad, half_x + pad, step)
+    ys = np.arange(-half_y - pad, half_y + pad, step)
+    grid_x, grid_y = np.meshgrid(xs, ys, indexing="ij")
+    occupied = np.zeros(grid_x.shape, dtype=bool)
+    for p, h in zip(pos, half):
+        occupied |= (np.abs(grid_x - p[0]) <= h[0]) & (
+            np.abs(grid_y - p[1]) <= h[1]
+        )
+    return xs, ys, occupied
+
+
+def _sealed_enclosure_bbox(env, step=1e-3, pad=0.3):
+    """Bounding box of the free region reachable from inside the maze.
+
+    Flood-fills the free space of :func:`_occupancy_raster` from a known open
+    cell.  If the maze leaked, the component would reach into the ``pad``
+    margin and the bbox would blow past the footprint -- so this doubles as the
+    "the arena is sealed" check.
+    """
+    from scipy import ndimage  # already a transitive dep (bowl_escape imports it)
+
+    xs, ys, occupied = _occupancy_raster(env, step=step, pad=pad)
+    labels, _ = ndimage.label(~occupied)
+    seed_x, seed_y = env.free_cell_positions[0]
+    label = labels[
+        int(np.argmin(np.abs(xs - seed_x))), int(np.argmin(np.abs(ys - seed_y)))
+    ]
+    assert label > 0, "seed point is inside a wall"
+    mask = labels == label
+    xi = np.flatnonzero(mask.any(axis=1))
+    yi = np.flatnonzero(mask.any(axis=0))
+    return (
+        float(xs[xi[0]]),
+        float(xs[xi[-1]]),
+        float(ys[yi[0]]),
+        float(ys[yi[-1]]),
+    )
+
+
 def test_corridor_width_is_two_cells_minus_thickness(env):
     """``cell_size`` is the grid PITCH; thinning roughly doubles the clear width.
 
     ``_wall_box_geometry`` thins a one-cell-wide wall rectangle to
     ``wall_thickness``, handing ``cell_size - wall_thickness`` of floor back to
     the cell on each side, so a nominally one-cell corridor flanked by two
-    thinned walls is really ``2 * cell_size - wall_thickness`` across -- 0.65 m
-    at the defaults, not the 0.35 m the config comment used to claim.  Measured
-    here by rasterising the compiled box geoms, so the docs (and
-    ``corridor_width``) cannot drift away from the geometry.
+    thinned walls is really ``2 * cell_size - wall_thickness`` across -- 0.334 m
+    at the defaults (``cell_size = 2/11``, ``wall_thickness = 0.03``), not the
+    0.182 m grid pitch.  Measured here by rasterising the compiled box geoms, so
+    the docs (and ``corridor_width``) cannot drift away from the geometry.
 
-    Corridors flanked by a wall that spans several cells along the scan axis
-    (those are not thinned on that axis) are narrower; the invariant checked
-    for them is only that thinning never makes a corridor *narrower* than one
-    cell.
+    Two shapes deliver LESS than that, and both are checked, not hidden:
+
+    * a flanking wall that spans several cells along the scan axis is not
+      thinned on that axis, costing ``(cell_size - wall_thickness) / 2`` per
+      such side;
+    * a perpendicular wall rectangle seal-extended into a T-junction pokes a
+      nub ``cell_size / 2 - 1.5 * wall_thickness`` into the corridor (the
+      extension reaches across the neighbouring wall *cell*, and that cell is
+      only ``wall_thickness`` full once the neighbour is thinned).  Measured
+      here: 0.2878 m instead of 0.3336 m at ``maze_cells=5``, i.e. a corner
+      nub, not a narrower corridor along its length.
+
+    Corridors with nothing but their two thinned flanking walls on the scan
+    line hit the formula exactly; the floor over *all* corridors is one cell.
     """
-    cell = float(env._config.cell_size)
+    cell = env.cell_size  # DERIVED: config.cell_size is None by default
     thickness = float(env._config.wall_thickness)
     expected = 2.0 * cell - thickness
     assert env.corridor_width == pytest.approx(expected)
     assert env.corridor_width > cell  # the docs used to claim == cell
 
-    grid = env.maze_grid
-    wall = grid == maze_utils.WALL_CHAR
-    measured, both_thinned = [], []
-    for col in range(grid.shape[1]):
-        for row in range(grid.shape[0] - 2):
-            # wall / free / wall in a column -> a one-cell corridor cell.
-            if not (wall[row, col] and not wall[row + 1, col] and wall[row + 2, col]):
-                continue
-            x = maze_utils.grid_to_world((row, col), cell, grid.shape)[0]
-            y_hi = maze_utils.grid_to_world((row, col), cell, grid.shape)[1]
-            y_lo = maze_utils.grid_to_world((row + 2, col), cell, grid.shape)[1]
-            gap = _free_run_along_y(env, x, y_lo, y_hi)
-            measured.append(gap)
-            near = _covering_rect(env, row, col)
-            far = _covering_rect(env, row + 2, col)
-            if (
-                int(near.end.y) - int(near.start.y) == 1
-                and int(far.end.y) - int(far.start.y) == 1
-            ):
-                both_thinned.append(gap)
+    scans = _corridor_scans(env)
+    measured = [scan["gap"] for scan in scans]
+    clean = [
+        scan["gap"]
+        for scan in scans
+        if scan["both_flanks_thinned"] and scan["n_boxes_on_line"] == 2
+    ]
+    nubbed = [
+        scan["gap"]
+        for scan in scans
+        if scan["both_flanks_thinned"] and scan["n_boxes_on_line"] > 2
+    ]
 
     assert measured, "no one-cell corridor found in the maze"
-    assert both_thinned, "no corridor flanked by two thinned walls"
-    for gap in both_thinned:
+    assert clean, "no corridor flanked by two thinned walls and nothing else"
+    for gap in clean:
         assert gap == pytest.approx(expected, abs=2e-3)
+    # The T-junction nub is a known, bounded loss -- pin its size so it cannot
+    # grow silently into a real narrowing.
+    for gap in nubbed:
+        assert gap == pytest.approx(1.5 * cell + thickness / 2.0, abs=2e-3)
     assert max(measured) == pytest.approx(expected, abs=2e-3)
     assert min(measured) >= cell - 2e-3
 
@@ -1055,29 +1192,51 @@ def _task_obs_shift_when_translated(env, dx=0.5):
     return float(np.linalg.norm(after - before))
 
 
-def test_include_origin_false_drops_the_allocentric_fix(env):
-    """``origin`` is an exact position+heading fix in a fixed maze; make it A/B-able.
+def test_include_origin_adds_exactly_three_elements(env, origin_env):
+    """``origin`` is an exact position+heading fix in a fixed maze; A/B-able.
 
-    Per DESIGN.md 3e ``task_obs`` copies ``go_to_target_vision``'s contract, so
-    ``origin`` stays on by default -- but in a maze that never changes it is a
-    ground-truth place code, which confounds any "the CNN learned to localise"
-    claim.  The switch exists so that can be ablated without editing the task.
+    Default is OFF (the vision-only premise); ``include_origin=True`` recovers
+    ``go_to_target_vision``'s contract (DESIGN.md 3e) as an explicit ablation.
+    The delta must be exactly the 3 elements of ``origin`` and nothing else.
     """
-    no_origin = _build_env(include_origin=False)
-    state = jax.jit(no_origin.reset)(jax.random.PRNGKey(0))
-    expected = no_origin.action_size + N_KINEMATIC_SENSORS + N_TOUCH_SENSORS
-    assert state.obs["state"]["task_obs"].shape == (expected,)
-    assert int(no_origin.non_flattened_observation_size["state"]["task_obs"]) == (
-        expected
-    )
-    assert int(env.non_flattened_observation_size["state"]["task_obs"]) == (
-        expected + N_ORIGIN
+    assert bool(env._config.include_origin) is False
+    assert bool(origin_env._config.include_origin) is True
+
+    base = env.action_size + N_KINEMATIC_SENSORS + N_TOUCH_SENSORS
+    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    assert state.obs["state"]["task_obs"].shape == (base,)
+    assert int(env.non_flattened_observation_size["state"]["task_obs"]) == base
+
+    with_origin = jax.jit(origin_env.reset)(jax.random.PRNGKey(0))
+    assert with_origin.obs["state"]["task_obs"].shape == (base + N_ORIGIN,)
+    assert int(
+        origin_env.non_flattened_observation_size["state"]["task_obs"]
+    ) == base + N_ORIGIN
+
+    # ...and the leading elements are the same quantities in both.
+    np.testing.assert_allclose(
+        np.asarray(with_origin.obs["state"]["task_obs"])[:base],
+        np.asarray(state.obs["state"]["task_obs"]),
+        atol=1e-6,
     )
 
-    # Translating the rodent moves task_obs by exactly the translation with
-    # `origin` on, and by nothing (bar float noise) with it off.
-    assert _task_obs_shift_when_translated(env, 0.5) == pytest.approx(0.5, abs=1e-3)
-    assert _task_obs_shift_when_translated(no_origin, 0.5) < 1e-4
+    # observation_size (task_obs + proprioception) tracks the same delta.
+    assert int(origin_env.observation_size) - int(env.observation_size) == N_ORIGIN
+
+
+def test_task_obs_is_invariant_to_a_global_translation(env, origin_env):
+    """No global self-localisation channel in the default ``task_obs``.
+
+    Rigidly translating the rodent through the world must leave ``task_obs``
+    unchanged: everything in it is egocentric (previous action, IMU, touch).
+    With ``include_origin=True`` the same translation moves ``task_obs`` by
+    exactly the translation distance -- that IS the confound, measured.
+    """
+    for dx in (0.25, 0.5, 0.9):
+        assert _task_obs_shift_when_translated(env, dx) < 1e-4
+        assert _task_obs_shift_when_translated(origin_env, dx) == pytest.approx(
+            dx, abs=1e-3
+        )
 
 
 def test_privileged_state_has_no_duplicate_vision_buffer(env):
@@ -1120,3 +1279,284 @@ def test_highlvl_wrapper_drops_privileged_state_in_vision_mode(env):
     assert set(state.obs) == {"imitation_target", "proprioception", "vision"}
     assert "privileged_state" not in state.obs
     assert "treat_vectors" not in state.obs
+
+
+# ===========================================================================
+# 10. SIZING: fixed 2.0 m x 2.0 m arena, derived cell_size (2026-08-21)
+# ===========================================================================
+# `maze_extent` is now what stays fixed and `cell_size` is derived from it, so
+# turning `maze_cells` up narrows the corridors instead of growing the arena.
+# The renders in the next phase pick between maze_cells 4 / 5 / 6, so all three
+# have to build, be fully connected and admit the rat.
+
+
+def _grid_size(maze_cells: int) -> int:
+    """Character-grid side length for ``maze_cells`` logical cells."""
+    return 2 * int(maze_cells) + 1
+
+
+def _wall_outer_faces(env):
+    """``(min_x, max_x, min_y, max_y)`` of the compiled wall boxes, in metres."""
+    pos, half = _wall_boxes_from_model(env)
+    lo = (pos - half).min(axis=0)
+    hi = (pos + half).max(axis=0)
+    return float(lo[0]), float(hi[0]), float(lo[1]), float(hi[1])
+
+
+def _free_cells_are_connected(grid) -> bool:
+    """4-connectivity flood fill over the non-wall cells of a maze grid."""
+    free = grid != maze_utils.WALL_CHAR
+    idx = np.argwhere(free)
+    assert idx.size, "maze has no free cells"
+    height, width = grid.shape
+    start = (int(idx[0][0]), int(idx[0][1]))
+    seen = {start}
+    stack = [start]
+    while stack:
+        row, col = stack.pop()
+        for d_row, d_col in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            n_row, n_col = row + d_row, col + d_col
+            if (
+                0 <= n_row < height
+                and 0 <= n_col < width
+                and free[n_row, n_col]
+                and (n_row, n_col) not in seen
+            ):
+                seen.add((n_row, n_col))
+                stack.append((n_row, n_col))
+    return len(seen) == int(free.sum())
+
+
+def _rodent_aabb(env) -> np.ndarray:
+    """World-axis-aligned bounding box ``(dx, dy, dz)`` of the rodent, in metres.
+
+    Built from every non-maze, non-treat, non-worldbody geom's own ``geom_aabb``
+    rotated into the world at the compile pose, which is a much tighter bound
+    than ``geom_rbound`` (0.308 x 0.080 x 0.092 m vs 0.308 x 0.099 x 0.111 m).
+    Planes are skipped -- MuJoCo gives them an effectively infinite aabb.
+    """
+    model = env.mj_model
+    data = mujoco.MjData(model)
+    root = env._rodent_root_qpos
+    data.qpos[:] = model.qpos0
+    data.qpos[root : root + 3] = 0.0
+    data.qpos[root + 3 : root + 7] = (1.0, 0.0, 0.0, 0.0)
+    mujoco.mj_forward(model, data)
+
+    corners = np.array(
+        [[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)],
+        dtype=float,
+    )
+    lo = np.full(3, np.inf)
+    hi = np.full(3, -np.inf)
+    for gid in range(model.ngeom):
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or ""
+        if name.startswith("maze_wall_") or name.startswith("treat_"):
+            continue
+        if model.geom_bodyid[gid] == 0:  # worldbody (floor plane)
+            continue
+        if model.geom_type[gid] == mujoco.mjtGeom.mjGEOM_PLANE:
+            continue
+        centre, half = model.geom_aabb[gid, :3], model.geom_aabb[gid, 3:]
+        rot = data.geom_xmat[gid].reshape(3, 3)
+        pts = data.geom_xpos[gid] + (rot @ (centre + corners * half).T).T
+        lo = np.minimum(lo, pts.min(axis=0))
+        hi = np.maximum(hi, pts.max(axis=0))
+    return hi - lo
+
+
+def test_maze_extent_is_exactly_two_metres(env):
+    """The headline number: a 2.0 m x 2.0 m square arena, measured three ways."""
+    grid_size = _grid_size(int(env._config.maze_cells))
+    assert env.maze_grid.shape == (grid_size, grid_size)
+
+    # 1. the configured contract.
+    assert float(env._config.maze_extent) == MAZE_EXTENT_M
+    # 2. grid_size * cell_size, i.e. the derivation itself.
+    assert env.cell_size == pytest.approx(MAZE_EXTENT_M / grid_size, abs=1e-12)
+    assert grid_size * env.cell_size == pytest.approx(MAZE_EXTENT_M, abs=1e-9)
+    # 3. the realised footprint the env reports (re-derived off the grid).
+    assert env.maze_extent == pytest.approx(
+        (MAZE_EXTENT_M, MAZE_EXTENT_M), abs=1e-9
+    )
+    assert env.maze_half_extent == pytest.approx(
+        (MAZE_EXTENT_M / 2, MAZE_EXTENT_M / 2), abs=1e-9
+    )
+
+    # ...and 4: every compiled wall box lies inside that footprint.  NOTE the
+    # box bounding box is not itself exactly 2.0 m and is not symmetric -- the
+    # greedy covering hands the top border row to a one-row rectangle, which is
+    # then thinned, so its outer face sits at +0.924 m while the un-thinned
+    # border column reaches -1.0 m.  Pre-existing geometry, unrelated to the
+    # resize; what matters is containment, which is asserted.
+    half = MAZE_EXTENT_M / 2
+    min_x, max_x, min_y, max_y = _wall_outer_faces(env)
+    assert min_x >= -half - 1e-9 and max_x <= half + 1e-9
+    assert min_y >= -half - 1e-9 and max_y <= half + 1e-9
+    assert min_x == pytest.approx(-half, abs=1e-9)  # left border is un-thinned
+
+    # 5: the arena is SEALED, and the enclosed span is the footprint minus one
+    # border cell and one wall thickness (the border walls are thinned and sit
+    # on their cell centres).  A leak would let the flood fill escape into the
+    # padding and blow this bbox past the footprint.
+    step = 1e-3
+    encl_min_x, encl_max_x, encl_min_y, encl_max_y = _sealed_enclosure_bbox(
+        env, step=step
+    )
+    expected_span = MAZE_EXTENT_M - env.cell_size - float(
+        env._config.wall_thickness
+    )
+    assert encl_max_x - encl_min_x == pytest.approx(expected_span, abs=2 * step)
+    assert encl_max_y - encl_min_y == pytest.approx(expected_span, abs=2 * step)
+    # Symmetric about the origin, and strictly inside the footprint.
+    assert encl_min_x == pytest.approx(-encl_max_x, abs=2 * step)
+    assert encl_min_y == pytest.approx(-encl_max_y, abs=2 * step)
+    assert encl_max_x < half and encl_max_y < half
+
+
+def test_corridor_width_matches_the_formula(env):
+    """``corridor_width == 2 * cell_size - wall_thickness``, from the extent."""
+    grid_size = _grid_size(int(env._config.maze_cells))
+    cell = MAZE_EXTENT_M / grid_size
+    thickness = float(env._config.wall_thickness)
+    assert 0.0 < thickness < cell  # else the thinning falls back to full cells
+    assert env.cell_size == pytest.approx(cell, abs=1e-12)
+    assert env.corridor_width == pytest.approx(2.0 * cell - thickness, abs=1e-12)
+    # 2/11 m pitch, 0.03 m walls -> 0.3336 m of clear corridor.
+    assert env.corridor_width == pytest.approx(0.333636, abs=1e-6)
+
+
+def test_cell_size_is_derived_and_scales_with_maze_cells():
+    """Changing ``maze_cells`` re-scales the corridors, never the arena."""
+    extents, cells = [], []
+    for maze_cells in PARAMETERISED_MAZE_CELLS:
+        sized = _build_env(maze_cells=maze_cells)
+        extents.append(sized.maze_extent)
+        cells.append(sized.cell_size)
+        assert sized.cell_size == pytest.approx(
+            MAZE_EXTENT_M / _grid_size(maze_cells), abs=1e-12
+        )
+    for extent in extents:
+        assert extent == pytest.approx((MAZE_EXTENT_M, MAZE_EXTENT_M), abs=1e-9)
+    # Strictly decreasing pitch: 0.2222 -> 0.1818 -> 0.1538.
+    assert cells == sorted(cells, reverse=True)
+    assert len(set(cells)) == len(cells)
+
+
+def test_explicit_cell_size_must_agree_with_maze_extent():
+    """A stale ``cell_size:`` in a yaml must raise, not silently resize the arena."""
+    with pytest.raises(ValueError, match="maze_extent"):
+        _build_env(cell_size=0.35)  # the pre-resize default: a 3.85 m maze
+    with pytest.raises(ValueError, match="maze_extent"):
+        _build_env(maze_cells=4, cell_size=MAZE_EXTENT_M / 11)  # right size, wrong grid
+
+    # A consistent explicit value is accepted and honoured.
+    explicit = _build_env(cell_size=MAZE_EXTENT_M / 11)
+    assert explicit.cell_size == pytest.approx(MAZE_EXTENT_M / 11, abs=1e-12)
+    assert explicit.maze_extent == pytest.approx(
+        (MAZE_EXTENT_M, MAZE_EXTENT_M), abs=1e-9
+    )
+
+
+def test_non_positive_maze_extent_raises():
+    with pytest.raises(ValueError, match="maze_extent must be > 0"):
+        _build_env(maze_extent=0.0)
+
+
+@pytest.mark.parametrize("maze_cells", PARAMETERISED_MAZE_CELLS)
+def test_parameterised_maze_sizes_build_and_are_navigable(maze_cells):
+    """maze_cells 4 / 5 / 6 all build, keep the 2.0 m arena, and are navigable.
+
+    "Navigable" here is three concrete checks, not a vibe:
+
+    1. every open grid cell is reachable from every other one (4-connectivity
+       flood fill) -- a perfect maze is a spanning tree, so an island would
+       mean the carve or the wall covering is broken;
+    2. the *narrowest* corridor measured off the compiled box geoms still
+       clears the rat's body width, so no corridor is a wall;
+    3. the sampled spawn/treat cells all sit inside the arena footprint.
+
+    Turning in place additionally wants a corridor wider than the rat is LONG
+    (0.308 m measured).  Only maze_cells 4 and 5 clear that on their widest
+    corridors; the narrowest segments (flanked by a multi-cell wall rectangle,
+    which is not thinned on that axis) do not, at any of the three sizes.  That
+    is reported, not asserted -- it is a design trade-off for the human picking
+    a size from the renders, not a correctness property.
+    """
+    sized = _build_env(maze_cells=maze_cells)
+    grid_size = _grid_size(maze_cells)
+
+    # -- 2.0 m arena, derived pitch --------------------------------------
+    assert sized.maze_grid.shape == (grid_size, grid_size)
+    assert sized.maze_extent == pytest.approx(
+        (MAZE_EXTENT_M, MAZE_EXTENT_M), abs=1e-9
+    )
+    assert sized.cell_size == pytest.approx(MAZE_EXTENT_M / grid_size, abs=1e-12)
+    assert sized.corridor_width == pytest.approx(
+        2.0 * sized.cell_size - float(sized._config.wall_thickness), abs=1e-12
+    )
+
+    # -- 1. connectivity --------------------------------------------------
+    assert _free_cells_are_connected(sized.maze_grid)
+    assert sized.n_free_cells == int(
+        np.sum(sized.maze_grid != maze_utils.WALL_CHAR)
+    )
+
+    # -- 2. the rat fits down the narrowest corridor ----------------------
+    body = _rodent_aabb(sized)
+    body_width = float(body[1])
+    gaps = _measured_one_cell_corridors(sized)
+    assert gaps.size, "no one-cell corridor found"
+    assert gaps.min() > body_width, (
+        f"narrowest corridor {gaps.min():.4f} m does not clear the "
+        f"{body_width:.4f} m body width"
+    )
+    assert gaps.max() == pytest.approx(sized.corridor_width, abs=2e-3)
+
+    # -- 3. sampled cells are inside the footprint ------------------------
+    half_x, half_y = sized.maze_half_extent
+    free = sized.free_cell_positions
+    assert np.all(np.abs(free[:, 0]) <= half_x + 1e-9)
+    assert np.all(np.abs(free[:, 1]) <= half_y + 1e-9)
+
+    state = jax.jit(sized.reset)(jax.random.PRNGKey(0))
+    treats = _treat_xy(sized, state.data)
+    spawn = _spawn_xy(sized, state.data)
+    assert np.all(np.abs(treats[:, 0]) <= half_x) and np.all(
+        np.abs(treats[:, 1]) <= half_y
+    )
+    assert abs(spawn[0]) <= half_x and abs(spawn[1]) <= half_y
+
+    # -- reported, not asserted: exploration sparsity ---------------------
+    print(
+        f"maze_cells={maze_cells}: grid {grid_size}x{grid_size}, "
+        f"cell {sized.cell_size:.6f} m, corridor {sized.corridor_width:.4f} m "
+        f"(measured max {gaps.max():.4f}, min {gaps.min():.4f}), "
+        f"{sized.n_free_cells} free cells, "
+        f"open-cell fraction {sized.open_cell_fraction:.4f}, "
+        f"treat/free-cell fraction {sized.treat_cell_fraction:.4f}"
+    )
+
+
+def test_treat_density_is_reported_by_the_env(env):
+    """``treat_cell_fraction`` is the sparsity of the exploration problem.
+
+    Not a threshold -- ``n_treats`` is a human decision that this pins the
+    consequences of: at ``maze_cells=5`` the shipped ``n_treats=4`` covers 4/49
+    of the reachable cells, and it gets strictly sparser as ``maze_cells`` grows
+    because the arena size is fixed.
+    """
+    assert env.n_free_cells == int(np.sum(env.maze_grid != maze_utils.WALL_CHAR))
+    assert env.treat_cell_fraction == pytest.approx(
+        env.n_treats / env.n_free_cells
+    )
+    assert env.open_cell_fraction == pytest.approx(
+        env.n_free_cells / env.maze_grid.size
+    )
+    denser = _build_env(maze_cells=4)
+    sparser = _build_env(maze_cells=6)
+    assert (
+        sparser.treat_cell_fraction
+        < env.treat_cell_fraction
+        < denser.treat_cell_fraction
+    ), "treat density must fall as the maze gains cells at fixed arena size"

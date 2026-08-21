@@ -37,17 +37,27 @@ env_config:
     torque_actuators: true
     rescale_factor: 0.9
     # -- Maze (fixed for the whole run; regenerated only if maze_seed changes)
-    maze_cells: 3           # -> 7 x 7 character grid
-    # GRID PITCH, not corridor width. Wall rectangles are thinned to
-    # wall_thickness, so a nominally one-cell corridor is really
-    # 2*cell_size - wall_thickness = 0.65 m wide here (env.corridor_width
-    # reports it; the rat is ~0.2 m at rescale 0.9, so this is roomy). For a
-    # corridor of width W set cell_size = (W + wall_thickness)/2 -- e.g.
-    # cell_size: 0.20 gives the 0.35 m corridor DESIGN.md 3b asks for, in a
-    # 1.4 m arena instead of a 2.45 m one.
-    cell_size: 0.35
+    # The arena is maze_extent x maze_extent metres for EVERY maze_cells:
+    # cell_size is DERIVED as maze_extent / (2*maze_cells + 1), so turning
+    # maze_cells up narrows the corridors instead of growing the arena.
+    # env.maze_extent re-derives the realised footprint off the geometry and
+    # __init__ raises if it does not match this number.
+    maze_extent: 2.0        # m, outer extent of the maze footprint (square)
+    maze_cells: 5           # -> 11 x 11 character grid, cell_size = 2/11
+    # Corridor width is 2*cell_size - wall_thickness (env.corridor_width),
+    # NOT cell_size. At maze_cells=5 that is 0.334 m against a rat measured
+    # 0.308 m long x 0.080 m wide x 0.092 m tall (AABB over the rodent geoms
+    # at rescale_factor 0.9), so a corridor clears the body length and the rat
+    # can turn around without relying on spine flexion. Alternatives in the
+    # same 2.0 m arena: maze_cells 4 -> 0.414 m / 16 cells,
+    # 6 -> 0.278 m / 36 cells (below body length: turning needs flexion).
+    # NOTE corridor segments flanked by a multi-cell wall rectangle are not
+    # thinned on that axis and measure 1.5*cell_size - wall_thickness/2
+    # (0.258 m at maze_cells=5) -- see test_corridor_width_*.
+    # Leave cell_size unset (null) unless you also set a matching maze_extent.
+    cell_size: null
     wall_height: 0.3        # m; occludes and cannot be climbed
-    wall_thickness: 0.05    # m
+    wall_thickness: 0.03    # m
     maze_seed: 0
     maze_loop_fraction: 0.0
     # -- Treats (resampled without replacement every reset)
@@ -59,11 +69,12 @@ env_config:
     # -- Spawn
     spawn_height: 0.005
     # -- Observation. `origin` is the world origin in the torso frame, i.e. an
-    #    exact allocentric position + heading fix in a FIXED maze. It is part
-    #    of go_to_target_vision's task_obs contract (DESIGN.md 3e) so it is on
-    #    by default, but set it false to remove the place-code confound when
-    #    asking whether the CNN itself learned to localise.
-    include_origin: true
+    #    exact allocentric position + heading fix in a FIXED maze -- global
+    #    self-localisation for free. That defeats the vision-only premise and
+    #    confounds any "the CNN learned to localise" claim, so it is OFF.
+    #    Set it true only to recover go_to_target_vision's task_obs contract
+    #    (DESIGN.md 3e) as an explicit ablation.
+    include_origin: false
     # -- Reward: SPARSE, +1 per treat on first reach. Nothing else. Adding a
     #    dense shaping term here would defeat the point of the task.
     reward_terms:
@@ -146,7 +157,7 @@ logging_config:
   project_name: vnl-playground
   group_name: maze-forage-vision
   model_path: checkpoints_maze_forage_vision
-  notes: "Fixed maze, 4 treats, sparse +1 per treat, vision-only task_obs"
+  notes: "2.0 m fixed maze (11x11), 4 treats, sparse +1 per treat, vision-only task_obs (no origin)"
   exp_name: maze_forage_v1
 
 render_config:
