@@ -180,6 +180,7 @@ class BowlEscape(rodent_base.RodentEnv):
             naconmax=self._config.naconmax,
             njmax=self._config.njmax,
         )
+        data = mjx.forward(self.mjx_model, data)
         metrics = {}
 
         obs = self._get_obs(data, info)

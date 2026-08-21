@@ -101,6 +101,7 @@ class MaintainVelocity(stick_base.StickBugEnv):
             naconmax=self._config.naconmax,
             njmax=self._config.njmax,
         )
+        data = mjx.forward(self.mjx_model, data)
         metrics = {}
         obs = self._get_obs(data, info)
         reward = self._get_reward(data, info, metrics)
