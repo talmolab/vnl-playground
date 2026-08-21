@@ -300,7 +300,25 @@ train_config:
   unroll_length: 50
   batch_size: 1024
   min_replay_size: 50_000
-  max_replay_size: 400_000
+  # SIZED TO ~95% OF THE 5090, measured rather than guessed.
+  # max_size per env = max(sequence_length + 1, max_replay_size // num_envs),
+  # so 400_000 was only 195 steps/env -- 2.18 GB of a 32,607 MiB card.
+  #
+  # Measured bytes per stored transition by walking the actual observation tree
+  # (vision uint8, next_observation dropped, plus action/reward/discount and the
+  # two anchor_* extras): 5,456 B. Steady-state total at 400_000 was 13.2 GB, so
+  # non-buffer is ~11.0 GB, leaving ~21.5 GB for the buffer at 95%:
+  #
+  #   3_932_160 = 1920 steps/env x 2048 envs = 21.45 GB  -> ~32.5 GB total
+  #
+  # THIS IS AN ALGORITHM CHANGE, not just a memory one. The buffer is 9.8x
+  # deeper at fixed sgd_steps_per_rollout=50, so each transition is revisited
+  # ~10x fewer times before eviction and the average sample is ~10x staler.
+  # Under sparse reward that cuts both ways: rare rewarding transitions survive
+  # far longer (the reason w2 wanted depth), but the critic trains on older
+  # policy data. If learning slows versus the a1 curve, this is the first
+  # suspect, and sgd_steps_per_rollout is the knob that compensates.
+  max_replay_size: 3_932_160
   # 101 = n_step + 1, REQUIRED by store_next_observation: false below --
   # the bootstrap state is read from observation[:, 100] instead of from a
   # stored next_observation, and DMPOConfig raises if the two disagree.
@@ -332,7 +350,12 @@ train_config:
   # per rollout; x iters_per_chunk. K=200 (batch=256) stalled the 2026-05-04 run.
   iters_per_chunk: 8
   log_every_steps: 1_000_000
-  eval_every_steps: 10_000_000
+  # 25M, not 10M: at a 1B budget that is 40 evals instead of 100. Each eval is a
+  # 2000-step rollout plus a 2001-frame video render (~74 s measured on the a1
+  # run), so this cuts ~2 h of eval overhead down to ~50 min without losing
+  # curve shape -- a1's treats/episode moved slowly enough that 25M spacing
+  # still resolves it.
+  eval_every_steps: 25_000_000
 
   # ---- MPO overrides of /rodent-dmpo-base (measured 2026-05-07) -------------
   # vnl-ray's MO-MPO penalty is `-||a||` over ALL action magnitudes, not just
