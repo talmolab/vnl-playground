@@ -1,6 +1,6 @@
 # @package _global_
 # =============================================================================
-# ARM maze_a1_sparse_vision  --  VISION-ONLY SPARSE MAZE FORAGING (DMPO)
+# ARM maze_a2_posture_1b  --  VISION-ONLY SPARSE MAZE FORAGING (DMPO), 1B
 #
 # The rat is dropped into a fixed 6.46 m, 21x21 maze at a random free cell with
 # a random heading, and 20 treats are scattered over the other free cells. Each
@@ -187,7 +187,35 @@ env_config:
   # wasted simulation, not a corrupted objective. If dead episodes turn out to
   # dominate the replay, the next lever is a height-only guard
   # (min_torso_z ~0.015, no angle term), NOT m9's pair.
+  # POSTURE TERMINATIONS, rearing-safe. The previous config had none at all,
+  # because the only one available (`fallen`) ended 100% of episodes at ~1.2 s.
+  # The reason it did is now measured rather than guessed: over the 210,500
+  # frames of real rat motion in rodent_reference_clips.h5 -- the data this
+  # task's frozen prior was trained to imitate -- torso tilt from upright is
+  #
+  #   median 11.5 deg   p95 90.7 deg   p99 98.2 deg   max 120.8 deg
+  #     frames >  70 deg : 14.00%   <- rodent_base `fallen` default
+  #     frames >  85 deg :  8.13%   <- the DMPO gap arms' value
+  #     frames > 100 deg :  0.61%
+  #     frames > 120 deg :  0.0019%
+  #     frames > 140 deg :  0.0000%
+  #
+  # so an 85 deg gate ends episodes on postures real rats hold 8% of the time:
+  # rearing and nosing downward. 140 deg is exceeded by ZERO reference frames,
+  # so it can only fire on a genuinely inverted body. The discriminator is
+  # xmat[2,2] (torso z-axis . world z), not a tilt magnitude -- rearing pitches
+  # about the lateral axis and keeps it positive; belly-up drives it to -1.
+  #
+  # Height is the innocent half and is kept: NO reference frame goes below
+  # 0.0354 m, while a rodent collapsed under zero torque settles at ~0.031 m,
+  # so 0.0325 separates them without touching normal motion.
+  #
+  # `patience` (50 steps = 0.5 s at ctrl_dt 0.01) is the "cannot recover" half:
+  # the counter resets on the first good step, so a tumble that rights itself
+  # never terminates.
   termination_criteria:
+    belly_up: {max_tilt_angle: 140.0, patience: 50}
+    torso_too_low: {min_torso_z: 0.0325, patience: 50}
     all_treats_collected: {}
     nan_termination: {}
 
@@ -268,7 +296,7 @@ kl_anchor:
 
 train_config:
   num_envs: 2048
-  num_timesteps: 300_000_000
+  num_timesteps: 1_000_000_000
   unroll_length: 50
   batch_size: 1024
   min_replay_size: 50_000
@@ -375,16 +403,16 @@ train_config:
 
 logging_config:
   project_name: dmpo-rodent
-  exp_name: maze_a1_sparse_vision
+  exp_name: maze_a2_posture_1b
   group_name: RodentMazeForageVision-frozen-prior
-  notes: "maze_a1_sparse_vision: first DMPO arm on the vision-only sparse maze forage task. 6.46 m / 21x21 maze, 20 treats, random spawn cell + heading and random treat cells EVERY episode (wrappers.full_reset=true; the layout lives in Data because warp ignores per-world Model edits). task_obs carries no treat vector and include_origin is off, so the 32x32 binocular pair is the only channel that can locate a treat. All DMPO parameters are arm_m9_m7_inforeset's, unchanged: cold start on the frozen combined prior 260407_183223_056788, pure sparse from step 0, K=50, temperature floor -7, n_step=100, gamma=0.995, C51 [0,20]x101 (n_treats=20 at weight 1.0 makes the undiscounted return literally treats-collected). No warm start, no reward anneal, no behavior mixing -- none of the three has a dense reference checkpoint for this task; they are the follow-ups if this starves."
+  notes: "maze_a2_posture_1b: 1B-step vision-only sparse maze forage. Supersedes maze_a1_sparse_vision (proof of concept, stopped by user at 266.9M; treats/episode rose 0.054 @10M -> 1.018 @265M, r_anchor 0.94 -> 0.35, so the task is learnable and had not plateaued). ONE factor changed: posture terminations are back, but rearing-safe. a1 ran with NO fall termination at all, because the only one available (fallen, tilt gate at 85 deg) ended 100% of episodes at ~1.2 s. Measured over the 210,500 frames of rodent_reference_clips.h5 -- the data this run's frozen prior was trained to imitate -- torso tilt from upright is median 11.5 deg, p95 90.7, p99 98.2, max 120.8; 8.13% of frames exceed 85 deg and ZERO exceed 140 deg. So the 85 deg gate was terminating on ordinary rearing and nose-down foraging. a2 uses belly_up (xmat[2,2], 140 deg, patience 50 steps) and torso_too_low (0.0325 m, patience 50); no reference frame violates either, and patience encodes 'cannot recover' so a tumble that rights itself does not end the episode. Prior/decoder unchanged and frozen: combined all-clips imitation prior 260407_183223_056788 / PriorNetwork_14, intention_size 16, prior [1536,1024,512], decoder [512,512,512,256,256]. Eval videos now render top-down + close-up panels side by side; the historical single camera showed the rat in only 33% of frames."
 
 # ABSOLUTE, deliberately. A relative './checkpoints/...' resolves against the
 # launch cwd; a 2026-05-07 launch fired from the SalkResearch root instead of
 # the repo root silently wrote to an empty dir, logged "Found 0 checkpoint
 # steps", skipped auto-resume and died ~10 s in, leaving a stub wandb run that
 # looked like a completed experiment.
-checkpoint_dir: /home/talmolab/Desktop/SalkResearch/_implementation_log/DMPO/checkpoints/maze_a1_sparse_vision
+checkpoint_dir: /home/talmolab/Desktop/SalkResearch/_implementation_log/DMPO/checkpoints/maze_a2_posture_1b
 
 # See the header: this is the one setting that silently voids the experiment if
 # it is missing, and the entry point refuses to launch this env without it.

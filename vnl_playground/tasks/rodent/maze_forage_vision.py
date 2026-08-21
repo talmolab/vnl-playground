@@ -216,6 +216,8 @@ INFO_RESET_KEYS = (
     "step_count",
     "collected",
     "n_collected",
+    "belly_up_steps",
+    "low_torso_steps",
 )
 
 
@@ -313,8 +315,14 @@ def default_config() -> config_dict.ConfigDict:
             "treat_collected": {"weight": 1.0},
         },
         # --- Termination criteria ---
+        # `belly_up` + `torso_too_low` rather than `fallen`: the latter's tilt
+        # gate cannot distinguish a reared rat from a fallen one, and real rat
+        # motion spends 8% of its frames past 85 deg (see _belly_up_termination
+        # for the measured distribution). Both new criteria are rate-limited by
+        # `patience` consecutive steps, which is what encodes "cannot recover".
         termination_criteria={
-            "fallen": {"min_torso_z": 0.01, "max_torso_angle": 70},
+            "belly_up": {"max_tilt_angle": 140.0, "patience": 50},
+            "torso_too_low": {"min_torso_z": 0.0325, "patience": 50},
             "all_treats_collected": {},
             "nan_termination": {},
         },
@@ -948,6 +956,10 @@ class MazeForageVision(rodent_base.RodentEnv):
             "step_count": jp.array(0, dtype=jp.int32),
             "collected": jp.zeros((self._n_treats,), dtype=bool),
             "n_collected": jp.array(0, dtype=jp.int32),
+            # Consecutive-step counters behind the `belly_up` /
+            # `torso_too_low` terminations; see _update_posture_counters.
+            "belly_up_steps": jp.array(0, dtype=jp.int32),
+            "low_torso_steps": jp.array(0, dtype=jp.int32),
         }
 
         data = mjx.make_data(
@@ -1014,6 +1026,8 @@ class MazeForageVision(rodent_base.RodentEnv):
         info["prev_action"] = info["action"]
         info["action"] = action
         info["step_count"] = info["step_count"] + 1
+        # MUST run before _is_done: the posture terminations only read counters.
+        self._update_posture_counters(data, info)
 
         done = self._is_done(data, info, state.metrics)
         reward = self._get_reward(data, info, state.metrics)
@@ -1260,6 +1274,114 @@ class MazeForageVision(rodent_base.RodentEnv):
         """Terminate once every treat has been collected."""
         del data
         return jp.all(info["collected"])
+
+    def _torso_posture(self, data: mjx.Data):
+        """``(torso_z, cos_tilt)`` where ``cos_tilt`` is the torso z-axis . world z.
+
+        ``cos_tilt`` is ``xmat[2, 2]``: +1 upright, 0 on its side, -1 belly up.
+        It is the quantity both posture terminations are written against,
+        because it separates "reared" from "inverted" while a plain tilt
+        magnitude does not.
+        """
+        torso = self._torso(data)
+        return torso.xpos[2], torso.xmat[-1, -1]
+
+    def _update_posture_counters(self, data: mjx.Data, info) -> None:
+        """Advances the consecutive-step counters the posture terminations read.
+
+        Each counter counts how long its condition has held WITHOUT
+        interruption; a single good step resets it to zero.  That is what turns
+        "is inverted right now" into "is inverted and not recovering", which is
+        the actual failure we want to end an episode on.  Mutates ``info``.
+        """
+        torso_z, cos_tilt = self._torso_posture(data)
+
+        crit = self._config.termination_criteria
+        belly_cfg = crit.get("belly_up", {}) or {}
+        low_cfg = crit.get("torso_too_low", {}) or {}
+        max_tilt = float(belly_cfg.get("max_tilt_angle", 140.0))
+        min_z = float(low_cfg.get("min_torso_z", 0.0325))
+
+        inverted = cos_tilt < float(np.cos(np.deg2rad(max_tilt)))
+        too_low = torso_z < min_z
+        info["belly_up_steps"] = jp.where(
+            inverted, info["belly_up_steps"] + 1, jp.zeros_like(info["belly_up_steps"])
+        )
+        info["low_torso_steps"] = jp.where(
+            too_low, info["low_torso_steps"] + 1, jp.zeros_like(info["low_torso_steps"])
+        )
+
+    @_registry.termination("belly_up")
+    def _belly_up_termination(
+        self, data, info, max_tilt_angle: float = 140.0, patience: int = 50
+    ) -> bool:
+        """End the episode only when the rodent is inverted and staying that way.
+
+        THE POINT OF THIS CRITERION is that ``fallen``'s tilt gate cannot tell a
+        rearing rat from a fallen one.  Measured over the 210,500 frames of real
+        rat motion in ``rodent_reference_clips.h5`` -- the data this task's
+        frozen prior was trained to imitate -- torso tilt from upright is:
+
+            median 11.5 deg,  p95 90.7 deg,  p99 98.2 deg,  max 120.8 deg
+            frames >  70 deg : 14.00%   <- rodent_base `fallen` default
+            frames >  85 deg :  8.13%   <- what the DMPO gap arms use
+            frames > 100 deg :  0.61%
+            frames > 120 deg :  0.0019%
+            frames > 140 deg :  0.0000%
+
+        Real rats spend 8% of their time past the 85 deg gate, rearing and
+        nosing downward. A tilt gate anywhere in that range ends episodes on
+        NORMAL behaviour. 140 deg is exceeded by zero frames of real motion, so
+        it can only fire on a genuinely inverted body.
+
+        ``cos_tilt`` (``xmat[2, 2]``) rather than a tilt magnitude is what makes
+        this work: rearing pitches the torso about its lateral axis and keeps
+        ``cos_tilt`` positive, while belly-up drives it to -1.
+
+        ``patience`` is the "and cannot recover" half. A rat that tumbles
+        through an inverted pose for a few frames and rights itself never
+        reaches the count; the counter resets on the first good step.
+
+        Args:
+            data: Simulation data (unused; the counter is maintained in step()).
+            info: State info carrying ``belly_up_steps``.
+            max_tilt_angle: Degrees from upright beyond which the body counts as
+                inverted. Read in ``_update_posture_counters``, not here.
+            patience: Consecutive inverted steps required to terminate.
+
+        Returns:
+            Whether the rodent has been inverted for ``patience`` steps.
+        """
+        del data, max_tilt_angle
+        return info["belly_up_steps"] >= patience
+
+    @_registry.termination("torso_too_low")
+    def _torso_too_low_termination(
+        self, data, info, min_torso_z: float = 0.0325, patience: int = 50
+    ) -> bool:
+        """End the episode when the torso stays collapsed against the floor.
+
+        The height half of the old ``fallen``, split out so it can be tuned
+        independently of the tilt half -- they fail for different reasons and
+        the tilt half was the one doing the damage.
+
+        0.0325 m is safe by measurement, not by guess: over the 210,500
+        reference frames the torso NEVER goes below 0.0354 m, so this gate
+        cannot fire on any posture the reference rat adopts, while a rodent
+        collapsed under zero torque settles at ~0.031 m.
+
+        Args:
+            data: Simulation data (unused; the counter is maintained in step()).
+            info: State info carrying ``low_torso_steps``.
+            min_torso_z: World-z below which the torso counts as collapsed.
+                Read in ``_update_posture_counters``, not here.
+            patience: Consecutive low steps required to terminate.
+
+        Returns:
+            Whether the torso has been below ``min_torso_z`` for ``patience`` steps.
+        """
+        del data, min_torso_z
+        return info["low_torso_steps"] >= patience
 
     @_registry.termination("fallen")
     def _fallen_termination(

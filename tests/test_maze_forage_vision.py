@@ -355,6 +355,151 @@ def test_joint_angle_slice_covers_exactly_the_rodent_hinges(env):
     assert list(range(env._rodent_qvel_start, model.nv)) == hinge_dof
 
 
+def _posed_state(env, pitch_deg):
+    """Reset state with the root free joint pitched ``pitch_deg`` about +y.
+
+    Pitch is the axis rearing uses, so this sweeps a rat from upright (0) through
+    reared (~90) to belly up (180).
+    """
+    st = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    root = env._rodent_root_qpos
+    half = np.deg2rad(pitch_deg) / 2.0
+    quat = jp.array([np.cos(half), 0.0, np.sin(half), 0.0], dtype=jp.float32)
+    qpos = st.data.qpos.at[root + 3 : root + 7].set(quat)
+    return st, mjx.forward(env.mjx_model, st.data.replace(qpos=qpos))
+
+
+def _hold_pose(env, data, info, n_steps):
+    """Run the posture counters ``n_steps`` times against a frozen pose."""
+    info = dict(info)
+    for _ in range(n_steps):
+        env._update_posture_counters(data, info)
+    return info
+
+
+@pytest.mark.parametrize("pitch_deg", [0, 45, 90, 120])
+def test_belly_up_never_fires_on_rearing(env, pitch_deg):
+    """Rearing must not trip the tilt gate, at any pitch a real rat reaches.
+
+    Asserts on the belly_up criterion specifically, not on ``_is_done``: pitching
+    the root about its own origin also drops the torso through the floor, which
+    is an artifact of posing this way and would trip the (separate) height gate.
+    Real rearing rotates about the hind feet and RAISES the torso.
+    """
+    st, data = _posed_state(env, pitch_deg)
+    info = _hold_pose(env, data, st.info, 400)  # 8x the default patience
+    assert int(info["belly_up_steps"]) == 0
+    assert not bool(env._belly_up_termination(data, info))
+
+
+def test_belly_up_fires_when_inverted_and_only_after_patience(env):
+    """Inverted terminates, but only once it has held -- that is 'cannot recover'."""
+    patience = int(env._config.termination_criteria["belly_up"]["patience"])
+    st, data = _posed_state(env, 178)
+
+    _, cos_tilt = env._torso_posture(data)
+    assert float(cos_tilt) < np.cos(np.deg2rad(140.0)), "pose is not actually inverted"
+
+    just_short = _hold_pose(env, data, st.info, patience - 1)
+    assert not bool(env._is_done(data, just_short, dict(st.metrics)))
+    long_enough = _hold_pose(env, data, st.info, patience)
+    assert bool(env._is_done(data, long_enough, dict(st.metrics)))
+
+
+def test_posture_counters_reset_on_a_single_good_step(env):
+    """One recovered step wipes the counter, so a tumble-and-right never ends it."""
+    st, inverted = _posed_state(env, 178)
+    _, upright = _posed_state(env, 0)
+    patience = int(env._config.termination_criteria["belly_up"]["patience"])
+
+    info = _hold_pose(env, inverted, st.info, patience - 1)
+    assert int(info["belly_up_steps"]) == patience - 1
+    env._update_posture_counters(upright, info)
+    assert int(info["belly_up_steps"]) == 0
+
+
+def test_torso_too_low_needs_patience_and_clears_normal_heights(env):
+    """The height gate is below anything the reference rat does (min 0.0354 m)."""
+    st = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    root = env._rodent_root_qpos
+    patience = int(env._config.termination_criteria["torso_too_low"]["patience"])
+    min_z = float(env._config.termination_criteria["torso_too_low"]["min_torso_z"])
+
+    standing_z, _ = env._torso_posture(st.data)
+    assert float(standing_z) > min_z
+    assert int(_hold_pose(env, st.data, st.info, 400)["low_torso_steps"]) == 0
+
+    sunk = mjx.forward(
+        env.mjx_model, st.data.replace(qpos=st.data.qpos.at[root + 2].add(-0.05))
+    )
+    assert float(env._torso_posture(sunk)[0]) < min_z
+    assert not bool(env._is_done(sunk, _hold_pose(env, sunk, st.info, patience - 1),
+                                 dict(st.metrics)))
+    assert bool(env._is_done(sunk, _hold_pose(env, sunk, st.info, patience),
+                             dict(st.metrics)))
+
+
+_REFERENCE_CLIPS = pathlib.Path(
+    "/home/talmolab/Desktop/SalkResearch/SCAMPER/data/rodent/rodent_reference_clips.h5"
+)
+
+
+@pytest.mark.skipif(
+    not _REFERENCE_CLIPS.exists(), reason="reference clip file not available"
+)
+def test_no_posture_gate_fires_on_real_rat_motion(env):
+    """THE guarantee: replay real rat motion and terminate on none of it.
+
+    ``rodent_reference_clips.h5`` is the data this task's frozen prior was
+    trained to imitate, so it is the operational definition of "normal walking
+    and rearing". Both gates are calibrated to sit outside it -- measured on
+    every 20th frame, replayed through THIS model (so heights are in our units,
+    not the reference's):
+
+        torso z   p0 0.0355   p1 0.0494   p50 0.0728   (gate 0.0325)
+        tilt      p50 11.4    p99 98.3    max 110.9    (gate 140.0)
+
+    A tilt gate of 85 deg -- what ``fallen`` and the DMPO gap arms use -- would
+    fire on 8.13% of these frames. That is the regression this test exists to
+    prevent.
+    """
+    import h5py
+
+    with h5py.File(_REFERENCE_CLIPS, "r") as handle:
+        reference = handle["qpos"][::200].astype(np.float64)
+
+    # CPU MuJoCo on purpose: this is a calibration check on the thresholds, and
+    # forward kinematics is identical. Looping mjx.forward here allocates a full
+    # device Data per frame and OOMs whenever a training run holds the GPU.
+    crit = env._config.termination_criteria
+    min_z = float(crit["torso_too_low"]["min_torso_z"])
+    max_tilt = float(crit["belly_up"]["max_tilt_angle"])
+
+    model = env.mj_model
+    data = mujoco.MjData(model)
+    root = env._rodent_root_qpos
+    torso_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "torso-rodent")
+
+    heights = np.empty(len(reference))
+    cos_tilt = np.empty(len(reference))
+    for i, frame in enumerate(reference):
+        data.qpos[root:] = frame
+        mujoco.mj_forward(model, data)
+        heights[i] = data.xpos[torso_id, 2]
+        cos_tilt[i] = data.xmat[torso_id].reshape(3, 3)[2, 2]
+    tilt = np.degrees(np.arccos(np.clip(cos_tilt, -1.0, 1.0)))
+
+    assert heights.min() > min_z, (
+        f"height gate {min_z} fires on real motion (min {heights.min():.4f} m)"
+    )
+    assert tilt.max() < max_tilt, (
+        f"tilt gate {max_tilt} fires on real motion (max {tilt.max():.1f} deg)"
+    )
+    # And the regression this is really guarding: the gap arms' 85 deg gate
+    # would fire on a large fraction of ordinary rearing.
+    assert (tilt > 85.0).mean() > 0.05
+
+
 def test_nan_termination_watches_qpos_and_qvel_only(env):
     """The NaN tripwire reads the integrator state, deliberately not all of ``data``.
 
