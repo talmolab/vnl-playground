@@ -1,0 +1,154 @@
+# @package _global_
+# Vision-guided sparse maze foraging (RodentMazeForageVision).
+#
+# A rat is dropped into a FIXED box-walled maze and must find n_treats treats
+# using only its egocentric camera: task_obs carries no treat vector, so the
+# CNN is the only channel that can say where a treat is.  Spawn cell + heading
+# and every treat cell are resampled each reset(); the maze layout is fixed for
+# the whole run.
+#
+# Usage:
+#   python -m vnl_playground.train_highlvl \
+#       --config-name=maze_forage_vision/maze_forage
+#
+# Design doc:
+#   _implementation_log/maze-forage-vision/DESIGN.md
+
+env_config:
+  env_name: RodentMazeForageVision
+  task_name: maze_forage_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  # Only vision_width / vision_height / grayscale / binocular are forwarded
+  # into the env's config_overrides (train_highlvl.py); the rest of the keys in
+  # this block are read straight off env_config by VisionRenderWrapper.
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  use_textures: true    # the maze walls are a checker texture; keep this on
+  use_shadows: true
+  env_args:
+    # Every key here must already exist in maze_forage_vision.default_config():
+    # MjxEnv.__init__ LOCKS the ConfigDict, so an unknown key raises.
+    episode_length: 1000
+    naconmax: 20480       # 20 * num_envs (1024)
+    njmax: 400
+    torque_actuators: true
+    rescale_factor: 0.9
+    # -- Maze (fixed for the whole run; regenerated only if maze_seed changes)
+    maze_cells: 3           # -> 7 x 7 character grid
+    cell_size: 0.35         # m corridor width; rat is ~0.2 m at rescale 0.9
+    wall_height: 0.3        # m; occludes and cannot be climbed
+    wall_thickness: 0.05    # m
+    maze_seed: 0
+    maze_loop_fraction: 0.0
+    # -- Treats (resampled without replacement every reset)
+    n_treats: 4
+    treat_radius: 0.03
+    treat_height: 0.05
+    treat_reach_threshold: 0.1
+    park_depth: 1.0         # collected treats slide this far underground
+    # -- Spawn
+    spawn_height: 0.005
+    # -- Reward: SPARSE, +1 per treat on first reach. Nothing else. Adding a
+    #    dense shaping term here would defeat the point of the task.
+    reward_terms:
+      treat_collected:
+        weight: 1.0
+    # -- Termination. NOTE: the `timeout` termination is registered by the env
+    #    but deliberately left out: info["step_count"] is not cleared by
+    #    BraxAutoResetWrapper(full_reset=False), so once it latches the env
+    #    collapses into 1-step episodes. Truncation is EpisodeWrapper's job
+    #    (train_config.episode_length below).
+    termination_criteria:
+      fallen:
+        min_torso_z: 0.01
+        max_torso_angle: 70
+      all_treats_collected: {}
+      nan_termination: {}
+
+network_config:
+  arch_name: shared_vision_task_obs
+  vision_latent_size: 16
+  vision_feature_size: 32
+  decoder_hidden_layer_sizes: [512, 512]
+  value_hidden_layer_sizes: [512, 512]
+  vision_channels: [4, 8, 16, 32]
+  fusion_hidden_layer_sizes: [256]
+
+transfer:
+  # Graft the frozen Phase-1 (track-mjx) imitation decoder: the high-level
+  # policy emits an intention latent, the frozen decoder turns it into joint
+  # torques. mode defaults to "decoder_only", which is the mimic_* path.
+  # Point mimic_checkpoint_dir / mimic_run_id at a real Phase-1 imitation run
+  # on this machine before launching -- the run id below is the one the
+  # rodent_run_gap vision transfer configs use and is NOT present locally.
+  mimic_run_id: "260212_123718_492372"
+  mimic_checkpoint_dir: /home/talmolab/Desktop/SalkResearch/track-mjx/model_checkpoints
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+train_setup:
+  eval_every: 10_000_000
+  train_config:
+    episode_length: 1000
+    num_envs: 1024
+    num_timesteps: 1_000_000_000
+    # Constraint (track_mjx ff_ppo/ppo.py): batch_size * num_minibatches must
+    # be divisible by num_envs. 512 * 16 = 8192 = 8 * 1024. batch_size is half
+    # go_to_target's 1024 to offset the 4x rollout-buffer growth from
+    # unroll_length=40: the buffer holds
+    # (batch_size * num_minibatches) x unroll_length transitions and each
+    # transition carries the 32x32 image twice (observation + next_observation).
+    batch_size: 512
+    num_minibatches: 16
+    num_updates_per_batch: 4
+    learning_rate: 3e-4
+    clipping_epsilon: 0.2
+    discounting: 0.99
+    entropy_cost: 1e-3
+    action_repeat: 1
+    # SPARSE reward with a LONG credit path (find a treat several corridors
+    # away, get +1 once). unroll_length caps how far a reward can propagate
+    # back within one rollout segment: in this repo's gap-jump work,
+    # unroll_length=10 truncated the sparse credit outright -- the advantage
+    # was bit-exactly 0 at the decision states, so the sparse-bonus arm
+    # collapsed (see memory: project_kappa_anneal_unroll_horizon). 40 gives a
+    # 0.8 s horizon at ctrl_dt=0.02. Do not lower it without re-checking that
+    # the sparse term still produces non-zero advantages.
+    unroll_length: 40
+    reward_scaling: 1.0
+    normalize_observations: true
+    seed: 0
+    num_eval_envs: 128
+    deterministic_eval: false
+    grad_clip_threshold: 20.0
+    vf_loss_coefficient: 0.5
+    vision_lr_multiplier: 3.0
+
+logging_config:
+  project_name: vnl-playground
+  group_name: maze-forage-vision
+  model_path: checkpoints_maze_forage_vision
+  notes: "Fixed maze, 4 treats, sparse +1 per treat, vision-only task_obs"
+  exp_name: maze_forage_v1
+
+render_config:
+  render_fps: 50
+  render_height: 480
+  render_width: 640
+
+# WARNING -- info ratchet. The `collected` bitmask lives in state.info, and
+# BraxAutoResetWrapper(full_reset=False) does NOT clear info across episodes,
+# so each treat would be collectable exactly once per *environment*, forever
+# (this shape already invalidated eight DMPO gap-jump runs). The fix is
+# tasks/wrappers_info_reset.InfoResetOnDoneWrapper with
+# maze_forage_vision.INFO_RESET_KEYS -- but train_highlvl.py does not read a
+# `wrappers:` block yet (verified: no InfoReset reference in that file; only
+# train_highlvl_dmpo_kl_anchor.py wires it). Port the opt-in block into the
+# entry point before training, then uncomment:
+#
+# wrappers:
+#   info_reset_on_done: true
+#   info_reset_keys: [prev_action, action, step_count, collected, n_collected]

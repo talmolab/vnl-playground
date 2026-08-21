@@ -20,6 +20,7 @@ from vnl_playground.tasks.rodent import gap_jump_trial as rodent_gap_jump_trial
 from vnl_playground.tasks.rodent import gap_jump_trial_vision as rodent_gap_jump_trial_vision
 from vnl_playground.tasks.rodent import go_to_target as rodent_go_to_target
 from vnl_playground.tasks.rodent import go_to_target_vision as rodent_go_to_target_vision
+from vnl_playground.tasks.rodent import maze_forage_vision as rodent_maze_forage_vision
 from vnl_playground.tasks.fruitfly import imitation as fruitfly_imitation
 from vnl_playground.tasks.fruitfly import (
     maintain_velocity as fruitfly_maintain_velocity,
@@ -52,6 +53,7 @@ _envs = {
     "RodentGapJumpTrialVision": rodent_gap_jump_trial_vision.GapJumpTrialVision,
     "RodentGoToTarget": rodent_go_to_target.GoToTarget,
     "RodentGoToTargetVision": rodent_go_to_target_vision.GoToTargetVision,
+    "RodentMazeForageVision": rodent_maze_forage_vision.MazeForageVision,
     "FruitflyImitation": fruitfly_imitation.Imitation,
     "FruitflyMaintainVelocity": fruitfly_maintain_velocity.MaintainVelocity,
     "MouseReach": mouse_reach.MouseReach,
@@ -95,6 +97,7 @@ _cfgs = {
     "RodentGapJumpTrialVision": rodent_gap_jump_trial_vision.default_config,
     "RodentGoToTarget": rodent_go_to_target.default_config,
     "RodentGoToTargetVision": rodent_go_to_target_vision.default_config,
+    "RodentMazeForageVision": rodent_maze_forage_vision.default_config,
     "FruitflyImitation": fruitfly_imitation.default_config,
     "FruitflyMaintainVelocity": fruitfly_maintain_velocity.default_config,
     "MouseReach": mouse_reach.default_config,
