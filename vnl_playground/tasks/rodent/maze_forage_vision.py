@@ -312,6 +312,12 @@ def default_config() -> config_dict.ConfigDict:
         # white; 0.30/0.25 takes that to 3.1% and lets the wall texture read.
         key_light_diffuse=0.7,
         wall_light_diffuse=0.45,
+        # Facade the thin END CAPS of wall rectangles, not just the long faces
+        # that front a corridor. One third of the facade geometry for a 0.15 m
+        # sliver (the wall thickness) seen only when looking straight down a
+        # dead end; the box underneath is tinted to the texture's mean colour
+        # either way. Off by default -- turn on for figure fidelity.
+        wall_facade_end_caps=False,
         # labmaze wall texture as "<style>/<tint>" (dm_control's mazes use
         # style_01..style_05 from the same asset pack). Empty string falls back
         # to the builtin checker, which is much darker.
@@ -979,8 +985,15 @@ class MazeForageVision(rodent_base.RodentEnv):
             inside[skip] = False
             return bool(np.any(inside))
 
+        end_caps = bool(self._config.get("wall_facade_end_caps", False))
         for i in range(pos.shape[0]):
+            # The wall's THIN axis is `wall_thickness`; the faces whose normal
+            # points along it are the big ones fronting a corridor. Faces on
+            # the other in-plane axis are the end caps.
+            thin_axis = int(np.argmin(size[i, :2]))
             for axis, signs in faces.items():
+                if axis != thin_axis and not end_caps:
+                    continue
                 plane = [a for a in range(3) if a != axis]
                 mat = self._spec.add_material(name=f"{_WALL_MATERIAL}_{i}_{axis}")
                 mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = _WALL_TEXTURE
