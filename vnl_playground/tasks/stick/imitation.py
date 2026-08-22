@@ -41,8 +41,8 @@ def default_config() -> config_dict.ConfigDict:
         solver="newton",
         iterations=5,
         ls_iterations=5,
-        naconmax=256,
-        njmax=600,
+        contacts_per_world=128,
+        constraints_per_world=512,
         noslip_iterations=0,
         torque_actuators=False,
         rescale_factor=1.5,  # Match H5 SCALE_FACTOR
@@ -88,8 +88,9 @@ class Imitation(stick_base.StickBugEnv):
         config: config_dict.ConfigDict = default_config(),
         config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
         clips: ReferenceClips | None = None,
+        num_worlds: int = 1,
     ) -> None:
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
         self.add_stick(
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
@@ -201,8 +202,8 @@ class Imitation(stick_base.StickBugEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            njmax=self._config.njmax,
-            naconmax=self._config.naconmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         _assert_all_are_prefix(

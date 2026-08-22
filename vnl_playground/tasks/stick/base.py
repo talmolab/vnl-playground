@@ -37,6 +37,8 @@ def default_config() -> config_dict.ConfigDict:
         ls_iterations=5,
         noslip_iterations=0,
         mujoco_impl="jax",
+        contacts_per_world=128,
+        constraints_per_world=512,
     )
 
 
@@ -50,8 +52,10 @@ class StickBugEnv(mjx_env.MjxEnv):
         self,
         config: config_dict.ConfigDict = default_config(),
         config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
         super().__init__(config, config_overrides)
+        self._num_worlds = num_worlds
         self._walker_xml_path = str(config.walker_xml_path)
         self._arena_xml_path = str(config.arena_xml_path)
         self._spec = mujoco.MjSpec.from_file(str(config.arena_xml_path))

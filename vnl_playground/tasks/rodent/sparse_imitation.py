@@ -40,13 +40,13 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         # Simulation params
         mujoco_impl="jax",
+        contacts_per_world=32,
+        constraints_per_world=256,
         sim_dt=0.002,
         ctrl_dt=0.01,  # 100 Hz control
         solver="newton",
         iterations=5,
         ls_iterations=5,
-        naconmax=90 * 1024,
-        njmax=1200,
         noslip_iterations=0,
         torque_actuators=True,
         rescale_factor=0.9,
@@ -108,6 +108,7 @@ class SparseImitation(rodent_base.RodentEnv):
         config: config_dict.ConfigDict = default_config(),
         config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
         clips: ReferenceClips | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """Initialize the sparse imitation environment.
 
@@ -117,7 +118,7 @@ class SparseImitation(rodent_base.RodentEnv):
             clips: Pre-loaded ReferenceClips object. If provided, it overrides
                 loading from `config.reference_data_path`.
         """
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
         self.add_rodent(
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
@@ -647,8 +648,8 @@ class SparseImitation(rodent_base.RodentEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            njmax=self._config.njmax,
-            naconmax=self._config.naconmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
 
         # Get default qpos from model

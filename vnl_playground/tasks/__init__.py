@@ -63,6 +63,7 @@ _cfgs = {
     "StickMaintainVelocity": stick_maintain_velocity.default_config,
     "StickImitation": stick_imitation.default_config,
     "WormImitation": worm_imitation.default_config,
+    "CelegansImitation": worm_imitation.default_config,
 }
 
 # Environments that consume reference clips.
@@ -73,6 +74,7 @@ _reference_clip_envs = {
     "MouseImitation",
     "StickImitation",
     "WormImitation",
+    "CelegansImitation",
 }
 
 

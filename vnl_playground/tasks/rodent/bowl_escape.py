@@ -66,8 +66,8 @@ def default_config() -> config_dict.ConfigDict:
         sim_dt=0.002,
         solver="newton",
         mujoco_impl="jax",
-        naconmax=90 * 1024,
-        njmax=1200,
+        contacts_per_world=192,
+        constraints_per_world=768,
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
@@ -103,6 +103,7 @@ class BowlEscape(rodent_base.RodentEnv):
         rng: jax.Array = jax.random.PRNGKey(0),
         config: config_dict.ConfigDict = default_config(),
         config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """
         Initialize the BowlEscape class and set up the environment.
@@ -116,7 +117,7 @@ class BowlEscape(rodent_base.RodentEnv):
             NotImplementedError: Raised if vision is enabled.
         """
         # super has already init a spec with the provided arena xml path
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
         self._rng = rng
         if self._config.vision:
             raise NotImplementedError(
@@ -177,8 +178,8 @@ class BowlEscape(rodent_base.RodentEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            naconmax=self._config.naconmax,
-            njmax=self._config.njmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
         data = mjx.forward(self.mjx_model, data)
         metrics = {}
