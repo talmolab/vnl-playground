@@ -304,6 +304,14 @@ def default_config() -> config_dict.ConfigDict:
         # gradient on all four wall orientations. 0 disables them.
         wall_lights=4,
         wall_light_elevation=0.35,  # tan of the downward tilt, not an angle
+        # Light intensities. MEASURED: the warp ray-tracer ignores
+        # `light.diffuse` exactly as it ignores `light.ambient` -- the policy's
+        # 32x32 view is identical (dark 9.8%, mean 0.694) at key 0.70/0.45/0.30.
+        # These therefore only affect the human-facing OpenGL renders, where
+        # the default rig blows out 24.6% of an up-facing wall top to pure
+        # white; 0.30/0.25 takes that to 3.1% and lets the wall texture read.
+        key_light_diffuse=0.7,
+        wall_light_diffuse=0.45,
         # labmaze wall texture as "<style>/<tint>" (dm_control's mazes use
         # style_01..style_05 from the same asset pack). Empty string falls back
         # to the builtin checker, which is much darker.
@@ -470,7 +478,7 @@ class MazeForageVision(rodent_base.RodentEnv):
             pos=[0, 0, 8],
             dir=[-0.1, -0.1, -1],
             type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
-            diffuse=[0.7, 0.7, 0.7],
+            diffuse=[float(self._config.get('key_light_diffuse', 0.7))] * 3,
             specular=[0.3, 0.3, 0.3],
             castshadow=1,
         )
@@ -595,7 +603,7 @@ class MazeForageVision(rodent_base.RodentEnv):
                 name=f"wall_light_{i}",
                 pos=[-direction[0] * radius, -direction[1] * radius, radius * 0.5],
                 dir=direction,
-                diffuse=[0.45, 0.45, 0.45],
+                diffuse=[float(self._config.get('wall_light_diffuse', 0.45))] * 3,
                 specular=[0.0, 0.0, 0.0],
                 castshadow=0,
             )
@@ -666,15 +674,38 @@ class MazeForageVision(rodent_base.RodentEnv):
         )
         floor_mat = self._spec.add_material(name=_FLOOR_MATERIAL)
         floor_mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = _FLOOR_TEXTURE
-        # One tile per grid cell: fine enough to give optic flow inside a
-        # corridor, coarse enough not to alias at 32x32.
-        repeat = float(self._config.maze_extent) / float(self._cell_size)
+        # ONE TEXTURE TILE PER MAZE CELL, which is dm_control's rule: its
+        # per-tile floor planes use `texrepeat = 2 * tile_half_size / xy_scale`,
+        # and since the plane's half-size IS the tile size that works out to
+        # exactly one tile per cell. texuniform=True makes texrepeat a
+        # repeats-per-METRE figure, so it does not depend on the arena plane
+        # being 20 m wide.
+        #
+        # Getting this wrong is why the first attempt looked like flat colour:
+        # texuniform=False with texrepeat=21 over the 20 m ground plane is
+        # ~0.95 m per tile, and a 0.465 m corridor then shows half a tile.
+        repeat = 1.0 / float(self._cell_size)
         floor_mat.texrepeat = [repeat, repeat]
-        floor_mat.texuniform = False
+        floor_mat.texuniform = True
         floor_mat.reflectance = 0.0
         for geom in self._spec.geoms:
             if geom.name == "floor":
                 geom.material = _FLOOR_MATERIAL
+
+        # Flat-tint the wall BOXES to the wall texture's own mean colour. The
+        # textured planes cover only the vertical faces, so the tops would
+        # otherwise render as the default white and read as bright caps sitting
+        # on green walls. Sampling the texture rather than hard-coding a colour
+        # keeps the two in step if the tint changes.
+        texture_path = self._wall_texture_asset()
+        if texture_path is not None:
+            import PIL.Image
+
+            with PIL.Image.open(texture_path) as handle:
+                mean = np.asarray(handle.convert("RGB"), dtype=float).mean((0, 1)) / 255.0
+            for geom in self._spec.geoms:
+                if geom.name.startswith("maze_wall_"):
+                    geom.rgba = [float(mean[0]), float(mean[1]), float(mean[2]), 1.0]
 
     def _add_sky(self) -> None:
         """Adds a blue gradient skybox, matching dm_control's outdoor aesthetic."""
@@ -703,8 +734,12 @@ class MazeForageVision(rodent_base.RodentEnv):
         if not spec_str:
             return None
         if spec_str == "dm_control":
-            # What basic_rodent_2020.rodent_maze_forage uses.
-            spec_str = "style_01/green"
+            # basic_rodent_2020.rodent_maze_forage passes style_01. Of that
+            # style's eight tints, `green_bright` is the pale mint with crisp
+            # dark circuit traces seen in dm_control's published screenshots;
+            # plain `green` is a dark olive (asset mean 93.5 vs 173.1) whose
+            # traces wash out under this task's light ring.
+            spec_str = "style_01/green_bright"
         if "/" not in spec_str:
             raise ValueError(
                 f"config.wall_texture must be '<style>/<tint>', got {spec_str!r}."
@@ -754,7 +789,12 @@ class MazeForageVision(rodent_base.RodentEnv):
             )
         wall_mat = self._spec.add_material(name=_WALL_MATERIAL)
         wall_mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = _WALL_TEXTURE
-        wall_mat.texrepeat = [2, 2]
+        # Same one-tile-per-cell rule as the floor (dm_control scales its wall
+        # texturing planes by `2 * wall_size / xy_scale`). texuniform=True means
+        # repeats per metre, so the pattern keeps a fixed physical size instead
+        # of stretching with the wall rectangle's length.
+        wall_repeat = 1.0 / float(self._cell_size)
+        wall_mat.texrepeat = [wall_repeat, wall_repeat]
         wall_mat.texuniform = True
         wall_mat.reflectance = 0.0
 
@@ -875,6 +915,106 @@ class MazeForageVision(rodent_base.RodentEnv):
                 contype=1,
                 conaffinity=1,
             )
+        self._add_wall_texturing_planes(pos, size)
+
+    def _add_wall_texturing_planes(self, pos, size) -> None:
+        """Facades a textured plane onto each wall face, dm_control style.
+
+        MUJOCO DOES NOT MAP A 2D TEXTURE ONTO A BOX. Applying the wall material
+        straight to the box geom tiles it along one axis only: the render shows
+        vertical stripes whose spacing tracks ``texrepeat`` and never the
+        image's actual pattern, at any repeat value and any light level. That is
+        why dm_control's ``mazes.py`` textures its walls with separate PLANE
+        geoms (``_make_wall_texturing_planes``) rather than with the boxes it
+        collides against, and why the first port of this aesthetic came out as
+        flat colour.
+
+        Each plane is non-colliding (``contype=0, conaffinity=0``) and sits flush
+        on a face, so physics is untouched -- the boxes still do all the
+        colliding. ``texrepeat`` is ``2 * half_size / cell_size``, i.e. one
+        texture tile per maze cell, matching dm_control.
+
+        Only runs for the ``outdoor_natural`` aesthetic; the default look keeps
+        the plain material on the box and pays no extra geoms.
+        """
+        if str(self._config.get("aesthetic", "default")) != "outdoor_natural":
+            return
+
+        # VERTICAL FACES ONLY. dm_control also facades the top (its
+        # `_make_wall_texturing_planes` skips only `z, -1`), but the top face is
+        # the wrong surface to texture here: it is what the light rig hits
+        # head-on, so it blows out, and it is not a surface the rodent ever
+        # navigates by -- at 0.3 m wall height and 0.06 m eye height the policy
+        # only ever sees the inner sides. Texturing sides alone also removes a
+        # class of render artifact from top planes seen edge-on, and costs 2
+        # fewer geoms per wall.
+        # Explicit in-plane axes per face, straight out of dm_control's
+        # `_make_wall_texturing_planes`. THIS IS NOT OPTIONAL. A plane's `size`
+        # is (half-x, half-y) in its OWN frame; give MuJoCo only a normal and it
+        # derives in-plane axes of its choosing, so half-sizes computed for
+        # world y/z get applied along whatever it picked. The visible result is
+        # planes stretched far past the 0.3 m wall height -- huge slabs that
+        # read as translucent because MuJoCo draws a plane's back face
+        # see-through.
+        #   axis -> {sign: (local_x, local_y, in-plane world axes for size)}
+        faces = {
+            0: {-1: ([0, -1, 0], [0, 0, 1]), 1: ([0, 1, 0], [0, 0, 1])},
+            1: {-1: ([1, 0, 0], [0, 0, 1]), 1: ([-1, 0, 0], [0, 0, 1])},
+        }
+        cell = float(self._cell_size)
+        # A face is BURIED when the neighbouring wall rectangle covers it. That
+        # happens constantly here and never in dm_control: their wall boxes fill
+        # a whole cell so rectangles tile flush, while ours are thinned to
+        # `wall_thickness` (0.15 m) inside a 0.3076 m cell, so at every corner
+        # and T-junction one rectangle's end face sits INSIDE its neighbour.
+        # Facading those produces exactly the mis-aligned corner seams you get
+        # from coplanar/interior geometry. Test it exactly rather than guess:
+        # probe a point just outside the face and drop the plane if it lands
+        # inside any other box.
+        lo, hi = pos - size, pos + size
+        eps = 1e-4
+
+        def buried(point, skip):
+            inside = np.all((point > lo + eps) & (point < hi - eps), axis=1)
+            inside[skip] = False
+            return bool(np.any(inside))
+
+        for i in range(pos.shape[0]):
+            for axis, signs in faces.items():
+                plane = [a for a in range(3) if a != axis]
+                mat = self._spec.add_material(name=f"{_WALL_MATERIAL}_{i}_{axis}")
+                mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = _WALL_TEXTURE
+                mat.texrepeat = [2.0 * size[i, plane[0]] / cell,
+                                 2.0 * size[i, plane[1]] / cell]
+                mat.texuniform = False
+                mat.reflectance = 0.0
+                for sign, (local_x, local_y) in signs.items():
+                    normal = np.zeros(3)
+                    normal[axis] = sign
+                    face_centre = pos[i] + normal * size[i, axis]
+                    if buried(face_centre + normal * 1e-3, i):
+                        continue
+                    ex = np.asarray(local_x, dtype=float)
+                    ey = np.asarray(local_y, dtype=float)
+                    frame = np.stack([ex, ey, np.cross(ex, ey)], axis=1)
+                    quat = np.zeros(4)
+                    mujoco.mju_mat2Quat(quat, frame.reshape(-1))
+                    # Half-sizes are (along local_x, along local_y); with the
+                    # frame pinned they now correspond to the intended world
+                    # axes. Stand off 0.1 mm so the plane does not z-fight the
+                    # box it sits on.
+                    half_x = size[i, plane[0]] if axis != 0 else size[i, 1]
+                    half_y = size[i, 2]
+                    self._spec.worldbody.add_geom(
+                        name=f"maze_wall_{i}_face_{axis}_{int(sign)}",
+                        type=mujoco.mjtGeom.mjGEOM_PLANE,
+                        pos=list(face_centre + normal * 1e-4),
+                        size=[half_x, half_y, cell],
+                        quat=list(quat),
+                        material=mat.name,
+                        contype=0,
+                        conaffinity=0,
+                    )
 
     def _build_treats(self) -> None:
         """Adds the slide-jointed treat bodies (must precede ``add_rodent``).

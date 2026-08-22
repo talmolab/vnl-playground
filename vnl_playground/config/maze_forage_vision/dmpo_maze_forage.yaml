@@ -135,6 +135,11 @@ env_config:
   wall_texture: "style_03/gray_bright"
   wall_lights: 4
   wall_light_elevation: 0.35
+  # Human-render only: the warp ray-tracer ignores light.diffuse (measured --
+  # the policy view is identical at 0.70/0.45/0.30), but the default rig blows
+  # 24.6% of a wall top to pure white in the eval videos. 0.30/0.25 -> 3.1%.
+  key_light_diffuse: 0.30
+  wall_light_diffuse: 0.25
   sky: true
   # -- Treats
   n_treats: 20
