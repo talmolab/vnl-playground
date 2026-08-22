@@ -321,7 +321,12 @@ def default_config() -> config_dict.ConfigDict:
         # for the measured distribution). Both new criteria are rate-limited by
         # `patience` consecutive steps, which is what encodes "cannot recover".
         termination_criteria={
-            "belly_up": {"max_tilt_angle": 140.0, "patience": 50},
+            "belly_up": {
+                "max_tilt_angle": 140.0,
+                "fallen_tilt_angle": 90.0,
+                "fallen_max_torso_z": 0.10,
+                "patience": 50,
+            },
             "torso_too_low": {"min_torso_z": 0.0325, "patience": 50},
             "all_treats_collected": {},
             "nan_termination": {},
@@ -1300,9 +1305,23 @@ class MazeForageVision(rodent_base.RodentEnv):
         belly_cfg = crit.get("belly_up", {}) or {}
         low_cfg = crit.get("torso_too_low", {}) or {}
         max_tilt = float(belly_cfg.get("max_tilt_angle", 140.0))
+        fallen_tilt = float(belly_cfg.get("fallen_tilt_angle", 90.0))
+        fallen_max_z = float(belly_cfg.get("fallen_max_torso_z", 0.10))
         min_z = float(low_cfg.get("min_torso_z", 0.0325))
 
-        inverted = cos_tilt < float(np.cos(np.deg2rad(max_tilt)))
+        # Two ways to be down, OR'd. Tilt alone cannot do it: a rat lying on
+        # its back settles anywhere in 94-166 deg depending on how it landed,
+        # and real REARING reaches 120.8 deg, so the ranges overlap. What does
+        # separate them is height -- in the reference data a rat past 90 deg is
+        # rearing and its torso is never below 0.1146 m, whereas every settled
+        # fallen pose measured sits at 0.09 m or lower.
+        inverted = jp.logical_or(
+            cos_tilt < float(np.cos(np.deg2rad(max_tilt))),
+            jp.logical_and(
+                cos_tilt < float(np.cos(np.deg2rad(fallen_tilt))),
+                torso_z < fallen_max_z,
+            ),
+        )
         too_low = torso_z < min_z
         info["belly_up_steps"] = jp.where(
             inverted, info["belly_up_steps"] + 1, jp.zeros_like(info["belly_up_steps"])
@@ -1313,7 +1332,13 @@ class MazeForageVision(rodent_base.RodentEnv):
 
     @_registry.termination("belly_up")
     def _belly_up_termination(
-        self, data, info, max_tilt_angle: float = 140.0, patience: int = 50
+        self,
+        data,
+        info,
+        max_tilt_angle: float = 140.0,
+        fallen_tilt_angle: float = 90.0,
+        fallen_max_torso_z: float = 0.10,
+        patience: int = 50,
     ) -> bool:
         """End the episode only when the rodent is inverted and staying that way.
 
@@ -1338,6 +1363,38 @@ class MazeForageVision(rodent_base.RodentEnv):
         this work: rearing pitches the torso about its lateral axis and keeps
         ``cos_tilt`` positive, while belly-up drives it to -1.
 
+        A PURE TILT GATE IS NOT ENOUGH, and 140 deg alone missed the common
+        case. Dropping the rodent at four roll angles and letting it settle
+        under zero torque gives:
+
+            init roll   settled tilt   settled z   fires at 140 deg?
+                90 deg       67.7 deg     0.1140   no  (on its side)
+               120 deg      129.0 deg     0.0906   yes
+               150 deg       94.3 deg    -0.0042   NO  <- lies there sprawled
+               180 deg      166.5 deg     0.0212   yes
+
+        The 150 deg case never approaches 140 deg, so the episode used to run
+        on until the separate height gate ended it -- the failure is silent and
+        mis-attributed. Lowering the tilt threshold does not fix it either:
+        fallen poses span 94-166 deg while real REARING reaches 120.8 deg, so
+        the two ranges overlap and no tilt cut separates them.
+
+        HEIGHT is what separates them. Conditioning the reference motion on
+        tilt (52,625 frames):
+
+            tilt   0-45 deg   z min 0.0354   median 0.0705
+            tilt  45-90 deg   z min 0.0858   median 0.1148
+            tilt  90-100 deg  z min 0.1146   median 0.1468
+            tilt 100-110 deg  z min 0.1274   median 0.1547
+            tilt 110-121 deg  z min 0.1329   median 0.1581
+
+        A real rat past 90 deg is REARING, and rearing puts the torso UP: it is
+        never below 0.1146 m. Every settled fallen pose is at 0.09 m or below.
+        So the second arm is ``tilt > 90 deg AND z < 0.10 m``, which sits in the
+        gap with ~1.5 cm of margin on the reference side and ~0.9 cm on the
+        fallen side. Measured false-positive rate on the reference: 0 of 52,625
+        frames.
+
         ``patience`` is the "and cannot recover" half. A rat that tumbles
         through an inverted pose for a few frames and rights itself never
         reaches the count; the counter resets on the first good step.
@@ -1345,14 +1402,17 @@ class MazeForageVision(rodent_base.RodentEnv):
         Args:
             data: Simulation data (unused; the counter is maintained in step()).
             info: State info carrying ``belly_up_steps``.
-            max_tilt_angle: Degrees from upright beyond which the body counts as
-                inverted. Read in ``_update_posture_counters``, not here.
-            patience: Consecutive inverted steps required to terminate.
+            max_tilt_angle: Degrees from upright that count as inverted on tilt
+                alone, regardless of height.
+            fallen_tilt_angle: Degrees from upright for the combined arm.
+            fallen_max_torso_z: Torso height below which ``fallen_tilt_angle``
+                counts as down rather than reared.
+            patience: Consecutive down steps required to terminate.
 
         Returns:
             Whether the rodent has been inverted for ``patience`` steps.
         """
-        del data, max_tilt_angle
+        del data, max_tilt_angle, fallen_tilt_angle, fallen_max_torso_z
         return info["belly_up_steps"] >= patience
 
     @_registry.termination("torso_too_low")

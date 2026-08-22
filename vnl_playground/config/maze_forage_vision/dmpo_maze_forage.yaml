@@ -214,7 +214,36 @@ env_config:
   # the counter resets on the first good step, so a tumble that rights itself
   # never terminates.
   termination_criteria:
-    belly_up: {max_tilt_angle: 140.0, patience: 50}
+    # TWO ARMS, OR'd. A tilt-only gate misses the common failure: dropping the
+    # rodent at a 150 deg roll and letting it settle gives tilt 94.3 deg at
+    # z = -0.004 m -- nowhere near 140 deg, so the episode ran on until the
+    # HEIGHT gate ended it, mis-attributing the cause. Measured settling:
+    #
+    #   init roll   settled tilt   settled z   fires at 140 deg alone?
+    #       90 deg       67.7 deg     0.1140   no  (on its side, recoverable)
+    #      120 deg      129.0 deg     0.0906   yes
+    #      150 deg       94.3 deg    -0.0042   NO  <- the miss
+    #      180 deg      166.5 deg     0.0212   yes
+    #
+    # Lowering the tilt threshold cannot fix it: fallen poses span 94-166 deg
+    # and real REARING reaches 120.8 deg, so the ranges overlap. HEIGHT
+    # separates them -- conditioning the reference on tilt, a rat past 90 deg
+    # is rearing and its torso is NEVER below 0.1146 m, while every settled
+    # fallen pose is at 0.09 m or lower:
+    #
+    #   tilt  0-45 deg  z min 0.0354 | tilt  90-100 deg  z min 0.1146
+    #   tilt 45-90 deg  z min 0.0858 | tilt 100-110 deg  z min 0.1274
+    #                                | tilt 110-121 deg  z min 0.1329
+    #
+    # So: inverted on tilt alone (140), OR past 90 deg AND below 0.10 m.
+    # 0.10 sits in the gap with ~1.5 cm margin on the reference side and
+    # ~0.9 cm on the fallen side. False positives on the reference: 0 of
+    # 52,625 frames, for both arms combined.
+    belly_up:
+      max_tilt_angle: 140.0
+      fallen_tilt_angle: 90.0
+      fallen_max_torso_z: 0.10
+      patience: 50
     torso_too_low: {min_torso_z: 0.0325, patience: 50}
     all_treats_collected: {}
     nan_termination: {}

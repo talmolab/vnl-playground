@@ -355,17 +355,21 @@ def test_joint_angle_slice_covers_exactly_the_rodent_hinges(env):
     assert list(range(env._rodent_qvel_start, model.nv)) == hinge_dof
 
 
-def _posed_state(env, pitch_deg):
+def _posed_state(env, pitch_deg, root_z=None):
     """Reset state with the root free joint pitched ``pitch_deg`` about +y.
 
-    Pitch is the axis rearing uses, so this sweeps a rat from upright (0) through
-    reared (~90) to belly up (180).
+    ``root_z`` matters as much as the angle. Rotating the root about its own
+    origin drops the torso to the floor, which is a SPRAWL, not a rear -- real
+    rearing lifts the torso (reference: past 90 deg it is never below 0.1146 m).
+    Pass a height from the reference distribution to pose an actual rear.
     """
     st = jax.jit(env.reset)(jax.random.PRNGKey(0))
     root = env._rodent_root_qpos
     half = np.deg2rad(pitch_deg) / 2.0
     quat = jp.array([np.cos(half), 0.0, np.sin(half), 0.0], dtype=jp.float32)
     qpos = st.data.qpos.at[root + 3 : root + 7].set(quat)
+    if root_z is not None:
+        qpos = qpos.at[root + 2].set(root_z)
     return st, mjx.forward(env.mjx_model, st.data.replace(qpos=qpos))
 
 
@@ -377,17 +381,78 @@ def _hold_pose(env, data, info, n_steps):
     return info
 
 
-@pytest.mark.parametrize("pitch_deg", [0, 45, 90, 120])
-def test_belly_up_never_fires_on_rearing(env, pitch_deg):
-    """Rearing must not trip the tilt gate, at any pitch a real rat reaches.
+# (pitch, root height) drawn from the reference conditional medians: a real rat
+# at higher tilt is rearing, and rearing is HIGH. See _belly_up_termination.
+_REARING_POSES = [(0, 0.070), (45, 0.115), (90, 0.147), (120, 0.158)]
 
-    Asserts on the belly_up criterion specifically, not on ``_is_done``: pitching
-    the root about its own origin also drops the torso through the floor, which
-    is an artifact of posing this way and would trip the (separate) height gate.
-    Real rearing rotates about the hind feet and RAISES the torso.
+
+@pytest.mark.parametrize("pitch_deg,root_z", _REARING_POSES)
+def test_belly_up_never_fires_on_rearing(env, pitch_deg, root_z):
+    """Rearing must not trip the gate, at any pitch-and-height a real rat reaches.
+
+    The heights are not decoration. Posing by rotation alone puts the torso on
+    the floor, which the height arm of the gate correctly reads as fallen -- so
+    a test that omitted them would be asserting the wrong thing about the wrong
+    posture. These pairs come from the reference distribution.
     """
-    st, data = _posed_state(env, pitch_deg)
+    st, data = _posed_state(env, pitch_deg, root_z=root_z)
     info = _hold_pose(env, data, st.info, 400)  # 8x the default patience
+    assert int(info["belly_up_steps"]) == 0
+    assert not bool(env._belly_up_termination(data, info))
+
+
+def test_belly_up_catches_a_sprawled_rat_that_never_reaches_140_deg(env):
+    """The case a pure tilt gate misses: down, but only ~94 deg from upright.
+
+    Dropping the rodent at a 150 deg roll and letting it settle gives torso tilt
+    94.3 deg at z = -0.004 m -- nowhere near 140 deg, so a tilt-only gate stays
+    silent and the episode runs until the separate height gate ends it. Real
+    rearing reaches 120.8 deg, so no tilt cut separates the two; height does,
+    because a reference rat past 90 deg is rearing and never below 0.1146 m.
+    """
+    crit = env._config.termination_criteria["belly_up"]
+    st = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    root = env._rodent_root_qpos
+
+    # 100 deg roll, torso pushed to the floor: down, but far short of 140 deg.
+    half = np.deg2rad(100.0) / 2.0
+    qpos = st.data.qpos.at[root + 3 : root + 7].set(
+        jp.array([np.cos(half), np.sin(half), 0.0, 0.0], dtype=jp.float32)
+    )
+    qpos = qpos.at[root + 2].set(0.02)
+    data = mjx.forward(env.mjx_model, st.data.replace(qpos=qpos))
+
+    torso_z, cos_tilt = env._torso_posture(data)
+    tilt = np.degrees(np.arccos(np.clip(float(cos_tilt), -1.0, 1.0)))
+    assert tilt < float(crit["max_tilt_angle"]), "pose must NOT trip the tilt-only arm"
+    assert tilt > float(crit["fallen_tilt_angle"])
+    assert float(torso_z) < float(crit["fallen_max_torso_z"])
+
+    info = _hold_pose(env, data, st.info, int(crit["patience"]))
+    assert bool(env._belly_up_termination(data, info))
+
+
+def test_belly_up_stays_silent_on_a_reared_rat_at_the_same_tilt(env):
+    """Same tilt as the sprawled case, but HIGH -- that is rearing, not falling.
+
+    This is the pair that makes the height term load-bearing: identical torso
+    orientation, opposite verdict, decided entirely by z.
+    """
+    crit = env._config.termination_criteria["belly_up"]
+    st = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    root = env._rodent_root_qpos
+
+    half = np.deg2rad(100.0) / 2.0
+    qpos = st.data.qpos.at[root + 3 : root + 7].set(
+        jp.array([np.cos(half), np.sin(half), 0.0, 0.0], dtype=jp.float32)
+    )
+    # 0.15 m is inside the reference range for a reared rat (min 0.1274 at
+    # 100-110 deg tilt); the sprawled twin above sits at 0.02.
+    qpos = qpos.at[root + 2].set(0.15)
+    data = mjx.forward(env.mjx_model, st.data.replace(qpos=qpos))
+
+    assert float(env._torso_posture(data)[0]) > float(crit["fallen_max_torso_z"])
+    info = _hold_pose(env, data, st.info, 400)
     assert int(info["belly_up_steps"]) == 0
     assert not bool(env._belly_up_termination(data, info))
 
