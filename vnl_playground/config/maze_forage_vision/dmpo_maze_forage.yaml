@@ -459,6 +459,11 @@ logging_config:
 # looked like a completed experiment.
 checkpoint_dir: /home/talmolab/Desktop/SalkResearch/_implementation_log/DMPO/checkpoints/maze_a2_posture_1b
 
+# KEEP EVERY CHECKPOINT. The default is the last 3, which at eval_every_steps
+# 25M is only the last 75M of a 1B run -- useless for probing how the policy
+# develops. 40 checkpoints x ~58 MB = ~2.3 GB, which is nothing. `null` = all.
+checkpoint_max_to_keep: null
+
 # See the header: this is the one setting that silently voids the experiment if
 # it is missing, and the entry point refuses to launch this env without it.
 wrappers:

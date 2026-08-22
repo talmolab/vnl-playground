@@ -559,7 +559,19 @@ def main(hydra_cfg: DictConfig):
             "is the warm-start policy)."
         )
 
-    ckpt_mgr = make_checkpointer(ckpt_dir)
+    # Retention is a config key rather than make_checkpointer's default of 3.
+    # `checkpoint_max_to_keep: null` means KEEP EVERYTHING, which is what a
+    # developmental probe needs -- with eval_every_steps=25M over a 1B budget
+    # that is 40 checkpoints at ~58 MB each, ~2.3 GB total. Absent from a
+    # config -> 3, so every existing gap arm is unchanged.
+    max_to_keep = hydra_cfg.get("checkpoint_max_to_keep", 3)
+    ckpt_mgr = make_checkpointer(
+        ckpt_dir, max_to_keep=None if max_to_keep is None else int(max_to_keep)
+    )
+    log.info(
+        "Checkpoint retention: %s",
+        "ALL (keeping every step)" if max_to_keep is None else f"last {int(max_to_keep)}",
+    )
     restored = restore_ckpt(ckpt_mgr, state_template=state)
     # Checkpoints are saved at `step=total_env_steps`, so the manager's latest
     # step IS the env-step count to resume the training-loop counter from. Without
@@ -727,21 +739,29 @@ def main(hydra_cfg: DictConfig):
                 rew_cfg_raw = hydra_cfg.get("env_config", {}).get("reward_terms", None)
                 rew_cfg = (OmegaConf.to_container(rew_cfg_raw, resolve=True)
                            if rew_cfg_raw is not None else None)
+                # `camera` below is a dead parameter (never forwarded --
+                # render_video builds its own tracking camera). `cameras` is
+                # the live one: a list of panel specs rendered side by side.
+                # Absent -> the historical single camera, unchanged.
+                #
+                # `erc` has ALREADY been converted to a plain dict by the time
+                # we get here (see the isinstance check above), so `cameras` is
+                # a plain list and OmegaConf.to_container REJECTS it --
+                # "Input cfg is not an OmegaConf config object (list)". That
+                # raised inside the eval-render try/except, which logs a
+                # warning and continues, so two evals produced no video at all
+                # while training carried on looking healthy. Convert only when
+                # it really is an OmegaConf node.
+                cam_specs = erc.get("cameras", None)
+                if OmegaConf.is_config(cam_specs):
+                    cam_specs = OmegaConf.to_container(cam_specs, resolve=True)
                 render_eval_video(
                     rollout, mj_model, video_path,
                     fps=int(erc.get("fps", 50)),
                     height=int(erc.get("height", 480)),
                     width=int(erc.get("width", 640)),
                     camera=str(erc.get("camera", "close_profile-rodent")),
-                    # `camera` above is a dead parameter (never forwarded --
-                    # render_video builds its own tracking camera). `cameras`
-                    # is the live one: a list of panel specs rendered side by
-                    # side. Absent -> the historical single camera, unchanged.
-                    cameras=(
-                        OmegaConf.to_container(erc.get("cameras"), resolve=True)
-                        if erc.get("cameras", None) is not None
-                        else None
-                    ),
+                    cameras=cam_specs,
                     hud_config=hud_cfg, reward_config=rew_cfg,
                     termination_events=term_events,
                     reward_remix=(
