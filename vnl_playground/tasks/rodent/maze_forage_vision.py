@@ -973,10 +973,22 @@ class MazeForageVision(rodent_base.RodentEnv):
         lo, hi = pos - size, pos + size
         eps = 1e-4
 
-        def buried(point, skip):
-            inside = np.all((point > lo + eps) & (point < hi - eps), axis=1)
-            inside[skip] = False
-            return bool(np.any(inside))
+        def buried(points, skip):
+            """True only if EVERY sample of the face is inside another box.
+
+            Probing just the face centre is wrong and visibly so: a long wall
+            with a perpendicular wall joining at its midpoint has its centre
+            inside that neighbour, so the whole face gets discarded and renders
+            as the bare striped box while its neighbours carry the pattern.
+            Sample across the face and keep the facade if any part is exposed.
+            """
+            points = np.atleast_2d(points)
+            inside = np.all(
+                (points[:, None, :] > lo[None] + eps) & (points[:, None, :] < hi[None] - eps),
+                axis=2,
+            )
+            inside[:, skip] = False
+            return bool(np.all(np.any(inside, axis=1)))
 
         # Flat-tint the wall BOXES to the wall texture's own mean colour. The
         # facades cover only the vertical faces, so the tops would otherwise
@@ -1014,7 +1026,18 @@ class MazeForageVision(rodent_base.RodentEnv):
                     normal = np.zeros(3)
                     normal[axis] = sign
                     face_centre = pos[i] + normal * size[i, axis]
-                    if buried(face_centre + normal * 1e-3, i):
+                    # 5 x 3 grid over the face, inset so samples sit strictly
+                    # inside it rather than on the shared edge with a neighbour.
+                    us = np.linspace(-0.8, 0.8, 5) * size[i, plane[0]]
+                    vs = np.linspace(-0.8, 0.8, 3) * size[i, plane[1]]
+                    samples = []
+                    for u in us:
+                        for v in vs:
+                            point = face_centre + normal * 1e-3
+                            point[plane[0]] += u
+                            point[plane[1]] += v
+                            samples.append(point.copy())
+                    if buried(np.asarray(samples), i):
                         continue
                     ex = np.asarray(local_x, dtype=float)
                     ey = np.asarray(local_y, dtype=float)
