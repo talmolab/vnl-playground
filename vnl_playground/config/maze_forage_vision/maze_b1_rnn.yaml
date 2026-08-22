@@ -556,7 +556,21 @@ train_config:
   # THE SMOKE MEASURES PEAK, NOT STEADY: a2 died at 84.6% steady on a transient,
   # and the failing allocation was warp's (outside JAX's pool), so an XLA-only
   # budget will not see it coming.
-  max_replay_size: 1_005_568
+  # MEASURED, not modelled. Three smokes on the 5090 (32,607 MiB), each with a
+  # full eval INCLUDING the 2001-frame render -- the exact path a2 died in --
+  # and peak sampled at 2 Hz rather than steady:
+  #     491 steps/env ( 9.8 rollouts, 4.26 GB) -> peak 22,662 MiB (69.5%)
+  #     900 steps/env (18.0 rollouts, 7.80 GB) -> peak 22,656 MiB (69.5%)
+  # The marginal cost of replay depth came out at ~0 over that range, i.e. the
+  # peak is set by a learner/render transient that dwarfs the buffer, not by the
+  # buffer. So the audit's model -- which predicted this arm would not fit at
+  # ANY depth with a widened conv stack -- was right about the CONV widening
+  # (not attempted here) and pessimistic about depth.
+  # 1150 steps/env (23.0 rollouts, a2's exact depth) very likely also fits and
+  # would remove a confound from the a2 comparison, but it was NOT measured --
+  # the smoke was cut short. Reliability wins for an overnight run; revisit for
+  # the next arm.
+  max_replay_size: 1_843_200
   # 101 = n_step + 1, REQUIRED by store_next_observation: false below --
   # the bootstrap state is read from observation[:, 100] instead of from a
   # stored next_observation, and DMPOConfig raises if the two disagree.
