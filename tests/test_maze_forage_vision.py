@@ -1396,30 +1396,53 @@ def test_corridor_width_is_two_cells_minus_thickness(env):
     assert min(measured) >= cell - 2e-3
 
 
-def test_t_junction_nub_still_bites_with_thin_walls():
-    """The nub bound is only slack at the shipped thickness -- pin the thin case.
+def test_t_junction_seal_no_longer_pokes_into_the_corridor():
+    """The T-junction nub is GONE, at thin walls too. This pins that it stays gone.
 
-    At the pre-2026-08-21 geometry (11x11 grid in the same square arena, 0.03 m
-    walls) the seal extension does poke into the corridor, costing
-    `0.5 * cell - 1.5 * thickness` of clear width.  Without this the generalised
-    `min(...)` bound above would silently accept a nub of any size.
+    It existed because a sealed side was extended by
+    ``(cell_size - wall_thickness) / 2`` while the perpendicular wall's surface
+    is only ``wall_thickness / 2`` away -- a 3.8 mm overshoot per side at the
+    shipped geometry, showing up as a 7.62 mm overlap on 5 wall pairs and as a
+    corner nub narrowing the corridor. Extending to exactly the neighbour's
+    face still seals the diagonal hole (the flood-fill test proves that
+    independently) and leaves the corridor full width everywhere.
+
+    This test previously asserted the OPPOSITE -- that the nub still bit at thin
+    walls -- as a guard against the bound loosening. The guard is now the
+    stronger statement: no nub at all, and no overlapping wall boxes.
     """
+    import mujoco as _mj
+
     thin = _build_env(maze_cells=5, wall_thickness=0.03, n_treats=4)
-    cell, thickness = thin.cell_size, 0.03
+    expected = 2.0 * thin.cell_size - 0.03
+
     nubbed = [
         scan["gap"]
         for scan in _corridor_scans(thin)
         if scan["both_flanks_thinned"] and scan["n_boxes_on_line"] > 2
     ]
-    assert nubbed, "no T-junction nub in the thin-wall maze"
-    assert 0.5 * cell > 1.5 * thickness  # i.e. the nub really does intrude
-    for gap in nubbed:
-        assert gap == pytest.approx(1.5 * cell + thickness / 2.0, abs=2e-3)
-        assert gap < 2.0 * cell - thickness
+    assert not nubbed, f"a seal extension pokes into {len(nubbed)} corridors"
 
+    model = thin.mj_model
+    ids = [
+        i
+        for i in range(model.ngeom)
+        if (_mj.mj_id2name(model, _mj.mjtObj.mjOBJ_GEOM, i) or "").startswith("maze_wall_")
+    ]
+    pos, size = model.geom_pos[ids][:, :2], model.geom_size[ids][:, :2]
+    low, high = pos - size, pos + size
+    for a in range(len(ids)):
+        for b in range(a + 1, len(ids)):
+            for axis in (0, 1):
+                other = 1 - axis
+                if min(high[a, other], high[b, other]) - max(low[a, other], low[b, other]) <= 1e-9:
+                    continue
+                gap = max(low[a, axis], low[b, axis]) - min(high[a, axis], high[b, axis])
+                assert gap > -1e-9, f"wall boxes overlap by {-gap * 1e3:.2f} mm"
 
-# --- Collected treats must vanish on the step they stop paying -------------
-
+    for scan in _corridor_scans(thin):
+        if scan["both_flanks_thinned"]:
+            assert scan["gap"] == pytest.approx(expected, abs=2e-3)
 
 def test_collected_treat_is_hidden_on_the_collection_step(env):
     """``_park_collected_treats`` must move the derived pose, not just qpos.

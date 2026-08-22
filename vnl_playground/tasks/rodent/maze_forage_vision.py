@@ -698,21 +698,6 @@ class MazeForageVision(rodent_base.RodentEnv):
             if geom.name == "floor":
                 geom.material = _FLOOR_MATERIAL
 
-        # Flat-tint the wall BOXES to the wall texture's own mean colour. The
-        # textured planes cover only the vertical faces, so the tops would
-        # otherwise render as the default white and read as bright caps sitting
-        # on green walls. Sampling the texture rather than hard-coding a colour
-        # keeps the two in step if the tint changes.
-        texture_path = self._wall_texture_asset()
-        if texture_path is not None:
-            import PIL.Image
-
-            with PIL.Image.open(texture_path) as handle:
-                mean = np.asarray(handle.convert("RGB"), dtype=float).mean((0, 1)) / 255.0
-            for geom in self._spec.geoms:
-                if geom.name.startswith("maze_wall_"):
-                    geom.rgba = [float(mean[0]), float(mean[1]), float(mean[2]), 1.0]
-
     def _add_sky(self) -> None:
         """Adds a blue gradient skybox, matching dm_control's outdoor aesthetic."""
         if str(self._config.get("aesthetic", "default")) == "outdoor_natural":
@@ -879,7 +864,15 @@ class MazeForageVision(rodent_base.RodentEnv):
             # full-cell walls rather than producing a leaky maze.
             return pos, size
 
-        seal = self._cell_size - thickness
+        # Extend a sealed side to the NEIGHBOUR'S FACE, not past it. This used
+        # to be `cell_size - thickness` (0.1576 m at the defaults), extending by
+        # half of that = 0.0788 m, while the perpendicular wall's surface is
+        # only `thickness / 2` = 0.075 m away. The 3.8 mm overshoot per side put
+        # a 7.62 mm overlap on 5 wall pairs -- invisible as bare boxes, but once
+        # each face carries a facade plane it shows as a small tab poking past
+        # every T-junction. Reaching exactly the neighbour's face still seals
+        # the diagonal hole (the flood-fill test pins that).
+        seal = thickness
         is_wall = grid == maze_utils.WALL_CHAR
         height, width = grid.shape
 
@@ -984,6 +977,22 @@ class MazeForageVision(rodent_base.RodentEnv):
             inside = np.all((point > lo + eps) & (point < hi - eps), axis=1)
             inside[skip] = False
             return bool(np.any(inside))
+
+        # Flat-tint the wall BOXES to the wall texture's own mean colour. The
+        # facades cover only the vertical faces, so the tops would otherwise
+        # render at MuJoCo's default 0.5 grey and read as bright caps on green
+        # walls. THIS MUST RUN AFTER _build_maze: it lived in _apply_aesthetic,
+        # which __init__ calls one line EARLIER than _build_maze, so the loop
+        # found no wall geoms and silently did nothing.
+        texture_path = self._wall_texture_asset()
+        if texture_path is not None:
+            import PIL.Image
+
+            with PIL.Image.open(texture_path) as handle:
+                tint = np.asarray(handle.convert("RGB"), dtype=float).mean((0, 1)) / 255.0
+            for geom in self._spec.geoms:
+                if geom.name.startswith("maze_wall_"):
+                    geom.rgba = [float(tint[0]), float(tint[1]), float(tint[2]), 1.0]
 
         end_caps = bool(self._config.get("wall_facade_end_caps", False))
         for i in range(pos.shape[0]):

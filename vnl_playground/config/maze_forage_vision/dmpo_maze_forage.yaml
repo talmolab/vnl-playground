@@ -132,7 +132,35 @@ env_config:
   #    so without the light ring the walls render black to the policy:
   #    73.6% of egocentric pixels below 0.15 with the builtin checker and no
   #    ring, 43.4% with the labmaze texture alone, 11.8% with both.
+  # ---- APPEARANCE PRESET ---------------------------------------------
+  # Two supported looks. The block below is preset A, which is what the
+  # in-flight arm trains on; switch by commenting one block and uncommenting
+  # the other. Nothing else in this config depends on the choice.
+  #
+  # PRESET A -- CURRENT TRAINING LOOK (checker floor, gradient sky, texture
+  # assigned to the wall BOXES). Be aware of what this actually renders:
+  # MuJoCo cannot map a 2D texture onto a box, so the walls are FLAT and the
+  # texture only shifts their mean brightness. Measured in the policy's own
+  # eye view over 48 resets, wall vs floor separability is
+  #     d' = 0.116   (wall mean 0.727, floor mean 0.739)
+  # i.e. the policy essentially cannot tell an obstacle from open floor.
+  # Kept as the reference so a running arm stays reproducible.
   wall_texture: "style_03/gray_bright"
+  #
+  # PRESET B -- dm_control `outdoor_natural` (grass floor, photographic sky,
+  # per-face wall facades that actually show the pattern). Costs +100 to +151
+  # non-colliding plane geoms and ~1.23x render time; buys
+  #     d' = 0.575 with style_01/green_bright (dm_control's screenshot look)
+  #     d' = 3.228 with style_01/green        (dark; 6x better for the policy)
+  # Treat-vs-floor rises 6.5 -> 10.6 either way. NOTE the tint that matches
+  # dm_control's published frame is the WORST for separability, because pale
+  # mint walls (0.813) sit right on top of the grass floor (0.872); dm_control
+  # randomises tints within a style, so that frame is one sample, not a spec.
+  #   aesthetic: outdoor_natural
+  #   wall_texture: "style_01/green"        # or "dm_control" for green_bright
+  #   wall_facade_end_caps: true            # ~1% render cost, +6% structure
+  #   key_light_diffuse: 0.30
+  #   wall_light_diffuse: 0.25
   wall_lights: 4
   wall_light_elevation: 0.35
   # Human-render only: the warp ray-tracer ignores light.diffuse (measured --
