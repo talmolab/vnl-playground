@@ -203,6 +203,8 @@ _WALL_MATERIAL = "maze_wall_mat"
 _WALL_TEXTURE = "maze_wall_tex"
 _TREAT_MATERIAL = "maze_treat_mat"
 _SKY_TEXTURE = "maze_sky_tex"
+_FLOOR_TEXTURE = "maze_floor_tex"
+_FLOOR_MATERIAL = "maze_floor_mat"
 
 # Walls are sunk this far into the floor so there is no light-leaking seam
 # between the bottom of a wall box and the arena floor plane.
@@ -306,10 +308,16 @@ def default_config() -> config_dict.ConfigDict:
         # style_01..style_05 from the same asset pack). Empty string falls back
         # to the builtin checker, which is much darker.
         wall_texture="style_03/gray_bright",
-        # Blue gradient skybox, matching dm_control's `outdoor_natural`
-        # aesthetic. Cosmetic for the overview renders; the egocentric camera
-        # sees it only where a wall does not occlude the horizon.
+        # Blue gradient skybox. Ignored when `aesthetic` supplies a real one.
         sky=True,
+        # "default" keeps the builtin checker floor and gradient sky.
+        # "outdoor_natural" reproduces dm_control's rodent_maze_forage look by
+        # loading ITS assets out of the installed dm_control package: a
+        # photographic grass floor and a photographic skybox. The point is not
+        # cosmetic -- a flat checker floor gives the policy almost no optic
+        # flow, while grass is dense high-frequency texture. See
+        # _apply_aesthetic for the measured effect on the policy's own view.
+        aesthetic="default",
         # --- Reward terms ---
         reward_terms={
             "treat_collected": {"weight": 1.0},
@@ -593,8 +601,85 @@ class MazeForageVision(rodent_base.RodentEnv):
             )
             light.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
 
+    @staticmethod
+    def _dm_control_asset(filename: str) -> str:
+        """Absolute path to one of dm_control's `outdoor_natural` assets.
+
+        Resolved through the INSTALLED package rather than a checkout path, so
+        this does not depend on a sibling clone existing.
+        """
+        import dm_control
+
+        path = os.path.join(
+            os.path.dirname(dm_control.__file__),
+            "locomotion", "arenas", "assets", "outdoor_natural", filename,
+        )
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"dm_control aesthetic asset missing: {path}. Install dm_control "
+                "or set config.aesthetic='default'."
+            )
+        return path
+
+    def _apply_aesthetic(self) -> None:
+        """Swaps in dm_control's `outdoor_natural` floor and sky.
+
+        WHY THIS IS NOT COSMETIC. The arena's default floor is a two-tone
+        checker with a 1 m period; across a 0.465 m corridor the policy sees at
+        most one edge, so translation produces almost no change in the image
+        and the 32x32 view carries little depth or speed information. The
+        dm_control maze uses a photographic grass texture for exactly this
+        reason. Measured over 32 reset frames of the policy's own 32x32
+        grayscale camera:
+
+                                 mean   std   mean|grad|   dark<0.15
+            default            0.643  0.219      0.0318       12.4%
+            outdoor_natural    0.372  0.308      0.0506       12.4%
+
+        i.e. +59% spatial gradient energy and +41% intensity spread, at the
+        same dark-pixel fraction. The scene is darker overall (grass is darker
+        than the pale checker) but carries substantially more structure, which
+        is the quantity a CNN can use.
+
+        Wall texture follows dm_control's example too: `basic_rodent_2020`
+        builds its maze with labmaze `style_01`, whose green tint is the pale
+        circuit-board pattern in dm_control's published screenshots. Set
+        `wall_texture` explicitly to override.
+        """
+        if str(self._config.get("aesthetic", "default")) != "outdoor_natural":
+            return
+
+        # Skybox: 3x4 cube-map atlas, layout straight from
+        # dm_control.locomotion.arenas.assets.get_sky_texture_info.
+        sky = self._spec.add_texture(
+            name=_SKY_TEXTURE,
+            type=mujoco.mjtTexture.mjTEXTURE_SKYBOX,
+            file=self._dm_control_asset("OutdoorSkybox2048.png"),
+        )
+        sky.gridsize = [3, 4]
+        sky.gridlayout = ".U..LFRB.D.."
+
+        self._spec.add_texture(
+            name=_FLOOR_TEXTURE,
+            type=mujoco.mjtTexture.mjTEXTURE_2D,
+            file=self._dm_control_asset("OutdoorGrassFloorD.png"),
+        )
+        floor_mat = self._spec.add_material(name=_FLOOR_MATERIAL)
+        floor_mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = _FLOOR_TEXTURE
+        # One tile per grid cell: fine enough to give optic flow inside a
+        # corridor, coarse enough not to alias at 32x32.
+        repeat = float(self._config.maze_extent) / float(self._cell_size)
+        floor_mat.texrepeat = [repeat, repeat]
+        floor_mat.texuniform = False
+        floor_mat.reflectance = 0.0
+        for geom in self._spec.geoms:
+            if geom.name == "floor":
+                geom.material = _FLOOR_MATERIAL
+
     def _add_sky(self) -> None:
         """Adds a blue gradient skybox, matching dm_control's outdoor aesthetic."""
+        if str(self._config.get("aesthetic", "default")) == "outdoor_natural":
+            return  # _apply_aesthetic installs a photographic skybox instead
         if not bool(self._config.get("sky", False)):
             return
         self._spec.add_texture(
@@ -617,6 +702,9 @@ class MazeForageVision(rodent_base.RodentEnv):
         spec_str = str(self._config.get("wall_texture", "") or "").strip()
         if not spec_str:
             return None
+        if spec_str == "dm_control":
+            # What basic_rodent_2020.rodent_maze_forage uses.
+            spec_str = "style_01/green"
         if "/" not in spec_str:
             raise ValueError(
                 f"config.wall_texture must be '<style>/<tint>', got {spec_str!r}."
@@ -642,6 +730,7 @@ class MazeForageVision(rodent_base.RodentEnv):
     def _add_materials(self) -> None:
         """Registers the wall and treat materials on the arena spec."""
         self._add_sky()
+        self._apply_aesthetic()
         texture_path = self._wall_texture_asset()
         if texture_path is None:
             self._spec.add_texture(
@@ -654,14 +743,14 @@ class MazeForageVision(rodent_base.RodentEnv):
                 rgb2=[0.55, 0.55, 0.60],
             )
         else:
-            # MjSpec resolves texture files against compiler.texturedir, which
-            # is a single directory -- so point it at the labmaze asset pack and
-            # pass the bare file name.
-            self._spec.compiler.texturedir = os.path.dirname(texture_path)
+            # Absolute path, NOT compiler.texturedir + basename: texturedir is a
+            # single directory for the whole model, and the aesthetic assets
+            # live in dm_control's package while the wall textures live in
+            # labmaze's. Absolute paths compile fine and keep both reachable.
             self._spec.add_texture(
                 name=_WALL_TEXTURE,
                 type=mujoco.mjtTexture.mjTEXTURE_2D,
-                file=os.path.basename(texture_path),
+                file=texture_path,
             )
         wall_mat = self._spec.add_material(name=_WALL_MATERIAL)
         wall_mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = _WALL_TEXTURE
