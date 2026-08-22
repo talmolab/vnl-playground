@@ -152,7 +152,11 @@ env_config:
   # non-colliding plane geoms and ~1.23x render time; buys
   #     d' = 0.575 with style_01/green_bright (dm_control's screenshot look)
   #     d' = 3.228 with style_01/green        (dark; 6x better for the policy)
-  # Treat-vs-floor rises 6.5 -> 10.6 either way. NOTE the tint that matches
+  # Treat-vs-floor rises 6.5 -> 10.6 either way. All d' figures above were
+  # measured BEFORE the centre-to-centre wall-placement rewrite, which widened
+  # corridors at junctions and lengthened sightlines (treat-in-view at spawn
+  # went 25% -> 50% on the same seed). They are still the right ORDERING of the
+  # presets; re-measure before quoting an absolute. NOTE the tint that matches
   # dm_control's published frame is the WORST for separability, because pale
   # mint walls (0.813) sit right on top of the grass floor (0.872); dm_control
   # randomises tints within a style, so that frame is one sample, not a spec.

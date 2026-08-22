@@ -97,23 +97,22 @@ corridors, and never changes the arena.  ``__init__`` cross-checks
 
      maze_cells   grid     cell_size   corridor   measured min   free cells
      ----------   -----    ---------   --------   ------------   ----------
-     6            13x13    0.496923    0.8438     0.6703          71
-     8            17x17    0.380000    0.6100     0.4948         127
-     10 (default) 21x21    0.307619    0.4652     0.3862         199
-     12           25x25    0.258400    0.3668     0.2585         287
-     14           29x29    0.222759    0.2955     0.2228         391
+     6            13x13    0.496923    0.8438     0.8438          71
+     8            17x17    0.380000    0.6100     0.6098         127
+     10 (default) 21x21    0.307619    0.4652     0.4650         199
+     12           25x25    0.258400    0.3668     0.3668         287
+     14           29x29    0.222759    0.2955     0.2955         391
 
-   ``corridor`` is the formula above (and the widest measured corridor);
-   ``measured min`` is the narrowest one-cell corridor in that maze.  Two
-   bounded effects make the minimum smaller and neither is a bug: a flanking
-   wall rectangle spanning several cells along the scan axis is not thinned on
-   that axis, and a perpendicular rectangle seal-extended into a T-junction
-   pokes a corner nub into the corridor (see
-   :meth:`MazeForageVision._wall_box_geometry`).  The nub only reaches past the
-   flanking wall's inner face while ``0.5 * cell_size > 1.5 * wall_thickness``,
-   which the shipped 0.15 m walls are *not*: at the defaults the narrowest
-   corridor is set by the un-thinned multi-cell flanks alone.  The floor is one
-   ``cell_size``.
+   ``corridor`` is the formula above, and ``measured min`` is the narrowest
+   one-cell corridor found by rasterising the compiled boxes.  They agree to
+   the raster's own 1 mm resolution at every size, because the walls are built
+   as a centre-to-centre lattice: a wall cell owns a ``wall_thickness`` square
+   about its centre whatever rectangle covers it, so no corridor can be
+   narrowed by how the covering happened to be decomposed (see
+   :meth:`MazeForageVision._wall_box_geometry`).  The earlier thin-then-seal
+   rule did narrow some of them -- multi-cell flanks stayed un-thinned along
+   the scan axis, and a seal extension poked a corner nub into every
+   T-junction, costing up to 0.046 m at the defaults.
 
    From ``maze_cells=12`` on the corridor is narrower than the rat is long, so
    a turn-in-place needs body flexion.  ``maze_cells`` 8 / 10 / 12 are all built
@@ -180,7 +179,7 @@ Usage::
 
 import collections
 import os
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import jax
 import jax.numpy as jp
@@ -822,28 +821,50 @@ class MazeForageVision(rodent_base.RodentEnv):
 
         ``maze_utils.wall_boxes`` gives dm_control's geometry, where every wall
         cell is filled edge to edge.  That would make the walls as thick as the
-        grid pitch (0.1818 m at the defaults, i.e. as wide as the corridors), so
-        each rectangle is thinned to ``wall_thickness`` along any axis it spans
-        a *single* cell on.
+        grid pitch (0.3076 m at the defaults, i.e. as wide as the corridors), so
+        the boxes are rebuilt here as a **centre-to-centre lattice**: a wall is
+        ``wall_thickness`` wide, runs between the CENTRES of the wall cells it
+        covers, and is extended to a neighbouring cell's centre on any side
+        where every cell just beyond is also a wall.
 
-        Thinning alone would leave diagonal holes where a thin wall meets a
-        perpendicular one, so each side of a rectangle is then extended by
-        ``cell_size - wall_thickness`` **iff every grid cell just beyond that
-        side is also a wall**.  The extension never reaches past the
-        neighbouring wall *cell*, so the maze stays sealed and no corridor cell
-        is ever entered.  Overlapping wall boxes are free: they all live on
-        ``worldbody``, and MuJoCo never generates contact pairs within one body.
+        The rule is one sentence and every alignment property follows from it,
+        which is exactly why it replaced the previous thin-then-seal heuristic
+        (thin each single-cell axis, then extend a sealed side by a separately
+        chosen ``seal`` distance):
 
-        .. note::
+        * **Sealed.** Two wall cells are 4-adjacent iff both boxes reach their
+          shared midpoint, so the wall network has the connectivity of the wall
+          *grid*.  A diagonal hole needs two diagonally-adjacent wall cells whose
+          shared orthogonal neighbours are both free; in a ``2n+1`` labmaze the
+          pillar between them is always a wall, so that never arises.  Pinned
+          independently by the flood-fill test.
+        * **No protrusion.** An extension runs from the last cell's centre to
+          the neighbour cell's centre, and the neighbour's own box spans at
+          least ``wall_thickness`` about that centre on both axes, so the
+          extension lands strictly inside it.  Nothing pokes into free space --
+          the T-junction nub the old rule produced is gone by construction, and
+          the corridor is ``2 * cell_size - wall_thickness`` wide *everywhere*
+          rather than pinching to ``1.5 * cell_size + wall_thickness / 2``.
+        * **Aligned corners.** Both border rectangles meeting at a corner stop
+          at the corner cell's centre plus ``wall_thickness / 2`` on their long
+          axis, which is where the perpendicular one's thin axis already ends.
+          The two outer faces are flush.  Under the old rule the long axis ran
+          to the grid-cell boundary instead, so each border wall overhung its
+          neighbour's outer face by ``(cell_size - wall_thickness) / 2`` --
+          0.0788 m at the defaults, half a wall thickness of visible step at
+          every corner, and the reason this was rewritten.
 
-           The neighbouring wall cell is itself only ``wall_thickness`` full
-           once *it* has been thinned, so at a T-junction the extension does
-           poke a nub ``cell_size / 2 - 1.5 * wall_thickness`` into the free
-           space that thinning had handed back (0.046 m at the defaults).  It
-           is a corner nub, not a narrowing of the corridor along its length:
-           the corridor still measures ``1.5 * cell_size + wall_thickness / 2``
-           there (0.288 m) instead of 0.334 m.  Measured and pinned in
-           ``test_corridor_width_is_two_cells_minus_thickness``.
+        Boxes now OVERLAP by design (that is what an extension into a
+        neighbour's centre means).  Overlaps are free: they all live on
+        ``worldbody`` and MuJoCo never generates contact pairs within one body.
+        Flush coplanar faces -- which is what "reach exactly the neighbour's
+        face" produced -- are the arrangement that actually costs something,
+        because coplanar surfaces z-fight and read as a seam.
+
+        The reachable interior is unchanged: only the OUTER faces of the border
+        move (inward, onto the corner cell's centre line).  The inner faces are
+        set by the thin axis, which is ``wall_thickness`` about the cell centre
+        under both rules.
 
         Returns:
             ``(pos, size)``, each ``(n_walls, 3)``; ``size`` is MuJoCo's
@@ -864,15 +885,8 @@ class MazeForageVision(rodent_base.RodentEnv):
             # full-cell walls rather than producing a leaky maze.
             return pos, size
 
-        # Extend a sealed side to the NEIGHBOUR'S FACE, not past it. This used
-        # to be `cell_size - thickness` (0.1576 m at the defaults), extending by
-        # half of that = 0.0788 m, while the perpendicular wall's surface is
-        # only `thickness / 2` = 0.075 m away. The 3.8 mm overshoot per side put
-        # a 7.62 mm overlap on 5 wall pairs -- invisible as bare boxes, but once
-        # each face carries a facade plane it shows as a small tab poking past
-        # every T-junction. Reaching exactly the neighbour's face still seals
-        # the diagonal hole (the flood-fill test pins that).
-        seal = thickness
+        cell = self._cell_size
+        half_t = thickness / 2.0
         is_wall = grid == maze_utils.WALL_CHAR
         height, width = grid.shape
 
@@ -880,24 +894,37 @@ class MazeForageVision(rodent_base.RodentEnv):
             y0, y1 = int(wall.start.y), int(wall.end.y)
             x0, x1 = int(wall.start.x), int(wall.end.x)
 
-            # Thin any axis the rectangle is one cell wide on.
-            if x1 - x0 == 1:
-                size[i, 0] = thickness / 2.0
-            if y1 - y0 == 1:
-                size[i, 1] = thickness / 2.0
-
             # World +x follows increasing column, world +y follows DECREASING
-            # row (dm_control convention, see maze_utils.grid_to_world).
-            sides = (
+            # row (dm_control convention, see maze_utils.grid_to_world), so the
+            # min corner is (first column, last row) and the max corner is
+            # (last column, first row).
+            lo = maze_utils.grid_to_world((y1 - 1, x0), cell, grid.shape) - half_t
+            hi = maze_utils.grid_to_world((y0, x1 - 1), cell, grid.shape) + half_t
+
+            for axis, sign, neighbours in (
                 (0, +1.0, is_wall[y0:y1, x1] if x1 < width else None),
                 (0, -1.0, is_wall[y0:y1, x0 - 1] if x0 > 0 else None),
                 (1, +1.0, is_wall[y0 - 1, x0:x1] if y0 > 0 else None),
                 (1, -1.0, is_wall[y1, x0:x1] if y1 < height else None),
-            )
-            for axis, sign, neighbours in sides:
-                if neighbours is not None and np.all(neighbours):
-                    size[i, axis] += seal / 2.0
-                    pos[i, axis] += sign * seal / 2.0
+            ):
+                if neighbours is None or not np.all(neighbours):
+                    continue
+                # Reach the neighbour cell's CENTRE LINE -- `cell - half_t`
+                # past the face this side currently sits on. Not further: two
+                # rectangles flanking a shared wall cell then meet exactly at
+                # that cell's centre, edge to edge, with no overlap and so no
+                # pair of coplanar side faces anywhere in the maze. Extending a
+                # full pitch instead (to the far edge of the neighbour's band)
+                # seals identically but makes those two rectangles overlap by
+                # `wall_thickness`, which puts 12 coplanar-overlapping faces
+                # into the default look. Measured both ways.
+                if sign > 0:
+                    hi[axis] += cell - half_t
+                else:
+                    lo[axis] -= cell - half_t
+
+            pos[i, :2] = (lo + hi) / 2.0
+            size[i, :2] = (hi - lo) / 2.0
 
         return pos, size
 
@@ -990,12 +1017,50 @@ class MazeForageVision(rodent_base.RodentEnv):
             inside[:, skip] = False
             return bool(np.all(np.any(inside, axis=1)))
 
+        def duplicate(points, i, plane):
+            """True if another box already presents this whole face, on its plane.
+
+            The centre-to-centre lattice makes wall boxes overlap, and where a
+            wall ends on a cell a perpendicular wall also occupies, the end cap
+            lands on the same plane as that wall's SIDE -- 33 such pairs at the
+            shipped geometry, and zero between two sides, which is why the
+            default look (sides only) never sees this.  Both boxes carry the
+            same flat tint so the boxes cannot z-fight visibly, but two textured
+            facades on one plane very much can.
+
+            Keep the larger face and drop the smaller; the surviving facade
+            already spans the surface.  Ties (identical faces) go to the lower
+            index, so a mutually-covering pair never loses both and leaves the
+            plane bare.  Bounds are tolerant here because the samples sit
+            exactly ON the neighbour's boundary, which the strict test in
+            ``buried`` is right to miss.
+            """
+            points = np.atleast_2d(points)
+            covered = np.all(
+                (points[:, None, :] > lo[None] - eps) & (points[:, None, :] < hi[None] + eps),
+                axis=2,
+            )
+            area = 4.0 * size[:, plane[0]] * size[:, plane[1]]
+            wins = (area > area[i] + eps) | ((np.abs(area - area[i]) <= eps)
+                                             & (np.arange(len(area)) < i))
+            covered &= wins[None]
+            return bool(np.all(np.any(covered, axis=1)))
+
         # Flat-tint the wall BOXES to the wall texture's own mean colour. The
         # facades cover only the vertical faces, so the tops would otherwise
         # render at MuJoCo's default 0.5 grey and read as bright caps on green
         # walls. THIS MUST RUN AFTER _build_maze: it lived in _apply_aesthetic,
         # which __init__ calls one line EARLIER than _build_maze, so the loop
         # found no wall geoms and silently did nothing.
+        #
+        # The tint is an `rgba` override, which recolours the geom but leaves
+        # the wall material's TEXTURE attached, so the tops still carry the
+        # unmappable-on-a-box striping the facades exist to avoid. That is the
+        # better of the two looks and was checked both ways: swapping the boxes
+        # onto a texture-free material does remove the striping, and then the
+        # top face -- lit head-on by the key light, with no texture left to
+        # modulate it -- blows out to white. The stripes are only ever seen from
+        # directly overhead; the policy's eye sits at 0.06 m under a 0.3 m wall.
         texture_path = self._wall_texture_asset()
         if texture_path is not None:
             import PIL.Image
@@ -1007,6 +1072,31 @@ class MazeForageVision(rodent_base.RodentEnv):
                     geom.rgba = [float(tint[0]), float(tint[1]), float(tint[2]), 1.0]
 
         end_caps = bool(self._config.get("wall_facade_end_caps", False))
+        # Facades accepted so far, as (axis, sign, plane coordinate, in-plane
+        # bbox), used to keep two coplanar facades off the same depth.
+        placed: List[Tuple[int, int, float, np.ndarray]] = []
+
+        def standoff_rank(axis, sign, coord, box):
+            """How many accepted facades already share this plane and overlap it.
+
+            Coplanar overlapping facades z-fight, and the lattice makes a few
+            unavoidable: a wall's END CAP lands on the same plane as the SIDE of
+            the perpendicular wall it ends against, overlapping it only partly,
+            so neither can be dropped as redundant (21 such pairs with end caps
+            on; zero between two sides, which is why the default look never
+            hits this). Rank them and step the standoff by rank -- 0.1 mm apart
+            on a 300 mm wall, i.e. a depth order rather than a tie.
+            """
+            rank = 0
+            for other_axis, other_sign, other_coord, other_box in placed:
+                if other_axis != axis or other_sign != sign:
+                    continue
+                if abs(other_coord - coord) > 1e-6:
+                    continue
+                if np.all(np.minimum(box[1], other_box[1])
+                          > np.maximum(box[0], other_box[0]) + 1e-6):
+                    rank += 1
+            return rank
         for i in range(pos.shape[0]):
             # The wall's THIN axis is `wall_thickness`; the faces whose normal
             # points along it are the big ones fronting a corridor. Faces on
@@ -1037,8 +1127,16 @@ class MazeForageVision(rodent_base.RodentEnv):
                             point[plane[0]] += u
                             point[plane[1]] += v
                             samples.append(point.copy())
-                    if buried(np.asarray(samples), i):
+                    samples = np.asarray(samples)
+                    if buried(samples, i):
                         continue
+                    if duplicate(samples - normal * 1e-3, i, plane):
+                        continue
+                    in_plane = np.stack([face_centre[plane] - size[i, plane],
+                                         face_centre[plane] + size[i, plane]])
+                    rank = standoff_rank(axis, int(sign), float(face_centre[axis]),
+                                         in_plane)
+                    placed.append((axis, int(sign), float(face_centre[axis]), in_plane))
                     ex = np.asarray(local_x, dtype=float)
                     ey = np.asarray(local_y, dtype=float)
                     frame = np.stack([ex, ey, np.cross(ex, ey)], axis=1)
@@ -1053,7 +1151,7 @@ class MazeForageVision(rodent_base.RodentEnv):
                     self._spec.worldbody.add_geom(
                         name=f"maze_wall_{i}_face_{axis}_{int(sign)}",
                         type=mujoco.mjtGeom.mjGEOM_PLANE,
-                        pos=list(face_centre + normal * 1e-4),
+                        pos=list(face_centre + normal * (1e-4 * (1 + rank))),
                         size=[half_x, half_y, cell],
                         quat=list(quat),
                         material=mat.name,

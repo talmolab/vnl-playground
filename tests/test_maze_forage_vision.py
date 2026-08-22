@@ -1396,53 +1396,216 @@ def test_corridor_width_is_two_cells_minus_thickness(env):
     assert min(measured) >= cell - 2e-3
 
 
-def test_t_junction_seal_no_longer_pokes_into_the_corridor():
-    """The T-junction nub is GONE, at thin walls too. This pins that it stays gone.
+def _ideal_lattice_boxes(env):
+    """The centre-to-centre lattice ``_wall_box_geometry`` claims to build.
 
-    It existed because a sealed side was extended by
-    ``(cell_size - wall_thickness) / 2`` while the perpendicular wall's surface
-    is only ``wall_thickness / 2`` away -- a 3.8 mm overshoot per side at the
-    shipped geometry, showing up as a 7.62 mm overlap on 5 wall pairs and as a
-    corner nub narrowing the corridor. Extending to exactly the neighbour's
-    face still seals the diagonal hole (the flood-fill test proves that
-    independently) and leaves the corridor full width everywhere.
+    Independent of the covering-rectangle decomposition: every wall cell owns a
+    ``wall_thickness`` square about its centre, and every 4-adjacent pair of
+    wall cells is joined by a ``wall_thickness``-wide band between their
+    centres. Derived straight from the grid, so it cannot drift with the
+    implementation it checks.
+    """
+    grid = env.maze_grid
+    cell = env.cell_size
+    half_t = float(env._config.wall_thickness) / 2.0
+    wall = grid == maze_utils.WALL_CHAR
+    height, width = grid.shape
+    boxes = []
+    for row in range(height):
+        for col in range(width):
+            if not wall[row, col]:
+                continue
+            cx, cy = maze_utils.grid_to_world((row, col), cell, grid.shape)
+            boxes.append((cx - half_t, cx + half_t, cy - half_t, cy + half_t))
+            for drow, dcol in ((0, 1), (1, 0)):
+                r2, c2 = row + drow, col + dcol
+                if r2 < height and c2 < width and wall[r2, c2]:
+                    nx, ny = maze_utils.grid_to_world((r2, c2), cell, grid.shape)
+                    boxes.append((min(cx, nx) - half_t, max(cx, nx) + half_t,
+                                  min(cy, ny) - half_t, max(cy, ny) + half_t))
+    return boxes
 
-    This test previously asserted the OPPOSITE -- that the nub still bit at thin
-    walls -- as a guard against the bound loosening. The guard is now the
-    stronger statement: no nub at all, and no overlapping wall boxes.
+
+def _footprint_diff(env, step=2e-3):
+    """``(gap, tab)`` area in m^2 between the compiled boxes and the ideal lattice."""
+    pos, half = _wall_boxes_from_model(env)
+    extent = float(env.maze_half_extent[0])
+    axis = np.arange(-extent, extent + step, step)
+    grid_x, grid_y = np.meshgrid(axis, axis, indexing="ij")
+
+    def cover(boxes):
+        out = np.zeros(grid_x.shape, dtype=bool)
+        for lo_x, hi_x, lo_y, hi_y in boxes:
+            out |= (grid_x >= lo_x) & (grid_x <= hi_x) & (grid_y >= lo_y) & (grid_y <= hi_y)
+        return out
+
+    actual = cover([(p[0] - h[0], p[0] + h[0], p[1] - h[1], p[1] + h[1])
+                    for p, h in zip(pos, half)])
+    ideal = cover(_ideal_lattice_boxes(env))
+    area = step * step
+    return float((ideal & ~actual).sum() * area), float((actual & ~ideal).sum() * area)
+
+
+@pytest.mark.parametrize("cells,thickness", [(10, 0.15), (5, 0.03), (6, 0.25)])
+def test_wall_boxes_are_exactly_the_centre_to_centre_lattice(cells, thickness):
+    """The compiled walls cover the ideal lattice and nothing else.
+
+    This is the whole placement contract in one assertion, and it is what the
+    thin-then-seal rule it replaced could not satisfy: that rule ran a
+    rectangle's long axis to the grid-cell BOUNDARY, half a cell past where the
+    perpendicular wall's surface ends, so at the shipped geometry it put
+    0.60 m^2 of wall outside the lattice -- 0.0788 m of overhang at every
+    border corner, plus T-junction nubs -- while still leaving 0.0048 m^2 of
+    the lattice uncovered.
+
+    Gap means a hole; tab means wall sticking out into space the lattice says
+    is free.  Both must be zero to the raster's own resolution.
+    """
+    env = _build_env(maze_cells=cells, wall_thickness=thickness, n_treats=4)
+    gap, tab = _footprint_diff(env)
+    assert gap == pytest.approx(0.0, abs=1e-4), f"lattice not covered: {gap:.5f} m^2"
+    assert tab == pytest.approx(0.0, abs=1e-3), f"wall outside the lattice: {tab:.5f} m^2"
+
+
+def test_border_corner_faces_are_flush():
+    """The two border walls meeting at a corner end on the same two planes.
+
+    The user-visible symptom of the old rule was here: each border wall ran to
+    the grid-cell boundary on its long axis, so it overhung the perpendicular
+    border wall's outer face by ``(cell_size - wall_thickness) / 2`` -- 78.8 mm,
+    half a wall thickness, at every one of the four corners.
+    """
+    env = _build_env(maze_cells=6, wall_thickness=0.15, n_treats=4)
+    pos, half = _wall_boxes_from_model(env)
+    low, high = pos - half, pos + half
+    extent_x, extent_y = env.maze_half_extent
+    cell = env.cell_size
+    thickness = float(env._config.wall_thickness)
+    # Outer surface of the border: the corner cell's centre line, offset by half
+    # a wall. The footprint edge is (cell - thickness) / 2 further out.
+    outer_x = extent_x - cell / 2.0 + thickness / 2.0
+    outer_y = extent_y - cell / 2.0 + thickness / 2.0
+
+    assert low[:, 0].min() == pytest.approx(-outer_x, abs=1e-9)
+    assert high[:, 0].max() == pytest.approx(outer_x, abs=1e-9)
+    assert low[:, 1].min() == pytest.approx(-outer_y, abs=1e-9)
+    assert high[:, 1].max() == pytest.approx(outer_y, abs=1e-9)
+
+    # Every box that reaches the outer plane on one axis must stop at or inside
+    # the outer plane on the other -- i.e. nothing overhangs at a corner.
+    for i in range(len(pos)):
+        if low[i, 0] == pytest.approx(-outer_x, abs=1e-9):
+            assert low[i, 1] >= -outer_y - 1e-9
+            assert high[i, 1] <= outer_y + 1e-9
+
+
+def test_no_wall_box_reaches_a_free_cell():
+    """No wall material anywhere inside a free cell -- the strongest no-nub claim.
+
+    The old thin-then-seal rule extended a sealed side past the perpendicular
+    wall's surface, poking a corner nub into the corridor and narrowing it from
+    ``2 * cell_size - wall_thickness`` to ``1.5 * cell_size + wall_thickness / 2``
+    at every T-junction. The centre-to-centre lattice cannot do that at all: a
+    wall cell owns only a ``wall_thickness`` square about its centre, which stops
+    ``(cell_size - wall_thickness) / 2`` short of the cell boundary, and an
+    extension stops at the next wall cell's centre. So free cells are wholly
+    free, checked here as a strict box/cell intersection rather than by
+    measuring a corridor and hoping the worst case was sampled.
+    """
+    for cells, thickness in ((5, 0.03), (10, 0.15)):
+        env = _build_env(maze_cells=cells, wall_thickness=thickness, n_treats=4)
+        pos, half = _wall_boxes_from_model(env)
+        grid = env.maze_grid
+        cell = env.cell_size
+        free = np.argwhere(grid != maze_utils.WALL_CHAR)
+        centres = maze_utils.grid_to_world(free, cell, grid.shape)
+        slack = (cell - thickness) / 2.0
+        for (cx, cy) in centres:
+            overlap = (
+                (np.abs(pos[:, 0] - cx) < half[:, 0] + cell / 2.0 - 1e-9)
+                & (np.abs(pos[:, 1] - cy) < half[:, 1] + cell / 2.0 - 1e-9)
+            )
+            assert not overlap.any(), (
+                f"cells={cells}: a wall box reaches free cell at "
+                f"({cx:.4f}, {cy:.4f}); every wall should stop {slack:.4f} m short"
+            )
+
+
+def test_corridors_measure_full_width_at_thin_walls():
+    """Every one-cell corridor is ``2 * cell_size - wall_thickness`` across.
+
+    Thin walls are the strict case: the wider the wall, the less room a mistake
+    in where the wall ENDS has to show up as a narrowing.
+    """
+    thin = _build_env(maze_cells=5, wall_thickness=0.03, n_treats=4)
+    expected = 2.0 * thin.cell_size - 0.03
+    scans = [scan for scan in _corridor_scans(thin) if scan["both_flanks_thinned"]]
+    assert scans, "no corridor flanked by two thinned walls"
+    for scan in scans:
+        assert scan["gap"] == pytest.approx(expected, abs=2e-3)
+
+
+def test_wall_facades_are_never_exactly_coplanar():
+    """No two texture facades share a plane, so none can z-fight.
+
+    They would otherwise: a wall's end cap lands on the same plane as the SIDE
+    of the wall it ends against and overlaps it only partly, so neither is
+    redundant enough to drop. ``_add_wall_texturing_planes`` ranks such a pair
+    and steps the standoff by rank. Side faces alone (the default) never
+    collide -- two rectangles flanking a shared wall cell meet exactly at its
+    centre, edge to edge -- so this is really a guard on the end-cap option.
     """
     import mujoco as _mj
 
-    thin = _build_env(maze_cells=5, wall_thickness=0.03, n_treats=4)
-    expected = 2.0 * thin.cell_size - 0.03
+    for end_caps in (False, True):
+        env = _build_env(
+            maze_cells=6,
+            n_treats=4,
+            aesthetic="outdoor_natural",
+            wall_texture="dm_control",
+            wall_facade_end_caps=end_caps,
+        )
+        model = env.mj_model
+        ids = [
+            i
+            for i in range(model.ngeom)
+            if "_face_" in (_mj.mj_id2name(model, _mj.mjtObj.mjOBJ_GEOM, i) or "")
+        ]
+        assert ids, "aesthetic build emitted no facade planes"
+        pos, quat, size = model.geom_pos[ids], model.geom_quat[ids], model.geom_size[ids]
 
-    nubbed = [
-        scan["gap"]
-        for scan in _corridor_scans(thin)
-        if scan["both_flanks_thinned"] and scan["n_boxes_on_line"] > 2
-    ]
-    assert not nubbed, f"a seal extension pokes into {len(nubbed)} corridors"
+        def frame(i):
+            mat = np.zeros(9)
+            _mj.mju_quat2Mat(mat, quat[i])
+            return mat.reshape(3, 3)
 
-    model = thin.mj_model
-    ids = [
-        i
-        for i in range(model.ngeom)
-        if (_mj.mj_id2name(model, _mj.mjtObj.mjOBJ_GEOM, i) or "").startswith("maze_wall_")
-    ]
-    pos, size = model.geom_pos[ids][:, :2], model.geom_size[ids][:, :2]
-    low, high = pos - size, pos + size
-    for a in range(len(ids)):
-        for b in range(a + 1, len(ids)):
-            for axis in (0, 1):
-                other = 1 - axis
-                if min(high[a, other], high[b, other]) - max(low[a, other], low[b, other]) <= 1e-9:
-                    continue
-                gap = max(low[a, axis], low[b, axis]) - min(high[a, axis], high[b, axis])
-                assert gap > -1e-9, f"wall boxes overlap by {-gap * 1e3:.2f} mm"
+        for a in range(len(ids)):
+            fa = frame(a)
+            for b in range(a + 1, len(ids)):
+                fb = frame(b)
+                if abs(abs(float(fa[:, 2] @ fb[:, 2])) - 1.0) > 1e-6:
+                    continue  # not parallel
+                axis = int(np.argmax(np.abs(fa[:, 2])))
+                if abs(pos[a, axis] - pos[b, axis]) > 1e-9:
+                    continue  # different depth: cannot z-fight
+                span = [
+                    sum(np.abs(f[:, k]) * s[k] for k in range(2))
+                    for f, s in ((fa, size[a]), (fb, size[b]))
+                ]
+                overlaps = all(
+                    min(pos[a, k] + span[0][k], pos[b, k] + span[1][k])
+                    - max(pos[a, k] - span[0][k], pos[b, k] - span[1][k])
+                    > 1e-6
+                    for k in range(3)
+                    if k != axis
+                )
+                assert not overlaps, (
+                    f"end_caps={end_caps}: facades "
+                    f"{_mj.mj_id2name(model, _mj.mjtObj.mjOBJ_GEOM, ids[a])} and "
+                    f"{_mj.mj_id2name(model, _mj.mjtObj.mjOBJ_GEOM, ids[b])} "
+                    "are exactly coplanar and overlap"
+                )
 
-    for scan in _corridor_scans(thin):
-        if scan["both_flanks_thinned"]:
-            assert scan["gap"] == pytest.approx(expected, abs=2e-3)
 
 def test_collected_treat_is_hidden_on_the_collection_step(env):
     """``_park_collected_treats`` must move the derived pose, not just qpos.
@@ -1701,17 +1864,24 @@ def test_maze_extent_is_exactly_two_metres(env):
         (MAZE_EXTENT_M / 2, MAZE_EXTENT_M / 2), abs=1e-9
     )
 
-    # ...and 4: every compiled wall box lies inside that footprint.  NOTE the
-    # box bounding box is not itself exactly 6.46 m and is not symmetric -- the
-    # greedy covering hands the top border row to a one-row rectangle, which is
-    # then thinned, so its outer face sits at +0.924 m while the un-thinned
-    # border column reaches -1.0 m.  Pre-existing geometry, unrelated to the
-    # resize; what matters is containment, which is asserted.
+    # ...and 4: the compiled wall boxes lie inside that footprint, and their
+    # bounding box is SYMMETRIC and sits on the border cells' outer surface --
+    # half a wall thickness outside the border cell centres, i.e. inset by
+    # `(cell_size - wall_thickness) / 2` from the grid footprint. The centre-to-
+    # centre lattice puts every rectangle's long axis there whatever the greedy
+    # covering did with it. It did NOT used to: a rectangle's long axis ran to
+    # the grid-cell boundary, so a one-row border rectangle reached the
+    # footprint edge while the border column it met stopped 0.0788 m inside it,
+    # and the bbox came out asymmetric -- the visible corner overhang.
     half = MAZE_EXTENT_M / 2
+    outer = half - env.cell_size / 2.0 + float(env._config.wall_thickness) / 2.0
     min_x, max_x, min_y, max_y = _wall_outer_faces(env)
     assert min_x >= -half - 1e-9 and max_x <= half + 1e-9
     assert min_y >= -half - 1e-9 and max_y <= half + 1e-9
-    assert min_x == pytest.approx(-half, abs=1e-9)  # left border is un-thinned
+    for face in (min_x, min_y):
+        assert face == pytest.approx(-outer, abs=1e-9)
+    for face in (max_x, max_y):
+        assert face == pytest.approx(outer, abs=1e-9)
 
     # 5: the arena is SEALED, and the enclosed span is the footprint minus one
     # border cell and one wall thickness (the border walls are thinned and sit
