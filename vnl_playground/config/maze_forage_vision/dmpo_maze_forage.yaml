@@ -325,10 +325,23 @@ network_config:
 
 transfer:
   mode: kl_anchor_b_aggressive
-  # CHANGED: the "combined prior" -- the exact prior the PPO reference run
-  # 260408_082253 froze (its config.json transfer.prior_checkpoint_path).
-  # Previous value was /home/talmolab/Desktop/SalkResearch/data/prior/default.
-  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/SCAMPER/model_checkpoints/260407_183223_056788
+  # The "combined prior" -- the exact prior the PPO reference run 260408_082253
+  # froze (its config.json transfer.prior_checkpoint_path). Its own checkpoint
+  # metadata names it `prior_combined_gap_v1`, distilled over clip_set=all of
+  # rodent_reference_clips.h5.
+  #
+  # PATH CHANGED 2026-08-21, WEIGHTS DID NOT. This used to point at
+  # SCAMPER/model_checkpoints/260407_183223_056788, which is a run-output
+  # working directory. data/prior/combined_jump is a durable copy of it and is
+  # VERIFIED IDENTICAL: `diff -rq --exclude='*.mp4'` over the two trees reports
+  # nothing (exit 0) across all 15 PriorNetwork_* steps, and both total exactly
+  # 782,990,865 bytes. The only files unique to data/prior/combined_jump are
+  # its 15 *_encoder_decoder.mp4 previews. So this is a provenance change, not
+  # a numerical one -- an arm launched before and after this edit restores the
+  # same weights, and the startup `anchor_invariant_probe r_anchor=1.0000`
+  # gate would catch it if that ever stopped being true.
+  # (Before the combined prior, this was data/prior/default.)
+  prior_checkpoint_path: /home/talmolab/Desktop/SalkResearch/data/prior/combined_jump
   prior_checkpoint_step: null
   highlvl_obs_key: task_obs
   decoder_obs_key: proprioception
