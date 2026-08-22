@@ -318,6 +318,59 @@ def main(hydra_cfg: DictConfig):
     cfg.kl_anchor_decay_sgd_steps = int(
         hydra_cfg.kl_anchor.get("decay_sgd_steps", 0)
     )
+    # Is the loss-side anchor actually switched on? This mirrors the gate the
+    # learner uses to decide whether `anchor_mu_imit` is USED -- which exists
+    # TWICE, once per learner path, and the recurrent arm runs the second copy:
+    #   feedforward  track-mjx learner.py:309-311
+    #   recurrent    track-mjx learner.py:828-830   (byte-identical predicate)
+    # (Line numbers are version-fragile: the same gate sits at 307-308 on the
+    # pre-RNN commit and in the other track-mjx clone on this box. Match on the
+    # expression, not the line.) Note the learner does not skip READING the
+    # field -- learner.py:488 does `batch.get("anchor_mu_imit")` unconditionally
+    # and gets None when absent; the gate decides whether the value is used.
+    #
+    # When the term is off we stop threading the two anchor arrays through the
+    # rollout AND stop reserving room for them in the replay. On the maze arm
+    # (action_size 38) that is 2 * 38 * 4 = 304 B/transition -- 7.9% of the
+    # 3,824 B the FF arm reports at startup ("3.73 KB"), i.e. 683 MiB of an
+    # 8.39 GiB buffer -- spent on a term whose gradient was measured at
+    # train/anchor_loss_term = -2.7e-08.
+    #
+    # THE BACKSTOP IS WEAKER THAN IT LOOKS. learner.py:494 (FF) / :1058 (RNN)
+    # raises a bare ValueError, and its condition is `cfg.kl_anchor_alpha != 0.0
+    # and anchor_mu is None` -- alpha ONLY. `beta_linear` is not checked, so the
+    # combination alpha == 0, beta_linear != 0, extras dropped would sail past
+    # it and silently contribute nothing. That combination cannot arise from
+    # THIS predicate, which covers beta; it would arise from anyone later
+    # "simplifying" this line to match the ValueError. Do not.
+    #
+    # NOTE what this does and does not cost. It costs NO diagnostics.
+    # `train/anchor_kl_mean` / `anchor_reward_mean` / `anchor_loss_term` keep
+    # being emitted every chunk regardless (unconditional initialisers at
+    # learner.py:303-305 / 824-826, unconditional emission at :614-618 /
+    # :1168-1172) -- they are pinned at exactly 0.0, which is a property of
+    # alpha == 0, not of dropping the extras. Read a flat zero line there as
+    # "term is off", not as "no drift". The diagnostic the run notes actually
+    # quote -- `eval/anchor/r_anchor_mean`, MSE-based -- is computed by
+    # KLAnchorPriorDecoderWrapper into state.metrics from state.info and is
+    # independent of both alpha and the replay, so it keeps logging either way.
+    #
+    # Resume-safe: the replay is never checkpointed, it is rebuilt empty from
+    # this template on every launch, after the restore.
+    anchor_in_loss = (
+        cfg.kl_anchor_alpha != 0.0 or cfg.kl_anchor_beta_linear != 0.0
+    )
+    anchor_extras = (
+        ("anchor_mu_imit", "anchor_log_std_imit") if anchor_in_loss else ()
+    )
+    log.info(
+        "kl-anchor loss term: %s (alpha=%.3g, beta_linear=%.3g) -> replay "
+        "anchor extras %s",
+        "ON" if anchor_in_loss else "OFF",
+        cfg.kl_anchor_alpha,
+        cfg.kl_anchor_beta_linear,
+        "stored" if anchor_in_loss else "dropped",
+    )
     iters_per_chunk = int(hydra_cfg.train_config.get("iters_per_chunk", 32))
     cfg_dict = OmegaConf.to_container(hydra_cfg, resolve=True)
     seed = int(hydra_cfg.get("seed", 0))
@@ -454,9 +507,10 @@ def main(hydra_cfg: DictConfig):
         "action": jnp.zeros((action_size,), dtype=jnp.float32),
         "reward": jnp.zeros((), dtype=jnp.float32),
         "discount": jnp.zeros((), dtype=jnp.float32),
-        "anchor_mu_imit": jnp.zeros((action_size,), dtype=jnp.float32),
-        "anchor_log_std_imit": jnp.zeros((action_size,), dtype=jnp.float32),
     }
+    # Only reserved when the loss-side anchor is on -- see `anchor_in_loss`.
+    for _k in anchor_extras:
+        transition_template[_k] = jnp.zeros((action_size,), dtype=jnp.float32)
     if bool(getattr(cfg, "store_next_observation", True)):
         transition_template["next_observation"] = obs_template
     else:
@@ -788,7 +842,7 @@ def main(hydra_cfg: DictConfig):
         wandb_log_callback=wandb_log_cb,
         ckpt_mgr=ckpt_mgr, ckpt_save_callback=ckpt_save_cb,
         cfg_dict=cfg_dict,
-        extra_state_extras=("anchor_mu_imit", "anchor_log_std_imit"),
+        extra_state_extras=anchor_extras,
         start_env_steps=start_env_steps,
         frozen_behavior_params=frozen_behavior_params,
     )

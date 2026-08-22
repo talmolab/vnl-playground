@@ -286,7 +286,16 @@ env_config:
     nan_termination: {}
 
 network_config:
-  arch_name: dmpo_kl_anchor_b_aggressive
+  # NO `arch_name` KEY, deliberately. train_highlvl_dmpo_kl_anchor.py calls
+  # make_dmpo_kl_anchor_networks unconditionally -- it never reads arch_name --
+  # so the historical `arch_name: dmpo_kl_anchor_b_aggressive` was a label that
+  # looked like a switch. Other entry points (train.py / train_highlvl.py) DO
+  # dispatch on arch_name and CAN be pointed at this config -- they share
+  # `config_path="config"` -- so the key was not merely inert, it was a live
+  # wrong-path invitation. Removed 2026-08-21. No hydra structured config or
+  # dataclass schema requires it: DMPOConfig is a plain all-defaults dataclass
+  # fed only from train_config, and every network_config read is an explicit
+  # `.get(key, default)`.
   binocular_mode: shared
   critic_use_proprio: true
   # ---- latent residual bound (added 2026-08-11 after the OOD diagnosis) -----
@@ -324,7 +333,16 @@ network_config:
   #   action_size=38     obs={imitation_target:640, proprioception:277}
 
 transfer:
-  mode: kl_anchor_b_aggressive
+  # NO `mode` KEY, deliberately. This block is consumed by
+  # train_highlvl_dmpo_kl_anchor.py, which reads only prior_checkpoint_path,
+  # prior_checkpoint_step and warm_start_dmpo_checkpoint from this block, and
+  # never looks at `mode`. (It does NOT read highlvl_obs_key / decoder_obs_key
+  # either, despite them living here -- those are consumed elsewhere.) The historical
+  # `mode: kl_anchor_b_aggressive` was worse than inert: the ONE dispatcher that
+  # does read transfer.mode (train_dmpo.py) accepts only
+  # ("", "prior_decoder", "from_scratch"), so that value would have raised
+  # `Unknown transfer.mode` had this config ever been pointed at it. Removed
+  # 2026-08-21; absent now reads as "" there.
   # The "combined prior" -- the exact prior the PPO reference run 260408_082253
   # froze (its config.json transfer.prior_checkpoint_path). Its own checkpoint
   # metadata names it `prior_combined_gap_v1`, distilled over clip_set=all of
@@ -353,16 +371,39 @@ kl_anchor:
   # frozen, pi_imit is the same network with residual=0, so
   # KL(pi_theta || pi_imit) is a pure function of the residual and the anchor
   # term degenerates into a penalty on the one thing being trained.
-  # NOT 0.0: `learner.py:306` gates the whole anchor branch on
-  # `if cfg.kl_anchor_alpha != 0.0`, a trace-time Python branch, so alpha=0
-  # leaves anchor_kl_mean / anchor_reward_mean pinned at 0 for the entire run
-  # and we lose the ONLY continuous measure of how far z has drifted from the
-  # frozen prior. 1e-6 against a policy loss of ~5 is 7 orders down, so the
-  # gradient contribution is negligible while the diagnostic stays alive.
-  # Caveat when reading it: the wrapper recomputes pi_imit under its own
-  # normalizer, so anchor_kl also charges for DMPO normalizer drift -- read it
-  # as "policy moved OR normalizer moved", not as a pure residual measure.
-  alpha_anchor: 1.0e-6
+  # NOW ACTUALLY 0.0 (was 1e-6 until 2026-08-21). The old value was held above
+  # zero to keep `learner.py:311`'s trace-time gate alive, on the belief that
+  # anchor_kl_mean / anchor_reward_mean were "the ONLY continuous measure of how
+  # far z has drifted from the frozen prior". That premise was wrong: the
+  # diagnostic this project actually quotes -- eval/anchor/r_anchor_mean, e.g.
+  # a1's "0.94 -> 0.35" in the notes below -- is MSE-based and is computed by
+  # KLAnchorPriorDecoderWrapper straight into state.metrics. It does not touch
+  # the loss, the replay or alpha, so it keeps logging at alpha=0. Verified in
+  # the a2 wandb summary: eval/anchor/r_anchor_mean=0.259 alongside
+  # train/anchor_kl_mean=13.74.
+  #
+  # WHAT IS GIVEN UP: train/anchor_kl_mean and train/anchor_reward_mean (the
+  # closed-form pre-tanh KL) stop being emitted. That is a real but small loss,
+  # and the metric was never clean anyway -- the wrapper recomputes pi_imit
+  # under its own normalizer, so anchor_kl charges for DMPO normalizer drift too
+  # and reads as "policy moved OR normalizer moved", not as a pure residual
+  # measure.
+  #
+  # WHAT IS BOUGHT: alpha=0 makes `anchor_in_loss` False in the entry point,
+  # which drops anchor_mu_imit / anchor_log_std_imit from BOTH the rollout
+  # extras and the replay schema. Sized against the numbers THIS run logs at
+  # startup ("Replay transition size: 3.73 KB -> max_replay_size=2355200 is
+  # 8.39 GB"), not against the 5,456 B in the max_replay_size comment below --
+  # that figure predates the current obs tree and is 1.4x too big:
+  #
+  #   anchor extras = 2 * 38 (action_size) * 4 B = 304 B/transition
+  #                 = 7.9% of the 3,824 B transition
+  #                 = 683 MiB (0.67 GiB) of the 8.39 GiB buffer
+  #
+  # Directly relevant: the first 1B launch died at 559M with a warp OOM asking
+  # for 64 MB. The gradient being discarded was measured at
+  # train/anchor_loss_term = -2.7e-08 against a policy loss of ~5.
+  alpha_anchor: 0.0
   w_anchor: 0.5
   w_anchor_floor: 0.0
   decay_sgd_steps: 0
