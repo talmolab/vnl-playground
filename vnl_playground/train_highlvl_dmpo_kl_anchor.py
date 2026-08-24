@@ -31,6 +31,9 @@ from track_mjx.agent.dmpo.networks_kl_anchor import make_dmpo_kl_anchor_networks
 from track_mjx.agent.dmpo.networks_kl_anchor_rnn import (
     make_dmpo_kl_anchor_rnn_networks,
 )
+from track_mjx.agent.dmpo.networks_scratch_rnn import (
+    make_dmpo_scratch_rnn_networks,
+)
 from track_mjx.agent.dmpo.normalizer_seeding import seed_proprio_from_imit
 from track_mjx.agent.dmpo.optim_kl_anchor import make_kl_anchor_optimizers
 from track_mjx.agent.dmpo.replay import make_replay
@@ -236,9 +239,19 @@ def _validate_reset_requirements(cfg, env, env_name: str) -> None:
     )
 
 
-def _build_env(hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size):
-    """Load registry env, wrap in KLAnchorPriorDecoderWrapper +
-    brax wrap_for_brax_training + BinocularVisionRenderWrapper.
+def _build_env(
+    hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size,
+    from_scratch=False,
+):
+    """Load registry env, wrap in KLAnchorPriorDecoderWrapper (or
+    EndToEndWrapper on the from-scratch arm) + brax wrap_for_brax_training +
+    BinocularVisionRenderWrapper.
+
+    `from_scratch=True` is the no-prior/no-decoder control: the policy emits
+    joint actions directly, so there is no frozen pipeline to anchor against
+    and `prior_fn` / `decoder_logits_fn` / `latent_size` are unused. Every
+    downstream wrapper is identical, so the two arms see the same env, the
+    same vision pipeline and the same episode/reset semantics.
     """
     env_name = str(hydra_cfg.env_name)
     env_args = OmegaConf.to_container(hydra_cfg.get("env_config", {}), resolve=True) or {}
@@ -253,14 +266,28 @@ def _build_env(hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size)
     if mj_model is None or mjx_model is None:
         raise RuntimeError("Could not find mj_model/mjx_model on base env for vision rendering")
 
-    base_env = KLAnchorPriorDecoderWrapper(
-        base_env,
-        prior_fn=prior_fn,
-        decoder_logits_fn=decoder_logits_fn,
-        action_size=action_size,
-        w_anchor=float(hydra_cfg.kl_anchor.w_anchor),
-        alpha_anchor=float(hydra_cfg.kl_anchor.alpha_anchor),
-    )
+    if from_scratch:
+        # No prior, no decoder, no anchor. The `anchor/*` metrics and the
+        # `anchor_mu_imit` / `anchor_log_std_imit` info keys that
+        # KLAnchorPriorDecoderWrapper populates are all absent on this arm --
+        # by construction, not by omission. action_size stays the env's native
+        # joint control space, which is what the policy now emits directly.
+        from vnl_playground.tasks.wrappers import EndToEndWrapper
+
+        base_env = EndToEndWrapper(
+            base_env,
+            highlvl_obs_key=str(hydra_cfg.transfer.get("highlvl_obs_key", "task_obs")),
+            decoder_obs_key=str(hydra_cfg.transfer.get("decoder_obs_key", "proprioception")),
+        )
+    else:
+        base_env = KLAnchorPriorDecoderWrapper(
+            base_env,
+            prior_fn=prior_fn,
+            decoder_logits_fn=decoder_logits_fn,
+            action_size=action_size,
+            w_anchor=float(hydra_cfg.kl_anchor.w_anchor),
+            alpha_anchor=float(hydra_cfg.kl_anchor.alpha_anchor),
+        )
 
     from vnl_playground.tasks.rodent.vision_jax import BinocularVisionRenderWrapper
 
@@ -379,6 +406,60 @@ def main(hydra_cfg: DictConfig):
         "stored" if anchor_in_loss else "dropped",
     )
 
+    # ---- from-scratch control arm: no prior, no decoder ---------------------
+    # transfer.mode is the SAME key train_dmpo.py dispatches on, with the same
+    # vocabulary, so a config reads identically whichever entry point runs it.
+    # Absent/"" and "prior_decoder" both mean the historical grafted path, so
+    # every completed arm resolves from_scratch=False and nothing below fires.
+    #
+    # WHY THIS LIVES HERE rather than in train_dmpo.py, which already has a
+    # from_scratch path: that path is feed-forward only. The recurrent policy
+    # head, its rollout hidden-state storage, the compressed replay schema and
+    # the BPTT gates all live in THIS entry point. Porting the network was a
+    # ~200-line new module; porting the recurrent plumbing would have been a
+    # second copy of all of it.
+    # COMPATIBILITY, and why this is not simply train_dmpo.py's validator:
+    # until now this entry point never read transfer.mode at all, so 30 live
+    # arm configs carry the historical dead value `kl_anchor_b_aggressive`
+    # (and one carries `decoder_only`) purely as a label. Adopting
+    # train_dmpo.py's strict 3-value set verbatim rejected every one of them.
+    # They are accepted here as aliases for the grafted path -- which is what
+    # they already silently did.
+    #
+    # The one thing NOT made lenient is an unrecognised value, because the
+    # dangerous failure is asymmetric: a typo'd `from_scrach` that quietly
+    # falls through to the grafted path would run the exact experiment the
+    # user was trying not to run, and the logs would look normal.
+    _GRAFTED_MODES = ("", "prior_decoder", "kl_anchor_b_aggressive", "decoder_only")
+    transfer_mode = str(hydra_cfg.get("transfer", {}).get("mode", ""))
+    if transfer_mode not in _GRAFTED_MODES + ("from_scratch",):
+        raise ValueError(
+            f"Unknown transfer.mode={transfer_mode!r}; expected 'from_scratch' "
+            f"or one of the grafted-path values {_GRAFTED_MODES}. Refusing to "
+            "guess: silently falling through to the grafted path would run a "
+            "different experiment than the one this config asks for."
+        )
+    from_scratch = transfer_mode == "from_scratch"
+    if from_scratch:
+        if cfg.kl_anchor_alpha != 0.0 or cfg.kl_anchor_beta_linear != 0.0:
+            raise ValueError(
+                "transfer.mode=from_scratch with a non-zero kl-anchor "
+                f"(alpha={cfg.kl_anchor_alpha}, "
+                f"beta_linear={cfg.kl_anchor_beta_linear}). There is no frozen "
+                "prior/decoder to anchor to on this arm -- set "
+                "kl_anchor.alpha_anchor=0.0."
+            )
+        if hydra_cfg.transfer.get("warm_start_dmpo_checkpoint", None):
+            raise ValueError(
+                "transfer.warm_start_dmpo_checkpoint is set with "
+                "transfer.mode=from_scratch. A grafted policy param tree has "
+                "prior/decoder blocks this network does not."
+            )
+        log.info(
+            "FROM-SCRATCH arm ACTIVE: no prior, no decoder, no anchor. "
+            "Policy emits joint actions directly."
+        )
+
     # ---- Recurrent (GRU) policy head: config surface + fail-loud guards ----
     # network_config.policy_head_rnn absent/null => FF path, byte-identical
     # (every completed arm resolves `recurrent = False` here and no branch
@@ -483,40 +564,52 @@ def main(hydra_cfg: DictConfig):
         except Exception as e:
             log.warning("wandb.init failed (%s); continuing without wandb.", e)
 
-    # --- 1. Load frozen prior + decoder ---
-    prior_ckpt_path = str(hydra_cfg.transfer.prior_checkpoint_path)
-    prior_ckpt_step = hydra_cfg.transfer.get("prior_checkpoint_step", None)
-    log.info("Loading prior checkpoint from: %s", prior_ckpt_path)
-    (
-        _enc_params,
-        prior_params,
-        decoder_params,
-        normalizer_params,
-        prior_cfg,
-    ) = load_prior_checkpoint(prior_ckpt_path, prior_ckpt_step)
-    latent_size = int(prior_cfg["network_config"]["intention_size"])
-    prior_layer_sizes = tuple(
-        prior_cfg["network_config"].get("prior_layer_sizes", [1024, 1024])
-    )
-    decoder_layer_sizes = tuple(prior_cfg["network_config"]["decoder_layer_sizes"])
-    log.info("Prior loaded. intention_size=%d", latent_size)
+    # --- 1. Load frozen prior + decoder (grafted arms only) ---
+    if from_scratch:
+        # Nothing to load. These stay None/empty so the shared call sites below
+        # read the same on both arms; _build_env and the network factory both
+        # ignore them when from_scratch is set.
+        prior_params = decoder_params = normalizer_params = prior_cfg = None
+        prior_fn = decoder_logits_fn = None
+        latent_size = 0
+        prior_layer_sizes = decoder_layer_sizes = ()
+        log.info("From-scratch arm: skipping prior checkpoint load entirely.")
+    else:
+        prior_ckpt_path = str(hydra_cfg.transfer.prior_checkpoint_path)
+        prior_ckpt_step = hydra_cfg.transfer.get("prior_checkpoint_step", None)
+        log.info("Loading prior checkpoint from: %s", prior_ckpt_path)
+        (
+            _enc_params,
+            prior_params,
+            decoder_params,
+            normalizer_params,
+            prior_cfg,
+        ) = load_prior_checkpoint(prior_ckpt_path, prior_ckpt_step)
+        latent_size = int(prior_cfg["network_config"]["intention_size"])
+        prior_layer_sizes = tuple(
+            prior_cfg["network_config"].get("prior_layer_sizes", [1024, 1024])
+        )
+        decoder_layer_sizes = tuple(prior_cfg["network_config"]["decoder_layer_sizes"])
+        log.info("Prior loaded. intention_size=%d", latent_size)
 
-    prior_fn = make_prior_inference_fn(prior_params, normalizer_params, prior_cfg)
-    decoder_logits_fn = make_decoder_logits_fn(decoder_params, normalizer_params, prior_cfg)
+        prior_fn = make_prior_inference_fn(prior_params, normalizer_params, prior_cfg)
+        decoder_logits_fn = make_decoder_logits_fn(decoder_params, normalizer_params, prior_cfg)
 
     # --- 2. Build env ---
     base_env_for_size = tasks.load(str(hydra_cfg.env_name), flatten_obs=False)
     action_size_base = int(base_env_for_size.action_size)
     env, base_env_wrapped, mj_model, mjx_model, vision_shape = _build_env(
         hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size_base,
+        from_scratch=from_scratch,
     )
     obs_size_dict = dict(env.observation_size)
     proprio_size = int(obs_size_dict.get("proprioception", 0))
     task_obs_size = int(obs_size_dict.get("imitation_target", 0))
     action_size = int(env.action_size)
     log.info(
-        "env_spec: action_size=%d, proprio=%d, task_obs=%d, vision_shape=%s, latent=%d",
-        action_size, proprio_size, task_obs_size, vision_shape, latent_size,
+        "env_spec: action_size=%d, proprio=%d, task_obs=%d, vision_shape=%s, latent=%s",
+        action_size, proprio_size, task_obs_size, vision_shape,
+        "n/a(from_scratch)" if from_scratch else latent_size,
     )
 
     # --- 3. Build B-aggressive networks (warm-started) ---
@@ -547,7 +640,31 @@ def main(hydra_cfg: DictConfig):
             hydra_cfg.network_config.get("critic_use_proprio", False)
         ),
     )
-    if recurrent:
+    if from_scratch:
+        if not recurrent:
+            raise ValueError(
+                "transfer.mode=from_scratch on this entry point requires "
+                "network_config.policy_head_rnn. The feed-forward from-scratch "
+                "path already exists in train_dmpo.py -- use that instead."
+            )
+        # Drop every prior/decoder-shaped kwarg; the scratch factory's
+        # signature is the grafted one minus exactly these keys.
+        _scratch_kwargs = {
+            k: v for k, v in _shared_net_kwargs.items()
+            if k not in (
+                "latent_size", "prior_layer_sizes", "decoder_layer_sizes",
+                "warm_start_prior_params", "warm_start_decoder_params",
+                "residual_mode", "residual_scale",
+            )
+        }
+        nets = make_dmpo_scratch_rnn_networks(
+            rnn_cell=str(rnn_head_cfg.get("cell", "gru")),
+            rnn_mlp_layers=tuple(rnn_head_cfg.get("mlp_layers", [512])),
+            rnn_hidden_sizes=tuple(rnn_head_cfg.get("hidden_sizes", [512])),
+            rnn_store_dtype=str(rnn_head_cfg.get("store_dtype", "float16")),
+            **_scratch_kwargs,
+        )
+    elif recurrent:
         nets = make_dmpo_kl_anchor_rnn_networks(
             rnn_cell=str(rnn_head_cfg.get("cell", "gru")),
             rnn_mlp_layers=tuple(rnn_head_cfg.get("mlp_layers", [256])),
@@ -555,12 +672,22 @@ def main(hydra_cfg: DictConfig):
             rnn_store_dtype=str(rnn_head_cfg.get("store_dtype", "float16")),
             **_shared_net_kwargs,
         )
+    else:
+        nets = make_dmpo_kl_anchor_networks(
+            policy_head_layer_sizes=tuple(
+                hydra_cfg.network_config.get("policy_head_layer_sizes", [256, 256, 256])
+            ),
+            **_shared_net_kwargs,
+        )
+    if recurrent:
         # init_training_state calls `nets.policy.init(rng, obs)` — the FF
         # signature. Adapt with a default zero hidden rather than forking
         # init_training_state: GRU param shapes do not depend on hidden
-        # VALUES, and the zero-init residual makes the resulting params
-        # correct for any hidden (the step-0 invariant). Same init-wrapping
-        # precedent as the factory's own warm-start splice.
+        # VALUES. On the grafted arm the zero-init residual additionally makes
+        # the resulting params correct for any hidden (the step-0 invariant);
+        # on the from-scratch arm there is no such invariant to preserve, but
+        # the shape argument is the same. Same init-wrapping precedent as the
+        # grafted factory's own warm-start splice.
         _rnn_policy_init = nets.policy.init
 
         def _policy_init_default_hidden(rng, obs, hidden=None):
@@ -580,19 +707,19 @@ def main(hydra_cfg: DictConfig):
             nets.recurrent_meta.store_dtype,
             int(cfg.rnn_bptt_length), int(cfg.n_step), int(cfg.sequence_length),
         )
-    else:
-        nets = make_dmpo_kl_anchor_networks(
-            policy_head_layer_sizes=tuple(
-                hydra_cfg.network_config.get("policy_head_layer_sizes", [256, 256, 256])
-            ),
-            **_shared_net_kwargs,
+    if from_scratch:
+        log.info(
+            "no latent residual (from-scratch: policy -> action directly) | "
+            "critic_use_proprio=%s",
+            bool(hydra_cfg.network_config.get("critic_use_proprio", False)),
         )
-    log.info(
-        "latent residual: mode=%s scale=%.3g | critic_use_proprio=%s",
-        str(hydra_cfg.network_config.get("residual_mode", "sigma_tanh")),
-        float(hydra_cfg.network_config.get("residual_scale", 2.0)),
-        bool(hydra_cfg.network_config.get("critic_use_proprio", False)),
-    )
+    else:
+        log.info(
+            "latent residual: mode=%s scale=%.3g | critic_use_proprio=%s",
+            str(hydra_cfg.network_config.get("residual_mode", "sigma_tanh")),
+            float(hydra_cfg.network_config.get("residual_scale", 2.0)),
+            bool(hydra_cfg.network_config.get("critic_use_proprio", False)),
+        )
 
     # --- 4. Asymmetric optimizers ---
     optimizers = make_kl_anchor_optimizers(
@@ -679,18 +806,28 @@ def main(hydra_cfg: DictConfig):
     # that the entire B-aggressive design depends on. Done BEFORE restore_ckpt
     # so a resumed run will overwrite this with its own (already-seeded-and-
     # updated) normalizer from disk.
-    state = state._replace(
-        normalizer_params=seed_proprio_from_imit(
-            state.normalizer_params, normalizer_params,
+    if from_scratch:
+        # Nothing to seed from, and nothing that needs seeding: the reason the
+        # grafted arm seeds is to keep the FROZEN prior+decoder in-distribution
+        # at step 0. With no frozen pipeline, DMPO's own running stats warm up
+        # from the rollouts like any from-scratch run.
+        log.info(
+            "From-scratch arm: normalizer NOT seeded (no imit checkpoint; "
+            "running stats warm up from rollouts)."
         )
-    )
-    log.info(
-        "Seeded DMPO normalizer with imit proprio stats: mean=%.3f±%.3f std=%.3f±%.3f",
-        float(state.normalizer_params.proprioception.mean.mean()),
-        float(state.normalizer_params.proprioception.mean.std()),
-        float(state.normalizer_params.proprioception.std.mean()),
-        float(state.normalizer_params.proprioception.std.std()),
-    )
+    else:
+        state = state._replace(
+            normalizer_params=seed_proprio_from_imit(
+                state.normalizer_params, normalizer_params,
+            )
+        )
+        log.info(
+            "Seeded DMPO normalizer with imit proprio stats: mean=%.3f±%.3f std=%.3f±%.3f",
+            float(state.normalizer_params.proprioception.mean.mean()),
+            float(state.normalizer_params.proprioception.mean.std()),
+            float(state.normalizer_params.proprioception.std.mean()),
+            float(state.normalizer_params.proprioception.std.std()),
+        )
 
     # ---- DMPO warm start from ANOTHER run's checkpoint ------------------------
     # transfer.warm_start_dmpo_checkpoint points at a DMPONetwork_<step> dir of a
@@ -793,55 +930,64 @@ def main(hydra_cfg: DictConfig):
     # working warm-start should observe r_anchor very close to 1.0 (the policy's
     # mode action equals tanh(mu_imit_pretanh) up to numerics). If r_anchor drops,
     # one of the warm-start fixes (Tasks 1-6) regressed.
-    try:
-        from track_mjx.agent.dmpo.learner import _normalize_obs
-        from track_mjx.agent.dmpo.kl_anchor_utils import pretanh_gaussian_kl
-        probe_label = (
-            "anchor_invariant_probe_resumed"
-            if restored is not None
-            else "anchor_invariant_probe"
-        )
-        if ws_path and restored is None:
-            # A DMPO-warm-started policy head has learned away from the
-            # anchor BY DESIGN -- r_anchor < 1 here is expected, not a
-            # regression of the prior/decoder warm-start splice.
-            probe_label = "anchor_invariant_probe_dmpo_warmstart(r_anchor<1 expected)"
-        rng_probe, k_probe = jax.random.split(rng)
-        keys = jax.random.split(k_probe, cfg.num_envs)
-        st0 = env.reset(keys)
-        norm_obs = _normalize_obs(st0.obs, state.normalizer_params)
-        # Online policy distribution at the spawn obs.
-        if recurrent:
-            # Per-env zeros hidden, matching what the first rollout will
-            # consume. The invariant is hidden-AGNOSTIC by design (zero-init
-            # residual), so probing at zeros loses no coverage.
-            dist0, _ = jax.vmap(
-                lambda o, h: nets.policy.apply(state.policy_params, o, h)
-            )(norm_obs, nets.recurrent_meta.init_hidden(cfg.num_envs))
-        else:
-            dist0 = jax.vmap(lambda o: nets.policy.apply(state.policy_params, o))(norm_obs)
-        mu_theta = dist0.mean()
-        log_std_theta = jnp.log(dist0.stddev())
-        # Anchor distribution from state.info — populated by the wrapper.
-        # Both wrapper and loss compute log_std as log(softplus(raw)+1e-3) so the
-        # KL on this side is in the same units as the loss-side anchor signal.
-        mu_imit = st0.info["anchor_mu_imit"]
-        log_std_imit = st0.info["anchor_log_std_imit"]
-        kl = pretanh_gaussian_kl(mu_theta, log_std_theta, mu_imit, log_std_imit)
-        # kl is per-sample shape (num_envs,); aggregate via mean(exp(-w*kl))
-        # which matches the loss-side r_anchor formula.
-        r_anchor = float(jnp.mean(jnp.exp(-cfg.kl_anchor_w * kl)))
-        kl_mean = float(jnp.mean(kl))
-        # Format keeps `action_mse=` for smoke-test regex compat (post-port
-        # the wrapper's MSE diagnostic is no longer relevant for the probe;
-        # we report kl_mean here as the meaningful diagnostic).
+    if from_scratch:
+        # st0.info has no `anchor_mu_imit` -- EndToEndWrapper does not populate
+        # it. Skipping explicitly beats letting the probe raise into its own
+        # except handler and logging a warning that looks like a regression.
         log.info(
-            "%s r_anchor=%.4f action_mse=%.4f kl_mean=%.4f",
-            probe_label, r_anchor, 0.0, kl_mean,
+            "anchor_invariant_probe SKIPPED (from_scratch: no frozen "
+            "prior/decoder to be invariant to)"
         )
-        rng = rng_probe
-    except Exception as exc:
-        log.warning("Startup invariant probe failed (non-fatal): %s", exc, exc_info=True)
+    else:
+        try:
+            from track_mjx.agent.dmpo.learner import _normalize_obs
+            from track_mjx.agent.dmpo.kl_anchor_utils import pretanh_gaussian_kl
+            probe_label = (
+                "anchor_invariant_probe_resumed"
+                if restored is not None
+                else "anchor_invariant_probe"
+            )
+            if ws_path and restored is None:
+                # A DMPO-warm-started policy head has learned away from the
+                # anchor BY DESIGN -- r_anchor < 1 here is expected, not a
+                # regression of the prior/decoder warm-start splice.
+                probe_label = "anchor_invariant_probe_dmpo_warmstart(r_anchor<1 expected)"
+            rng_probe, k_probe = jax.random.split(rng)
+            keys = jax.random.split(k_probe, cfg.num_envs)
+            st0 = env.reset(keys)
+            norm_obs = _normalize_obs(st0.obs, state.normalizer_params)
+            # Online policy distribution at the spawn obs.
+            if recurrent:
+                # Per-env zeros hidden, matching what the first rollout will
+                # consume. The invariant is hidden-AGNOSTIC by design (zero-init
+                # residual), so probing at zeros loses no coverage.
+                dist0, _ = jax.vmap(
+                    lambda o, h: nets.policy.apply(state.policy_params, o, h)
+                )(norm_obs, nets.recurrent_meta.init_hidden(cfg.num_envs))
+            else:
+                dist0 = jax.vmap(lambda o: nets.policy.apply(state.policy_params, o))(norm_obs)
+            mu_theta = dist0.mean()
+            log_std_theta = jnp.log(dist0.stddev())
+            # Anchor distribution from state.info — populated by the wrapper.
+            # Both wrapper and loss compute log_std as log(softplus(raw)+1e-3) so the
+            # KL on this side is in the same units as the loss-side anchor signal.
+            mu_imit = st0.info["anchor_mu_imit"]
+            log_std_imit = st0.info["anchor_log_std_imit"]
+            kl = pretanh_gaussian_kl(mu_theta, log_std_theta, mu_imit, log_std_imit)
+            # kl is per-sample shape (num_envs,); aggregate via mean(exp(-w*kl))
+            # which matches the loss-side r_anchor formula.
+            r_anchor = float(jnp.mean(jnp.exp(-cfg.kl_anchor_w * kl)))
+            kl_mean = float(jnp.mean(kl))
+            # Format keeps `action_mse=` for smoke-test regex compat (post-port
+            # the wrapper's MSE diagnostic is no longer relevant for the probe;
+            # we report kl_mean here as the meaningful diagnostic).
+            log.info(
+                "%s r_anchor=%.4f action_mse=%.4f kl_mean=%.4f",
+                probe_label, r_anchor, 0.0, kl_mean,
+            )
+            rng = rng_probe
+        except Exception as exc:
+            log.warning("Startup invariant probe failed (non-fatal): %s", exc, exc_info=True)
     # ----------------------------------------------------------------------------
 
     rb = make_replay(
