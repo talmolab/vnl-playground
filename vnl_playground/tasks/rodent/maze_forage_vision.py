@@ -1669,6 +1669,81 @@ class MazeForageVision(rodent_base.RodentEnv):
         metrics["rewards/cos_tilt"] = cos_tilt
         return reward_val
 
+    @_registry.reward("speed")
+    def _speed_reward(
+        self, data, info, metrics, weight, target_speed=0.5
+    ) -> float:
+        """Dense reward for moving, direction-agnostic, scaled by uprightness.
+
+        WHY THIS EXISTS: this maze task has NO movement reward -- until this
+        term, the only one was `treat_collected`. A from-scratch policy
+        therefore never contacts a treat, never observes reward, and never
+        learns to move. Measured twice, in two different ways:
+          c1  (torque)   fell over at exactly step 52, 100% of episodes;
+          c1p (position) survived all 2000 steps but lay splayed and immobile,
+                         44 mm of travel in 1900 steps against a treat 0.428 m
+                         away, action RMS 0.004.
+        Both ended with zero treats at 25.7M and the critic collapsed onto the
+        zero function (critic_loss 3.36 -> 0.065), which leaves MPO with no
+        advantage signal and hence no policy-improvement direction. b1 escaped
+        this only because its frozen decoder could already walk and so wandered
+        into treats by accident (0.053 treats/ep at 1.1M).
+
+        DIRECTION-AGNOSTIC ON PURPOSE. `run_gap`'s `forward_velocity` rewards
+        +x only, and its docstring notes that circling then averages to ~0 --
+        correct for a corridor, wrong for a maze, where the useful direction
+        changes at every junction and there is no privileged axis.
+
+        The cost of that choice is that circling now pays. It is bounded by the
+        `clip(speed / target_speed, 0, 1)` SATURATION: past target_speed the
+        term is flat, so once the policy moves at all competently the only way
+        left to increase return is to collect treats. At the default weight the
+        per-episode ceiling is `weight * episode_length`; sized against b1's
+        ~3.4 treats/episode the intent is that a fully-saturated speed term is
+        worth well under one treat's worth of the total.
+
+        The `clip(cos_tilt, 0, 1)` factor mirrors `run_gap`'s
+        `forward_velocity_upright` (tent(v) * upright), the dm_control/vnl-ray
+        parity form. Without it the cheapest way to earn this term is to slither
+        along the floor: c1p sagged to torso_z 0.035 m, which clears
+        `min_torso_z` 0.0325 m by 2.5 mm, so a height gate alone would pass a
+        belly-down splay.
+
+        Non-negative by construction, which the C51 critic REQUIRES: its
+        support is ``[vmin, vmax] = [0, 20]``.
+
+        Args:
+            data: Simulation data.
+            info: Unused.
+            metrics: Metrics dict for logging.
+            weight: Reward at or above `target_speed` while fully upright.
+            target_speed: m/s at which the term saturates. Default 0.5 is just
+                under b1's measured locomotion speed of 0.54 m/s, so "moving
+                like b1" already saturates it.
+
+        Returns:
+            ``weight * clip(|v_xy| / target_speed, 0, 1) * clip(cos_tilt, 0, 1)``,
+            or 0.0 while collapsed below ``min_torso_z``.
+        """
+        del info
+        v_xy = self._torso(data).subtree_linvel[:2]
+        # sqrt(sum + eps) rather than norm: at exactly zero velocity -- which is
+        # where an untrained policy starts -- norm has a NaN gradient that would
+        # poison the first update.
+        speed = jp.sqrt(jp.sum(v_xy * v_xy) + 1e-12)
+
+        torso_z, cos_tilt = self._torso_posture(data)
+        low_cfg = self._config.termination_criteria.get("torso_too_low", {})
+        min_z = float(low_cfg.get("min_torso_z", 0.0325))
+
+        tent = jp.clip(speed / target_speed, 0.0, 1.0)
+        upright = jp.clip(cos_tilt, 0.0, 1.0)
+        reward_val = weight * tent * upright * jp.where(torso_z >= min_z, 1.0, 0.0)
+
+        metrics["rewards/speed"] = reward_val
+        metrics["rewards/speed_mps"] = speed
+        return reward_val
+
     @_registry.reward("termination_penalty")
     def _termination_penalty(self, data, info, metrics, weight) -> float:
         """Negative reward on the timestep the episode terminates.

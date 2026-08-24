@@ -1,0 +1,774 @@
+# @package _global_
+# =============================================================================
+# ARM maze_c3_scratch_position_speed -- c1p + a dense speed reward
+# =============================================================================
+# Forked from maze_forage_vision/maze_c1p_scratch_position. ONE thing differs:
+# a `speed` reward term is added. Same from-scratch network, same widths, same
+# POSITION actuators, same njmax, same 1B budget. Comments not marked
+# "C3 DELTA" are inherited from c1p / c1 / b1.
+#
+# WHY: from-scratch on this task has now failed twice under a PURE SPARSE
+# reward, by two different mechanisms, and both traced to the same root -- this
+# maze task has NO movement reward, only `treat_collected`, so a random policy
+# never contacts a treat, never observes reward, and never learns to move.
+#
+#   c1  (TORQUE, pure sparse), measured at 25,702,400 steps:
+#       mean_episode_length 52, sem 0; terminations/any 1.000; belly_up 1.000
+#       (77,824 episodes, std 0); treats 0. It fell over in 0.52 s, while the
+#       nearest treat is 0.78 m away and needs ~144 steps at b1's measured
+#       0.54 m/s. The reward was UNREACHABLE inside the horizon.
+#
+#   c1p (POSITION, pure sparse), measured at 25,702,400 steps:
+#       mean_episode_length 2000 (the cap); terminations/any 0; belly_up 0 --
+#       position servos fixed the falling COMPLETELY. But treats were still 0.
+#       The eval video shows why: the rat sags into a belly-down splay and
+#       stays there. Step 1 -> step 1901 it moved 44 mm laterally and 19 mm
+#       toward a treat 0.428 m away, at action RMS 0.004, torso height
+#       0.064 -> 0.035 m. It survives on a technicality: a belly-down splay is
+#       not `belly_up` (which needs inversion), and 0.035 m clears
+#       `min_torso_z` 0.0325 m by 2.5 mm.
+#
+# Both ended with critic_loss collapsed onto the zero function (3.36 -> 0.065):
+# the critic learned "everything is worth zero", which leaves MPO with no
+# advantage signal and therefore no policy-improvement direction. b1 escaped
+# this ONLY because its frozen decoder could already walk, so it wandered into
+# treats by accident -- its own config records 0.053 treats/ep at 1.126M.
+#
+# C3 DELTA 1: add the `speed` reward term, weight 5e-4, target_speed 0.5 m/s.
+#   Shape and full rationale live on the term in
+#   tasks/rodent/maze_forage_vision.py. The short version:
+#     weight * clip(|v_xy| / target_speed, 0, 1) * clip(cos_tilt, 0, 1),
+#     gated to 0 below min_torso_z.
+#   - DIRECTION-AGNOSTIC, unlike run_gap's `forward_velocity` (+x only). That
+#     term's own docstring notes circling averages to ~0 -- right for a
+#     corridor, wrong for a maze where the useful direction changes at every
+#     junction.
+#   - The cost is that circling now pays. It is bounded by SATURATION: past
+#     target_speed the term is flat, so once the policy moves competently the
+#     only way left to raise return is to collect treats.
+#   - The `cos_tilt` factor mirrors run_gap's `forward_velocity_upright`
+#     (tent(v) * upright), the dm_control/vnl-ray parity form. Without it the
+#     cheapest way to earn the term is to slither, which is exactly the posture
+#     c1p already found.
+#   - Non-negative by construction, which the C51 critic REQUIRES: support is
+#     [vmin, vmax] = [0, 20].
+#   SIZING: per-episode ceiling = 5e-4 * 2000 = 1.0, against b1's ~3.4
+#   treats/episode. A fully-saturated speed term is worth well under one
+#   treat's worth of the total, and saturates, so treats stay the only
+#   improvable axis once locomotion works.
+#   VERIFIED on CPU before launch: zero-action rollout peaks at 0.132 m/s and
+#   sums 0.00080 over 30 steps; random-action peaks at 0.581 m/s (saturating)
+#   and sums 0.00150. The gradient points at moving.
+#
+# WHAT THIS COSTS: c3 is NOT a clean control for b1. THREE things now differ
+# (graft, actuator mode, reward). A c3-vs-b1 gap is not attributable to any one
+# of them. That comparison is already spent -- c1 and c1p answered it, in the
+# strongest available form: with the graft removed, pure sparse cannot
+# bootstrap under EITHER actuator mode. c3 asks the remaining useful question:
+# given survival AND a reason to move, how far does a from-scratch recurrent
+# policy get on this maze?
+#
+# LAUNCH:
+#   cd /home/talmolab/Desktop/SalkResearch/scratch/maze-forage-vnl
+#   /home/talmolab/Desktop/SalkResearch/_implementation_log/DMPO/dmpo-env/bin/python \
+#     -m vnl_playground.train_highlvl_dmpo_kl_anchor \
+#     --config-name=maze_forage_vision/maze_c3_scratch_position_speed
+# =============================================================================
+defaults:
+  - /rodent-dmpo-base
+  - _self_
+
+env_name: RodentMazeForageVision
+walker: rodent_no_tail_collisions
+
+env_config:
+  env_name: RodentMazeForageVision
+  task_name: maze_forage_vision
+  walker_name: rodent
+  render_camera_name: close_profile
+  # -- Vision. 32x32 per eye, binocular, matching the gap arms exactly. The
+  #    DMPO entry point ALWAYS wraps in BinocularVisionRenderWrapper and always
+  #    renders eye_left-rodent / eye_right-rodent; there is no monocular path.
+  #    These keys must agree with that or the env's zeros placeholder is the
+  #    wrong shape.
+  vision: true
+  vision_width: 32
+  vision_height: 32
+  grayscale: true
+  vision_camera_name: "egocentric-rodent"
+  binocular: true
+  left_camera_name: "eye_left-rodent"
+  right_camera_name: "eye_right-rodent"
+  eye_dropout_rate: 0.0
+  eval_eye_mode: "binocular"
+  render_depth: false
+  use_textures: true
+  use_shadows: true
+  flatten_obs: false
+  # -- 2000 steps at ctrl_dt 0.01 = 20 s, DOUBLE the gap arms' 1000. The gap
+  #    task is a 4 m corridor; this maze has ~60 m of corridor, and at the
+  #    prior's ~0.8 m/s a 10 s episode could not physically reach most of it.
+  #    Costs nothing in throughput (same env steps/s), only reset frequency.
+  episode_length: 2000
+  action_repeat: 1
+  # C1: b1's reason for pinning ctrl_dt (the frozen decoder was trained at
+  # 100 Hz control) does not apply here -- there is no decoder. It stays at
+  # 0.01 for a different reason: c1 is a control for b1, and changing the
+  # control rate would add a second difference between the arms.
+  ctrl_dt: 0.01
+  sim_dt: 0.002
+  solver: "newton"
+  mujoco_impl: "warp"
+  naconmax: 65536
+  # C1 DELTA 3: njmax 400 -> 1024. MEASURED, not precautionary. b1 logged
+  # ZERO `nefc overflow` warnings across its entire 1B run; the c1 smoke logged
+  # 570 in its first few minutes, peaking at "please increase njmax to 647".
+  # An untrained from-scratch rat collapses, flails and piles into walls, which
+  # generates far more simultaneous constraints than b1's walking gait ever
+  # did. At njmax=400 warp silently truncates the constraint set, so the arm
+  # would have been training on quietly wrong physics.
+  #
+  # THIS IS NOT A CONFOUND vs b1. b1 never exceeded 400, so raising the cap
+  # changes nothing b1 experienced -- it only stops c1 being simulated
+  # incorrectly. 1024 rather than 647: the observed peak comes from a smoke of
+  # a few minutes, and the worst pile-ups on a from-scratch arm are early, so
+  # the cap needs headroom above anything measured so far.
+  njmax: 1024
+  iterations: 5
+  ls_iterations: 5
+  noslip_iterations: 0
+  # C1P DELTA 1 -- the single key that differs from c1. See the header.
+  torque_actuators: false
+  rescale_factor: 0.9
+  # -- Maze geometry. See maze_forage_vision.py's module docstring for the
+  #    measured sizing table; these are its defaults, restated so a run's
+  #    config.json records the geometry it actually trained on.
+  maze_extent: 6.46       # m, square footprint
+  maze_cells: 10          # -> 21 x 21 grid, cell_size = 6.46/21 = 0.307619
+  cell_size: null         # DERIVED; setting it needs a matching maze_extent
+  wall_height: 0.3
+  wall_thickness: 0.15    # -> 0.465 m corridors vs a 0.308 m rat
+  maze_seed: 0            # the maze is FIXED for the whole run
+  maze_loop_fraction: 0.0
+  # -- Appearance is load-bearing for a vision task. The warp ray-tracer
+  #    shades by N.L over directional lights only and ignores light.ambient,
+  #    so without the light ring the walls render black to the policy:
+  #    73.6% of egocentric pixels below 0.15 with the builtin checker and no
+  #    ring, 43.4% with the labmaze texture alone, 11.8% with both.
+  # ---- APPEARANCE PRESET ---------------------------------------------
+  # Two supported looks. The block below is preset A, which is what the
+  # in-flight arm trains on; switch by commenting one block and uncommenting
+  # the other. Nothing else in this config depends on the choice.
+  #
+  # PRESET A -- CURRENT TRAINING LOOK (checker floor, gradient sky, texture
+  # assigned to the wall BOXES). Be aware of what this actually renders:
+  # MuJoCo cannot map a 2D texture onto a box, so the walls are FLAT and the
+  # texture only shifts their mean brightness. Measured in the policy's own
+  # eye view over 48 resets, wall vs floor separability is
+  #     d' = 0.116   (wall mean 0.727, floor mean 0.739)
+  # i.e. the policy essentially cannot tell an obstacle from open floor.
+  # Kept as the reference so a running arm stays reproducible.
+  wall_texture: "style_03/gray_bright"
+  #
+  # PRESET B -- dm_control `outdoor_natural` (grass floor, photographic sky,
+  # per-face wall facades that actually show the pattern). Costs +100 to +151
+  # non-colliding plane geoms and ~1.23x render time; buys
+  #     d' = 0.575 with style_01/green_bright (dm_control's screenshot look)
+  #     d' = 3.228 with style_01/green        (dark; 6x better for the policy)
+  # Treat-vs-floor rises 6.5 -> 10.6 either way. All d' figures above were
+  # measured BEFORE the centre-to-centre wall-placement rewrite, which widened
+  # corridors at junctions and lengthened sightlines (treat-in-view at spawn
+  # went 25% -> 50% on the same seed). They are still the right ORDERING of the
+  # presets; re-measure before quoting an absolute. NOTE the tint that matches
+  # dm_control's published frame is the WORST for separability, because pale
+  # mint walls (0.813) sit right on top of the grass floor (0.872); dm_control
+  # randomises tints within a style, so that frame is one sample, not a spec.
+  #   aesthetic: outdoor_natural
+  #   wall_texture: "style_01/green"        # or "dm_control" for green_bright
+  #   wall_facade_end_caps: true            # ~1% render cost, +6% structure
+  #   key_light_diffuse: 0.30
+  #   wall_light_diffuse: 0.25
+  wall_lights: 4
+  wall_light_elevation: 0.35
+  # Human-render only: the warp ray-tracer ignores light.diffuse (measured --
+  # the policy view is identical at 0.70/0.45/0.30), but the default rig blows
+  # 24.6% of a wall top to pure white in the eval videos. 0.30/0.25 -> 3.1%.
+  key_light_diffuse: 0.30
+  wall_light_diffuse: 0.25
+  sky: true
+  # -- Treats
+  n_treats: 20
+  treat_radius: 0.05
+  treat_height: 0.125
+  treat_reach_threshold: 0.1
+  park_depth: 1.0
+  spawn_height: 0.005
+  # -- THE vision-only switch. `origin` is the world origin in the torso frame,
+  #    i.e. an exact allocentric position + heading fix against a FIXED maze --
+  #    self-localisation handed over for free. Turning it on would make any
+  #    "the CNN learned to navigate" reading unsupportable, so it stays off.
+  include_origin: false
+  # SPARSE REGIME. The only reward is +1 the first time a treat is reached, so
+  # the undiscounted episode return IS the number of treats collected. It
+  # cannot be farmed: a collected treat is flagged in state.info['collected']
+  # and slid park_depth below the floor on the same step.
+  reward_terms:
+    treat_collected:
+      weight: 1.0
+    # C3 DELTA 1. See the header for the sizing arithmetic and the measured
+    # failure modes that motivate it, and _speed_reward in
+    # tasks/rodent/maze_forage_vision.py for the term's shape.
+    speed:
+      weight: 5.0e-4
+      target_speed: 0.5
+  # NO `fallen` TERMINATION. This is the reference task's own choice and it is
+  # the difference between a learnable task and a dead one -- measured, one
+  # factor apart, at 1.126M env steps on this exact config:
+  #
+  #   fallen {0.0325, 85 deg}   avg_episode_length  119.7 / 2000
+  #                             100% of episodes end `fallen`
+  #                             treats/episode      0.000   (exactly zero)
+  #   no fallen                 avg_episode_length  2000 / 2000
+  #                             0% terminate early
+  #                             treats/episode      0.053   (std 0.228)
+  #
+  # 119 steps is under a metre of travel at the prior's pace, in a maze with
+  # ~60 m of corridor: the agent physically cannot reach a treat, so the sparse
+  # reward is identically zero and there is nothing for the E-step to improve
+  # on. The eval HUD shows the rat at 0.105 m -- well above the 0.0325 m floor
+  # -- when it terminates, so it is the TILT arm firing: the rat walks into a
+  # wall, rears against it and tips past 85 deg. m9's thresholds are permissive
+  # for a corridor; they are not permissive for a maze.
+  #
+  # dm_control does the same thing deliberately. In
+  # locomotion/examples/basic_rodent_2020.py, `rodent_maze_forage` constructs
+  # ManyGoalsMaze with `contact_termination=False`, and `rodent.Rat` does not
+  # override `legacy_base.Walker.aliveness`, which returns 0.0 against an
+  # `aliveness_threshold` of -0.5. So `should_terminate_episode` is ALWAYS
+  # False there: the reference episode has no failure termination at all and
+  # always runs its full 30 s time limit.
+  #
+  # There is no reward-hacking risk in dropping it. The only reward is +1 per
+  # treat, so an episode spent lying down scores 0 either way; the cost is
+  # wasted simulation, not a corrupted objective. If dead episodes turn out to
+  # dominate the replay, the next lever is a height-only guard
+  # (min_torso_z ~0.015, no angle term), NOT m9's pair.
+  # POSTURE TERMINATIONS, rearing-safe. The previous config had none at all,
+  # because the only one available (`fallen`) ended 100% of episodes at ~1.2 s.
+  # The reason it did is now measured rather than guessed: over the 210,500
+  # frames of real rat motion in rodent_reference_clips.h5 -- the data this
+  # task's frozen prior was trained to imitate -- torso tilt from upright is
+  #
+  #   median 11.5 deg   p95 90.7 deg   p99 98.2 deg   max 120.8 deg
+  #     frames >  70 deg : 14.00%   <- rodent_base `fallen` default
+  #     frames >  85 deg :  8.13%   <- the DMPO gap arms' value
+  #     frames > 100 deg :  0.61%
+  #     frames > 120 deg :  0.0019%
+  #     frames > 140 deg :  0.0000%
+  #
+  # so an 85 deg gate ends episodes on postures real rats hold 8% of the time:
+  # rearing and nosing downward. 140 deg is exceeded by ZERO reference frames,
+  # so it can only fire on a genuinely inverted body. The discriminator is
+  # xmat[2,2] (torso z-axis . world z), not a tilt magnitude -- rearing pitches
+  # about the lateral axis and keeps it positive; belly-up drives it to -1.
+  #
+  # Height is the innocent half and is kept: NO reference frame goes below
+  # 0.0354 m, while a rodent collapsed under zero torque settles at ~0.031 m,
+  # so 0.0325 separates them without touching normal motion.
+  #
+  # `patience` (50 steps = 0.5 s at ctrl_dt 0.01) is the "cannot recover" half:
+  # the counter resets on the first good step, so a tumble that rights itself
+  # never terminates.
+  termination_criteria:
+    # TWO ARMS, OR'd. A tilt-only gate misses the common failure: dropping the
+    # rodent at a 150 deg roll and letting it settle gives tilt 94.3 deg at
+    # z = -0.004 m -- nowhere near 140 deg, so the episode ran on until the
+    # HEIGHT gate ended it, mis-attributing the cause. Measured settling:
+    #
+    #   init roll   settled tilt   settled z   fires at 140 deg alone?
+    #       90 deg       67.7 deg     0.1140   no  (on its side, recoverable)
+    #      120 deg      129.0 deg     0.0906   yes
+    #      150 deg       94.3 deg    -0.0042   NO  <- the miss
+    #      180 deg      166.5 deg     0.0212   yes
+    #
+    # Lowering the tilt threshold cannot fix it: fallen poses span 94-166 deg
+    # and real REARING reaches 120.8 deg, so the ranges overlap. HEIGHT
+    # separates them -- conditioning the reference on tilt, a rat past 90 deg
+    # is rearing and its torso is NEVER below 0.1146 m, while every settled
+    # fallen pose is at 0.09 m or lower:
+    #
+    #   tilt  0-45 deg  z min 0.0354 | tilt  90-100 deg  z min 0.1146
+    #   tilt 45-90 deg  z min 0.0858 | tilt 100-110 deg  z min 0.1274
+    #                                | tilt 110-121 deg  z min 0.1329
+    #
+    # So: inverted on tilt alone (140), OR past 90 deg AND below 0.10 m.
+    # 0.10 sits in the gap with ~1.5 cm margin on the reference side and
+    # ~0.9 cm on the fallen side. False positives on the reference: 0 of
+    # 52,625 frames, for both arms combined.
+    belly_up:
+      max_tilt_angle: 140.0
+      fallen_tilt_angle: 90.0
+      fallen_max_torso_z: 0.10
+      patience: 50
+    torso_too_low: {min_torso_z: 0.0325, patience: 50}
+    all_treats_collected: {}
+    nan_termination: {}
+
+network_config:
+  # NO `arch_name` KEY, deliberately. train_highlvl_dmpo_kl_anchor.py calls
+  # make_dmpo_kl_anchor_networks unconditionally -- it never reads arch_name --
+  # so the historical `arch_name: dmpo_kl_anchor_b_aggressive` was a label that
+  # looked like a switch. Other entry points (train.py / train_highlvl.py) DO
+  # dispatch on arch_name and CAN be pointed at this config -- they share
+  # `config_path="config"` -- so the key was not merely inert, it was a live
+  # wrong-path invitation. Removed 2026-08-21. No hydra structured config or
+  # dataclass schema requires it: DMPOConfig is a plain all-defaults dataclass
+  # fed only from train_config, and every network_config read is an explicit
+  # `.get(key, default)`.
+  binocular_mode: shared
+  critic_use_proprio: true
+  # ---- latent residual bound (added 2026-08-11 after the OOD diagnosis) -----
+  # MEASURED on the unbounded run at 116.5M steps: |residual| max 172.9,
+  # 96.2% of dims past 1.0, z sitting 203x Mahalanobis off the prior manifold
+  # at 100% of frames, var(z)/var(prior) = 22,714x. The frozen decoder was
+  # being evaluated astronomically outside its training domain. See DIAGNOSIS.md.
+  #
+  # sigma_tanh:  z = prior_mean + residual_scale * sigma_prior(s) * tanh(raw)
+  # The imitation decoder was trained on z = mu(s) + sigma(s)*eps, eps~N(0,I),
+  # and the prior's logvar is fit by KL to that same encoder posterior -- so
+  # `residual_scale * tanh(raw)` IS eps, restricted to (-k, k). k=2 covers
+  # 95.4% of the noise the decoder actually saw. This is in-distribution by
+  # construction and correctly anisotropic, unlike a fixed +-1 box (the latent's
+  # natural per-dim scale is ~0.83 sigma, and marginal std varies 12x across
+  # dims: 0.10 to 1.21).
+  #   "tanh" reproduces the PPO wrapper exactly (isotropic, scale in raw units)
+  #   "none" is the old unbounded behaviour -- kept only to reproduce this bug
+  # sigma_ball (2026-08-11, supersedes sigma_tanh): constrain the JOINT radius
+  # ||eps|| <= r, not each dim. MEASURED on the sigma_tanh run at 191M: per-dim
+  # |eps| median sat exactly on the k=2 ceiling and ||eps|| reached 7.39 vs a
+  # training radius of 4.0 -- the policy exploited the corner of the box. r is
+  # read off chi^2_16: 4.00 = median training radius, 5.13 = 95th, 5.66 = 99th.
+  # C1: residual_mode / residual_scale DELETED. They bounded the policy's
+  # displacement of a frozen prior's latent; this arm has no prior, no latent
+  # and no decoder, so there is no training domain to stay inside. The action
+  # bound is applied at the env boundary by action_utils.bind, as on every
+  # other from-scratch path. Leaving them set would read as a live knob.
+  # B1 DELTA 2: WIDER VISUAL FEATURE, NOT WIDER CONV. This is the one place b1
+  # does not do what was originally asked, and the reason is measured. Widening
+  # conv CHANNELS [4,8,16,32] -> [16,32,64,64] does not fit on this card at ANY
+  # replay depth, including zero: conv activations are gradient-retained at
+  # B*L = 512*20 = 10,240 loss points and charged TWICE (the policy head and the
+  # critic each own a private BinocularVisionEncoder), so per-image retained
+  # bytes go 109,824 -> 420,864 (3.83x) and the retained total goes ~2,625 MiB
+  # (what r2 paid at 87.7% of the card) -> ~9,180 MiB. Fitting that would need
+  # batch 256 AND ~322 steps/env -- a 3.6x loss of depth on a sparse task, which
+  # inverts a2's own load-bearing sizing argument.
+  #
+  # vision_feature_size buys a wider visual representation for free instead:
+  # VisionEncoder flattens 6*6*channels[-1] then projects, so 32 -> 64
+  # quadruples fc_project (1152*32+32 -> 1152*64+64) and doubles the width the
+  # head and critic consume, while leaving every conv output byte-identical.
+  # If conv width is genuinely wanted later, the lever is num_envs (the env
+  # floor is ~18.3 GiB at 2048 envs), not replay depth.
+  vision_feature_size: 64
+  # FOUR ENTRIES IS A HARD REQUIREMENT: the encoder zips channels against a
+  # hardcoded strides=(1,1,2,2) that has no yaml key, so a 5-entry list SILENTLY
+  # drops the 5th conv layer. There is no guard anywhere.
+  vision_channels: [4, 8, 16, 32]
+  # B1 DELTA 1: RECURRENT POLICY HEAD. CNN + task_obs + proprio ->
+  # Dense(512)+LayerNorm+silu -> GRU(512) -> zero-init residual Dense. The
+  # zero-init is what preserves the warm-start graft: residual == 0 for ANY
+  # hidden state and ANY upstream width, so the step-0 policy is still exactly
+  # the frozen prior->decoder pipeline. `anchor_invariant_probe r_anchor=1.0000
+  # action_mse=0.0000` at startup is the gate on that and must read 1.0000 here
+  # exactly as it did on a2.
+  #
+  # 512 rather than r2's 256 because the head is one of the two places widening
+  # is nearly free: per loss point the whole MLP+GRU+critic widening costs ~49 KB
+  # of retained activation against the CNN's 421 KB.
+  #
+  # store_dtype is the REPLAY dtype for the per-step hidden; the live hidden runs
+  # f32 end to end. The replay leaf auto-sizes from hidden_sizes, so 512 units
+  # cost exactly 512*2 = 1024 B/transition -- no constant to keep in sync.
+  # C1 DELTA 2 applied here. See the header for the capacity argument, and for
+  # why the width went into the MLP rather than the GRU.
+  policy_head_rnn:
+    cell: gru
+    mlp_layers: [2048, 1024]
+    hidden_sizes: [512]
+    store_dtype: float16
+  # UNREAD ON THIS ARM -- consumed only in the feedforward else-branch. Kept so
+  # the diff against a2 stays readable; tuning it here has no effect.
+  policy_head_layer_sizes: [256, 256, 256]
+  # B1 DELTA 3: WIDER CRITIC, [512]x4 -> [1024]x4. Same reasoning as the head --
+  # ~10% of the CNN's per-loss-point activation cost. The critic carries MPO's
+  # entire policy-improvement signal, and on a sparse task with 20 collectable
+  # treats it has to separate "found 3" from "found 11" over a 2000-step episode.
+  value_hidden_layer_sizes: [1024, 1024, 1024, 1024]
+  # C1: on b1 this block explained that prior_layer_sizes /
+  # decoder_layer_sizes / intention_size are read from the prior checkpoint's
+  # own config so the spliced param tree always matches. There is no splice
+  # here and no checkpoint to read, so none of those sizes exist on this arm.
+  # They are quoted once, for the capacity argument in the header only:
+  #   intention_size=16  prior=[1536,1024,512]  decoder=[512,512,512,256,256]
+  # action_size stays 38 -- but it is now what the policy EMITS, not what a
+  # frozen decoder produced from a 16-D latent.
+
+transfer:
+  # C1: this whole block was rewritten. b1's version documented at length why
+  # it deliberately had NO `mode` key and pointed at data/prior/combined_jump;
+  # both of those statements are now false here, so keeping the prose would be
+  # worse than useless. The prior-provenance history it carried lives on in
+  # maze_b1_rnn.yaml, which is still the grafted arm of record.
+  #
+  # C1 DELTA 1. "" / "prior_decoder" are the grafted path; "from_scratch"
+  # selects EndToEndWrapper + make_dmpo_scratch_rnn_networks and skips the
+  # prior load entirely. Same key and same vocabulary train_dmpo.py uses.
+  mode: from_scratch
+  # prior_checkpoint_path / prior_checkpoint_step are DELETED, not blanked:
+  # nothing reads them on this arm, and a stale path here would be the exact
+  # kind of dead key that reads like a live switch.
+  highlvl_obs_key: task_obs
+  decoder_obs_key: proprioception
+
+kl_anchor:
+  # C1: this entire block is INERT on the from-scratch arm and is kept only so
+  # the diff against b1 stays readable. The entry point fails loud if
+  # alpha_anchor is non-zero with transfer.mode=from_scratch -- there is no
+  # frozen pipeline to anchor to. Everything below is b1's reasoning, retained
+  # as history.
+  #
+  # CHANGED 1.0 -> 0.0: DISABLE the KL-in-loss anchor.
+  # The anchor exists to stop a TRAINABLE prior+decoder from drifting off the
+  # imitation manifold. Freezing them achieves that structurally. With both
+  # frozen, pi_imit is the same network with residual=0, so
+  # KL(pi_theta || pi_imit) is a pure function of the residual and the anchor
+  # term degenerates into a penalty on the one thing being trained.
+  # NOW ACTUALLY 0.0 (was 1e-6 until 2026-08-21). The old value was held above
+  # zero to keep `learner.py:311`'s trace-time gate alive, on the belief that
+  # anchor_kl_mean / anchor_reward_mean were "the ONLY continuous measure of how
+  # far z has drifted from the frozen prior". That premise was wrong: the
+  # diagnostic this project actually quotes -- eval/anchor/r_anchor_mean, e.g.
+  # a1's "0.94 -> 0.35" in the notes below -- is MSE-based and is computed by
+  # KLAnchorPriorDecoderWrapper straight into state.metrics. It does not touch
+  # the loss, the replay or alpha, so it keeps logging at alpha=0. Verified in
+  # the a2 wandb summary: eval/anchor/r_anchor_mean=0.259 alongside
+  # train/anchor_kl_mean=13.74.
+  #
+  # WHAT IS GIVEN UP: train/anchor_kl_mean and train/anchor_reward_mean (the
+  # closed-form pre-tanh KL) stop being emitted. That is a real but small loss,
+  # and the metric was never clean anyway -- the wrapper recomputes pi_imit
+  # under its own normalizer, so anchor_kl charges for DMPO normalizer drift too
+  # and reads as "policy moved OR normalizer moved", not as a pure residual
+  # measure.
+  #
+  # WHAT IS BOUGHT: alpha=0 makes `anchor_in_loss` False in the entry point,
+  # which drops anchor_mu_imit / anchor_log_std_imit from BOTH the rollout
+  # extras and the replay schema. Sized against the numbers THIS run logs at
+  # startup ("Replay transition size: 3.73 KB -> max_replay_size=2355200 is
+  # 8.39 GB"), not against the 5,456 B in the max_replay_size comment below --
+  # that figure predates the current obs tree and is 1.4x too big:
+  #
+  #   anchor extras = 2 * 38 (action_size) * 4 B = 304 B/transition
+  #                 = 7.9% of the 3,824 B transition
+  #                 = 683 MiB (0.67 GiB) of the 8.39 GiB buffer
+  #
+  # Directly relevant: the first 1B launch died at 559M with a warp OOM asking
+  # for 64 MB. The gradient being discarded was measured at
+  # train/anchor_loss_term = -2.7e-08 against a policy loss of ~5.
+  alpha_anchor: 0.0
+  w_anchor: 0.5
+  w_anchor_floor: 0.0
+  decay_sgd_steps: 0
+  # C1: UNREAD on this arm -- there is no `prior` or `decoder` block in the
+  # param tree for label_param_tree to find. Kept at 0.0 so the diff against
+  # b1 stays readable; changing them here has no effect.
+  prior_lr_mult: 0.0
+  decoder_lr_mult: 0.0
+  # C1: this now drives the ENTIRE network. The scratch policy deliberately
+  # keeps its action head INSIDE the `policy_head` block so every parameter is
+  # labelled `policy_head` -- a top-level `action_head` block would fall into
+  # label_param_tree's "other" bucket and be driven by other_lr_mult, which no
+  # config here sets.
+  policy_head_lr_mult: 1.0
+
+train_config:
+  num_envs: 2048
+  num_timesteps: 1_000_000_000
+  unroll_length: 50
+  # B1 DELTA 4: BATCH IS THE MEMORY KNOB, 1024 -> 512 (matching r2). Everything
+  # that scales with B*L -- the BPTT unroll, the critic loss over [B*L, ...],
+  # the E-step map, the Bellman target -- halves with it. K is NOT traded for
+  # it: see sgd_steps_per_rollout below.
+  batch_size: 512
+  min_replay_size: 50_000
+  # SIZED TO ~95% OF THE 5090, measured rather than guessed.
+  # max_size per env = max(sequence_length + 1, max_replay_size // num_envs),
+  # so 400_000 was only 195 steps/env -- 2.18 GB of a 32,607 MiB card.
+  #
+  # Measured bytes per stored transition by walking the actual observation tree
+  # (vision uint8, next_observation dropped, plus action/reward/discount and the
+  # two anchor_* extras): 5,456 B. Steady-state total at 400_000 was 13.2 GB, so
+  # non-buffer is ~11.0 GB, leaving ~21.5 GB for the buffer at 95%:
+  #
+  #   1920 steps/env = 3_932_160 -> 21.45 GB buffer, ~32.5 GB steady
+  #
+  # 1920 was TRIED AND OOMed. Steady footprint is not the binding constraint:
+  # XLA needs ~4.07 GB of scratch while compiling the fused step, and the run
+  # died asking for exactly that at 25.4 GB already resident (~29.5 GB), well
+  # under the card's nominal 34.19 GB -- so fragmentation eats the rest. The
+  # ceiling to design against is `steady + ~4.1 GB transient`, not `steady`.
+  #
+  #   1400 steps/env = 2_867_200 -> ALSO OOMed.
+  #
+  # WHY ~95% IS NOT REACHABLE, and it is not the steady footprint: the replay
+  # INSERT materialises a transposed scratch copy of each buffer field, shape
+  # [num_envs, max_size, dim]. At 1400 steps/env that is
+  #   f32[2048, 1400, 277] = 3.18 GB   for proprioception alone
+  # -- the exact HLO the run died on -- with a comparable uint8 copy for
+  # vision. Peak therefore scales with depth ON TOP OF the steady buffer, and
+  # bytes-per-transition only predicts the steady half. Design against peak.
+  #
+  #   1150 steps/env = 2_355_200 -> 12.85 GB buffer, ~23.9 GB steady
+  #
+  # w2's value: the only depth with prior evidence of working on this card.
+  # Still 5.9x the original 195 steps/env. Going deeper needs the insert-path
+  # transient measured, not the steady footprint.
+  #
+  # THIS IS AN ALGORITHM CHANGE, not just a memory one. The buffer is 9.8x
+  # deeper at fixed sgd_steps_per_rollout=50, so each transition is revisited
+  # ~10x fewer times before eviction and the average sample is ~10x staler.
+  # Under sparse reward that cuts both ways: rare rewarding transitions survive
+  # far longer (the reason w2 wanted depth), but the critic trains on older
+  # policy data. If learning slows versus the a1 curve, this is the first
+  # suspect, and sgd_steps_per_rollout is the knob that compensates.
+  # B1 DELTA 5: REPLAY DEPTH, SET BY SMOKE. This is the starting estimate.
+  # 1,005,568 = 491 steps/env = 9.8 rollouts at num_envs 2048, down from a2's
+  # 2,355,200 (1150 steps/env, 23.0 rollouts). That reduction is the real cost
+  # of this arm, and it cuts against a2's own argument (just above) that depth
+  # is load-bearing for sparse reward.
+  # Budget: the transition is 4,544 B here -- vision 2048 + imitation_target 204
+  # + proprioception 1108 + action 152 + reward 4 + discount 4 + policy_hidden
+  # 1024 + anchor extras 0 (dropped by the alpha_anchor=0 gate, 71b47d7) -- and
+  # the maze env/rollout floor is ~18.3 GiB at 2048 envs, ~2.8 GiB heavier than
+  # the run_gap env r2 was tuned on, so r2's numbers do not transfer.
+  # THE SMOKE MEASURES PEAK, NOT STEADY: a2 died at 84.6% steady on a transient,
+  # and the failing allocation was warp's (outside JAX's pool), so an XLA-only
+  # budget will not see it coming.
+  # MEASURED, not modelled. Three smokes on the 5090 (32,607 MiB), each with a
+  # full eval INCLUDING the 2001-frame render -- the exact path a2 died in --
+  # and peak sampled at 2 Hz rather than steady:
+  #     491 steps/env ( 9.8 rollouts, 4.26 GB) -> peak 22,662 MiB (69.5%)
+  #     900 steps/env (18.0 rollouts, 7.80 GB) -> peak 22,656 MiB (69.5%)
+  # The marginal cost of replay depth came out at ~0 over that range, i.e. the
+  # peak is set by a learner/render transient that dwarfs the buffer, not by the
+  # buffer. So the audit's model -- which predicted this arm would not fit at
+  # ANY depth with a widened conv stack -- was right about the CONV widening
+  # (not attempted here) and pessimistic about depth.
+  # 1150 steps/env (23.0 rollouts, a2's exact depth) very likely also fits and
+  # would remove a confound from the a2 comparison, but it was NOT measured --
+  # the smoke was cut short. Reliability wins for an overnight run; revisit for
+  # the next arm.
+  max_replay_size: 1_843_200
+  # 101 = n_step + 1, REQUIRED by store_next_observation: false below --
+  # the bootstrap state is read from observation[:, 100] instead of from a
+  # stored next_observation, and DMPOConfig raises if the two disagree.
+  # B1 DELTA 6: sequence_length == rnn_bptt_length + n_step is enforced
+  # fail-loud by the recurrent learner. n_step stays 100 (the return horizon,
+  # unchanged from a2), so seq = 120. L=20 is the MEMORY horizon: 200 ms at
+  # ctrl_dt 0.01. NOTE rnn_bptt_length=1 would also satisfy the guard while
+  # training the GRU on a one-step BPTT -- passing the check is not evidence the
+  # horizon is right.
+  rnn_bptt_length: 20
+  sequence_length: 120
+  # ---- Compressed replay (w2's storage format, on m9's algorithm) ---------
+  # NOT optional here, unlike on the gap task: at 2048 envs the buffer is
+  # [num_envs, max_size, obs] = [2048, 195, 2048] per observation field, and
+  # storing next_observation as well at fp32 makes that 6.5 GB of vision
+  # alone. The first launch died in the replay scatter with
+  #   INTERNAL: Autotuning failed for HLO %loop_transpose_fusion
+  #   f32[2048,195,2048] ... NOT_FOUND: No valid config found!
+  # which is an out-of-memory in autotuner clothing. Dropping
+  # next_observation and storing vision as uint8 is 5.08x (measured on w2)
+  # and takes it to ~0.8 GB. m9 got away with the uncompressed format because
+  # the gap env's model is far smaller and full_reset=False keeps only one
+  # env state live; this maze holds a second full mjx.Data for the per-step
+  # reset path.
+  # Quantisation error on the stored image is <= 1/510 -- the renderer
+  # unpacks 8-bit channels -- so this is a storage change, not a learning one.
+  store_next_observation: false
+  vision_uint8_storage: true
+  samples_per_insert: 2.0
+  # Ray parity on learner throughput (arm_j1). Under sparse reward this is
+  # load-bearing rather than a tuning knob: at the frozen prior's initial
+  # crossing rate the replay holds only a handful of rewarding transitions,
+  # and K is how many times each one is revisited before eviction.
+  # B1 DELTA 7 (value unchanged, reasoning new): K stays 50. K is memory-free
+  # (lax.scan) and is NOT traded for batch -- folder rule from
+  # BASELINE_arm_r2_rnn_k50.md, where K=50 vs K=10 moved takeoff 148M -> 31M.
+  # Pinned explicitly because at batch 512 the legacy fallback formula would
+  # give 100, silently doubling the learner clock against both a2 and r2.
+  sgd_steps_per_rollout: 50
+  # K = unroll * num_envs / (batch * spi) = 50*2048/(1024*2) = 50 SGD updates
+  # per rollout; x iters_per_chunk. K=200 (batch=256) stalled the 2026-05-04 run.
+  iters_per_chunk: 8
+  log_every_steps: 1_000_000
+  # 25M, not 10M: at a 1B budget that is 40 evals instead of 100. Each eval is a
+  # 2000-step rollout plus a 2001-frame video render (~74 s measured on the a1
+  # run), so this cuts ~2 h of eval overhead down to ~50 min without losing
+  # curve shape -- a1's treats/episode moved slowly enough that 25M spacing
+  # still resolves it.
+  eval_every_steps: 25_000_000
+
+  # ---- MPO overrides of /rodent-dmpo-base (measured 2026-05-07) -------------
+  # vnl-ray's MO-MPO penalty is `-||a||` over ALL action magnitudes, not just
+  # the out-of-bound part as in Acme (losses.py:274). Its normalized weights are
+  # ADDED to the MPO weights (losses.py:291), so ~half the cross-entropy weight
+  # mass pushes actions toward zero -- directly anti-correlated with the
+  # large-amplitude torques a gap jump needs.
+  use_n_step: true
+  # n_step stays 100 -- NOT raised to match gamma's 200-step horizon. n_step is
+  # how far value propagates per update; gamma is how far it looks. They need
+  # not be equal, and raising it here would be actively harmful: sequence_length
+  # must be >= n_step, and max_size = max(sequence_length+1, max_replay_size /
+  # num_envs) = max(201, 195) = 201 at seq=200, leaving 201-200+1 = 2 valid
+  # sampling start positions per env against 96 today. Restoring 96 would need
+  # max_replay_size ~604k, i.e. +51% replay memory on a run already at 28.4 GB
+  # of 32.6 GB. Cheap in principle, OOM in practice.
+  n_step: 100
+  min_log_temperature: -7.0
+
+  # ---- gamma: 0.97 -> 0.995 -------------------------------------------------
+  # gamma IS a speed prior, which is exactly what this experiment removes. It
+  # discounts a later crossing relative to an earlier one, so a small gamma
+  # smuggles "hurry up" back into a reward that no longer says it.
+  #
+  # Numerically, at arm_i1's measured pace of one crossing per 73.6 steps:
+  #     gamma   horizon   Q(crosses forever)   Q(crosses once, then falls)
+  #     0.97     0.33 s        1.119                    1.0
+  #     0.99     1.00 s        1.913                    1.0
+  #     0.995    2.00 s        3.242                    1.0
+  # At 0.97 the critic can barely separate a rat that runs the whole corridor
+  # from one that clears a single gap and dies -- 12% of value. At 0.995 it is
+  # 224%. Q is MPO's ENTIRE policy-improvement signal, so that separation is the
+  # experiment.
+  #
+  # KNOWN BIAS, accepted: rollout.py:139 stores discount = 1 - done, and brax's
+  # EpisodeWrapper folds the 1000-step time limit into `done`, so truncation is
+  # bootstrapped as if terminal. At gamma=0.97 that touches the last ~33 steps
+  # (3%); at 0.995 the last ~200 (20%). It is tolerable here because the bias is
+  # ~state-additive and MPO's E-step is a softmax over actions AT THE SAME
+  # STATE, where an additive term cancels. It still costs critic fit quality.
+  # Proper fix (own arm, not this one): bootstrap on truncation. Note that a
+  # naive fix breaks the n-step mask -- `_alive = cumprod(discount)` is what
+  # stops post-autoreset rewards leaking into R_n -- so it needs two separate
+  # masks, and the true terminal obs is already overwritten by BraxAutoReset.
+  discount: 0.995
+
+  # ---- C51 support: [-150,150]x51 -> [0,20]x101 -----------------------------
+  # The dense support was calibrated for ~1 reward/step over ~1000 steps. The
+  # sparse return maxes out at 20 (n_platforms=20) and is never negative (the
+  # only reward term is a non-negative bonus), so [0, 20] are HARD bounds, not
+  # estimates, and no atom is wasted.
+  #
+  # Leaving it alone would have been fatal, not merely suboptimal: 300/50 = 6.0
+  # per atom, so the entire realistic value range (0 to ~3.2) would live inside
+  # ONE atom of a 51-atom head. 101 atoms over [0,20] gives 0.2. Atom count
+  # matters less than it looks -- learner.py:285 feeds `dist.mean()` to the
+  # E-step, and the categorical mean is continuous in the target regardless of
+  # spacing -- so 101 is chosen for distribution shape, not for the mean.
+  vmin: 0.0
+  vmax: 20.0
+  num_atoms: 101
+  action_penalization: false
+  # softplus(1000) ~= 1000 makes the stddev-KL Lagrange multiplier enormous at
+  # init, so the policy cannot widen. Start it small instead.
+  init_log_alpha_stddev: 1.0
+  # 1e-7 freezes the stddev update budget outright.
+  epsilon_stddev: 1.0e-3
+
+logging_config:
+  project_name: dmpo-rodent
+  exp_name: maze_c3_scratch_position_speed
+  group_name: RodentMazeForageVision-from-scratch
+  notes: "maze_c3_scratch_position_speed: maze_c1p_scratch_position plus a dense direction-agnostic speed reward (weight 5e-4, target_speed 0.5 m/s, shaped as tent(|v_xy|) x upright, gated on min_torso_z). From-scratch pure sparse failed twice for two different reasons, both rooted in this task having no movement reward at all: c1 (torque) fell over at exactly step 52 in 100%% of 77,824 episodes; c1p (position) survived all 2000 steps but lay splayed and immobile, 44 mm of travel in 1900 steps against a treat 0.428 m away at action RMS 0.004. Both hit zero treats at 25.7M with critic_loss collapsed onto the zero function (3.36 -> 0.065), leaving MPO no advantage signal. b1 escaped only because its frozen decoder could already walk (0.053 treats/ep at 1.1M). The speed term saturates past target_speed so treats remain the only improvable axis, and its per-episode ceiling of 1.0 sits well under b1's ~3.4 treats. NOT a control for b1 any more: graft, actuator mode and reward all differ; that comparison was already answered by c1 and c1p."
+
+# ABSOLUTE, deliberately. A relative './checkpoints/...' resolves against the
+# launch cwd; a 2026-05-07 launch fired from the SalkResearch root instead of
+# the repo root silently wrote to an empty dir, logged "Found 0 checkpoint
+# steps", skipped auto-resume and died ~10 s in, leaving a stub wandb run that
+# looked like a completed experiment.
+# FRESH DIR -- MANDATORY, two independent reasons. (1) An FF param tree cannot
+# be restored into a recurrent one; the entry point raises a named ValueError
+# for exactly this. (2) a2's dir also holds wandb_state.json, which would
+# silently resume this arm INTO a2's wandb run.
+checkpoint_dir: /home/talmolab/Desktop/SalkResearch/_implementation_log/DMPO/checkpoints/maze_c3_scratch_position_speed
+
+# KEEP EVERY CHECKPOINT. The default is the last 3, which at eval_every_steps
+# 25M is only the last 75M of a 1B run -- useless for probing how the policy
+# develops. 40 checkpoints x ~58 MB = ~2.3 GB, which is nothing. `null` = all.
+checkpoint_max_to_keep: null
+
+# See the header: this is the one setting that silently voids the experiment if
+# it is missing, and the entry point refuses to launch this env without it.
+wrappers:
+  full_reset: true
+
+eval_render_config:
+  # 50 fps against a 100 Hz control rate = half-speed playback, as in the gap
+  # arms. episode_length matches env_config.episode_length so a rendered
+  # episode is the same length as a trained one.
+  fps: 50
+  height: 480
+  width: 640
+  # `camera:` is a DEAD KEY -- render_eval_video accepts it and never forwards
+  # it, and render_video builds its own tracking camera. Naming an MJCF camera
+  # here does nothing. Left at the historical value so nobody reads a change
+  # into it; `cameras:` below is the one that works.
+  camera: close_profile-rodent
+  # TWO PANELS, side by side. The historical single camera
+  # (elevation -20, distance 1.0) puts the eye ~0.34 m above the torso and
+  # ~0.94 m from it horizontally. That is fine in an open arena and useless
+  # here: the walls are 0.30 m tall and the corridors 0.465 m wide, so the eye
+  # is barely above wall height with a wall in the way.
+  #
+  # MEASURED over 24 random resets by segmentation render, counting frames
+  # with at least one rat pixel on screen:
+  #
+  #   camera                          visible   mean rat px
+  #   HISTORICAL dist 1.0  el -20      33.3%           577
+  #   close      dist 0.8  el -45     100.0%          2566
+  #   close      dist 0.8  el -55     100.0%          3894
+  #   close      dist 0.6  el -55     100.0%          6938
+  #   close      dist 0.6  el -70     100.0%          7130   <- shipped
+  #   close      dist 0.45 el -60     100.0%         12438
+  #   top        dist 2.2  el -90     100.0%           564   <- shipped
+  #   top        dist 1.6  el -90     100.0%          1062
+  #
+  # The historical camera shows the rat in one frame in three. Every candidate
+  # is 100%, so the choice below is framing, not occlusion:
+  #   - top (elevation -90) cannot be occluded by a 0.3 m wall at all; at
+  #     distance 2.2 it shows ~7 cells of local maze plus usually 2-3 treats,
+  #     so you can see what the rat is navigating toward.
+  #   - close at distance 0.6 gives 12x the historical rat-pixel count. -70
+  #     rather than -55 because at -55 the top face of the near wall fills the
+  #     bottom quarter of the frame in 2 of 3 sampled states; -70 is clean and
+  #     centred for the same rat-pixel count. Posture is still readable, and
+  #     the HUD reports height and speed numerically anyway.
+  # Each panel gets the full `width` below, so the video is 2 x 640 wide.
+  cameras:
+    - {label: "top",   elevation: -90, azimuth: 90, distance: 2.2}
+    - {label: "close", elevation: -70, azimuth: 90, distance: 0.6}
+  episode_length: 2000
+  # The gap-specific readouts (show_gap_crossing, show_distance_to_gap,
+  # gap_flash_duration) are OFF: they read state.info keys this env does not
+  # write.
+  hud:
+    enabled: true
+    show_speed: true
+    show_reward_breakdown: true
+    show_cumulative_reward: true
+    show_height: true
+    show_heading: true
+    show_step_counter: true
+    show_action_magnitude: true
