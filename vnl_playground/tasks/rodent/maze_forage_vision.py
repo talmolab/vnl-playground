@@ -1620,6 +1620,55 @@ class MazeForageVision(rodent_base.RodentEnv):
         metrics["rewards/nearest_treat_distance"] = nearest
         return reward_val
 
+    @_registry.reward("upright")
+    def _upright_reward(self, data, info, metrics, weight) -> float:
+        """Dense per-step reward for holding the torso upright and off the floor.
+
+        WHY THIS EXISTS: the from-scratch arm (maze_c1_scratch_rnn) measured a
+        hard floor that pure sparse cannot cross. Every episode ended belly_up
+        at exactly step 52 (sem 0 over 77,824 episodes), while the mean
+        nearest-treat distance is 0.78 m, which even a competent walker at the
+        measured 0.54 m/s needs ~144 steps to cover. The only reward term was
+        `treat_collected`, so the reward was not merely sparse -- it was
+        UNREACHABLE inside the horizon, leaving the critic uniformly zero and
+        MPO with no advantage signal at all. This term supplies the missing
+        gradient toward staying alive long enough for a treat to exist.
+
+        Shape: ``weight * clip(cos_tilt, 0, 1)``, gated to zero when the torso
+        has collapsed below ``min_torso_z``. cos_tilt is +1 upright, 0 on its
+        side, -1 belly up (see `_torso_posture`), so the term is non-negative
+        by construction -- required, because the C51 critic's support is
+        ``[vmin, vmax] = [0, 20]`` and a negative per-step reward would push
+        returns outside it.
+
+        SIZING IS THE WHOLE DESIGN. At `weight` w the per-episode ceiling is
+        ``w * episode_length``, so w=0.0005 over 2000 steps contributes at most
+        1.0 -- against b1's ~3.4 treats/episode, i.e. treats stay the dominant
+        objective once locomotion is solved. Early on, when treats are exactly
+        0, ANY positive term dominates and provides the gradient. Raising w
+        much above this inverts that: the agent is paid more for standing still
+        than for foraging, and it will stand still.
+
+        Args:
+            data: Simulation data.
+            info: Unused; posture is read from `data`.
+            metrics: Metrics dict for logging.
+            weight: Per-step reward at perfectly upright. See sizing above.
+
+        Returns:
+            ``weight * clip(cos_tilt, 0, 1)``, or 0.0 while collapsed.
+        """
+        del info
+        torso_z, cos_tilt = self._torso_posture(data)
+        low_cfg = self._config.termination_criteria.get("torso_too_low", {})
+        min_z = float(low_cfg.get("min_torso_z", 0.0325))
+        upright = jp.clip(cos_tilt, 0.0, 1.0)
+        reward_val = weight * jp.where(torso_z >= min_z, upright, 0.0)
+
+        metrics["rewards/upright"] = reward_val
+        metrics["rewards/cos_tilt"] = cos_tilt
+        return reward_val
+
     @_registry.reward("termination_penalty")
     def _termination_penalty(self, data, info, metrics, weight) -> float:
         """Negative reward on the timestep the episode terminates.
