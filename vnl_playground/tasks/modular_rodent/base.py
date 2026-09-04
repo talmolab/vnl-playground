@@ -16,7 +16,7 @@ from mujoco_playground._src import mjx_env
 from mujoco_playground._src.mjx_env import get_sensor_data
 
 from . import consts
-from vnl_playground.tasks.utils import dm_scale_spec
+from vnl_playground.tasks.utils import scale_spec
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -55,7 +55,7 @@ class ModularRodentEnv(mjx_env.MjxEnv):
         self._spec = mujoco.MjSpec.from_file(str(self._config.arena_xml_path))
         walker_spec = mujoco.MjSpec.from_file(str(self._config.walker_xml_path))
         if self._config.rescale_factor != 1.0:
-            walker_spec = dm_scale_spec(walker_spec, self._config.rescale_factor)
+            walker_spec = scale_spec(walker_spec, self._config.rescale_factor)
         if self._config.torque_actuators:
             for actuator in walker_spec.actuators:
                 if actuator.forcerange.size >= 2:
