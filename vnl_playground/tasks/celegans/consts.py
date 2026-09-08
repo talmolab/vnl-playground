@@ -4,8 +4,6 @@ This module contains path definitions and configuration constants used
 throughout the C. elegans simulation environment.
 """
 
-from typing import List
-
 from etils import epath
 
 CELEGANS_PATH: epath.Path = epath.Path(__file__).parent
@@ -16,12 +14,12 @@ WHITE_ARENA_XML_PATH: epath.Path = CELEGANS_PATH / "xmls" / "white_arena.xml"
 REFERENCE_H5_PATH: epath.Path = CELEGANS_PATH / "reference_data" / "reference.h5"
 
 ROOT: str = "torso13_body"
-END_EFFECTORS: List[str] = [
+END_EFFECTORS: list[str] = [
     "torso1_body",
     "torso25_body",
 ]
-TOUCH_SENSORS: List[str] = []
-BODIES: List[str] = [
+TOUCH_SENSORS: list[str] = []
+BODIES: list[str] = [
     "torso1_body",
     "torso2_body",
     "torso3_body",
@@ -48,7 +46,7 @@ BODIES: List[str] = [
     "torso24_body",
     "torso25_body",
 ]
-JOINTS: List[str] = [
+JOINTS: list[str] = [
     "free_body_rot",
     "motor1_rot",
     "motor2_rot",
@@ -75,4 +73,4 @@ JOINTS: List[str] = [
     "rot24",
     "rot25",
 ]
-SENSORS: List[str] = ["accelerometer", "gyro", "velocimeter"]
+SENSORS: list[str] = ["accelerometer", "gyro", "velocimeter"]

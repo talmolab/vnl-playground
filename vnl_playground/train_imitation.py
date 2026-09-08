@@ -15,31 +15,24 @@ os.environ["PYOPENGL_PLATFORM"] = "egl"
 import functools
 import json
 from datetime import datetime
-import numpy as np
-import imageio
 
+import imageio
 import jax
 import jax.numpy as jp
-import matplotlib.pyplot as plt
-import mediapy as media
 import mujoco
+import numpy as np
 import wandb
+from brax.training.acme import running_statistics
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
-from brax.training.acme import running_statistics
-
 from etils import epath
 from flax.training import orbax_utils
-from IPython.display import clear_output, display
-from orbax import checkpoint as ocp
 from ml_collections import config_dict
-from tqdm import tqdm
+from mujoco_playground import wrapper
+from orbax import checkpoint as ocp
 
-from mujoco_playground import locomotion, wrapper
-from mujoco_playground.config import locomotion_params
-
+from vnl_playground.tasks import wrappers as rodent_wrappers
 from vnl_playground.tasks.rodent import imitation
-from vnl_playground.tasks.rodent import wrappers as rodent_wrappers
 
 # Enable persistent compilation cache.
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
@@ -48,11 +41,11 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 
 env_cfg = imitation.default_config()
 env_cfg.mujoco_impl = "warp"
-env_cfg.keep_clips_idx = np.arange(50)
 
 ppo_params = config_dict.create(
     num_envs=4096,
-    num_timesteps=int(4_000_000_000),
+    num_eval_envs=128,
+    num_timesteps=4_000_000_000,
     batch_size=1024,
     num_minibatches=16,
     num_updates_per_batch=3,
@@ -74,7 +67,6 @@ ppo_params = config_dict.create(
 )
 
 env_name = "imitation"
-env_cfg.nconmax *= ppo_params.num_envs
 
 from pprint import pprint
 
@@ -146,7 +138,12 @@ del training_params["eval_every"]
 network_factory = functools.partial(
     ppo_networks.make_ppo_networks, **ppo_params.network_factory
 )
-normalize = lambda x, y: x
+
+
+def normalize(x, y):
+    return x
+
+
 if training_params["normalize_observations"]:
     normalize = running_statistics.normalize
 
@@ -206,26 +203,33 @@ def make_logging_inference_fn(ppo_networks):
 
 
 if __name__ == "__main__":
-    env = rodent_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg))
-    eval_env = rodent_wrappers.FlattenObsWrapper(imitation.Imitation(config=env_cfg))
+    training_worlds_per_device = ppo_params.num_envs // jax.device_count()
+    env = rodent_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=env_cfg, num_worlds=training_worlds_per_device)
+    )
+    eval_env = rodent_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=env_cfg, num_worlds=ppo_params.num_eval_envs)
+    )
 
-    # render a rollout in the policy_params_fn to log to wandb at each step
-    jit_reset = jax.jit(env.reset)
-    jit_step = jax.jit(env.step)
-    rng = jax.random.PRNGKey(0)
-    start_state = jit_reset(rng)
-    mj_model = env._mj_model
+    # One-world environment used only for video rollouts.
+    rollout_env = rodent_wrappers.FlattenObsWrapper(
+        imitation.Imitation(config=env_cfg, num_worlds=1)
+    )
+    jit_reset = jax.jit(rollout_env.reset)
+    jit_step = jax.jit(rollout_env.step)
+    start_state = jit_reset(jax.random.PRNGKey(0))
+    mj_model = rollout_env._mj_model
     mj_data = mujoco.MjData(mj_model)
     renderer = mujoco.Renderer(mj_model, height=512, width=512)
     ppo_network = network_factory(
         start_state.obs.shape[-1],
-        env.action_size,
+        rollout_env.action_size,
         preprocess_observations_fn=normalize,
     )
     make_logging_policy = make_logging_inference_fn(ppo_network)
     jit_logging_inference_fn = jax.jit(make_logging_policy(deterministic=True))
 
-    def policy_params_fn(current_step, make_policy, params, jit_logging_inference_fn):
+    def policy_params_fn(current_step, make_policy, params):
         del make_policy  # Unused.
 
         # generate a rollout
@@ -242,7 +246,7 @@ if __name__ == "__main__":
         qposes_rollout = np.array([state.data.qpos for state in rollout])
         video_path = f"{ckpt_path}/{current_step}.mp4"
 
-        with imageio.get_writer(video_path, fps=int((1.0 / env.dt))) as video:
+        with imageio.get_writer(video_path, fps=int(1.0 / rollout_env.dt)) as video:
             for qpos in qposes_rollout:
                 mj_data.qpos = qpos
                 mujoco.mj_forward(mj_model, mj_data)
@@ -263,7 +267,5 @@ if __name__ == "__main__":
     make_inference_fn, params, _ = train_fn(
         environment=env,
         eval_env=eval_env,
-        policy_params_fn=functools.partial(
-            policy_params_fn, jit_logging_inference_fn=jit_logging_inference_fn
-        ),
+        policy_params_fn=policy_params_fn,
     )

@@ -1,23 +1,32 @@
 """Mouse arm imitation environment for motion tracking."""
 
 import collections
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jp
 import mujoco
 import numpy as np
-from jax import flatten_util
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.mouse import consts
 from vnl_playground.tasks.mouse.base import (
     MouseBaseEnv,
+)
+from vnl_playground.tasks.mouse.base import (
     default_config as base_default_config,
 )
+from jax import flatten_util
+
 from vnl_playground.tasks.mouse.reference_clips import MouseReferenceClips
+from vnl_playground.tasks.reference_clips import (
+    ReferenceClips,
+    prepare_reference_clips,
+)
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
@@ -39,6 +48,10 @@ def default_config() -> config_dict.ConfigDict:
     cfg.qvel_init = "zeros"  # How to initialize velocities: "zeros", "reference"
     cfg.keep_clips_idx = None  # Indices of clips to keep (None = all)
     cfg.recompute_kinematics = False  # Recompute xpos/xquat from sim model
+    # main's name for keep_clips_idx, read by prepare_reference_clips(). Kept so
+    # a later migration of imitation_arm_hand.py onto tasks/reference_clips.py
+    # does not have to reintroduce it. Unused on the MouseReferenceClips path.
+    cfg.clip_indices = None
 
     # Walker-specific settings (can be overridden via config)
     cfg.tracked_bodies = ["scapula", "humerus", "ulna", "radius", "wrist_body"]
@@ -74,8 +87,9 @@ class MouseImitation(MouseBaseEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
-        clips: Optional[MouseReferenceClips] = None,
+        config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
+        clips: ReferenceClips | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """Initialize the mouse arm imitation environment.
 
@@ -84,7 +98,7 @@ class MouseImitation(MouseBaseEnv):
             config_overrides: Optional overrides for config fields.
             clips: Pre-loaded MouseReferenceClips. If None, loads from config path.
         """
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
 
         # Add mouse arm (no freejoint - fixed base)
         self.add_mouse(
@@ -92,7 +106,16 @@ class MouseImitation(MouseBaseEnv):
         )
         self.compile()
 
-        # Load reference clips
+        # Load reference clips.
+        #
+        # NOT main's prepare_reference_clips(): MouseImitationArmHand subclasses
+        # this env, and main's load_reference_clips() globs HDF5 files directly
+        # under reference_data_path, while the joystick task's STAC v25 layout is
+        # one directory per trial with the clip at <trial>/<trial>_ik.h5.
+        # MouseReferenceClips does that glob and applies keep_clips_idx. Swapping
+        # loaders here raises "No HDF5 files found" on the v25 data, and on any
+        # layout where it did NOT raise it would silently change the reference the
+        # policy trains against. See MERGE_NOTES.md.
         if clips is not None:
             self.reference_clips = clips
         else:
@@ -133,8 +156,8 @@ class MouseImitation(MouseBaseEnv):
     def reset(
         self,
         rng: jax.Array,
-        clip_idx: Optional[int] = None,
-        start_frame: Optional[int] = None,
+        clip_idx: int | None = None,
+        start_frame: int | None = None,
     ) -> mjx_env.State:
         """Reset the environment to a reference pose.
 
@@ -271,8 +294,16 @@ class MouseImitation(MouseBaseEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            naconmax=self._config.naconmax,
-            njmax=self._config.njmax,
+            naconmax=(
+                self._config.naconmax
+                if self._config.naconmax is not None
+                else self._config.contacts_per_world * self._num_worlds
+            ),
+            njmax=(
+                self._config.njmax
+                if self._config.njmax is not None
+                else self._config.constraints_per_world
+            ),
         )
 
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
@@ -317,7 +348,7 @@ class MouseImitation(MouseBaseEnv):
 
     def _get_current_target(
         self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> MouseReferenceClips:
+    ) -> ReferenceClips:
         """Get reference data at the current frame.
 
         Args:
@@ -325,7 +356,7 @@ class MouseImitation(MouseBaseEnv):
             info: Episode info dict containing 'reference_clip' and 'start_frame'.
 
         Returns:
-            MouseReferenceClips: Reference clip sliced to the current frame.
+            Reference clip sliced to the current frame.
         """
         return self.reference_clips.at(
             clip=info["reference_clip"], frame=self._get_cur_frame(data, info)
@@ -333,7 +364,7 @@ class MouseImitation(MouseBaseEnv):
 
     def _get_imitation_reference(
         self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> MouseReferenceClips:
+    ) -> ReferenceClips:
         """Get future reference frames for observation.
 
         Args:
@@ -341,7 +372,7 @@ class MouseImitation(MouseBaseEnv):
             info: Episode info dict containing 'reference_clip' and 'start_frame'.
 
         Returns:
-            MouseReferenceClips: Slice of reference_length future frames starting
+            Slice of ``reference_length`` future frames starting
                 from current_frame + 1.
         """
         return self.reference_clips.slice(
@@ -383,7 +414,7 @@ class MouseImitation(MouseBaseEnv):
         target = self._get_current_target(data, info)
         distance = jp.linalg.norm(target.joints - data.qpos)
         metrics["joint_l2_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/joints"] = reward
         return reward
 
@@ -393,7 +424,7 @@ class MouseImitation(MouseBaseEnv):
         target = self._get_current_target(data, info)
         distance = jp.linalg.norm(target.joints_velocity - data.qvel)
         metrics["joint_vel_l2_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/joints_vel"] = reward
         return reward
 
@@ -405,7 +436,7 @@ class MouseImitation(MouseBaseEnv):
         target_wrist = target.body_xpos(self._config.end_effector)
         distance = jp.linalg.norm(wrist_pos - target_wrist)
         metrics["wrist_pos_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/wrist_pos"] = reward
         return reward
 
@@ -422,14 +453,24 @@ class MouseImitation(MouseBaseEnv):
             total_dist_sqr += dist_sqr
         total_dist = jp.sqrt(total_dist_sqr)
         metrics["body_errors/total"] = total_dist
-        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(total_dist, weight=weight, scale=exp_scale)
         metrics["rewards/bodies_pos"] = reward
         return reward
 
     @_registry.reward("control_cost")
     def _control_cost(self, data, info, metrics, weight) -> float:
-        """Penalty for control magnitude."""
-        ctrl_sqr = jp.sum(jp.square(info["action"]))
+        """Penalty for control magnitude.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+            metrics: Mutable metrics dict.
+            weight: Penalty weight multiplier.
+
+        Returns:
+            float: Negative weighted sum of squared action values.
+        """
+        ctrl_sqr = math_utils.squared_l2_norm(info["action"])
         metrics["ctrl_sqr"] = ctrl_sqr
         cost = weight * ctrl_sqr
         metrics["rewards/control_cost"] = -cost
@@ -437,8 +478,18 @@ class MouseImitation(MouseBaseEnv):
 
     @_registry.reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
-        """Penalty for control rate of change."""
-        ctrl_diff_sqr = jp.sum(jp.square(info["action"] - info["prev_action"]))
+        """Penalty for control rate of change.
+
+        Args:
+            data: MJX simulation data.
+            info: Episode info dict.
+            metrics: Mutable metrics dict.
+            weight: Penalty weight multiplier.
+
+        Returns:
+            float: Negative weighted sum of squared action deltas.
+        """
+        ctrl_diff_sqr = math_utils.squared_l2_norm(info["action"] - info["prev_action"])
         metrics["ctrl_diff_sqr"] = ctrl_diff_sqr
         cost = weight * ctrl_diff_sqr
         metrics["rewards/control_diff_cost"] = -cost
@@ -454,6 +505,11 @@ class MouseImitation(MouseBaseEnv):
     @_registry.termination("nan_termination")
     def _nan_termination(self, data, info) -> bool:
         """Terminate if NaN values appear in simulation."""
+        # Deliberately broader than main's `jp.any(jp.isnan(data.qpos))`: this
+        # ravels the WHOLE data pytree, so a NaN that appears first in qvel or in
+        # the contact arrays is caught before it reaches qpos. Every
+        # `nan_termination = 0.0` result quoted for the joystick task was measured
+        # under this check. See MERGE_NOTES.md.
         flattened_vals, _ = flatten_util.ravel_pytree(data)
         num_nans = jp.sum(jp.isnan(flattened_vals))
         return num_nans > 0
@@ -462,11 +518,11 @@ class MouseImitation(MouseBaseEnv):
 
     def render(
         self,
-        trajectory: List[mjx_env.State],
+        trajectory: list[mjx_env.State],
         height: int = 480,
         width: int = 640,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
         render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """Render a trajectory with optional ghost showing reference motion.

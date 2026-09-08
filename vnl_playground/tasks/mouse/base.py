@@ -1,21 +1,22 @@
 """Base classes for mouse (arena-first, add walker later)."""
 
 import os
-from typing import Any, Dict, Mapping, Optional, Sequence, Union
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jp
-from ml_collections import config_dict
 import mujoco
+from ml_collections import config_dict
 from mujoco import mjx
+from mujoco_playground._src import mjx_env
 from tqdm import tqdm
 
-from mujoco_playground._src import mjx_env
 from vnl_playground.tasks.mouse import consts, contact_presets
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
-def get_assets() -> Dict[str, bytes]:
+def get_assets() -> dict[str, bytes]:
     """Collect XML + asset files into a dict for bundling/remote loading.
 
     Returns:
@@ -82,6 +83,12 @@ def default_config() -> config_dict.ConfigDict:
         # config predating this key keeps its original contact behaviour.
         contact_preset=None,
         contact_stiffness_mult=30.0,
+        # main's per-world spelling of the same capacity mechanism
+        # (naconmax = contacts_per_world * num_worlds; njmax =
+        # constraints_per_world). Used by mouse/imitation.py and the other
+        # tasks; imitation_arm_hand.py sets naconmax/njmax above directly.
+        contacts_per_world=8,
+        constraints_per_world=32,
     )
 
 
@@ -94,7 +101,8 @@ class MouseBaseEnv(mjx_env.MjxEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """
         Initialize with arena-only MjSpec; add mouse(s) later via add_mouse().
@@ -104,6 +112,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
             config_overrides: Optional overrides for fields in `config`.
         """
         super().__init__(config, config_overrides)
+        self._num_worlds = num_worlds
         self._walker_xml_path = str(config.walker_xml_path)
         self._arena_xml_path = str(config.arena_xml_path)
 
@@ -143,9 +152,9 @@ class MouseBaseEnv(mjx_env.MjxEnv):
     def add_mouse(
         self,
         freejoint: bool = False,
-        pos: Union[tuple[float, float, float], list[float]] = (0.0, 0.0, 0.02),
+        pos: tuple[float, float, float] | list[float] = (0.0, 0.0, 0.02),
         suffix: str = "-mouse",
-        rgba: Optional[tuple[float, float, float, float]] = None,
+        rgba: tuple[float, float, float, float] | None = None,
         root_bodies: Sequence[str] = ("clavicle",),
     ) -> None:
         """
@@ -204,7 +213,7 @@ class MouseBaseEnv(mjx_env.MjxEnv):
 
     def add_ghost_mouse(
         self,
-        pos: Union[tuple[float, float, float], list[float]] = (0.2, 0.0, 0.02),
+        pos: tuple[float, float, float] | list[float] = (0.2, 0.0, 0.02),
         suffix: str = "-ghost",
         ghost_rgba: tuple[float, float, float, float] = (
             65 / 256,

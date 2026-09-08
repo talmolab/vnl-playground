@@ -1,23 +1,25 @@
 import collections
-import tqdm
 import warnings
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import brax.math
 import jax
 import jax.numpy as jp
 import mujoco
 import numpy as np
+import tqdm
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
-from jax import flatten_util
+
+from vnl_playground.tasks import math_utils
+from vnl_playground.tasks.reference_clips import ReferenceClips, prepare_reference_clips
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
 from . import base as rodent_base
 from . import consts
-from vnl_playground.tasks.reference_clips import ReferenceClips
-from vnl_playground.tasks.reward_registry import RewardRegistry
 
 _registry = RewardRegistry()
 
@@ -28,28 +30,29 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         joints=consts.JOINTS,
         bodies=consts.BODIES,
+        root_body="walker",
         end_effectors=consts.END_EFFECTORS,
         touch_sensors=consts.TOUCH_SENSORS,
         mujoco_impl="jax",
+        contacts_per_world=32,
+        constraints_per_world=256,
         sim_dt=0.002,
         ctrl_dt=0.01,
         solver="newton",
         iterations=5,
         ls_iterations=5,
-        naconmax=90 * 1024,
-        njmax=1200,
         noslip_iterations=0,
         torque_actuators=True,
         rescale_factor=0.9,
         reference_data_path=consts.IMITATION_REFERENCE_PATH,
         mocap_hz=50,
         clip_length=250,
-        clip_set="all",  # NOTE: Charles added keep_clips_idx which basically is the same as this for indices to reduce memory usage
+        clip_set="all",
         reference_length=5,
         reference_stride=1,
         start_frame_range=[0, 44],
         qvel_init="zeros",
-        keep_clips_idx=None,
+        clip_indices=None,
         reward_terms={
             # Imitation rewards
             "root_pos": {"exp_scale": 0.035, "weight": 1.0},  # Meters
@@ -90,8 +93,9 @@ class Imitation(rodent_base.RodentEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
-        clips: Optional[ReferenceClips] = None,
+        config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
+        clips: ReferenceClips | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """
         Initialize the rodent imitation environment.
@@ -103,34 +107,34 @@ class Imitation(rodent_base.RodentEnv):
             clips (optional):
                 Pre-loaded ReferenceClips object. If provided, it overrides
                 loading from `config.reference_data_path`.
+            num_worlds: Number of environments that will share the MJX-Warp
+                contact buffer after vectorization.
         """
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
         self.add_rodent(
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
             rgba=(0, 0.5, 0.5, 1),  # Teal color
         )
         self.compile()
-        if clips is not None:
-            self.reference_clips = clips
-        else:
-            self.reference_clips = ReferenceClips(
-                self._config.reference_data_path,
-                self._config.clip_length,
-                self._config.keep_clips_idx,
-                joint_names=self._config.joints,
-                body_names=self._config.bodies,
-            )
+        self.reference_clips = prepare_reference_clips(
+            self._config,
+            clips,
+            joint_names=self._config.joints,
+            body_names=self._config.bodies,
+            root_body_name=self._config.root_body,
+        )
         max_n_clips = self.reference_clips.qpos.shape[0]
+        behaviour_labels = self.reference_clips.behaviour_labels
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
         elif isinstance(self._config.clip_set, (list, tuple, jp.ndarray, np.ndarray)):
             self._clip_set = jp.array(self._config.clip_set)
-        elif self._config.clip_set in self.reference_clips.clip_names:
+        elif behaviour_labels is not None and self._config.clip_set in behaviour_labels:
             # Only use clips whose types match the specified set of
             # clips (e.g. "Walk", "LGroom")
             (self._clip_set,) = jp.where(
-                self._config.clip_set == self.reference_clips.clip_names
+                self._config.clip_set == np.asarray(behaviour_labels)
             )
         else:
             raise ValueError(
@@ -139,20 +143,21 @@ class Imitation(rodent_base.RodentEnv):
             )
 
         if (
-            self._config.rescale_factor
-            != self.reference_clips._config["model"]["SCALE_FACTOR"]
+            self.reference_clips.scale_factor is not None
+            and self._config.rescale_factor != self.reference_clips.scale_factor
         ):
             warnings.warn(
                 f"Environment `rescale_factor` ({self._config.rescale_factor})"
                 f" does not match the reference data `SCALE_FACTOR`"
-                f" ({self.reference_clips._config['model']['SCALE_FACTOR']})."
+                f" ({self.reference_clips.scale_factor}).",
+                stacklevel=2,
             )
 
     def reset(
         self,
         rng: jax.Array,
-        clip_idx: Optional[int] = None,
-        start_frame: Optional[int] = None,
+        clip_idx: int | None = None,
+        start_frame: int | None = None,
     ) -> mjx_env.State:
         """
         Resets the environment state: draws a new reference clip and initializes the rodent's pose to match.
@@ -241,8 +246,8 @@ class Imitation(rodent_base.RodentEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            njmax=self._config.njmax,
-            naconmax=self._config.naconmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         _assert_all_are_prefix(
@@ -309,7 +314,9 @@ class Imitation(rodent_base.RodentEnv):
         root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
         root_targets = jax.vmap(
-            lambda ref_pos: brax.math.inv_rotate(ref_pos - root_pos, root_quat)
+            lambda ref_pos: math_utils.world_point_to_local(
+                ref_pos, root_pos, root_quat
+            )
         )(reference.root_position)
         quat_targets = jax.vmap(
             lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat)
@@ -328,7 +335,7 @@ class Imitation(rodent_base.RodentEnv):
             [reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos]
         )
         to_egocentric = jax.vmap(
-            lambda diff_vec: brax.math.inv_rotate(diff_vec, root_quat)
+            lambda diff_vec: math_utils.world_vector_to_local(diff_vec, root_quat)
         )
         body_targets = jax.vmap(to_egocentric)(body_rel_pos)
 
@@ -346,7 +353,7 @@ class Imitation(rodent_base.RodentEnv):
         root_pos = self.root_body(data).xpos
         distance = jp.linalg.norm(target.root_position - root_pos)
         metrics["root_pos_distance"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/root_pos"] = reward
         return reward
 
@@ -355,11 +362,13 @@ class Imitation(rodent_base.RodentEnv):
         """`exp_scale` is in degrees."""
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
-        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        rot_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
-        ang_dist_degrees = jp.rad2deg(rot_dist)
+        ang_dist_degrees = math_utils.quaternion_angle(
+            root_quat, target.root_quaternion, degrees=True
+        )
         metrics["root_angular_error"] = ang_dist_degrees
-        reward = weight * jp.exp(-((ang_dist_degrees / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(
+            ang_dist_degrees, weight=weight, scale=exp_scale
+        )
         metrics["rewards/root_quat"] = reward
         return reward
 
@@ -369,7 +378,7 @@ class Imitation(rodent_base.RodentEnv):
         joints = self._get_joint_angles(data)
         distance = jp.linalg.norm(target.joints - joints)
         metrics["joint_l2_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/joints"] = reward
         return reward
 
@@ -379,7 +388,7 @@ class Imitation(rodent_base.RodentEnv):
         joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         metrics["joint_vel_l2_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/joints_vel"] = reward
         return reward
 
@@ -397,7 +406,7 @@ class Imitation(rodent_base.RodentEnv):
     def _body_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         total_dist = self._get_bodies_dist(data, info, metrics, consts.BODIES)
         metrics["body_errors/total"] = total_dist
-        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(total_dist, weight=weight, scale=exp_scale)
         metrics["rewards/bodies_pos"] = reward
         return reward
 
@@ -405,7 +414,7 @@ class Imitation(rodent_base.RodentEnv):
     def _end_eff_reward(self, data, info, metrics, weight, exp_scale) -> float:
         total_dist = self._get_bodies_dist(data, info, metrics, consts.END_EFFECTORS)
         metrics["body_errors/end_eff_total"] = total_dist
-        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(total_dist, weight=weight, scale=exp_scale)
         metrics["rewards/end_eff"] = reward
         return reward
 
@@ -423,15 +432,15 @@ class Imitation(rodent_base.RodentEnv):
 
     @_registry.reward("control_cost")
     def _control_cost(self, data, info, metrics, weight) -> float:
-        metrics["ctrl_sqr"] = ctrl_sqr = jp.sum(jp.square(info["action"]))
+        metrics["ctrl_sqr"] = ctrl_sqr = math_utils.squared_l2_norm(info["action"])
         cost = weight * ctrl_sqr
         metrics["rewards/control_cost"] = -cost
         return -cost
 
     @_registry.reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
-        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(
-            jp.square(info["action"] - info["prev_action"])
+        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = math_utils.squared_l2_norm(
+            info["action"] - info["prev_action"]
         )
         cost = weight * ctrl_diff_sqr
         metrics["rewards/control_diff_cost"] = -cost
@@ -439,7 +448,7 @@ class Imitation(rodent_base.RodentEnv):
 
     @_registry.reward("energy_cost")
     def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
-        energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
+        energy_use = math_utils.absolute_actuator_power(data.qvel, data.qfrc_actuator)
         metrics["energy_use"] = energy_use
         cost = weight * jp.minimum(energy_use, max_value)
         metrics["rewards/energy_cost"] = -cost
@@ -461,8 +470,7 @@ class Imitation(rodent_base.RodentEnv):
     def _root_too_rotated(self, data, info, max_degrees) -> bool:
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
-        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        ang_dist = jp.arccos(jp.clip(quat_dist, -1.0, 1.0))
+        ang_dist = math_utils.quaternion_angle(root_quat, target.root_quaternion)
         return ang_dist > jp.deg2rad(max_degrees)
 
     @_registry.termination("pose_error")
@@ -480,7 +488,8 @@ class Imitation(rodent_base.RodentEnv):
         """Compile a new MjModel with an attached transparent ghost walker."""
         spec = self._spec.copy()
         ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
-        ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
+        if (ghost_rescale := self.reference_clips.scale_factor) is None:
+            ghost_rescale = self._config.rescale_factor
         if ghost_rescale != 1.0:
             ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
         for body in ghost_rodent.worldbody.bodies:
@@ -492,12 +501,12 @@ class Imitation(rodent_base.RodentEnv):
 
     def render(
         self,
-        trajectory: List[mjx_env.State],
+        trajectory: list[mjx_env.State],
         height: int = 240,
         width: int = 320,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
-        modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
+        modify_scene_fns: Sequence[Callable[[mujoco.MjvScene], None]] | None = None,
         add_labels=False,
         termination_extra_frames=0,
         render_ghost: bool = True,
@@ -528,10 +537,7 @@ class Imitation(rodent_base.RodentEnv):
         Returns:
             Sequence[np.ndarray]: List of rendered frames as numpy arrays.
         """
-        if render_ghost:
-            mj_model = self._compile_with_ghost()
-        else:
-            mj_model = self.mj_model
+        mj_model = self._compile_with_ghost() if render_ghost else self.mj_model
         mj_data = mujoco.MjData(mj_model)
 
         renderer = mujoco.Renderer(mj_model, height=height, width=width)
@@ -559,8 +565,13 @@ class Imitation(rodent_base.RodentEnv):
             if add_labels:
                 import cv2
 
-                behavior_label = self.reference_clips.clip_names[clip]
-                label = f"Clip {clip} ({behavior_label})"
+                behaviour_labels = self.reference_clips.behaviour_labels
+                behaviour_label = (
+                    behaviour_labels[clip]
+                    if behaviour_labels is not None
+                    else "<unlabelled>"
+                )
+                label = f"Clip {clip} ({behaviour_label})"
                 cv2.putText(
                     rendered_frame,
                     label,
@@ -579,7 +590,7 @@ class Imitation(rodent_base.RodentEnv):
                     reason = "<Unknown>"
                     if state.info["truncated"]:
                         reason = "truncated"
-                    for name in self._config.termination_criteria.keys():
+                    for name in self._config.termination_criteria:
                         if state.metrics["terminations/" + name] > 0:
                             reason = name
                     cv2.putText(
@@ -606,10 +617,10 @@ class Imitation(rodent_base.RodentEnv):
         rollout_source: Any,
         height: int = 480,
         width: int = 640,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
         render_ghost: bool = True,
-    ) -> List[np.ndarray]:
+    ) -> list[np.ndarray]:
         """Render from precomputed qposes using the old track-mjx logic.
 
         Accepts either a rollout dictionary containing ``qposes_rollout`` and
@@ -700,10 +711,10 @@ class Imitation(rodent_base.RodentEnv):
             checks["joints"] = jp.allclose(
                 self._get_joint_angles(data), reference.joints, atol=atol
             )
-            body_pos = self._get_bodies_pos(data, flatten=False)
-            for body_name, body_pos in body_pos.items():
+            body_positions = self._get_bodies_pos(data, flatten=False)
+            for body_name, body_position in body_positions.items():
                 checks[f"body_xpos/{body_name}"] = jp.allclose(
-                    body_pos, reference.body_xpos(body_name), atol=atol
+                    body_position, reference.body_xpos(body_name), atol=atol
                 )
             if self._config.qvel_init == "reference":
                 checks["joints_ang_vel"] = jp.allclose(
@@ -741,11 +752,17 @@ class Imitation(rodent_base.RodentEnv):
                 n_failed = jp.sum(np.logical_not(result))
                 if n_failed > 0:
                     first_failed_frame = jp.argmax(np.logical_not(result))
-                    clip_label = self.reference_clips.clip_names[clip]
+                    behaviour_labels = self.reference_clips.behaviour_labels
+                    behaviour_label = (
+                        behaviour_labels[clip]
+                        if behaviour_labels is not None
+                        else "<unlabelled>"
+                    )
                     warnings.warn(
                         f"Reference data verification failed for {n_failed} frames"
-                        f" for check '{name}' for clip {clip} ({clip_label})."
-                        f" First failure at frame {first_failed_frame}."
+                        f" for check '{name}' for clip {clip} ({behaviour_label})."
+                        f" First failure at frame {first_failed_frame}.",
+                        stacklevel=2,
                     )
                     any_failed = True
         return not any_failed

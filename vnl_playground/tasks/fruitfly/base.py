@@ -1,24 +1,25 @@
 """Base classes for fruitfly"""
 
 import collections
-from typing import Any, Dict, Mapping, Optional, Union
+import logging
+from collections.abc import Mapping
+from typing import Any
 
-from etils import epath
 import jax
 import jax.numpy as jp
-import logging
+import mujoco
 import numpy as np
 from ml_collections import config_dict
-import mujoco
 from mujoco import mjx
-
 from mujoco_playground._src import mjx_env
+
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.fruitfly import consts
-from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
 from vnl_playground.tasks.reward_registry import RewardRegistry
+from vnl_playground.tasks.utils import _recolour_tree, _scale_body_tree, scale_spec
 
 
-def get_assets() -> Dict[str, bytes]:
+def get_assets() -> dict[str, bytes]:
     assets = {}
     mjx_env.update_assets(assets, consts.FRUITFLY_PATH / "xmls", "*.xml")
     mjx_env.update_assets(assets, consts.FRUITFLY_PATH / "xmls" / "assets")
@@ -39,6 +40,8 @@ def default_config() -> config_dict.ConfigDict:
         ls_iterations=5,
         noslip_iterations=0,
         mujoco_impl="jax",
+        contacts_per_world=16,
+        constraints_per_world=64,
     )
 
 
@@ -52,7 +55,8 @@ class FruitflyEnv(mjx_env.MjxEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """
         Initialize the FruitflyEnv class with only arena
@@ -63,6 +67,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
             compile_spec (bool, optional): Whether to compile the model. Defaults to False.
         """
         super().__init__(config, config_overrides)
+        self._num_worlds = num_worlds
         self._walker_xml_path = str(config.walker_xml_path)
         self._arena_xml_path = str(config.arena_xml_path)
         self._spec = mujoco.MjSpec.from_file(str(config.arena_xml_path))
@@ -74,7 +79,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
         rescale_factor: float = 1.0,
         pos: tuple[float, float, float] = (0, 0, 0.05),
         quat: tuple[float, float, float, float] = (1, 0, 0, 0),
-        rgba: Optional[tuple[float, float, float, float]] = None,
+        rgba: tuple[float, float, float, float] | None = None,
         suffix: str = "-fly",
     ) -> None:
         """Adds the fly model to the environment.
@@ -90,7 +95,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
         """
         fly = mujoco.MjSpec.from_file(self._walker_xml_path)
 
-        # a) Convert motors to torque‑mode if requested
+        # a) Convert motors to torque-mode if requested
         if torque_actuators and hasattr(fly, "actuator"):
             logging.info("Converting to torque actuators")
             for actuator in fly.actuators:  # type: ignore[attr-defined]
@@ -115,7 +120,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
             quat=quat,
         )
 
-        spawn_body = spawn_frame.attach_body(fly.body("thorax"), "", suffix=suffix)
+        spawn_frame.attach_body(fly.body("thorax"), "", suffix=suffix)
         self._suffix = suffix
 
     def add_ghost_fly(
@@ -133,7 +138,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
             _recolour_tree(body, rgba=ghost_rgba)
         # Attach as ghost at the offset frame
         spawn_frame = self._spec.worldbody.add_frame(pos=pos, quat=[1, 0, 0, 0])
-        spawn_body = spawn_frame.attach_body(fly_spec.body("thorax"), "", suffix=suffix)
+        spawn_frame.attach_body(fly_spec.body("thorax"), "", suffix=suffix)
 
     def compile(self, forced=False) -> None:
         """Compiles the model from the mj_spec and put models to mjx"""
@@ -162,7 +167,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
 
     def _get_appendages_pos(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+    ) -> dict[str, jp.ndarray] | jp.ndarray:
         """Get _egocentric_ position of the appendages (claws)."""
         thorax = data.bind(self.mjx_model, self._spec.body(f"thorax{self._suffix}"))
         appendages_pos = collections.OrderedDict()
@@ -170,7 +175,9 @@ class FruitflyEnv(mjx_env.MjxEnv):
             global_xpos = data.bind(
                 self.mjx_model, self._spec.body(f"{appendage_name}{self._suffix}")
             ).xpos
-            egocentric_xpos = jp.dot(global_xpos - thorax.xpos, thorax.xmat)
+            egocentric_xpos = math_utils.world_point_to_local(
+                global_xpos, thorax.xpos, thorax.xquat
+            )
             appendages_pos[appendage_name] = egocentric_xpos
         if flatten:
             appendages_pos, _ = jax.flatten_util.ravel_pytree(appendages_pos)
@@ -178,7 +185,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
 
     def _get_bodies_pos(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+    ) -> dict[str, jp.ndarray] | jp.ndarray:
         """Get _global_ positions of the body parts."""
         bodies_pos = collections.OrderedDict()
         for body_name in consts.BODIES:
@@ -217,11 +224,11 @@ class FruitflyEnv(mjx_env.MjxEnv):
     def _get_origin(self, data: mjx.Data) -> jp.ndarray:
         """Get origin position in the thorax frame."""
         thorax = data.bind(self.mjx_model, self._spec.body(f"thorax{self._suffix}"))
-        return jp.dot(-thorax.xpos, thorax.xmat)
+        return math_utils.world_vector_to_local(-thorax.xpos, thorax.xquat)
 
     def _get_proprioception(
         self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True
-    ) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
+    ) -> jp.ndarray | Mapping[str, jp.ndarray]:
         """Get proprioception data from the environment."""
         proprioception = collections.OrderedDict(
             joint_angles=self._get_joint_angles(data),
@@ -239,7 +246,7 @@ class FruitflyEnv(mjx_env.MjxEnv):
 
     def _get_kinematic_sensors(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
+    ) -> Mapping[str, jp.ndarray] | jp.ndarray:
         """Get kinematic sensors data from the environment."""
         accelerometer = data.bind(
             self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")

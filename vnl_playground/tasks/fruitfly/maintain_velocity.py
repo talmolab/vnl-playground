@@ -11,15 +11,13 @@ Termination occurs if:
 """
 
 import collections
-from typing import Any, Dict, Mapping, Optional, Union
+from typing import Any
 
 import jax
 import jax.numpy as jp
 import numpy as np
-from jax import flatten_util
 from ml_collections import config_dict
 from mujoco import mjx
-
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward as reward_fns
 
@@ -36,7 +34,8 @@ def default_config() -> config_dict.ConfigDict:
         ctrl_dt=0.002,
         solver="newton",
         mujoco_impl="jax",
-        naconmax=1024 * 10,
+        contacts_per_world=16,
+        constraints_per_world=64,
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
@@ -73,9 +72,10 @@ class MaintainVelocity(fruitfly_base.FruitflyEnv):
         self,
         rng: jax.Array = jax.random.PRNGKey(0),
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
         self._rng = rng
 
         init_x, init_y, init_z = 0.0, 0.0, self._config.init_z
@@ -99,8 +99,10 @@ class MaintainVelocity(fruitfly_base.FruitflyEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            naconmax=self._config.naconmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
+        data = mjx.forward(self.mjx_model, data)
 
         metrics = {}
         obs = self._get_obs(data, info)

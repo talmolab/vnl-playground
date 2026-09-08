@@ -5,21 +5,20 @@ above a target height relative to its torso, emulating a rearing motion.
 """
 
 import collections
-from typing import Any, Callable, Dict, Mapping, Optional, Union
+from typing import Any
 
 import jax
 import jax.numpy as jp
 import numpy as np
-from jax import flatten_util
 from ml_collections import config_dict
 from mujoco import mjx
-
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward as reward_fns
 
+from vnl_playground.tasks import math_utils
+from vnl_playground.tasks.reward_registry import RewardRegistry
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
-from vnl_playground.tasks.reward_registry import RewardRegistry
 
 _registry = RewardRegistry()
 
@@ -32,8 +31,8 @@ def default_config() -> config_dict.ConfigDict:
         sim_dt=0.002,
         solver="newton",
         mujoco_impl="jax",
-        naconmax=90 * 1024,
-        njmax=1200,
+        contacts_per_world=80,
+        constraints_per_world=320,
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
@@ -68,9 +67,10 @@ class Rearing(rodent_base.RodentEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
 
         # Initialize rodent at origin, standing pose
         init_x, init_y, init_z = 0.0, 0.0, 0.03
@@ -97,8 +97,8 @@ class Rearing(rodent_base.RodentEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            naconmax=self._config.naconmax,
-            njmax=self._config.njmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
         # Compute forward kinematics to get body positions
         data = mjx.forward(self.mjx_model, data)
@@ -270,7 +270,7 @@ class Rearing(rodent_base.RodentEnv):
     @_registry.reward("energy_cost")
     def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
         """Penalize energy consumption."""
-        energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
+        energy_use = math_utils.absolute_actuator_power(data.qvel, data.qfrc_actuator)
         metrics["energy_use"] = energy_use
         cost = weight * jp.minimum(energy_use, max_value)
         metrics["rewards/energy_cost"] = -cost

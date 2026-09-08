@@ -1,19 +1,22 @@
 """Mouse forelimb reaching task following rodent task patterns."""
 
 import collections
-from typing import Any, Dict, Mapping, Optional, Union
+from collections.abc import Mapping
+from typing import Any
 
 import jax
 import jax.numpy as jp
-from ml_collections import config_dict
 import mujoco
+from ml_collections import config_dict
 from mujoco import mjx
-
-from jax import flatten_util
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward as reward_fns
+
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.mouse.base import (
     MouseBaseEnv,
+)
+from vnl_playground.tasks.mouse.base import (
     default_config as base_default_config,
 )
 from vnl_playground.tasks.reward_registry import RewardRegistry
@@ -56,7 +59,8 @@ class MouseReach(MouseBaseEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """Initialize the mouse reaching environment.
 
@@ -67,7 +71,7 @@ class MouseReach(MouseBaseEnv):
             config: Configuration dictionary with reaching task parameters.
             config_overrides: Optional overrides for config fields.
         """
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
 
         # Add mouse model (no freejoint - fixed base arm)
         # Spawn at origin to match target positions from original XML
@@ -160,7 +164,12 @@ class MouseReach(MouseBaseEnv):
             target_position = self._sample_target_from_list(key)
 
         # Initialize physics data (pass impl for warp/jax compatibility)
-        data = mjx.make_data(self.mj_model, impl=self._config.mujoco_impl)
+        data = mjx.make_data(
+            self.mj_model,
+            impl=self._config.mujoco_impl,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
+        )
 
         # Set mocap target position
         data = data.replace(
@@ -266,7 +275,7 @@ class MouseReach(MouseBaseEnv):
 
     @_registry.reward("control_cost")
     def _control_cost(self, data, info, metrics, weight) -> float:
-        cost = -weight * jp.sum(jp.square(info["action"]))
+        cost = -weight * math_utils.squared_l2_norm(info["action"])
         metrics["rewards/control_cost"] = cost
         return cost
 

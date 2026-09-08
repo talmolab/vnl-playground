@@ -2,8 +2,6 @@
 
 from etils import epath
 
-from mujoco_playground._src import mjx_env
-
 FRUITFLY_PATH = epath.Path(__file__).parent
 
 FRUITFLY_XML_PATH = FRUITFLY_PATH / "xmls" / "fruitfly_fast.xml"
@@ -19,7 +17,7 @@ IMITATION_REFERENCE_PATH = (
     / "fly_reference_clip.h5"
 )
 
-# 36 joints (6 per leg × 3 legs × 2 sides)
+# 36 joints (6 per leg x 3 legs x 2 sides)
 JOINTS = [
     # T1 left
     "coxa_flexion_T1_left",
@@ -65,7 +63,7 @@ JOINTS = [
     "tarsus_T3_right",
 ]
 
-# 48 bodies (8 segments per leg × 6 legs)
+# 48 bodies (8 segments per leg x 6 legs)
 BODIES = [
     # T1 left
     "coxa_T1_left",

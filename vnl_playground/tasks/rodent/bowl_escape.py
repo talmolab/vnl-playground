@@ -1,28 +1,23 @@
 # Bowl escape definition, reflecting the mujoco playgrounds.
 import collections
-from typing import Any, Dict, Mapping, Optional, Union, Tuple, Callable
-import jax.flatten_util
-import numpy as np
-from scipy.spatial.transform import Rotation
+from collections.abc import Callable
+from typing import Any
 
-from etils import epath
 import jax
+import jax.flatten_util
 import jax.numpy as jp
+import matplotlib.colors as mcolors
+import mujoco
 import numpy as np
 from ml_collections import config_dict
-import mujoco
 from mujoco import mjx
-import warnings
-from jax import flatten_util
-
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src import reward as reward_fns
+from scipy.spatial.transform import Rotation
 
+from vnl_playground.tasks.reward_registry import RewardRegistry
 from vnl_playground.tasks.rodent import base as rodent_base
 from vnl_playground.tasks.rodent import consts
-from vnl_playground.tasks.reward_registry import RewardRegistry
-
-import matplotlib.colors as mcolors
 
 _registry = RewardRegistry()
 
@@ -71,8 +66,8 @@ def default_config() -> config_dict.ConfigDict:
         sim_dt=0.002,
         solver="newton",
         mujoco_impl="jax",
-        naconmax=90 * 1024,
-        njmax=1200,
+        contacts_per_world=192,
+        constraints_per_world=768,
         iterations=5,
         ls_iterations=5,
         noslip_iterations=0,
@@ -107,7 +102,8 @@ class BowlEscape(rodent_base.RodentEnv):
         self,
         rng: jax.Array = jax.random.PRNGKey(0),
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """
         Initialize the BowlEscape class and set up the environment.
@@ -121,7 +117,7 @@ class BowlEscape(rodent_base.RodentEnv):
             NotImplementedError: Raised if vision is enabled.
         """
         # super has already init a spec with the provided arena xml path
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
         self._rng = rng
         if self._config.vision:
             raise NotImplementedError(
@@ -182,9 +178,10 @@ class BowlEscape(rodent_base.RodentEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            naconmax=self._config.naconmax,
-            njmax=self._config.njmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
+        data = mjx.forward(self.mjx_model, data)
         metrics = {}
 
         obs = self._get_obs(data, info)
@@ -441,8 +438,8 @@ class BowlEscapeRender(BowlEscape):
         num_rodents: int = 1,
         rng: jax.Array = jax.random.PRNGKey(0),
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
-        line_coords: Optional[list[tuple[float, float, float]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
+        line_coords: list[tuple[float, float, float]] | None = None,
         line_radius: float = 0.002,
     ) -> None:
         """Initialize the BowlEscapeRender class with rendering capabilities.
@@ -493,7 +490,7 @@ class BowlEscapeRender(BowlEscape):
         self._base_geom_count = len(self._spec.worldbody.geoms)
 
     def add_line_geoms(
-        self, line_coords: Optional[list[tuple[float, float, float]]] = None
+        self, line_coords: list[tuple[float, float, float]] | None = None
     ) -> None:
         """Add sphere geoms for each coordinate in self.line_coords."""
         if line_coords is None:
@@ -548,9 +545,9 @@ def interpolant(t: jp.ndarray) -> jp.ndarray:
 
 def perlin(
     rng: jax.Array,
-    shape: Tuple[int, int],
-    res: Tuple[int, int],
-    tileable: Tuple[bool, bool] = (False, False),
+    shape: tuple[int, int],
+    res: tuple[int, int],
+    tileable: tuple[bool, bool] = (False, False),
     interpolant: Callable[[jp.ndarray], jp.ndarray] = interpolant,
 ) -> np.ndarray:
     """Generate a 2D numpy array of Perlin noise.
@@ -596,7 +593,7 @@ def perlin(
 
 
 def gaussian_bowl(
-    shape: Tuple[int, int], sigma: float = 0.5, amplitude: float = -5.0
+    shape: tuple[int, int], sigma: float = 0.5, amplitude: float = -5.0
 ) -> np.ndarray:
     """Generate a Gaussian bowl shape.
 
@@ -616,12 +613,12 @@ def gaussian_bowl(
 
 def add_bowl_hfield(
     rng: jax.Array,
-    spec: Optional[mujoco.MjSpec] = None,
+    spec: mujoco.MjSpec | None = None,
     hsize: float = 10,
     vsize: float = 4,
     sigma: float = 0.5,
     amplitude: float = -5.0,
-) -> Tuple[mujoco.MjSpec, np.ndarray]:
+) -> tuple[mujoco.MjSpec, np.ndarray]:
     """Add a noisy bowl height field to the Mujoco spec.
 
     Args:
@@ -670,7 +667,7 @@ def add_bowl_hfield(
     noise /= np.max(noise)
 
     # Create height field
-    hfield = spec.add_hfield(
+    spec.add_hfield(
         name="hfield",
         size=[hsize, hsize, vsize, vsize],
         nrow=noise.shape[0],

@@ -11,7 +11,8 @@ Key behavior:
 """
 
 import collections
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jp
@@ -20,13 +21,14 @@ import numpy as np
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
-from jax import flatten_util
+
+from vnl_playground.tasks import math_utils
+from vnl_playground.tasks.reference_clips import ReferenceClips, prepare_reference_clips
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
 from . import base as rodent_base
 from . import consts
-from vnl_playground.tasks.reference_clips import ReferenceClips
-from vnl_playground.tasks.reward_registry import RewardRegistry
 
 _registry = RewardRegistry()
 
@@ -38,23 +40,26 @@ def default_config() -> config_dict.ConfigDict:
         arena_xml_path=consts.ARENA_XML_PATH,
         # Simulation params
         mujoco_impl="jax",
+        contacts_per_world=32,
+        constraints_per_world=256,
         sim_dt=0.002,
         ctrl_dt=0.01,  # 100 Hz control
         solver="newton",
         iterations=5,
         ls_iterations=5,
-        naconmax=90 * 1024,
-        njmax=1200,
         noslip_iterations=0,
         torque_actuators=True,
         rescale_factor=0.9,
         # Reference data params
         reference_data_path=consts.IMITATION_REFERENCE_PATH,
+        joints=consts.JOINTS,
+        bodies=consts.BODIES,
+        root_body="walker",
         mocap_hz=50,
         clip_length=250,
         clip_set="all",
         qvel_init="zeros",
-        keep_clips_idx=None,
+        clip_indices=None,
         clip_range=(
             75,
             200,
@@ -101,8 +106,9 @@ class SparseImitation(rodent_base.RodentEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
-        clips: Optional[ReferenceClips] = None,
+        config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
+        clips: ReferenceClips | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """Initialize the sparse imitation environment.
 
@@ -112,7 +118,7 @@ class SparseImitation(rodent_base.RodentEnv):
             clips: Pre-loaded ReferenceClips object. If provided, it overrides
                 loading from `config.reference_data_path`.
         """
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
         self.add_rodent(
             rescale_factor=self._config.rescale_factor,
             torque_actuators=self._config.torque_actuators,
@@ -120,23 +126,23 @@ class SparseImitation(rodent_base.RodentEnv):
         )
         self.compile()
 
-        if clips is not None:
-            self.reference_clips = clips
-        else:
-            self.reference_clips = ReferenceClips(
-                self._config.reference_data_path,
-                self._config.clip_length,
-                self._config.keep_clips_idx,
-            )
+        self.reference_clips = prepare_reference_clips(
+            self._config,
+            clips,
+            joint_names=self._config.joints,
+            body_names=self._config.bodies,
+            root_body_name=self._config.root_body,
+        )
 
         max_n_clips = self.reference_clips.qpos.shape[0]
+        behaviour_labels = self.reference_clips.behaviour_labels
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
         elif isinstance(self._config.clip_set, (list, tuple, jp.ndarray, np.ndarray)):
             self._clip_set = jp.array(self._config.clip_set)
-        elif self._config.clip_set in self.reference_clips.clip_names:
+        elif behaviour_labels is not None and self._config.clip_set in behaviour_labels:
             (self._clip_set,) = jp.where(
-                self._config.clip_set == self.reference_clips.clip_names
+                self._config.clip_set == np.asarray(behaviour_labels)
             )
         else:
             raise ValueError(
@@ -171,7 +177,7 @@ class SparseImitation(rodent_base.RodentEnv):
     def reset(
         self,
         rng: jax.Array,
-        clip_idx: Optional[int] = None,
+        clip_idx: int | None = None,
     ) -> mjx_env.State:
         """Reset the environment state.
 
@@ -542,7 +548,7 @@ class SparseImitation(rodent_base.RodentEnv):
         Uses atan2(sin(a-b), cos(a-b)) to handle angle wrapping at ±π.
         """
         diff = angles1 - angles2
-        wrapped_diff = jp.arctan2(jp.sin(diff), jp.cos(diff))
+        wrapped_diff = math_utils.wrap_angle_to_pi(diff)
         return jp.linalg.norm(wrapped_diff)
 
     def _dp_update(
@@ -571,7 +577,6 @@ class SparseImitation(rodent_base.RodentEnv):
             new_max: Updated max_steps array
             complete: Boolean, True if full sequence matched
         """
-        L = ref_joints.shape[0]
         INF = jp.iinfo(jp.int32).max // 4
         NINF = -INF
         tolerance = self._config.tolerance
@@ -581,7 +586,7 @@ class SparseImitation(rodent_base.RodentEnv):
         # Compute per-frame emission match (does current_joints match each ref frame?)
         if self._config.use_wrapped_angles:
             diff = current_joints[None, :] - ref_joints  # (L, n_joints)
-            wrapped_diff = jp.arctan2(jp.sin(diff), jp.cos(diff))
+            wrapped_diff = math_utils.wrap_angle_to_pi(diff)
             frame_distances = jp.linalg.norm(wrapped_diff, axis=1)  # (L,)
         else:
             frame_distances = jp.linalg.norm(
@@ -643,8 +648,8 @@ class SparseImitation(rodent_base.RodentEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            njmax=self._config.njmax,
-            naconmax=self._config.naconmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
 
         # Get default qpos from model
@@ -722,12 +727,12 @@ class SparseImitation(rodent_base.RodentEnv):
 
     def render(
         self,
-        trajectory: List[mjx_env.State],
+        trajectory: list[mjx_env.State],
         height: int = 240,
         width: int = 320,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
-        modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
+        modify_scene_fns: Sequence[Callable[[mujoco.MjvScene], None]] | None = None,
         render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """Render a sequence of states (trajectory).
@@ -747,7 +752,8 @@ class SparseImitation(rodent_base.RodentEnv):
         if render_ghost:
             spec = self._spec.copy()
             ghost_rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
-            ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
+        if (ghost_rescale := self.reference_clips.scale_factor) is None:
+            ghost_rescale = self._config.rescale_factor
             if ghost_rescale != 1.0:
                 ghost_rodent = utils.scale_spec(ghost_rodent, ghost_rescale)
             for body in ghost_rodent.worldbody.bodies:

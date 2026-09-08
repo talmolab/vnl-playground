@@ -1,6 +1,6 @@
 """Registry for reward and termination functions."""
 
-from typing import Callable
+from collections.abc import Callable
 
 
 class RewardRegistry:
