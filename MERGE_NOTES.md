@@ -100,9 +100,11 @@ future migration does not have to reintroduce it.
 Main's `tasks/reference_clips.py` imports it, so **the whole package is
 un-importable without it** even though the joystick task never touches that
 module. Add `jaxtyping` to the environment; it is annotations only, no physics
-impact. The handoff package's `requirements-lock.txt` needs it.
+impact. **Done:** the handoff package's `requirements-lock.txt` now pins
+`jaxtyping==0.3.11` (+ its dep `wadler-lindig==0.1.7`), 116 packages, re-verified
+to resolve cleanly from PyPI.
 
-## NOT adopted: main's dependency pins
+## Adopted as-is: main's `pyproject.toml` (with a caveat)
 
 Main's `pyproject.toml` moved the whole physics stack:
 
@@ -113,8 +115,8 @@ Main's `pyproject.toml` moved the whole physics stack:
 | jax | 0.9.0 | 0.10.2 |
 | brax | 0.14.0 (PyPI) | git SHA `303d89d` |
 
-The merge takes main's `pyproject.toml` wholesale (it did not conflict), so the
-branch now **declares** a stack it has never been run on. These analyses install
+Main's `pyproject.toml` is kept as-is (decision 2026-09-08), so the branch now
+**declares** a stack it has never been run on. These analyses install
 from `requirements-lock.txt` and run off `PYTHONPATH`, so `pyproject.toml` is not
 what actually installs — but `uv pip install -e .` would now pull a completely
 different physics stack. **Anyone running the joystick task must keep using the
