@@ -596,7 +596,7 @@ USE_WANDB = not args.no_wandb
 
 if USE_WANDB:
     wandb_kwargs = dict(
-        project="new-janelia",
+        project=os.environ.get("WANDB_PROJECT", "new-janelia"),
         config=env_cfg,
         name=wandb_name,
         id=f"janelia-v22-arm-hand-{exp_name}",
