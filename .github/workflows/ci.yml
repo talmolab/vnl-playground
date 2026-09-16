@@ -35,3 +35,13 @@ jobs:
       - name: Test reference data loading
         run: |
           pytest -q tests/test_reference_clips.py
+
+  cpu-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e . pytest
+      - run: JAX_PLATFORMS=cpu pytest -q tests -m "not gpu and not slow"
