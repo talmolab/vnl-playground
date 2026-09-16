@@ -30,6 +30,7 @@ dependencies = [
     "jax==0.10.2",
     "flax",
     "imageio[ffmpeg]",
+    "opencv-python",
     "hydra-core",
     "h5py",
     "numba",
