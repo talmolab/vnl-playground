@@ -149,6 +149,13 @@ def _build_env(hydra_cfg, prior_fn, decoder_logits_fn, latent_size, action_size)
         # E3: Gaussian sensor noise on the rendered image. Default 0.0 keeps
         # every pre-E3 arm (w2 and earlier) bit-identical.
         vision_noise_std=float(hydra_cfg.env_config.get("vision_noise_std", 0.0)),
+        # Temporal blur (motion blur). Default 0.0 keeps every pre-blur arm
+        # bit-identical. ctrl_dt is needed to turn tau into a retention
+        # weight, and arms DO vary it (0.02 default, 0.01 in the E3 sweep).
+        vision_blur_tau_ms=float(
+            hydra_cfg.env_config.get("vision_blur_tau_ms", 0.0)
+        ),
+        ctrl_dt=float(hydra_cfg.env_config.get("ctrl_dt", 0.02)),
     )
     env_adapter = _VnlPlaygroundEnvAdapter(base_env, pre_batched=True)
     vision_shape = tuple(
@@ -775,6 +782,14 @@ def main(hydra_cfg: DictConfig):
                     height=int(erc.get("height", 480)),
                     width=int(erc.get("width", 640)),
                     camera=str(erc.get("camera", "close_profile-rodent")),
+                    # `camera` is a dead parameter (never forwarded); `cameras` is the live
+                    # multi-panel spec (list of {label, elevation, azimuth, distance}).
+                    # Absent -> the historical single tracking camera. (ported from bbaed47, 2026-08-25)
+                    cameras=(
+                        OmegaConf.to_container(erc.get("cameras"), resolve=True)
+                        if isinstance(erc, dict) and erc.get("cameras", None) is not None
+                        else None
+                    ),
                     hud_config=hud_cfg, reward_config=rew_cfg,
                     termination_events=term_events,
                     reward_remix=(

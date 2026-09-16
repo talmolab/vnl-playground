@@ -28,6 +28,7 @@ Usage::
 
 import collections
 import logging
+import math
 import os
 from typing import Any
 
@@ -65,6 +66,32 @@ def _get_warp_cuda_devices() -> list[str]:
 #
 # Pixel format is ABGR uint32: B in bits 0-7, G in bits 8-15, R in bits 16-23.
 # ---------------------------------------------------------------------------
+
+
+def blur_alpha_from_tau(tau_ms: float, ctrl_dt: float) -> float:
+    """Retention weight of a first-order low-pass with time constant ``tau_ms``.
+
+    ``alpha = exp(-ctrl_dt / tau)``, so ``blurred_t = alpha * blurred_{t-1} +
+    (1 - alpha) * render_t`` decays a step input as ``alpha**n``.
+
+    tau is configured in MILLISECONDS rather than exposing alpha directly:
+    alpha is meaningless without ``ctrl_dt``, and the arms in this repo DO vary
+    it (``run_gap.default_config`` is 0.02 s, the E3 sweep arms override to
+    0.01 s). A raw alpha would silently mean a different exposure per arm,
+    while tau stays the physical quantity -- the photoreceptor integration
+    time being modelled.
+
+    Args:
+        tau_ms: Integration time in milliseconds. <= 0 disables blur.
+        ctrl_dt: Control timestep in SECONDS (the env's ``ctrl_dt``).
+
+    Returns:
+        alpha in [0, 1). Exactly 0.0 when blur is disabled, which makes the
+        blend a bit-exact identity on the fresh render.
+    """
+    if tau_ms <= 0.0:
+        return 0.0
+    return math.exp(-(ctrl_dt * 1000.0) / tau_ms)
 
 
 def _unpack_rgb(rgb_packed: jnp.ndarray, height: int, width: int) -> jnp.ndarray:
@@ -429,6 +456,8 @@ class BinocularVisionRenderWrapper:
         eye_dropout_rate=0.0,
         eval_eye_mode="binocular",
         vision_noise_std=0.0,
+        vision_blur_tau_ms=0.0,
+        ctrl_dt=0.02,
     ):
         self.env = env
         self._mj_model = mj_model
@@ -438,6 +467,8 @@ class BinocularVisionRenderWrapper:
         self._eye_dropout_rate = eye_dropout_rate
         self._eval_eye_mode = eval_eye_mode
         self._vision_noise_std = vision_noise_std
+        self._vision_blur_tau_ms = vision_blur_tau_ms
+        self._blur_alpha = blur_alpha_from_tau(vision_blur_tau_ms, ctrl_dt)
         self._renderer_kwargs = dict(
             width=width,
             height=height,
@@ -541,6 +572,59 @@ class BinocularVisionRenderWrapper:
         noise = jax.random.normal(rng, vision.shape, dtype=vision.dtype)
         return jnp.clip(vision + self._vision_noise_std * noise, 0.0, 1.0)
 
+    def _apply_vision_blur(self, vision, prev_blur, done):
+        """First-order temporal low-pass on the rendered image (motion blur).
+
+        The warp batch renderer samples INSTANTANEOUSLY -- one ray per pixel
+        from the current ``Data``, no shutter (`mujoco_warp/_src/render.py`
+        launches a single megakernel over ``(nworld, total_rays)`` and fills
+        the buffer rather than accumulating). A real retina integrates over
+        ~20-40 ms (rat photopic CFF is 30-40 Hz), so the rendered eye is
+        temporally aliased -- sharper in time than the animal's. This blends
+        the render with the running estimate::
+
+            blurred_t = alpha * blurred_{t-1} + (1 - alpha) * render_t
+
+        Content that is not moving is unchanged in steady state, so the effect
+        is genuinely MOTION blur: smear grows with retinal slip. At 2.5 deg /
+        pixel that is ~3 px at 0.8 m/s with a gap edge 10 cm away.
+
+        Unlike ``_apply_vision_noise`` this DESTROYS information rather than
+        adding removable noise -- it cannot be pooled away by the CNN -- and it
+        is reducible by an action (slow down, steady the head), which is what
+        makes it a probe of deliberation rather than just a handicap.
+
+        ORDERING: applied BEFORE ``_apply_vision_noise``, so the carried state
+        is the clean blurred image and each step's sensor noise is injected
+        fresh. That is both the physical order (optics precede photoreceptor
+        noise) and the one that keeps the two knobs independent -- blurring
+        AFTER noise would temporally average the noise away and silently
+        weaken any sigma it is combined with.
+
+        Args:
+            vision: (nworld, H, W, 2*C) fresh render in [0, 1].
+            prev_blur: (nworld, H, W, 2*C) previous step's blurred image.
+            done: (nworld,) episode-termination flags from the wrapped env.
+
+        Returns:
+            The blurred image, which is also the next step's filter state.
+            Still within [0, 1] -- a convex combination of two [0, 1] images.
+        """
+        # <= 0 rather than == 0: tau=0 is every pre-blur arm and must be a
+        # bit-identical no-op, and a negative tau is a config typo, not a
+        # request to amplify motion.
+        if self._vision_blur_tau_ms <= 0.0:
+            return vision
+
+        blended = self._blur_alpha * prev_blur + (1.0 - self._blur_alpha) * vision
+
+        # This wrapper sits OUTSIDE AutoResetWrapper, so on a done step
+        # `state.data` is ALREADY the fresh episode -- blending would ghost the
+        # previous episode's last frame into the new one. Same class of bug as
+        # the gap_crossing_bonus info ratchet (see BASELINE_w2).
+        done = jnp.reshape(done, (-1,) + (1,) * (vision.ndim - 1))
+        return jnp.where(done > 0, vision, blended)
+
     def _apply_eye_mask(self, vision, rng):
         """Stochastically zero out one eye's channels for monocular dropout.
 
@@ -630,6 +714,14 @@ class BinocularVisionRenderWrapper:
         self._ensure_renderers(rng.shape[0])
         vision = self._render_binocular(state.data)
 
+        # Temporal blur BEFORE noise, so the carried state is the clean
+        # blurred image and each step's sensor noise is injected fresh (see
+        # _apply_vision_blur). On reset there is no history: the filter starts
+        # AT the first render, so an episode opens sharp rather than fading in
+        # from black. Stored raw -- BEFORE the noise block below.
+        if self._vision_blur_tau_ms > 0.0:
+            state.info["vision_blur_state"] = vision
+
         # Sensor noise FIRST, so a dropped eye below still reads exactly 0.
         # The immediate draw uses split[0] while the stream stored for future
         # steps is split[1]: reusing one key for both would make the reset
@@ -654,6 +746,15 @@ class BinocularVisionRenderWrapper:
     def step(self, state, action):
         state = self.env.step(state, action)
         vision = self._render_binocular(state.data)
+
+        # Temporal blur BEFORE noise (see reset). The state carried forward is
+        # the blurred, PRE-noise image; _apply_vision_blur hard-resets it on
+        # done because this wrapper sits outside AutoResetWrapper.
+        if self._vision_blur_tau_ms > 0.0:
+            vision = self._apply_vision_blur(
+                vision, state.info["vision_blur_state"], state.done
+            )
+            state.info["vision_blur_state"] = vision
 
         # Sensor noise FIRST (see reset). World 0's key seeds the whole batch's
         # draw -- jax.random.normal over the full (nworld, H, W, C) shape still

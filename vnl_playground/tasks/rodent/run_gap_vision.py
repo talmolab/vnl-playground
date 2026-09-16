@@ -78,6 +78,12 @@ def default_config() -> config_dict.ConfigDict:
     # v + sigma*N(0,1) clipped to [0,1]. Continuous noise, as opposed to the
     # intermittent blindness of eye_dropout_rate. 0 = disabled (pre-E3 default).
     cfg.vision_noise_std = 0.0
+    # Photoreceptor integration time in MILLISECONDS -> first-order temporal
+    # low-pass on the rendered image (motion blur). The warp renderer samples
+    # instantaneously, so the eye is otherwise sharper in time than a real
+    # retina (rat photopic integration ~20-40 ms). 0 = disabled (bit-exact
+    # no-op, the pre-blur default). See vision_jax.blur_alpha_from_tau.
+    cfg.vision_blur_tau_ms = 0.0
     # Eye camera yaw offset from center (radians). Controls binocular overlap:
     #   overlap_deg ≈ fovy - 2 * degrees(eye_angle_offset)  [square aspect ratio]
     # Default 0.2 rad ≈ 11.5° offset → ~57° overlap (matches original XML).
