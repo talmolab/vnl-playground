@@ -7,6 +7,7 @@ byte-for-byte; a list of {distance, azimuth, elevation, lookat_z, label} dicts
 renders one panel each, side by side.
 """
 
+import functools
 import gc
 
 import cv2
@@ -36,6 +37,7 @@ def _add_batch_dim_for_warp(data):
     return jax.tree.map_with_path(_maybe_expand, data)
 
 
+@functools.lru_cache(maxsize=4)
 def _make_render_all_fn(renderer_id, renderer):
     """Return a cached JIT-compiled scan-render function for a given renderer.
 
@@ -563,8 +565,3 @@ def render_video(
                     writer.append_data(faded)
             else:
                 writer.append_data(frame)
-
-
-# ---------------------------------------------------------------------------
-# Eval render config resolution
-# ---------------------------------------------------------------------------
