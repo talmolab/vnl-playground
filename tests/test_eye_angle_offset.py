@@ -44,7 +44,9 @@ def _env(offset: float) -> run_gap_vision.RunGapVision:
     return run_gap_vision.RunGapVision(config=cfg)
 
 
-def _look_at_equilibrium(env, offset: float, cam_name: str) -> np.ndarray:
+def _look_at_equilibrium(
+    env: run_gap_vision.RunGapVision, offset: float, cam_name: str
+) -> np.ndarray:
     """World-frame look vector of ``cam_name`` with any yaw servo joint
     parked at its equilibrium (== offset)."""
     m = env.mj_model

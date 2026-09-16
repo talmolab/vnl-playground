@@ -17,8 +17,6 @@ import pytest
 from vnl_playground.tasks.rodent import run_gap_vision
 from vnl_playground.tasks.wrappers import HighLevelWrapper
 
-pytestmark = pytest.mark.gpu
-
 
 def _make_actuable_eye_env() -> run_gap_vision.RunGapVision:
     """Helper: create a RunGapVision env with actuable eyes enabled."""
@@ -56,6 +54,7 @@ def test_actuable_eyes_config_defaults():
 # ---------- Task 2: Eye joints, actuators, cameras ----------
 
 
+@pytest.mark.gpu
 def test_eye_joints_exist_in_model():
     """Eye yaw joints should be present after init with actuable_eyes=True."""
     env = _make_actuable_eye_env()
@@ -68,6 +67,7 @@ def test_eye_joints_exist_in_model():
     assert right_id >= 0, "eye_right_yaw joint not found"
 
 
+@pytest.mark.gpu
 def test_eye_actuators_exist_in_model():
     """Eye actuators should be appended at the end of the actuator list."""
     env = _make_actuable_eye_env()
@@ -90,6 +90,7 @@ def test_eye_actuators_exist_in_model():
     )
 
 
+@pytest.mark.gpu
 def test_eye_cameras_exist_on_mount_bodies():
     """Actuated cameras should exist and be attached to mount bodies."""
     env = _make_actuable_eye_env()
@@ -112,6 +113,7 @@ def test_eye_cameras_exist_on_mount_bodies():
         )
 
 
+@pytest.mark.gpu
 def test_action_size_increased_by_two():
     """Action size should be original + 2 (one per eye actuator)."""
     fixed_env = _make_fixed_eye_env()
@@ -120,6 +122,7 @@ def test_action_size_increased_by_two():
     assert actuable_env.action_size == fixed_env.action_size + 2
 
 
+@pytest.mark.gpu
 def test_n_eye_actuators_stored():
     """n_eye_actuators property should return 2 for actuable, 0 for fixed."""
     actuable_env = _make_actuable_eye_env()
@@ -129,6 +132,7 @@ def test_n_eye_actuators_stored():
     assert fixed_env.n_eye_actuators == 0
 
 
+@pytest.mark.gpu
 def test_camera_names_point_to_actuated_cameras():
     """Config camera names should be updated to the actuated camera names."""
     env = _make_actuable_eye_env()
@@ -141,6 +145,7 @@ def test_camera_names_point_to_actuated_cameras():
 # ---------- Task 3: Proprioception masking ----------
 
 
+@pytest.mark.gpu
 def test_proprioception_shape_unchanged():
     """Proprioceptive obs size should be the same with/without actuable eyes."""
     fixed_env = _make_fixed_eye_env()
@@ -152,6 +157,7 @@ def test_proprioception_shape_unchanged():
 # ---------- Task 4: Eye state in observations ----------
 
 
+@pytest.mark.gpu
 def test_task_obs_includes_eye_state():
     """task_obs should be 4 larger: +2 from prev_action (wider) and +2 eye angles."""
     fixed_env = _make_fixed_eye_env()
@@ -167,6 +173,7 @@ def test_task_obs_includes_eye_state():
     assert actuable_task_obs.shape[0] == fixed_task_obs.shape[0] + 4
 
 
+@pytest.mark.gpu
 def test_eye_joint_angles_at_zero_on_reset():
     """Eye joint angles should be zero at reset."""
     env = _make_actuable_eye_env()
@@ -179,6 +186,7 @@ def test_eye_joint_angles_at_zero_on_reset():
 # ---------- Task 5: HighLevelWrapper eye action bypass ----------
 
 
+@pytest.mark.gpu
 def test_highlevel_wrapper_action_size_with_eyes():
     """HighLevelWrapper action_size should include eye actuators."""
     env = _make_actuable_eye_env()
@@ -199,6 +207,7 @@ def test_highlevel_wrapper_action_size_with_eyes():
     assert hlw.action_size == latent_size + env.n_eye_actuators
 
 
+@pytest.mark.gpu
 def test_highlevel_wrapper_action_size_without_eyes():
     """HighLevelWrapper action_size should be latent_size when no eye actuators."""
     cfg = run_gap_vision.default_config()
@@ -237,6 +246,7 @@ def test_actuable_eyes_task_registered():
 
 
 @pytest.mark.slow
+@pytest.mark.gpu
 def test_smoke_actuable_eyes_reset_step():
     """Env should reset and step without errors. Eye joints should respond to control."""
     env = _make_actuable_eye_env()
@@ -262,6 +272,7 @@ def test_smoke_actuable_eyes_reset_step():
 
 
 @pytest.mark.slow
+@pytest.mark.gpu
 def test_smoke_eye_angles_change_with_sustained_control():
     """Sustained eye control should produce measurable joint angle change."""
     env = _make_actuable_eye_env()
