@@ -220,16 +220,36 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
 
         The kl-anchor policy consumes ``vision`` (HxWxC), ``imitation_target``,
         and ``proprioception``. We mirror the structure produced by
-        ``flatten_obs_dict``: the flattened sizes for proprio + task_obs
-        plus the vision shape preserved as a tuple.
+        ``flatten_obs_dict``: flattened element counts for proprio, task_obs,
+        and vision.
+
+        Every vnl_playground leaf env builds ``non_flattened_observation_size``
+        as ``jax.tree_util.tree_map(lambda x: jp.prod(jp.array(x.shape)), obs)``
+        (see e.g. ``RunGap.non_flattened_observation_size``), so by the time we
+        read it here every leaf -- including vision -- has ALREADY been
+        collapsed to a scalar element count. There is no per-axis shape left to
+        recover from it (a 0-d scalar's own ``.shape`` is always ``()``), so
+        ``vision`` is returned as its flattened pixel count (H*W*C), exactly
+        like ``proprioception`` and ``imitation_target`` -- not as a shape
+        tuple. A caller that needs the real (H, W, C) axes must get them from
+        the env's own vision config, not from this size dict.
         """
         obs = self.env.non_flattened_observation_size
+
+        # "vision" may live at the top level alongside "state" (vnl_playground's
+        # layout), so capture it before unwrapping in case "state" doesn't
+        # carry its own copy. Mirrors flatten_obs_dict's capture-before /
+        # second-chance-after-unwrap logic exactly -- same guard, because
+        # non_flattened_observation_size has the same nesting as the real obs
+        # pytree it was derived from (just with sizes at the leaves).
+        vision = obs.get("vision")
         inner = obs
-        if "state" in inner:
+        if "state" in inner and "proprioception" not in inner:
             inner = inner["state"]
+            if vision is None:
+                vision = inner.get("vision")
         proprio = inner.get("proprioception", 0)
         task_obs = inner.get("task_obs", inner.get("imitation_target", 0))
-        vision = inner.get("vision", None)
 
         def _size(x):
             if isinstance(x, dict):
@@ -245,12 +265,5 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
             "imitation_target": _size(task_obs),
         }
         if vision is not None:
-            # Preserve vision shape (H, W, C) — caller may want a tuple.
-            if hasattr(vision, "shape"):
-                result["vision"] = tuple(vision.shape)
-            elif isinstance(vision, (tuple, list)):
-                result["vision"] = tuple(vision)
-            else:
-                # Fallback to scalar size if unknown.
-                result["vision"] = _size(vision)
+            result["vision"] = _size(vision)
         return result
