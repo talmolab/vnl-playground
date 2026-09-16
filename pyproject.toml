@@ -113,3 +113,9 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["vnl_playground"]
+
+[tool.pytest.ini_options]
+markers = [
+    "gpu: needs a CUDA GPU (warp backend or renderer)",
+    "slow: takes more than ~30 s",
+]
