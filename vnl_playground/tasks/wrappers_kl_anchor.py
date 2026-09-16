@@ -57,9 +57,21 @@ def _flatten_nested_obs(nested):
 
 
 def flatten_obs_dict(obs):
-    """Flatten each top-level key (proprioception / imitation_target|task_obs / vision)."""
+    """Flatten each top-level key (proprioception / imitation_target|task_obs / vision).
+
+    Deliberate copy of track-mjx's ``observation_utils.flatten_obs_dict``, kept in
+    sync here to avoid a cross-repo import (track_mjx/agent/observation_utils.py).
+    """
+    # "vision" may live at the top level alongside "state" (vnl_playground's
+    # layout), so capture it before unwrapping in case "state" doesn't carry
+    # its own copy.
+    vision = obs.get("vision")
+
     if "state" in obs and "proprioception" not in obs:
         obs = obs["state"]
+        if vision is None:
+            vision = obs.get("vision")
+
     flat_proprio = _flatten_nested_obs(obs["proprioception"])
     if "imitation_target" in obs:
         flat_imit = _flatten_nested_obs(obs["imitation_target"])
@@ -68,8 +80,8 @@ def flatten_obs_dict(obs):
     else:
         flat_imit = jp.zeros((*flat_proprio.shape[:-1], 0))
     result = {"imitation_target": flat_imit, "proprioception": flat_proprio}
-    if "vision" in obs:
-        result["vision"] = obs["vision"]
+    if vision is not None:
+        result["vision"] = vision
     return result
 
 
@@ -200,11 +212,7 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
 
     @property
     def action_size(self) -> int:
-        return (
-            self.env.action_size
-            if hasattr(self.env, "action_size")
-            else self._action_size
-        )
+        return self.env.action_size
 
     @property
     def observation_size(self):
@@ -215,42 +223,34 @@ class KLAnchorPriorDecoderWrapper(wrapper.Wrapper):
         ``flatten_obs_dict``: the flattened sizes for proprio + task_obs
         plus the vision shape preserved as a tuple.
         """
-        try:
-            import jax.numpy as jnp
-            from jax import flatten_util as _flatten_util
+        obs = self.env.non_flattened_observation_size
+        inner = obs
+        if "state" in inner:
+            inner = inner["state"]
+        proprio = inner.get("proprioception", 0)
+        task_obs = inner.get("task_obs", inner.get("imitation_target", 0))
+        vision = inner.get("vision", None)
 
-            obs = self.env.non_flattened_observation_size
-            inner = obs
-            if "state" in inner:
-                inner = inner["state"]
-            proprio = inner.get("proprioception", 0)
-            task_obs = inner.get("task_obs", inner.get("imitation_target", 0))
-            vision = inner.get("vision", None)
+        def _size(x):
+            if isinstance(x, dict):
+                flat, _ = _flatten_util.ravel_pytree(x)
+                return int(jp.sum(flat))
+            try:
+                return int(jp.sum(jp.array(x)))
+            except Exception:
+                return int(x)
 
-            def _size(x):
-                if isinstance(x, dict):
-                    flat, _ = _flatten_util.ravel_pytree(x)
-                    return int(jnp.sum(flat))
-                try:
-                    return int(jnp.sum(jnp.array(x)))
-                except Exception:
-                    return int(x)
-
-            result = {
-                "proprioception": _size(proprio),
-                "imitation_target": _size(task_obs),
-            }
-            if vision is not None:
-                # Preserve vision shape (H, W, C) — caller may want a tuple.
-                if hasattr(vision, "shape"):
-                    result["vision"] = tuple(vision.shape)
-                elif isinstance(vision, (tuple, list)):
-                    result["vision"] = tuple(vision)
-                else:
-                    # Fallback to scalar size if unknown.
-                    result["vision"] = _size(vision)
-            return result
-        except Exception:
-            # Fall back to underlying observation_size; caller will fail
-            # with a clearer error.
-            return self.env.observation_size
+        result = {
+            "proprioception": _size(proprio),
+            "imitation_target": _size(task_obs),
+        }
+        if vision is not None:
+            # Preserve vision shape (H, W, C) — caller may want a tuple.
+            if hasattr(vision, "shape"):
+                result["vision"] = tuple(vision.shape)
+            elif isinstance(vision, (tuple, list)):
+                result["vision"] = tuple(vision)
+            else:
+                # Fallback to scalar size if unknown.
+                result["vision"] = _size(vision)
+        return result
