@@ -19,7 +19,6 @@ need:
 import jax
 import jax.numpy as jp
 import mujoco
-
 from mujoco_playground._src import mjx_env
 
 from vnl_playground.tasks.stick import consts

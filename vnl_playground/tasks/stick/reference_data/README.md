@@ -19,7 +19,7 @@ Easiest — the baked-in helper (writes into this folder):
 ```python
 from vnl_playground.tasks.stick.base import StickBugEnv
 
-StickBugEnv.download_reference_data()         # mesh -> reference_data/stick_mesh_reference.h5
+StickBugEnv.download_reference_data()  # mesh -> reference_data/stick_mesh_reference.h5
 # StickBugEnv.download_reference_data("box")  # box model
 ```
 
@@ -43,5 +43,5 @@ once the file is present no overrides are needed:
 ```python
 from vnl_playground import registry
 
-env = registry.load("StickImitation")   # loads reference_data/stick_mesh_reference.h5
+env = registry.load("StickImitation")  # loads reference_data/stick_mesh_reference.h5
 ```

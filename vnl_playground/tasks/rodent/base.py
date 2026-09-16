@@ -1,25 +1,26 @@
 """Base classes for rodent"""
 
-from typing import Any, Dict, Optional, Union, Mapping
 import collections
-
-from etils import epath
 import logging
+from collections.abc import Mapping
+from typing import Any
+
 import jax
 import jax.numpy as jp
-import mujoco_playground
-import numpy as np
-from ml_collections import config_dict
 import mujoco
+import numpy as np
+from etils import epath
+from ml_collections import config_dict
 from mujoco import mjx
-
 from mujoco_playground._src import mjx_env
-from vnl_playground.tasks.rodent import consts
-from vnl_playground.tasks.utils import _scale_body_tree, _recolour_tree, scale_spec
+
+from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.reward_registry import RewardRegistry
+from vnl_playground.tasks.rodent import consts
+from vnl_playground.tasks.utils import _recolour_tree, _scale_body_tree, scale_spec
 
 
-def get_assets() -> Dict[str, bytes]:
+def get_assets() -> dict[str, bytes]:
     assets = {}
     mjx_env.update_assets(assets, consts.RODENT_PATH / "xmls", "*.xml")
     mjx_env.update_assets(assets, consts.RODENT_PATH / "xmls" / "assets")
@@ -30,6 +31,10 @@ def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.RODENT_XML_PATH,
         arena_xml_path=consts.WHITE_ARENA_XML_PATH,
+        joints=consts.JOINTS,
+        bodies=consts.BODIES,
+        end_effectors=consts.END_EFFECTORS,
+        touch_sensors=consts.TOUCH_SENSORS,
         sim_dt=0.002,
         ctrl_dt=0.01,
         solver="newton",
@@ -37,6 +42,8 @@ def default_config() -> config_dict.ConfigDict:
         ls_iterations=5,
         noslip_iterations=0,
         mujoco_impl="jax",
+        contacts_per_world=32,
+        constraints_per_world=256,
     )
 
 
@@ -50,7 +57,8 @@ class RodentEnv(mjx_env.MjxEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]] = None,
+        config_overrides: dict[str, str | int | list[Any]] | None = None,
+        num_worlds: int = 1,
     ) -> None:
         """
         Initialize the RodentEnv class with only arena
@@ -61,6 +69,7 @@ class RodentEnv(mjx_env.MjxEnv):
             compile_spec (bool, optional): Whether to compile the model. Defaults to False.
         """
         super().__init__(config, config_overrides)
+        self._num_worlds = num_worlds
         self._walker_xml_path = str(config.walker_xml_path)
         self._arena_xml_path = str(config.arena_xml_path)
         self._spec = mujoco.MjSpec.from_file(self._arena_xml_path)
@@ -72,7 +81,7 @@ class RodentEnv(mjx_env.MjxEnv):
         rescale_factor: float = 1.0,
         pos: tuple[float, float, float] = (0, 0, 0),
         quat: tuple[float, float, float, float] = (1, 0, 0, 0),
-        rgba: Optional[tuple[float, float, float, float]] = None,
+        rgba: tuple[float, float, float, float] | None = None,
         suffix: str = "-rodent",
     ) -> None:
         """Adds the rodent model to the environment.
@@ -88,7 +97,7 @@ class RodentEnv(mjx_env.MjxEnv):
         """
         rodent = mujoco.MjSpec.from_file(self._walker_xml_path)
 
-        # a) Convert motors to torque‑mode if requested
+        # a) Convert motors to torque-mode if requested
         if torque_actuators and hasattr(rodent, "actuator"):
             logging.info("Converting to torque actuators")
             for actuator in rodent.actuators:  # type: ignore[attr-defined]
@@ -170,7 +179,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_appendages_pos(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+    ) -> dict[str, jp.ndarray] | jp.ndarray:
         """Get _egocentric_ position of the appendages."""
         torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
         appendages_pos = collections.OrderedDict()
@@ -178,7 +187,9 @@ class RodentEnv(mjx_env.MjxEnv):
             global_xpos = data.bind(
                 self.mjx_model, self._spec.body(f"{apppendage_name}{self._suffix}")
             ).xpos
-            egocentric_xpos = jp.dot(global_xpos - torso.xpos, torso.xmat)
+            egocentric_xpos = math_utils.world_point_to_local(
+                global_xpos, torso.xpos, torso.xquat
+            )
             appendages_pos[apppendage_name] = egocentric_xpos
         if flatten:
             appendages_pos, _ = jax.flatten_util.ravel_pytree(appendages_pos)
@@ -186,7 +197,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_bodies_pos(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[dict[str, jp.ndarray], jp.ndarray]:
+    ) -> dict[str, jp.ndarray] | jp.ndarray:
         """Get _global_ positions of the body parts."""
         bodies_pos = collections.OrderedDict()
         for body_name in consts.BODIES:
@@ -223,7 +234,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_proprioception(
         self, data: mjx.Data, info: Mapping[str, Any], flatten: bool = True
-    ) -> Union[jp.ndarray, Mapping[str, jp.ndarray]]:
+    ) -> jp.ndarray | Mapping[str, jp.ndarray]:
         """Get proprioception data from the environment."""
         proprioception = collections.OrderedDict(
             joint_angles=self._get_joint_angles(data),
@@ -242,7 +253,7 @@ class RodentEnv(mjx_env.MjxEnv):
 
     def _get_kinematic_sensors(
         self, data: mjx.Data, flatten: bool = True
-    ) -> Union[Mapping[str, jp.ndarray], jp.ndarray]:
+    ) -> Mapping[str, jp.ndarray] | jp.ndarray:
         """Get kinematic sensors data from the environment."""
         accelerometer = data.bind(
             self.mjx_model, self._spec.sensor(f"accelerometer{self._suffix}")
@@ -275,9 +286,8 @@ class RodentEnv(mjx_env.MjxEnv):
     def _get_origin(self, data: mjx.Data) -> jp.ndarray:
         """Get origin position in the torso frame."""
         torso = data.bind(self.mjx_model, self._spec.body(f"torso{self._suffix}"))
-        torso_frame = torso.xmat
         torso_pos = torso.xpos
-        return jp.dot(-torso_pos, torso_frame)
+        return math_utils.world_vector_to_local(-torso_pos, torso.xquat)
 
     def _get_egocentric_camera(self, data: mjx.Data):
         """Get egocentric camera data from the environment."""

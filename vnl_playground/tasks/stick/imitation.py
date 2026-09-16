@@ -1,44 +1,49 @@
 """Imitation task for stick bug.
 
 Multi-clip imitation environment where the stick bug must track motion
-capture reference data. Uses the legacy H5 format (qpos/qvel/xpos/xquat)
-loaded via the unified ReferenceClips class.
+capture reference data. Uses native STAC state arrays loaded through the
+shared :class:`ReferenceClips` interface.
 """
 
 import collections
-import tqdm
 import warnings
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import brax.math
 import jax
 import jax.numpy as jp
 import mujoco
 import numpy as np
+from etils import epath
 from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
-from jax import flatten_util
+
+from vnl_playground.tasks import math_utils
+from vnl_playground.tasks.reference_clips import ReferenceClips, prepare_reference_clips
+from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
 from . import base as stick_base
 from . import consts
-from vnl_playground.tasks.reference_clips import ReferenceClips
-from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
 def default_config() -> config_dict.ConfigDict:
     return config_dict.create(
         walker_xml_path=consts.STICK_XML_PATH,
         arena_xml_path=consts.ARENA_XML_PATH,
+        joints=consts.JOINTS,
+        bodies=consts.BODIES,
+        root_body="reference_base",
         mujoco_impl="jax",
         sim_dt=0.002,
         ctrl_dt=0.01,
         solver="newton",
         iterations=5,
         ls_iterations=5,
-        naconmax=256,
-        njmax=600,
+        contacts_per_world=128,
+        constraints_per_world=512,
         noslip_iterations=0,
         torque_actuators=False,
         rescale_factor=1.0,  # Mesh STAC fit was done with SCALE_FACTOR=1.
@@ -51,18 +56,19 @@ def default_config() -> config_dict.ConfigDict:
         reference_stride=1,
         start_frame_range=[0, 44],
         qvel_init="zeros",
-        keep_clips_idx=None,
-        # SI units (m/kg/s). Matches the wandb stick-mesh-ppo_260514_195032
-        # baseline (commit e87103f, episode_reward=675).
+        clip_indices=None,
         reward_terms={
-            "root_pos": {"exp_scale": 0.005, "weight": 1.0},
-            "root_quat": {"exp_scale": 5.0, "weight": 1.0},
-            "joints": {"exp_scale": 1.4, "weight": 2.0},
-            "joints_vel": {"exp_scale": 1.0, "weight": 0.0},
-            "bodies_pos": {"exp_scale": 0.05, "weight": 0.0},
-            "end_eff": {"exp_scale": 0.0025, "weight": 2.0},
-            "leg_joints": {"exp_scale": 0.005, "weight": 2.0},
-            "torso_z_range": {"healthy_z_range": (0.0, 0.1), "weight": 0.3},
+            "root_pos": {"exp_scale": 0.035, "weight": 1.0},
+            "root_quat": {"exp_scale": 40.0, "weight": 1.0},
+            "joints": {"exp_scale": 1.4, "weight": 1.0},
+            "joints_vel": {"exp_scale": 1.0, "weight": 1.0},
+            "bodies_pos": {"exp_scale": 0.25, "weight": 1.0},
+            "end_eff": {"exp_scale": 0.032, "weight": 1.0},
+            # Mesh-only term, disabled by default: ``end_eff`` already scores
+            # END_EFFECTORS + LEG_JOINTS, so a non-zero weight here double-counts
+            # the 24 leg segments. Matches the stick-exp6 reference run.
+            "leg_joints": {"exp_scale": 0.005, "weight": 0.0},
+            "torso_z_range": {"healthy_z_range": (0.0, 0.1), "weight": 1.0},
             "control_cost": {"weight": 0.02},
             "control_diff_cost": {"weight": 0.02},
             "energy_cost": {"max_value": 50.0, "weight": 0.01},
@@ -70,7 +76,7 @@ def default_config() -> config_dict.ConfigDict:
         termination_criteria={
             # root_too_far uses xy-only distance (see _root_too_far)
             "root_too_far": {"max_distance": 0.05},
-            "root_too_rotated": {"max_degrees": 60.0},
+            "root_too_rotated": {"max_degrees": 120.0},
             "pose_error": {"max_l2_error": 4.5},
             "nan_termination": {},
         },
@@ -88,10 +94,11 @@ class Imitation(stick_base.StickBugEnv):
     def __init__(
         self,
         config: config_dict.ConfigDict = default_config(),
-        config_overrides: Optional[Dict[str, Union[str, int, list[Any], dict]]] = None,
-        clips: Optional[ReferenceClips] = None,
+        config_overrides: dict[str, str | int | list[Any] | dict] | None = None,
+        clips: ReferenceClips | None = None,
+        num_worlds: int = 1,
     ) -> None:
-        super().__init__(config, config_overrides)
+        super().__init__(config, config_overrides, num_worlds)
         # rgba=None → keep the native chitin texture from sungaya_mat (set
         # in sungaya_inexpectata_mesh.xml). Recoloring would flatten the
         # mesh material to a solid color and lose the texture detail.
@@ -101,30 +108,30 @@ class Imitation(stick_base.StickBugEnv):
             rgba=None,
         )
         self.compile()
-        if clips is not None:
-            self.reference_clips = clips
-        else:
-            ref_path = self._config.reference_data_path
+        if clips is None:
+            ref_path = epath.Path(self._config.reference_data_path)
             if not ref_path.exists():
                 which = {v: k for k, v in stick_base._HF_REFERENCE_FILES.items()}.get(
                     ref_path.name
                 )
                 if self._config.get("auto_download", False) and which is not None:
-                    ref_path = stick_base.StickBugEnv.download_reference_data(
+                    stick_base.StickBugEnv.download_reference_data(
                         which=which, dest=ref_path
                     )
                 else:
                     raise FileNotFoundError(
                         f"Stick reference data not found at {ref_path}. Fetch it "
-                        "with `StickImitation.download_reference_data()` (~35 MB from "
-                        "talmolab/MIMIC-MJX), set config `auto_download=True`, or pass "
-                        "`clips=`. See reference_data/README.md."
+                        "with `StickBugEnv.download_reference_data()` (~35 MB from "
+                        "talmolab/MIMIC-MJX), set config `auto_download=True`, or "
+                        "pass `clips=`. See reference_data/README.md."
                     )
-            self.reference_clips = ReferenceClips(
-                ref_path,
-                self._config.clip_length,
-                self._config.keep_clips_idx,
-            )
+        self.reference_clips = prepare_reference_clips(
+            self._config,
+            clips,
+            joint_names=self._config.joints,
+            body_names=self._config.bodies,
+            root_body_name=self._config.root_body,
+        )
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
@@ -137,22 +144,21 @@ class Imitation(stick_base.StickBugEnv):
             )
 
         if (
-            self.reference_clips._config is not None
-            and "model" in self.reference_clips._config
-            and self._config.rescale_factor
-            != self.reference_clips._config["model"]["SCALE_FACTOR"]
+            self.reference_clips.scale_factor is not None
+            and self._config.rescale_factor != self.reference_clips.scale_factor
         ):
             warnings.warn(
                 f"Environment `rescale_factor` ({self._config.rescale_factor})"
                 f" does not match the reference data `SCALE_FACTOR`"
-                f" ({self.reference_clips._config['model']['SCALE_FACTOR']})."
+                f" ({self.reference_clips.scale_factor}).",
+                stacklevel=2,
             )
 
     def reset(
         self,
         rng: jax.Array,
-        clip_idx: Optional[int] = None,
-        start_frame: Optional[int] = None,
+        clip_idx: int | None = None,
+        start_frame: int | None = None,
     ) -> mjx_env.State:
         start_rng, clip_rng = jax.random.split(rng)
         if clip_idx is None:
@@ -222,8 +228,8 @@ class Imitation(stick_base.StickBugEnv):
         data = mjx.make_data(
             self.mj_model,
             impl=self._config.mujoco_impl,
-            njmax=self._config.njmax,
-            naconmax=self._config.naconmax,
+            naconmax=self._config.contacts_per_world * self._num_worlds,
+            njmax=self._config.constraints_per_world,
         )
         reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
         _assert_all_are_prefix(
@@ -284,7 +290,9 @@ class Imitation(stick_base.StickBugEnv):
         root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
         root_targets = jax.vmap(
-            lambda ref_pos: brax.math.rotate(ref_pos - root_pos, root_quat)
+            lambda ref_pos: math_utils.world_point_to_local(
+                ref_pos, root_pos, root_quat
+            )
         )(reference.root_position)
         quat_targets = jax.vmap(
             lambda ref_quat: brax.math.relative_quat(ref_quat, root_quat)
@@ -302,7 +310,9 @@ class Imitation(stick_base.StickBugEnv):
         body_rel_pos = jp.array(
             [reference.body_xpos(name) - bodies_pos[name] for name in bodies_pos]
         )
-        to_egocentric = jax.vmap(lambda diff_vec: brax.math.rotate(diff_vec, root_quat))
+        to_egocentric = jax.vmap(
+            lambda diff_vec: math_utils.world_vector_to_local(diff_vec, root_quat)
+        )
         body_targets = jax.vmap(to_egocentric)(body_rel_pos)
 
         return collections.OrderedDict(
@@ -319,7 +329,7 @@ class Imitation(stick_base.StickBugEnv):
         root_pos = self.root_body(data).xpos
         distance = jp.linalg.norm(target.root_position - root_pos)
         metrics["root_pos_distance"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/root_pos"] = reward
         return reward
 
@@ -327,11 +337,13 @@ class Imitation(stick_base.StickBugEnv):
     def _root_quat_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
-        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        rot_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
-        ang_dist_degrees = jp.rad2deg(rot_dist)
+        ang_dist_degrees = math_utils.quaternion_angle(
+            root_quat, target.root_quaternion, degrees=True
+        )
         metrics["root_angular_error"] = ang_dist_degrees
-        reward = weight * jp.exp(-((ang_dist_degrees / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(
+            ang_dist_degrees, weight=weight, scale=exp_scale
+        )
         metrics["rewards/root_quat"] = reward
         return reward
 
@@ -341,7 +353,7 @@ class Imitation(stick_base.StickBugEnv):
         joints = self._get_joint_angles(data)
         distance = jp.linalg.norm(target.joints - joints)
         metrics["joint_l2_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/joints"] = reward
         return reward
 
@@ -351,7 +363,7 @@ class Imitation(stick_base.StickBugEnv):
         joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         metrics["joint_vel_l2_error"] = distance
-        reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
         metrics["rewards/joints_vel"] = reward
         return reward
 
@@ -369,7 +381,7 @@ class Imitation(stick_base.StickBugEnv):
     def _body_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
         total_dist = self._get_bodies_dist(data, info, metrics, consts.BODIES)
         metrics["body_errors/total"] = total_dist
-        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(total_dist, weight=weight, scale=exp_scale)
         metrics["rewards/bodies_pos"] = reward
         return reward
 
@@ -379,7 +391,7 @@ class Imitation(stick_base.StickBugEnv):
             data, info, metrics, consts.END_EFFECTORS + consts.LEG_JOINTS
         )
         metrics["body_errors/end_eff_total"] = total_dist
-        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(total_dist, weight=weight, scale=exp_scale)
         metrics["rewards/end_eff"] = reward
         return reward
 
@@ -394,7 +406,7 @@ class Imitation(stick_base.StickBugEnv):
         (see _implementation_log/2026-06-10-stick-reward-double-tracking)."""
         total_dist = self._get_bodies_dist(data, info, metrics, consts.LEG_JOINTS)
         metrics["body_errors/leg_joints_total"] = total_dist
-        reward = weight * jp.exp(-((total_dist / exp_scale) ** 2) / 2)
+        reward = math_utils.gaussian_reward(total_dist, weight=weight, scale=exp_scale)
         metrics["rewards/leg_joints"] = reward
         return reward
 
@@ -412,15 +424,15 @@ class Imitation(stick_base.StickBugEnv):
 
     @_registry.reward("control_cost")
     def _control_cost(self, data, info, metrics, weight) -> float:
-        metrics["ctrl_sqr"] = ctrl_sqr = jp.sum(jp.square(info["action"]))
+        metrics["ctrl_sqr"] = ctrl_sqr = math_utils.squared_l2_norm(info["action"])
         cost = weight * ctrl_sqr
         metrics["rewards/control_cost"] = -cost
         return -cost
 
     @_registry.reward("control_diff_cost")
     def _control_diff_cost(self, data, info, metrics, weight) -> float:
-        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = jp.sum(
-            jp.square(info["action"] - info["prev_action"])
+        metrics["ctrl_diff_sqr"] = ctrl_diff_sqr = math_utils.squared_l2_norm(
+            info["action"] - info["prev_action"]
         )
         cost = weight * ctrl_diff_sqr
         metrics["rewards/control_diff_cost"] = -cost
@@ -428,7 +440,7 @@ class Imitation(stick_base.StickBugEnv):
 
     @_registry.reward("energy_cost")
     def _energy_cost(self, data, info, metrics, weight, max_value) -> float:
-        energy_use = jp.sum(jp.abs(data.qvel) * jp.abs(data.qfrc_actuator))
+        energy_use = math_utils.absolute_actuator_power(data.qvel, data.qfrc_actuator)
         metrics["energy_use"] = energy_use
         cost = weight * jp.minimum(energy_use, max_value)
         metrics["rewards/energy_cost"] = -cost
@@ -454,8 +466,7 @@ class Imitation(stick_base.StickBugEnv):
     def _root_too_rotated(self, data, info, max_degrees) -> bool:
         target = self._get_current_target(data, info)
         root_quat = self.root_body(data).xquat
-        quat_dist = 2.0 * jp.dot(root_quat, target.root_quaternion) ** 2 - 1.0
-        ang_dist = 0.5 * jp.arccos(jp.minimum(1.0, quat_dist))
+        ang_dist = math_utils.quaternion_angle(root_quat, target.root_quaternion)
         return ang_dist > jp.deg2rad(max_degrees)
 
     @_registry.termination("pose_error")
@@ -473,12 +484,9 @@ class Imitation(stick_base.StickBugEnv):
         """Compile a new MjModel with an attached transparent ghost stick."""
         spec = self._spec.copy()
         ghost_stick = mujoco.MjSpec.from_file(self._walker_xml_path)
-        ghost_rescale = self._config.rescale_factor
-        if (
-            self.reference_clips._config is not None
-            and "model" in self.reference_clips._config
-        ):
-            ghost_rescale = self.reference_clips._config["model"]["SCALE_FACTOR"]
+        ghost_rescale = self.reference_clips.scale_factor
+        if ghost_rescale is None:
+            ghost_rescale = self._config.rescale_factor
         if ghost_rescale != 1.0:
             ghost_stick = utils.scale_spec(
                 ghost_stick, ghost_rescale, root_body="reference_base"
@@ -496,21 +504,18 @@ class Imitation(stick_base.StickBugEnv):
 
     def render(
         self,
-        trajectory: List[mjx_env.State],
+        trajectory: list[mjx_env.State],
         height: int = 240,
         width: int = 320,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
-        modify_scene_fns: Optional[Sequence[Callable[[mujoco.MjvScene], None]]] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
+        modify_scene_fns: Sequence[Callable[[mujoco.MjvScene], None]] | None = None,
         add_labels=False,
         termination_extra_frames=0,
         render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """Renders a sequence of states with optional ghost stick bug."""
-        if render_ghost:
-            mj_model = self._compile_with_ghost()
-        else:
-            mj_model = self.mj_model
+        mj_model = self._compile_with_ghost() if render_ghost else self.mj_model
         mj_model.vis.global_.offwidth = width
         mj_model.vis.global_.offheight = height
         mj_data = mujoco.MjData(mj_model)
@@ -551,10 +556,10 @@ class Imitation(stick_base.StickBugEnv):
         rollout_source: Any,
         height: int = 480,
         width: int = 640,
-        camera: Optional[str] = None,
-        scene_option: Optional[mujoco.MjvOption] = None,
+        camera: str | None = None,
+        scene_option: mujoco.MjvOption | None = None,
         render_ghost: bool = True,
-    ) -> List[np.ndarray]:
+    ) -> list[np.ndarray]:
         """Render from precomputed qposes (track-mjx eval path)."""
         if isinstance(rollout_source, Mapping) and "qposes_rollout" in rollout_source:
             qposes_rollout = np.asarray(rollout_source["qposes_rollout"])
@@ -582,7 +587,8 @@ class Imitation(stick_base.StickBugEnv):
             warnings.warn(
                 "render_optimized(render_ghost=True) but no reference qposes "
                 "were available (the rollout Mapping has no 'qposes_ref'); "
-                "rendering the rollout without the ghost overlay."
+                "rendering the rollout without the ghost overlay.",
+                stacklevel=2,
             )
             render_ghost = False
 
@@ -606,6 +612,8 @@ class Imitation(stick_base.StickBugEnv):
             scene_option.sitegroup[:] = [1, 1, 1, 1, 1, 0]
 
         frames = []
+        import tqdm
+
         for qpos in tqdm.tqdm(qpos_list, desc="Rendering"):
             mj_data.qpos = qpos
             mujoco.mj_forward(mj_model, mj_data)
@@ -670,7 +678,8 @@ class Imitation(stick_base.StickBugEnv):
                     warnings.warn(
                         f"Reference data verification failed for {n_failed}"
                         f" frames for check '{name}' for clip {clip}."
-                        f" First failure at frame {first_failed_frame}."
+                        f" First failure at frame {first_failed_frame}.",
+                        stacklevel=2,
                     )
                     any_failed = True
         return not any_failed
