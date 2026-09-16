@@ -4,8 +4,6 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-pytestmark = pytest.mark.gpu
-
 
 class TestApplyEyeMask:
     """Unit tests for the eye masking logic.
