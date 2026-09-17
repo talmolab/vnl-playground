@@ -1388,9 +1388,14 @@ def default_config_scott_v2_spindle(
     runs stay reproducible.
 
     `mode` controls what happens to proprioception:
-      "add"     -- qpos 27 + qvel 27 + Ia 52 + II 52 = 158 (obs 78 + 158 = 236)
-      "replace" -- Ia 52 + II 52 = 104 (obs 78 + 104 = 182); the policy loses
-                   direct joint sense and must infer pose from muscle afferents
+      "add"         -- qpos 27 + qvel 27 + Ia 52 + II 52 = 158 (obs 236)
+      "replace"     -- Ia 52 + II 52 = 104 (obs 182); loses ALL direct joint
+                       sense, including the joystick's own qpos[0:2]. No
+                       afferent can substitute for that, so this confounds
+                       "no arm joint sense" with "no joystick sense".
+      "replace_arm" -- joystick qpos 2 + qvel 2 + Ia 52 + II 52 = 108
+                       (obs 186); replaces only the 25 arm dims. This is the
+                       clean version of the ablation.
 
     Either way **the observation size changes, so existing checkpoints cannot
     be warm-started from** -- stage 2 restores policy params and needs matching
@@ -1438,6 +1443,8 @@ class MouseImitationArmHandSpindle(MouseImitationArmHandScottV1):
         # lengthrange, operating range and vmax, plus the frozen velocity
         # normaliser. Never rebuild this inside a jitted step.
         self._spindle_params = spindle_obs.build_spindle_params(self.mj_model)
+        # Read from config rather than hardcoding [0, 1].
+        self._joystick_idx = list(self._config.joystick_qpos_idx)
 
     def _get_proprioception(
         self, data: mjx.Data, info: Mapping[str, Any]
@@ -1446,4 +1453,14 @@ class MouseImitationArmHandSpindle(MouseImitationArmHandScottV1):
         ia, ii = spindle_obs.afferents(data, self._spindle_params, data.ctrl)
         if self._spindle_mode == "replace":
             return jp.concatenate([ia, ii])
+        if self._spindle_mode == "replace_arm":
+            # Replace only the ARM's joint sense; keep the joystick's own
+            # qpos/qvel. No muscle spans the joystick slides (all 52 actuators
+            # are tendon-driven and the slides move only by hand contact), so
+            # no afferent carries joystick position -- plain "replace" blinds
+            # the policy to the joystick and confounds the comparison.
+            # nq == nv == 27 with no quaternions here, so qpos and qvel share
+            # indices.
+            js = jp.asarray(self._joystick_idx)
+            return jp.concatenate([data.qpos[js], data.qvel[js], ia, ii])
         return jp.concatenate([data.qpos, data.qvel, ia, ii])

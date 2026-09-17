@@ -45,7 +45,7 @@ V_SCALE_TABLE = os.path.join(
     "v_scale_scott_v2.json",
 )
 
-SPINDLE_MODES = ("add", "replace")
+SPINDLE_MODES = ("add", "replace", "replace_arm")
 
 
 def _match_key(name: str) -> str:

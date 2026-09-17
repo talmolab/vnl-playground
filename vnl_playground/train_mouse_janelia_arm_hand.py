@@ -235,10 +235,14 @@ def parse_args():
     )
 
     p.add_argument(
-        "--spindle-mode", type=str, default="add", choices=["add", "replace"],
+        "--spindle-mode", type=str, default="add",
+        choices=["add", "replace", "replace_arm"],
         help="'add' keeps qpos+qvel and appends Ia+II (proprioception 54 -> "
-             "158). 'replace' substitutes afferents for qpos+qvel "
-             "(proprioception -> 104), removing direct joint sense."
+             "158). 'replace' substitutes afferents for all of qpos+qvel "
+             "(-> 104), which also removes the joystick's own qpos[0:2] and "
+             "so confounds the ablation. 'replace_arm' keeps the 2 joystick "
+             "dims and replaces only the 25 arm dims (-> 108); this is the "
+             "clean ablation."
     )
 
     p.add_argument(
