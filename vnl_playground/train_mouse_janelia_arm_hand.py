@@ -57,12 +57,14 @@ from vnl_playground.tasks.mouse.imitation_arm_hand import (
     MouseImitationArmHandArmOnly,
     MouseImitationArmHandJoystickOnly,
     MouseImitationArmHandScottV1,
+    MouseImitationArmHandSpindle,
     default_config,
     default_config_no_joystick,
     default_config_raw_joystick,
     default_config_v23,
     default_config_scott_v1,
     default_config_scott_v2,
+    default_config_scott_v2_spindle,
     default_config_v25,
 )
 from vnl_playground.tasks.wrappers import FlattenObsWrapper
@@ -223,6 +225,23 @@ def parse_args():
     )
 
     p.add_argument(
+        "--spindle-obs", action="store_true",
+        help="Add Enander muscle-spindle afferents (Ia, II) to the "
+             "observation, using default_config_scott_v2_spindle and "
+             "MouseImitationArmHandSpindle. Implies the scott_v2 rig. Drive "
+             "is alpha-coupled, so the action space stays at 52, but the "
+             "observation size changes (236 add / 182 replace), so existing "
+             "checkpoints CANNOT be warm-started from."
+    )
+
+    p.add_argument(
+        "--spindle-mode", type=str, default="add", choices=["add", "replace"],
+        help="'add' keeps qpos+qvel and appends Ia+II (proprioception 54 -> "
+             "158). 'replace' substitutes afferents for qpos+qvel "
+             "(proprioception -> 104), removing direct joint sense."
+    )
+
+    p.add_argument(
         "--joystick-only-obs", action="store_true",
         help="Replace the 78-dim imitation target (27 joint deltas + 17 tracked "
              "bodies x 3) with the joystick's own 2-dim next-frame delta, so the "
@@ -323,7 +342,15 @@ if args.joystick_only_obs and args.arm_only_obs:
         "composable: the first supervises only the joystick, the second only "
         "the arm. Passing both would silently give you the arm-only env."
     )
-if args.no_joystick:
+if args.spindle_obs:
+    if args.no_joystick or args.v23 or args.raw_joystick or args.v25 or args.scott_v1:
+        raise SystemExit(
+            "--spindle-obs implies the scott_v2 rig and cannot be combined "
+            "with another rig flag."
+        )
+    env_cfg = default_config_scott_v2_spindle(mode=args.spindle_mode)
+    print(f"spindle observations: mode={args.spindle_mode}")
+elif args.no_joystick:
     env_cfg = default_config_no_joystick()
 elif args.v23:
     env_cfg = default_config_v23()
@@ -535,6 +562,11 @@ elif args.scott_v2:
     env_name = "janelia-scott-v2-arm-hand-joystick"
 else:
     env_name = "janelia-v22-arm-hand"
+# --spindle-obs runs the scott_v2 rig but does not set --scott-v2, so without
+# this the run would be named "janelia-v22-arm-hand" and its checkpoints would
+# be indistinguishable from a v22 run. Name it for the rig and the mode.
+if args.spindle_obs:
+    env_name = f"janelia-scott-v2-spindle-{args.spindle_mode}-arm-hand-joystick"
 SUFFIX = None
 FINETUNE_PATH = args.finetune_path
 
@@ -798,6 +830,11 @@ if __name__ == "__main__":
     # up without a code change.
     env_cls = (MouseImitationArmHandScottV1
                if (args.scott_v1 or args.scott_v2) else MouseImitationArmHand)
+    # Spindle afferents: same rig and rewards as scott_v2, only the
+    # proprioception vector differs. Checked after the scott_* branch so it
+    # wins regardless of flag order.
+    if args.spindle_obs:
+        env_cls = MouseImitationArmHandSpindle
     # --joystick-only-obs swaps in the A1 subclass, which returns a 2-dim
     # imitation target (the joystick's own next-frame delta) instead of the
     # 78-dim arm reference. Paired at the launch line with --drop-reward for

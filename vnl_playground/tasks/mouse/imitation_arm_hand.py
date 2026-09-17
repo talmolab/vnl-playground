@@ -22,7 +22,7 @@ from ml_collections import config_dict
 from mujoco import mjx
 from mujoco_playground._src import mjx_env
 
-from vnl_playground.tasks.mouse import contact_presets
+from vnl_playground.tasks.mouse import contact_presets, spindle_obs
 from vnl_playground.tasks.mouse.consts import (
     janelia_scott_v1_xml_path,
     janelia_scott_v2_xml_path,
@@ -1377,3 +1377,73 @@ class MouseImitationArmHandArmOnly(MouseImitationArmHandScottV1):
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
         metrics["rewards/joints_vel"] = reward
         return reward
+
+
+def default_config_scott_v2_spindle(
+    variant: str = "wrist_forearm", mode: str = "add"
+) -> config_dict.ConfigDict:
+    """The scott_v2 config plus Enander muscle-spindle afferents in the observation.
+
+    A new config rather than an edit to `default_config_scott_v2`, so existing
+    runs stay reproducible.
+
+    `mode` controls what happens to proprioception:
+      "add"     -- qpos 27 + qvel 27 + Ia 52 + II 52 = 158 (obs 78 + 158 = 236)
+      "replace" -- Ia 52 + II 52 = 104 (obs 78 + 104 = 182); the policy loses
+                   direct joint sense and must infer pose from muscle afferents
+
+    Either way **the observation size changes, so existing checkpoints cannot
+    be warm-started from** -- stage 2 restores policy params and needs matching
+    obs. Every condition is a fresh two-stage run.
+
+    Drive is alpha-coupled: the policy's motor command is also gamma_static and
+    gamma_dynamic, so the action space stays at 52.
+    """
+    cfg = default_config_scott_v2(variant)
+    if mode not in spindle_obs.SPINDLE_MODES:
+        raise ValueError(
+            f"unknown spindle mode {mode!r}; expected one of "
+            f"{spindle_obs.SPINDLE_MODES}"
+        )
+    cfg.spindle_obs_mode = mode
+    return cfg
+
+
+class MouseImitationArmHandSpindle(MouseImitationArmHandScottV1):
+    """scottV1/V2 rig with muscle-spindle afferents in the proprioception vector.
+
+    **Only `_get_proprioception` is overridden.** Rewards, terminations,
+    actions and task_obs are untouched, so a spindle run differs from its
+    baseline in exactly one thing: what the policy can perceive.
+
+    Afferents are computed from the post-step muscle kinematics
+    (`actuator_length` / `actuator_velocity`) and the motor command actually
+    applied (`data.ctrl`), which is the alpha-coupled fusimotor drive. They
+    land in the observation the policy reads on the *next* step, so there is
+    one control step (2 ms at ctrl_dt=0.002) of inherent afferent latency --
+    already in the range of real mouse Ia conduction plus synaptic delay. No
+    additional delay buffer is modelled; adding one would need per-episode
+    state and is deliberately out of scope here.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._spindle_mode = self._config.get("spindle_obs_mode", "add")
+        if self._spindle_mode not in spindle_obs.SPINDLE_MODES:
+            raise ValueError(
+                f"unknown spindle_obs_mode {self._spindle_mode!r}; expected "
+                f"one of {spindle_obs.SPINDLE_MODES}"
+            )
+        # Built once, on the host, from the real model: reads each muscle's
+        # lengthrange, operating range and vmax, plus the frozen velocity
+        # normaliser. Never rebuild this inside a jitted step.
+        self._spindle_params = spindle_obs.build_spindle_params(self.mj_model)
+
+    def _get_proprioception(
+        self, data: mjx.Data, info: Mapping[str, Any]
+    ) -> jp.ndarray:
+        """Proprioception, with spindle afferents added or substituted."""
+        ia, ii = spindle_obs.afferents(data, self._spindle_params, data.ctrl)
+        if self._spindle_mode == "replace":
+            return jp.concatenate([ia, ii])
+        return jp.concatenate([data.qpos, data.qvel, ia, ii])
