@@ -26,12 +26,16 @@ jobs:
 
       - name: Run Ruff format check
         run: |
-          ruff format --check vnl_playground/ tests/test_reference_clips.py
+          ruff format --check vnl_playground/ tests/
 
       - name: Run Ruff lint
         run: |
-          ruff check vnl_playground/ tests/test_reference_clips.py
+          ruff check vnl_playground/ tests/
 
+      # NOTE: only the reference-clip tests run here. The stick tests
+      # (tests/test_stick_*.py) need mujoco + mujoco-mjx and an EGL-capable
+      # runner, which this job does not install, so they are lint-checked
+      # above but executed locally only. See issue on wiring them into CI.
       - name: Test reference data loading
         run: |
           pytest -q tests/test_reference_clips.py

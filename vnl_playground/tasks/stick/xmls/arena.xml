@@ -1,19 +1,49 @@
 <mujoco>
   <visual>
-    <headlight diffuse=".5 .5 .5" specular="1 1 1"/>
+    <!-- Bright headlight + lifted ambient so the dark side of the body
+         isn't lost in shadow at the tight close-up framing. -->
+    <headlight diffuse=".7 .7 .7" specular=".4 .4 .4" ambient=".55 .55 .55"/>
     <global offwidth="3840" offheight="2160" elevation="-20" azimuth="120"/>
-    <quality shadowsize="2048"/>
+    <quality shadowsize="4096"/>
+    <rgba haze=".15 .25 .35 1"/>
   </visual>
 
   <asset>
-    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
-    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+    <!-- Finer checker because the camera is ~4 cm from a 2 cm bug; cells
+         resolve to ~0.5 mm at 1 m / 80 repeat. -->
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512"
+             rgb1=".40 .45 .50" rgb2=".55 .60 .65"
+             mark="cross" markrgb=".25 .3 .35"/>
+    <material name="grid" texture="grid" texrepeat="80 80" texuniform="true"
+              reflectance=".15"/>
   </asset>
 
   <worldbody>
-    <light pos="0 0 0.1" dir="0 0 -1"/>
+    <!-- 5-light setup tuned for close-up insect rendering. Lights are at
+         the global arena scale (~15-30 cm) so they behave like distant
+         sources regardless of where the bug walks. Increased intensities
+         compensate for the tighter camera framing and small subject. -->
+    <light name="overhead" pos="0 0 .3" dir="0 0 -1"
+           diffuse=".7 .7 .7" specular=".3 .3 .3" castshadow="false"/>
+    <light name="key"      pos=".15 .15 .25" dir="-1 -1 -1.5"
+           diffuse=".8 .72 .6" specular=".4 .4 .4"/>
+    <light name="fill"     pos="-.15 -.10 .15" dir="1 1 -1"
+           diffuse=".45 .50 .55" castshadow="false"/>
+    <light name="back"     pos="-.15 .15 .12" dir="1 -1 -1"
+           diffuse=".35 .35 .40" specular=".25 .25 .25" castshadow="false"/>
+    <light name="ground_bounce" pos="0 -.05 .04" dir="0 1 0.5"
+           diffuse=".25 .22 .18" castshadow="false"/>
+
     <body name="floor">
-      <geom name="floor" pos="0 0 -0.008" size="0.2 0.2 0.01" type="plane" material="grid"/>
+      <!-- 1 m × 1 m floor. Lowered from -0.008 m to -0.009 m on 2026-05-14
+           because the STAC-fit reference clip's deepest claw mesh extent
+           reaches z = -8.63 mm (front-right claws). With the old floor at
+           -8.0 mm, 5 of 6 claw meshes visually clipped into the floor in
+           4-33% of frames, creating an impossible-to-reach target that
+           caused the policy to jitter. Lowering the floor by 1 mm keeps
+           the deepest reference mesh point ~0.37 mm above the surface. -->
+      <geom name="floor" pos="0 0 -0.009" size=".5 .5 .01"
+            type="plane" material="grid"/>
     </body>
   </worldbody>
 </mujoco>
