@@ -4,8 +4,12 @@ from etils import epath
 
 STICK_PATH = epath.Path(__file__).parent
 
-# Default walker is the 41-DoF mesh model; the box variant is kept available
-# at STICK_BOX_XML_PATH for users who want to use the older model.
+# Default walker is the 41-DoF mesh model. The legacy box XML is still shipped
+# at STICK_BOX_XML_PATH, but it is NOT loadable through the stick envs: every
+# constant below (JOINTS, BODIES, FOOT_GEOMS) describes the mesh model, and
+# `base.add_stick` looks up FOOT_GEOMS unconditionally, so pointing an env at
+# the box XML raises `geom 'claw_collide_fl-stick' not found`. Reviving it
+# would mean selecting these constants off the walker XML.
 STICK_XML_PATH = STICK_PATH / "xmls" / "stick_mesh_fast.xml"
 STICK_BOX_XML_PATH = STICK_PATH / "xmls" / "stick_fast.xml"
 ARENA_XML_PATH = STICK_PATH / "xmls" / "arena.xml"

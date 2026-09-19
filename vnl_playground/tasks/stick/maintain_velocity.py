@@ -40,7 +40,7 @@ def default_config() -> config_dict.ConfigDict:
         ls_iterations=5,
         noslip_iterations=0,
         torque_actuators=False,
-        rescale_factor=0.9,
+        rescale_factor=1.0,  # Mesh STAC fit was done with SCALE_FACTOR=1.
         init_z=0.005,
         target_speed=0.01,  # Stick bug is mm-scale, so speed is small
         episode_length=2000,
