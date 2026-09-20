@@ -24,6 +24,8 @@ from vnl_playground.tasks.rodent import imitation as rodent_imitation
 from vnl_playground.tasks.rodent import joystick as rodent_joystick
 from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_velocity
 from vnl_playground.tasks.rodent import rearing as rodent_rearing
+from vnl_playground.tasks.rodent import run_gap as rodent_run_gap
+from vnl_playground.tasks.rodent import run_gap_vision as rodent_run_gap_vision
 from vnl_playground.tasks.rodent import sparse_imitation as rodent_sparse_imitation
 from vnl_playground.tasks.stick import imitation as stick_imitation
 from vnl_playground.tasks.stick import maintain_velocity as stick_maintain_velocity
@@ -39,6 +41,10 @@ _envs = {
     "RodentBowlEscape": rodent_bowl_escape.BowlEscape,
     "RodentMaintainVelocity": rodent_maintain_velocity.MaintainVelocity,
     "RodentJoystick": rodent_joystick.Joystick,
+    "RodentRunGap": rodent_run_gap.RunGap,
+    "RodentRunGapVision": rodent_run_gap_vision.RunGapVision,
+    "RodentRunGapBinocularVision": rodent_run_gap_vision.RunGapVision,
+    "RodentRunGapActuableEyes": rodent_run_gap_vision.RunGapVision,
     "FruitflyImitation": fruitfly_imitation.Imitation,
     "FruitflyMaintainVelocity": fruitfly_maintain_velocity.MaintainVelocity,
     "MouseReach": mouse_reach.MouseReach,
@@ -49,6 +55,24 @@ _envs = {
     "CelegansImitation": worm_imitation.Imitation,
 }
 
+
+def _binocular_default_config():
+    """Default config for binocular mode of RunGapVision."""
+    cfg = rodent_run_gap_vision.default_config()
+    cfg.binocular = True
+    return cfg
+
+
+def _actuable_eyes_default_config():
+    """Default config for actuable eyes binocular RunGapVision."""
+    cfg = rodent_run_gap_vision.default_config()
+    cfg.binocular = True
+    cfg.actuable_eyes = True
+    cfg.left_camera_name = "eye_left_actuated-rodent"
+    cfg.right_camera_name = "eye_right_actuated-rodent"
+    return cfg
+
+
 _cfgs = {
     "RodentImitation": rodent_imitation.default_config,
     "RodentSparseImitation": rodent_sparse_imitation.default_config,
@@ -56,6 +80,10 @@ _cfgs = {
     "RodentBowlEscape": rodent_bowl_escape.default_config,
     "RodentMaintainVelocity": rodent_maintain_velocity.default_config,
     "RodentJoystick": rodent_joystick.default_config,
+    "RodentRunGap": rodent_run_gap.default_config,
+    "RodentRunGapVision": rodent_run_gap_vision.default_config,
+    "RodentRunGapBinocularVision": _binocular_default_config,
+    "RodentRunGapActuableEyes": _actuable_eyes_default_config,
     "FruitflyImitation": fruitfly_imitation.default_config,
     "FruitflyMaintainVelocity": fruitfly_maintain_velocity.default_config,
     "MouseReach": mouse_reach.default_config,
