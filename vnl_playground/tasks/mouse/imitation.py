@@ -130,6 +130,10 @@ class MouseImitation(MouseBaseEnv):
         if self._config.recompute_kinematics:
             self.reference_clips.recompute_kinematics(self._mj_model)
 
+        # Reference qpos is assigned POSITIONALLY (see _reset_data), so the two
+        # joint orders have to agree. Checked once here rather than trusted.
+        self._check_reference_joint_alignment()
+
         # Setup clip set
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
@@ -152,6 +156,58 @@ class MouseImitation(MouseBaseEnv):
                 print(f"Warning: body {name}-mouse not found in model")
 
         self._wrist_body_id = self._body_ids.get(self._config.end_effector, None)
+
+    def _check_reference_joint_alignment(self) -> None:
+        """Fail at construction if reference and model joint orders disagree.
+
+        `_reset_data` does `data.replace(qpos=reference.qpos)` -- a whole-vector
+        positional assignment that never consults joint names -- and the rewards
+        index qpos directly (`joystick_qpos_idx`, `ik_driven_qpos_idx`). MuJoCo
+        only objects if the LENGTH changes, so reordering or inserting a joint in
+        the walker XML would silently train against the wrong targets for the
+        whole run. One `mj_name2id` sweep at construction is cheap insurance.
+
+        Skipped, deliberately, when the comparison is not meaningful:
+          * the clips expose no `joint_names` (a bare ReferenceClips);
+          * `nq != njnt` (a ball/free joint means qpos index != joint index);
+          * the reference is narrower than the model, which is the
+            `recompute_kinematics` padding path -- that one maps BY NAME
+            (reference_clips.recompute_kinematics) and so needs no positional
+            agreement.
+        """
+        ref_names = getattr(self.reference_clips, "joint_names", None)
+        if ref_names is None:
+            return
+        ref_names = [str(n) for n in ref_names]
+
+        model = self._mj_model
+        if model.nq != model.njnt:
+            return
+        if len(ref_names) != model.nq:
+            return
+
+        suffix = getattr(self, "_suffix", "") or ""
+        model_names = []
+        for j in range(model.njnt):
+            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j) or ""
+            if suffix and name.endswith(suffix):
+                name = name[: -len(suffix)]
+            model_names.append(name)
+
+        if ref_names != model_names:
+            diff = [
+                f"  qpos[{i}]: reference {r!r} vs model {m!r}"
+                for i, (r, m) in enumerate(zip(ref_names, model_names))
+                if r != m
+            ]
+            raise ValueError(
+                "Reference clip joint order does not match the walker model's.\n"
+                "Reference qpos is assigned positionally, so training would "
+                "silently use the wrong targets.\n"
+                + "\n".join(diff[:10])
+                + (f"\n  ... and {len(diff) - 10} more" if len(diff) > 10 else "")
+                + f"\nreference: {ref_names}\nmodel:     {model_names}"
+            )
 
     def reset(
         self,
