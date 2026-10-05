@@ -1,7 +1,7 @@
 """Mouse arm imitation environment for motion tracking."""
 
 import collections
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import jax
@@ -547,6 +547,7 @@ class MouseImitation(MouseBaseEnv):
         width: int = 640,
         camera: str | None = None,
         scene_option: mujoco.MjvOption | None = None,
+        modify_scene_fns: Sequence[Callable[[mujoco.MjvScene], None]] | None = None,
         render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """Render a trajectory with optional ghost showing reference motion.
@@ -557,6 +558,8 @@ class MouseImitation(MouseBaseEnv):
             width: Rendered frame width.
             camera: Camera name or None for default.
             scene_option: MuJoCo scene options.
+            modify_scene_fns: Optional per-frame functions applied to the scene
+                before rendering.
             render_ghost: Whether to render ghost showing reference pose.
 
         Returns:
@@ -596,7 +599,7 @@ class MouseImitation(MouseBaseEnv):
             camera = self._default_render_camera
 
         rendered_frames = []
-        for state in trajectory:
+        for i, state in enumerate(trajectory):
             frame_idx = self._get_cur_frame(state.data, state.info)
             clip_idx = state.info["reference_clip"]
             ref = self.reference_clips.at(clip=clip_idx, frame=frame_idx)
@@ -610,6 +613,8 @@ class MouseImitation(MouseBaseEnv):
 
             mujoco.mj_forward(mj_model, mj_data)
             renderer.update_scene(mj_data, camera=camera, scene_option=scene_option)
+            if modify_scene_fns is not None:
+                modify_scene_fns[i](renderer.scene)
             rendered_frames.append(renderer.render())
 
         return rendered_frames
