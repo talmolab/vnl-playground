@@ -23,9 +23,12 @@ import mujoco
 import numpy as np
 
 # contype bitmasks the walker XMLs use to pair hand against joystick. The hand's
-# collision proxies carry contype=4/conaffinity=8 and the joystick's three geoms
-# the mirror image, so these two values select exactly the geoms that can
-# participate in a grip contact -- and nothing in the arena.
+# collision proxies carry contype bit 4 / conaffinity 8 and the joystick's three
+# geoms the mirror image, so these two bits select exactly the geoms that can
+# participate in a grip contact -- and nothing in the arena. They are tested as
+# bits, not values: a grip geom may carry other contact bits too (the
+# shoulder-stage forelimb models add bit 16 for the rib cage, so 15 of their 22
+# hand proxies are contype 20), and an equality test would leave those soft.
 GRIP_CONTYPE = 4
 JOYSTICK_CONTYPE = 8
 
@@ -115,12 +118,12 @@ def apply_contact_preset(model, preset, stiffness_mult=30.0, dmax=0.999):
         )
 
     grip_or_joystick = np.flatnonzero(
-        (model.geom_contype == GRIP_CONTYPE)
-        | (model.geom_contype == JOYSTICK_CONTYPE)
+        ((model.geom_contype & GRIP_CONTYPE) != 0)
+        | ((model.geom_contype & JOYSTICK_CONTYPE) != 0)
     )
     if grip_or_joystick.size == 0:
         raise ValueError(
-            "contact_preset was set but no geom carries contype "
+            "contact_preset was set but no geom carries contype bit "
             f"{GRIP_CONTYPE} or {JOYSTICK_CONTYPE} -- this model has no "
             "hand/joystick contact pair to harden."
         )
