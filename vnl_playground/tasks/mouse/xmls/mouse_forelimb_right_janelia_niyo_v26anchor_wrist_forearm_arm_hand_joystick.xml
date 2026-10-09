@@ -8,7 +8,7 @@
      js_base_resting_position; v25's static-photo anchor was biased and pinned the
      +-6 mm slides at their stop on 59.5% of reference frames. The slide values in a
      clip are measured RELATIVE to this anchor, so v26 clips are only meaningful in a
-     model carrying the v26 anchor -- pairing v26 clips with the v25 anchor puts the
+     model carrying the v26 anchor -pairing v26 clips with the v25 anchor puts the
      stick 6.5 mm from the hand and it is never contacted (measured: 0/756 frames in
      contact, closest approach +2.098 mm).
      Diffing the v25 and v26 STAC models body by body, joystick_base is the ONLY frame
