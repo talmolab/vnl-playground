@@ -655,7 +655,10 @@ if USE_WANDB:
         project=os.environ.get("WANDB_PROJECT", "new-janelia"),
         config=env_cfg,
         name=wandb_name,
-        id=f"janelia-v22-arm-hand-{exp_name}",
+        # The run id (the wandb URL) is the experiment name, which starts with the walker
+        # (e.g. niyo_s23-...); it used to carry a fixed "janelia-v22-arm-hand-" prefix
+        # whatever was trained (runs up to 2026-10-12 keep it).
+        id=exp_name,
     )
     if args.wandb_group is not None:
         wandb_kwargs["group"] = args.wandb_group
