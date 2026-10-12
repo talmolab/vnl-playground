@@ -507,6 +507,12 @@ def default_config_v25() -> config_dict.ConfigDict:
     # qpos dims drowns the joystick's ~1cm-scale error out among arm/hand
     # joints with much wider natural ranges.
     cfg.joystick_qpos_idx = [0, 1]
+    # Joints (by name) the `joints` / `joints_vel` rewards leave out, for walkers
+    # whose reference has joints no keypoint measures -- e.g. s23's shoulder-girdle
+    # hinges (sternoclavicular_protraction, acromioclavicular_rotation), inferred by
+    # the retargeting with a weak pull toward 0. They stay in the reference and the
+    # observation; the tracked bodies (humerus = the Shoulder keypoint) shape them.
+    cfg.joints_reward_exclude = []
     cfg.njmax = 256
     cfg.naconmax = 512
     cfg.keep_clips_idx = _complete_clip_indices_v25(cfg.reference_data_path)
@@ -767,6 +773,18 @@ class MouseImitationArmHand(MouseImitation):
         self._non_ik_idx = jp.array(
             [i for i in range(nq) if i not in ik_idx], dtype=int
         )
+        # qpos dims the `joints` / `joints_vel` rewards use: not IK-driven, and not
+        # listed in config.joints_reward_exclude (see default_config_v25).
+        excl = []
+        for name in self._config.get("joints_reward_exclude", []):
+            try:
+                jid = self._mj_model.joint(name + self._suffix).id
+            except KeyError as exc:
+                raise ValueError(f"joints_reward_exclude: the walker has no joint {name!r}") from exc
+            excl.append(int(self._mj_model.jnt_qposadr[jid]))
+        self._joints_reward_idx = jp.array(
+            [i for i in range(nq) if i not in ik_idx and i not in excl], dtype=int
+        )
 
         if ik_idx:
             # Sanity: reference qpos at the IK-driven indices stays inside
@@ -901,7 +919,7 @@ class MouseImitationArmHand(MouseImitation):
     def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         distance = jp.linalg.norm(
-            target.joints[self._non_ik_idx] - data.qpos[self._non_ik_idx]
+            target.joints[self._joints_reward_idx] - data.qpos[self._joints_reward_idx]
         )
         metrics["joint_l2_error"] = distance
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)
@@ -912,7 +930,7 @@ class MouseImitationArmHand(MouseImitation):
     def _joints_vel_reward(self, data, info, metrics, weight, exp_scale) -> float:
         target = self._get_current_target(data, info)
         distance = jp.linalg.norm(
-            target.joints_velocity[self._non_ik_idx] - data.qvel[self._non_ik_idx]
+            target.joints_velocity[self._joints_reward_idx] - data.qvel[self._joints_reward_idx]
         )
         metrics["joint_vel_l2_error"] = distance
         reward = weight * jp.exp(-((distance / exp_scale) ** 2) / 2)

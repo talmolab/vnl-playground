@@ -184,6 +184,13 @@ def parse_args():
              "iterative SDF collider."
     )
     p.add_argument(
+        "--joints-reward-exclude", nargs="+", default=None, metavar="JOINT",
+        help="Joints (walker joint names) the joints / joints_vel rewards leave out; "
+             "they stay in the reference and the observation. For joints the "
+             "keypoints do not measure, e.g. s23's shoulder girdle: "
+             "sternoclavicular_protraction acromioclavicular_rotation.",
+    )
+    p.add_argument(
         "--drop-reward", action="append", default=[], metavar="TERM",
         help="Remove a reward term entirely (not the same as weight=0, which "
              "still evaluates it). Needed for joystick_contact under "
@@ -388,6 +395,10 @@ for _term in args.drop_reward:
         )
     del env_cfg.reward_terms[_term]
     print(f"dropped reward term: {_term}")
+
+if args.joints_reward_exclude is not None:
+    env_cfg.joints_reward_exclude = list(args.joints_reward_exclude)
+    print(f"joints reward excludes: {env_cfg.joints_reward_exclude}")
 
 if args.contact_preset is not None:
     env_cfg.contact_preset = args.contact_preset
