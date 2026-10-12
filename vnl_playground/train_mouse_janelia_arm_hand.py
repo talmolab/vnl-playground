@@ -571,6 +571,14 @@ else:
 # be indistinguishable from a v22 run. Name it for the rig and the mode.
 if args.spindle_obs:
     env_name = f"janelia-scott-v2-spindle-{args.spindle_mode}-arm-hand-joystick"
+# --xml-path swaps the walker, but the names above only know the rig flag, so a run
+# of another walker (e.g. mouse-full-body's s23) would be filed as "janelia-scott-v2-...".
+# Name it for the walker XML instead (without the common "mouse_forelimb_right_" prefix):
+# mouse_forelimb_right_niyo_s23.xml -> "niyo_s23".
+if args.xml_path is not None:
+    _walker = os.path.splitext(os.path.basename(args.xml_path))[0]
+    _walker = _walker.removeprefix("mouse_forelimb_right_")
+    env_name = f"{_walker}-spindle-{args.spindle_mode}" if args.spindle_obs else _walker
 SUFFIX = None
 FINETUNE_PATH = args.finetune_path
 
