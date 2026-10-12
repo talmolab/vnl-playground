@@ -288,6 +288,18 @@ def parse_args():
     p.add_argument("--wandb-group", type=str, default=None, help="Wandb group (e.g. 'sweep1-physics')")
     p.add_argument("--wandb-tags", type=str, nargs="*", default=None, help="Wandb tags list")
     p.add_argument("--no-wandb", action="store_true", help="Disable wandb logging")
+    p.add_argument(
+        "--render-azimuth", type=float, default=0.0,
+        help="Eval-video free camera azimuth (deg). Default 0 = the mouse's right side, "
+             "looking across its left-right axis (world x) at the arm, hand and joystick. "
+             "The old default 90 looks from the snout side.",
+    )
+    p.add_argument(
+        "--render-elevation", type=float, default=-15.0,
+        help="Eval-video free camera elevation (deg). Default -15 = a side view, slightly "
+             "from above. The old default -45, with azimuth 90, looks down onto the back of a "
+             "re-posed (crouched) trunk such as s23's.",
+    )
 
     # Physics overrides
     p.add_argument("--joint-damping", type=float, default=None, help="Override dof_damping[:] (default: XML value)")
@@ -928,9 +940,12 @@ if __name__ == "__main__":
         render_cam.type = mujoco.mjtCamera.mjCAMERA_FREE
         render_cam.lookat[:] = centroid
         render_cam.distance = span * 2.2
-        # azimuth=90, not v24's 0 -- swept and checked visually, this is the angle that shows real vs ghost joystick side by side
-        render_cam.azimuth = 90
-        render_cam.elevation = -45
+        # Side view of the right arm by default (--render-azimuth 0, --render-elevation -15;
+        # checked on the v26-anchor walker and on s23, 2026-10-12). The old view
+        # (azimuth 90, elevation -45: from the snout side, from above, chosen to show real vs
+        # ghost joystick side by side) is --render-azimuth 90 --render-elevation -45.
+        render_cam.azimuth = args.render_azimuth
+        render_cam.elevation = args.render_elevation
 
     ppo_network = network_factory(
         start_state.obs.shape[-1],
