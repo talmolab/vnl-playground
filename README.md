@@ -96,6 +96,8 @@ All 12 environments are accessible via the registry: `registry.load("TaskName", 
 | `RodentBowlEscape` | Escape from a bowl-shaped arena (supports vision) |
 | `RodentMaintainVelocity` | Track a target forward velocity in an open arena |
 | `RodentJoystick` | Track periodically resampled forward velocity + yaw rate commands |
+| `RodentRunGap` | Corridor gap-crossing task with procedural platforms |
+| `RodentRunGapBinocularVision` | `RodentRunGap` with optional binocular vision |
 
 ### Fruitfly
 

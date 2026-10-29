@@ -186,3 +186,5 @@ outputs/
 *.png
 vnl_playground/_version.py
 highlvl_checkpoints/
+!vnl_playground/tasks/rodent/xmls/assets/*.png
+MUJOCO_LOG.TXT
