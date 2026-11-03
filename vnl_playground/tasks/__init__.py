@@ -23,6 +23,7 @@ from vnl_playground.tasks.rodent import bowl_escape as rodent_bowl_escape
 from vnl_playground.tasks.rodent import imitation as rodent_imitation
 from vnl_playground.tasks.rodent import joystick as rodent_joystick
 from vnl_playground.tasks.rodent import maintain_velocity as rodent_maintain_velocity
+from vnl_playground.tasks.rodent import maze_forage_vision as rodent_maze_forage_vision
 from vnl_playground.tasks.rodent import rearing as rodent_rearing
 from vnl_playground.tasks.rodent import run_gap as rodent_run_gap
 from vnl_playground.tasks.rodent import run_gap_vision as rodent_run_gap_vision
@@ -45,6 +46,7 @@ _envs = {
     "RodentRunGapVision": rodent_run_gap_vision.RunGapVision,
     "RodentRunGapBinocularVision": rodent_run_gap_vision.RunGapVision,
     "RodentRunGapActuableEyes": rodent_run_gap_vision.RunGapVision,
+    "RodentMazeForageVision": rodent_maze_forage_vision.MazeForageVision,
     "FruitflyImitation": fruitfly_imitation.Imitation,
     "FruitflyMaintainVelocity": fruitfly_maintain_velocity.MaintainVelocity,
     "MouseReach": mouse_reach.MouseReach,
@@ -84,6 +86,7 @@ _cfgs = {
     "RodentRunGapVision": rodent_run_gap_vision.default_config,
     "RodentRunGapBinocularVision": _binocular_default_config,
     "RodentRunGapActuableEyes": _actuable_eyes_default_config,
+    "RodentMazeForageVision": rodent_maze_forage_vision.default_config,
     "FruitflyImitation": fruitfly_imitation.default_config,
     "FruitflyMaintainVelocity": fruitfly_maintain_velocity.default_config,
     "MouseReach": mouse_reach.default_config,
