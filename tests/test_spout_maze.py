@@ -620,7 +620,7 @@ def test_treat_visible_from_appear_zone(env, stack):
 
 
 # ---------------------------------------------------------------------------
-# T maze (maze_shape="T", the lab's mouse T maze at x2.5)
+# T maze (maze_shape="T", a mouse T maze at x2.5)
 # ---------------------------------------------------------------------------
 
 _T_OVERRIDES = dict(maze_shape="T", appear_distance=0.70)

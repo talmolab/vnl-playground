@@ -1,7 +1,7 @@
 """Vision-guided Y-/T-maze "spout" memory task for the virtual rodent (warp only).
 
 The rodent runs many *trials* per *episode* in a fixed Y maze (one stem, two
-goal arms), or, with ``maze_shape="T"``, in the lab's T maze at x2.5
+goal arms), or, with ``maze_shape="T"``, in a mouse T maze at x2.5
 (`spout_geometry.build_t_maze`).  One arm is baited for the whole episode
 (drawn at ``reset``).  A
 trial ends when the rat has visited an arm end, or on a timeout; the rat is then
@@ -28,7 +28,8 @@ layout type, so the shape only changes construction.  ``"Y"`` uses the
 ``t_*`` keys (`spout_geometry.TMazeSpec`; its own ``t_wall_thickness``).  Both
 use ``wall_height``.  The T's spout point is both ``arm_end_xy`` and
 ``treat_xy``, and its choice locks on arm ENTRY when ``appear_distance`` is at
-least every in-arm distance (0.70 in the T configs).  The wall/floor texture
+least every in-arm distance (the longest in the default T is 0.56 m, so
+0.70 m qualifies).  The wall/floor texture
 pitch is shape-independent (from ``corridor_width`` and ``wall_thickness``, the
 parent's physical scale).
 
@@ -51,7 +52,7 @@ With zero jitter the teleport step's observation (vision, ``task_obs`` and
 proprioception) equals a fresh reset's; ``tests/test_spout_maze.py`` checks it.
 
 Inter-trial hold and start gate (``hold_enabled``, T maze only, default off):
-the lab's start-box hold.  `spout_hold` holds the state machine.
+a start-box hold.  `spout_hold` holds the state machine.
 
 * A ``gate`` body on two slide joints (y and z) carries a colliding box
   (clear corridor width x ``wall_height`` x ``gate_thickness``,
@@ -216,9 +217,9 @@ def default_config() -> config_dict.ConfigDict:
         treat_inset=spec.treat_inset,
         # --- Maze shape: "Y" (keys above) or "T" (t_* keys below; the T sets
         # appear_distance >= every in-arm distance, so the choice locks on arm
-        # entry: 0.70 in its configs) ---
+        # entry; 0.70 m exceeds the default T's longest in-arm distance, 0.56 m) ---
         maze_shape="Y",
-        # --- T maze (spout_geometry.TMazeSpec; lab mouse T maze x2.5; walls
+        # --- T maze (spout_geometry.TMazeSpec; mouse T maze at x2.5; walls
         # use wall_height and t_wall_thickness) ---
         t_corridor_width=t_spec.corridor_width,
         t_segment_length=t_spec.segment_length,

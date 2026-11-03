@@ -48,9 +48,9 @@ Conventions
 
 T maze (`build_t_maze`)
 -----------------------
-The lab's mouse T maze (``data/tmaze_spec.png``: corridors 10 cm, a stem of
-five 20 cm segments, a 10 x 10 cm junction, two 27.5 cm arms) built at x2.5 for
-the virtual rat.  All dimensions are CLEAR inner dimensions::
+A mouse T maze (corridors 10 cm, a stem of five 20 cm segments, a 10 x 10 cm
+junction, two 27.5 cm arms) built at x2.5 for the virtual rat.  All dimensions
+are CLEAR inner dimensions::
 
         arm_left (arm 0, -x)    J    arm_right (arm 1, +x)     arm row:
       |------- 0.6875 ------|0.25|------- 0.6875 -------|       y in [-0.125, 0.125]
@@ -136,7 +136,7 @@ class YMazeSpec:
 
 @dataclasses.dataclass(frozen=True)
 class TMazeSpec:
-    """Dimensions of the T maze (the lab's mouse T maze at x2.5), in metres.
+    """Dimensions of the T maze (a mouse T maze at x2.5), in metres.
 
     All lengths are CLEAR inner dimensions (between wall inner faces).
 

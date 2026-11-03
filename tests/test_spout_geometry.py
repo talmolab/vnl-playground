@@ -315,7 +315,7 @@ def test_invalid_spec_raises():
 
 
 # ===========================================================================
-# T maze (the lab's mouse T maze at x2.5)
+# T maze (a mouse T maze at x2.5)
 # ===========================================================================
 from scipy import ndimage  # noqa: E402
 

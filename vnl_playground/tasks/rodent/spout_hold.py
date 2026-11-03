@@ -1,6 +1,6 @@
 """Inter-trial hold and start gate for the T-maze spout task (pure JAX).
 
-Mirrors the lab's start-box hold (and the hold / delay epoch of RNN
+Mirrors a mouse start-box hold (and the hold / delay epoch of RNN
 working-memory tasks): after every trial the rat is put back in ``start``
 behind a closed gate, waits a hold drawn per trial, and then the gate drops into
 the floor (the "go") and the trial clock starts.
