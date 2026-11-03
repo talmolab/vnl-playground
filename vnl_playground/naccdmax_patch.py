@@ -12,6 +12,14 @@ explicitly provided.
 Usage::
 
     import vnl_playground.naccdmax_patch  # noqa: F401  -- patch applied on import
+
+No module in this repository imports this file -- that is expected. It is
+applied by an external training launch harness, which imports it before the
+warp backend builds its collision buffers (i.e. before the first
+``mjx.make_data``/``put_data`` call of a run). If it is not applied,
+``naccdmax`` silently falls back to its tiny heuristic default, and any run
+using a large ``naconmax`` either overflows the CCD buffer at runtime or
+silently corrupts collision data instead.
 """
 
 from __future__ import annotations
@@ -24,6 +32,40 @@ if TYPE_CHECKING:
 
 try:
     import mujoco.mjx.third_party.mujoco_warp as _mjwp
+
+    # ------------------------------------------------------------------ #
+    # Guard: verify the patch-target assumption before patching anything.
+    # ------------------------------------------------------------------ #
+    # The real mjx call path resolves the warp backend through
+    # ``mujoco.mjx.warp.mujoco_warp``. This patch only works because, on the
+    # pinned stack, that attribute is the *same module object* as
+    # ``mujoco.mjx.third_party.mujoco_warp`` (checked below) -- so patching
+    # the latter's ``make_data``/``put_data`` also intercepts calls made
+    # through the former. If a future mujoco/warp release breaks that
+    # identity (e.g. by vendoring a separate copy, or moving/renaming the
+    # attribute), this patch would silently stop intercepting the real call
+    # path -- a failure that would only surface much later, as an
+    # out-of-memory or corrupted-collision bug deep inside training, far
+    # from its actual cause. Fail loudly here instead.
+    import mujoco.mjx.warp as _mjx_warp_pkg
+
+    _resolved_mujoco_warp = getattr(_mjx_warp_pkg, "mujoco_warp", None)
+    if _resolved_mujoco_warp is not _mjwp:
+        raise RuntimeError(
+            "naccdmax_patch: expected mujoco.mjx.warp.mujoco_warp to be the "
+            "same module object as mujoco.mjx.third_party.mujoco_warp "
+            f"(target={_mjwp!r}), but found {_resolved_mujoco_warp!r}. The "
+            "patch's identity assumption no longer holds on this "
+            "mujoco/warp version -- refusing to apply a patch that would "
+            "silently fail to intercept the real call path."
+        )
+    if not (hasattr(_mjwp, "make_data") and hasattr(_mjwp, "put_data")):
+        raise RuntimeError(
+            "naccdmax_patch: expected mujoco.mjx.third_party.mujoco_warp to "
+            "define both `make_data` and `put_data`, but found "
+            f"make_data={hasattr(_mjwp, 'make_data')!r}, "
+            f"put_data={hasattr(_mjwp, 'put_data')!r}."
+        )
 
     # ------------------------------------------------------------------ #
     # Save references to the original (unpatched) functions.
