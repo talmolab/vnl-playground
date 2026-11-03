@@ -11,9 +11,7 @@ import numpy as np
 import pytest
 
 from vnl_playground.tasks.rodent import consts
-from vnl_playground.tasks.rodent.eval_video import render_video
-
-pytestmark = pytest.mark.gpu
+from vnl_playground.tasks.rodent.eval_video import _make_render_all_fn, render_video
 
 # Exception types genuinely raised when a headless GL context can't be built
 # (see mujoco/egl/__init__.py: ImportError for "no EGL device display", or
@@ -22,7 +20,7 @@ pytestmark = pytest.mark.gpu
 # failure). Anything else -- a real bug in render_video, a bad model path,
 # etc. -- must propagate as a test failure, not vanish into a skip.
 _GL_INIT_ERROR_TYPES = (mujoco.FatalError, RuntimeError, ImportError, OSError)
-_GL_INIT_KEYWORDS = ("egl", "gl", "glad", "display", "context", "opengl")
+_GL_INIT_KEYWORDS = ("egl", "glad", "display", "context", "opengl")
 
 
 def _is_gl_init_failure(exc: Exception) -> bool:
@@ -49,6 +47,7 @@ def _fake_rollout(model, n=3):
     return frames
 
 
+@pytest.mark.gpu
 @pytest.mark.parametrize(
     "cameras", [None, [{"label": "side"}, {"elevation": -90, "label": "top"}]]
 )
@@ -74,3 +73,16 @@ def test_render_video_writes_mp4(tmp_path, cameras):
     n_panels = 1 if cameras is None else len(cameras)
     frame = imageio.v3.imread(out, index=0)
     assert frame.shape[1] == 96 * n_panels
+
+
+def test_make_render_all_fn_is_cached():
+    """`_make_render_all_fn` must be `functools.lru_cache`-wrapped.
+
+    Undecorated, every render call recompiles and leaks an XLA/Warp kernel
+    instead of reusing the one compiled for a given renderer (see the
+    function's docstring). This is a pure introspection check -- no
+    renderer is constructed and the function is never called -- so it runs
+    on CPU with no GL/EGL dependency.
+    """
+    assert hasattr(_make_render_all_fn, "cache_info")
+    assert _make_render_all_fn.cache_info().maxsize == 4
