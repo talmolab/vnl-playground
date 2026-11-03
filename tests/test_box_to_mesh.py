@@ -17,7 +17,7 @@ def test_box_to_mesh_creates_valid_mesh():
 
 
 def test_box_mesh_matches_box_geom_collision():
-    """Mesh geom should produce the same contact points as a box geom."""
+    """Mesh topology should match the box geom (12 faces, matching half-extents)."""
     spec = mujoco.MjSpec()
     spec.worldbody.add_geom(
         name="box_geom",
