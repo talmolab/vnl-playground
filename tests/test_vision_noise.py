@@ -35,8 +35,8 @@ class TestApplyVisionNoise:
     def test_zero_std_is_exact_identity(self):
         """sigma=0 must be bit-identical, not merely close.
 
-        sigma=0 IS the w2 baseline arm of the E3 ladder, so any drift here
-        would silently make the control a different experiment.
+        sigma=0 IS the noise-free control of the noise-sigma sweep, so any drift
+        here would silently make the control a different experiment.
         """
         w = _make_wrapper(vision_noise_std=0.0)
         vision = jax.random.uniform(jax.random.PRNGKey(0), (4, 8, 8, 2))
@@ -86,7 +86,7 @@ class TestApplyVisionNoise:
     def test_noise_is_unbiased_with_correct_scale(self, sigma):
         """On mid-gray (far from both clip bounds) the perturbation is N(0, sigma).
 
-        0.5 +- 4*sigma stays inside [0,1] for every sigma on the E3 ladder, so
+        0.5 +- 4*sigma stays inside [0,1] for every sigma in the noise sweep, so
         clipping does not bite and the moments are the raw Gaussian's.
         """
         w = _make_wrapper(vision_noise_std=sigma)

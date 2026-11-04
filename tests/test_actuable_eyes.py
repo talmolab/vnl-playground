@@ -38,7 +38,7 @@ def _make_fixed_eye_env() -> run_gap_vision.RunGapVision:
     return env
 
 
-# ---------- Task 1: Config parameters ----------
+# ---------- Section 1: Config parameters ----------
 
 
 def test_actuable_eyes_config_defaults():
@@ -51,7 +51,7 @@ def test_actuable_eyes_config_defaults():
     assert cfg.eye_stiffness == pytest.approx(0.0)
 
 
-# ---------- Task 2: Eye joints, actuators, cameras ----------
+# ---------- Section 2: Eye joints, actuators, cameras ----------
 
 
 @pytest.mark.gpu
@@ -142,7 +142,7 @@ def test_camera_names_point_to_actuated_cameras():
     assert env._config.right_camera_name == f"eye_right_actuated{suffix}"
 
 
-# ---------- Task 3: Proprioception masking ----------
+# ---------- Section 3: Proprioception masking ----------
 
 
 @pytest.mark.gpu
@@ -154,7 +154,7 @@ def test_proprioception_shape_unchanged():
     assert actuable_env.proprioceptive_obs_size == fixed_env.proprioceptive_obs_size
 
 
-# ---------- Task 4: Eye state in observations ----------
+# ---------- Section 4: Eye state in observations ----------
 
 
 @pytest.mark.gpu
@@ -183,7 +183,7 @@ def test_eye_joint_angles_at_zero_on_reset():
     np.testing.assert_allclose(eye_angles, 0.0, atol=1e-6)
 
 
-# ---------- Task 5: HighLevelWrapper eye action bypass ----------
+# ---------- Section 5: HighLevelWrapper eye action bypass ----------
 
 
 @pytest.mark.gpu
@@ -230,7 +230,7 @@ def test_highlevel_wrapper_action_size_without_eyes():
     assert hlw.action_size == latent_size
 
 
-# ---------- Task 6: Task registration ----------
+# ---------- Section 6: Task registration ----------
 
 
 def test_actuable_eyes_task_registered():
@@ -242,7 +242,7 @@ def test_actuable_eyes_task_registered():
     assert cfg.binocular is True
 
 
-# ---------- Task 7: Integration smoke tests ----------
+# ---------- Section 7: Integration smoke tests ----------
 
 
 @pytest.mark.slow

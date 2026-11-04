@@ -1,7 +1,7 @@
 """Offline render harness for ``MazeForageVision`` validation figures.
 
 Three things this script exists to get right, all of which were measured on an
-RTX 5090 with ``mujoco 3.9.0`` / ``warp 1.12.1`` before being written down here:
+CUDA GPU with ``mujoco 3.9.0`` / ``warp 1.12.1`` before being written down here:
 
 1. **Third-person views of the whole maze.**  Every camera compiled into this
    model is attached to the rodent body -- there is no world-fixed overview
@@ -124,7 +124,7 @@ class Stage:
     """Offscreen EGL renderer bound to one compiled model.
 
     Drawing is stateless in ``qpos``: write it, ``mj_forward`` to resolve
-    kinematics (no physics), draw.  ~0.9 ms/frame at 960x720 on a 5090.
+    kinematics (no physics), draw.  ~0.9 ms/frame at 960x720 on a CUDA GPU.
     """
 
     def __init__(

@@ -78,9 +78,9 @@ def blur_alpha_from_tau(tau_ms: float, ctrl_dt: float) -> float:
     (1 - alpha) * render_t`` decays a step input as ``alpha**n``.
 
     tau is configured in MILLISECONDS rather than exposing alpha directly:
-    alpha is meaningless without ``ctrl_dt``, and the arms in this repo DO vary
-    it (``run_gap.default_config`` is 0.02 s, the E3 sweep arms override to
-    0.01 s). A raw alpha would silently mean a different exposure per arm,
+    alpha is meaningless without ``ctrl_dt``, and the configs in this repo DO vary
+    it (``run_gap.default_config`` is 0.02 s, the vision-degradation sweep configs
+    override to 0.01 s). A raw alpha would silently mean a different exposure per config,
     while tau stays the physical quantity -- the photoreceptor integration
     time being modelled.
 
@@ -552,7 +552,7 @@ class BinocularVisionRenderWrapper:
 
         NOTE ON QUANTIZATION: with `vision_uint8_storage: true` the replay
         buffer stores 8-bit pixels, so noise below 1/255 ~ 0.004 is quantized
-        away. The E3 ladder starts at sigma=0.05, an order of magnitude above
+        away. The noise sweep starts at sigma=0.05, an order of magnitude above
         that, so the stored noise is faithful.
 
         Args:
@@ -562,7 +562,7 @@ class BinocularVisionRenderWrapper:
         Returns:
             Noisy vision, same shape/dtype, still within [0, 1].
         """
-        # <= 0 rather than == 0: sigma=0 is the E3 control arm and must be a
+        # <= 0 rather than == 0: sigma=0 is the noise-free control and must be a
         # bit-identical no-op, and a negative sigma is a config typo, not a
         # request to flip the sign of the noise.
         if self._vision_noise_std <= 0.0:
@@ -620,7 +620,7 @@ class BinocularVisionRenderWrapper:
         # This wrapper sits OUTSIDE AutoResetWrapper, so on a done step
         # `state.data` is ALREADY the fresh episode -- blending would ghost the
         # previous episode's last frame into the new one. Same class of bug as
-        # the gap_crossing_bonus info ratchet (see BASELINE_w2).
+        # the gap_crossing_bonus info ratchet (see wrappers_info_reset).
         done = jnp.reshape(done, (-1,) + (1,) * (vision.ndim - 1))
         return jnp.where(done > 0, vision, blended)
 

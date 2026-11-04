@@ -14,7 +14,7 @@ info-derived reward and termination signal during TRAINING (eval calls a real
     reward becomes a cross-episode ratchet whose inflow decays to zero as
     records saturate. Measured consequence: every sparse arm's on-policy
     reward dried up, Q went flat, and the MPO temperature dual ran away
-    (see arm_m1..m8, 2026-08-18/19).
+    (observed on every sparse-reward configuration).
   * ``info["max_x_reached"]`` persists the same way (silences new_progress).
   * ``info["stale_ref_x"]/["stale_steps"]`` persist (stale_location).
   * ``info["prev_action"]/["action"]`` leak the pre-reset action into the

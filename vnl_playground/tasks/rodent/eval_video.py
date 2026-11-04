@@ -1,7 +1,6 @@
 """Rollout → MP4 renderer with tracking cameras, binocular vision strip and HUD.
 
-Extracted verbatim from train_highlvl.render_video (scott_claude/maze-forage-vision
-@ 2a4c29f) so that trainers in other packages can render without importing the
+Extracted verbatim from train_highlvl.render_video so that trainers in other packages can render without importing the
 PPO trainer. `cameras=None` reproduces the historical single tracking camera
 byte-for-byte; a list of {distance, azimuth, elevation, lookat_z, label} dicts
 renders one panel each, side by side.

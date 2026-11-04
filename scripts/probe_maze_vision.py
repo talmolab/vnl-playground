@@ -4,7 +4,7 @@
 they apply a headlight and a skybox, neither of which exists in the Warp
 ray-tracer that fills the ``vision`` observation.  Every number below was
 measured through :class:`JaxVisionRenderer` -- the same class
-``train_highlvl`` wraps the env with -- on an RTX 5090, ``mujoco 3.9.0`` /
+``train_highlvl`` wraps the env with -- on a CUDA GPU, ``mujoco 3.9.0`` /
 ``warp 1.12.1``, at the config default 64x64 grayscale, batch 6, ``maze_seed=0``.
 
 Facts this script exists to keep honest (all re-derivable with ``--what all``):

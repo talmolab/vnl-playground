@@ -45,9 +45,9 @@ class TestBlurAlphaFromTau:
     """alpha is derived from tau and ctrl_dt, never configured directly.
 
     tau is the physical quantity (photoreceptor integration time); alpha is
-    meaningless without ctrl_dt, and this repo's arms DO vary it (run_gap's
-    default is 0.02, the E3 sweep arms override to 0.01). Configuring alpha
-    would silently mean different exposures across arms.
+    meaningless without ctrl_dt, and this repo's configs DO vary it (run_gap's
+    default is 0.02, the vision-degradation sweep configs override to 0.01).
+    Configuring alpha would silently mean different exposures across configs.
     """
 
     def test_tau_zero_gives_zero_alpha(self):

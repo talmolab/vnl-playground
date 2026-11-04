@@ -164,7 +164,7 @@ written at ``reset()`` and followed by a mandatory ``mjx.forward``.
    The fix used by the entry point is ``full_reset=True``, which calls
    ``env.reset`` on ``done``: measured on the same stack it re-randomises the
    layout *and* returns ``collected`` to all-False, for ~7% throughput at
-   batch 64 (1770 -> 1649 env-steps/s on a contended 5090).  Enable it with a
+   batch 64 (1770 -> 1649 env-steps/s on a contended GPU).  Enable it with a
    top-level ``wrappers: {full_reset: true}`` block; ``train_highlvl.py``
    raises if it is missing.  ``wrappers_info_reset.InfoResetOnDoneWrapper``
    with :data:`INFO_RESET_KEYS` fixes *only* the ``info`` half and leaves the
@@ -729,7 +729,7 @@ class MazeForageVision(rodent_base.RodentEnv):
             # style's eight tints, `green_bright` is the pale mint with crisp
             # dark circuit traces seen in dm_control's published screenshots;
             # plain `green` is a dark olive (asset mean 93.5 vs 173.1) whose
-            # traces wash out under this task's light ring.
+            # traces wash out under this environment's light ring.
             spec_str = "style_01/green_bright"
         if "/" not in spec_str:
             raise ValueError(
@@ -1844,7 +1844,7 @@ class MazeForageVision(rodent_base.RodentEnv):
 
         THE POINT OF THIS CRITERION is that ``fallen``'s tilt gate cannot tell a
         rearing rat from a fallen one.  Measured over the 210,500 frames of real
-        rat motion in ``rodent_reference_clips.h5`` -- the data this task's
+        rat motion in ``rodent_reference_clips.h5`` -- the data this environment's
         frozen prior was trained to imitate -- torso tilt from upright is:
 
             median 11.5 deg,  p95 90.7 deg,  p99 98.2 deg,  max 120.8 deg

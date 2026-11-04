@@ -12,14 +12,14 @@ Covers DESIGN.md section 4 items 2-8:
 7. the ``collected`` bitmask does not ratchet across an auto-reset boundary,
 8. a vision-render smoke test (GPU only),
 
-plus section 9, the regressions from the 2026-08-21 adversarial review: the
+plus section 9, regressions found in an adversarial review: the
 frozen-layout / ratcheting-``info`` pair that ``full_reset=False`` causes and
 the entry-point guard against it, the poisoned mutable default config, the
 corridor width vs ``cell_size`` mismatch, the one-frame ghost of a collected
 treat, and the two observation-contract claims (``origin``,
 ``privileged_state``),
 
-plus section 10, the 2026-08-21 resize: the arena is a fixed 6.46 m x 6.46 m
+plus section 10, the resize: the arena is a fixed 6.46 m x 6.46 m
 square for every ``maze_cells``, ``cell_size`` is derived from it, and
 ``task_obs`` no longer carries the allocentric ``origin`` fix by default.
 
@@ -49,7 +49,7 @@ from vnl_playground.tasks.rodent.maze_forage_vision import (
 
 # --- Declared task_obs components ------------------------------------------
 # task_obs = [prev_action, kinematic_sensors, touch_sensors] (+ origin iff
-# config.include_origin, which is OFF by default since the 2026-08-21 resize).
+# config.include_origin, which is OFF by default since the arena became fixed-size).
 N_KINEMATIC_SENSORS = 9  # accelerometer(3) + velocimeter(3) + gyro(3)
 N_TOUCH_SENSORS = 4  # consts.TOUCH_SENSORS
 N_ORIGIN = 3  # origin in the torso frame
@@ -542,7 +542,7 @@ else:
 def test_no_posture_gate_fires_on_real_rat_motion(env):
     """THE guarantee: replay real rat motion and terminate on none of it.
 
-    ``rodent_reference_clips.h5`` is the data this task's frozen prior was
+    ``rodent_reference_clips.h5`` is the data this environment's frozen prior was
     trained to imitate, so it is the operational definition of "normal walking
     and rearing". Both gates are calibrated to sit outside it -- measured on
     every 20th frame, replayed through THIS model (so heights are in our units,
@@ -635,7 +635,7 @@ def test_proprioception_ignores_the_treat_slide_joints(env):
     state = jax.jit(env.reset)(jax.random.PRNGKey(2))
     data = state.data
     baseline = np.asarray(env._get_joint_angles(data))
-    baseline_v = np.asarray(env._get_joint_ang_vels(data))
+    ref_v = np.asarray(env._get_joint_ang_vels(data))
 
     treat_idxs = jp.asarray(np.asarray(env._treat_slide_qpos_idxs_np).ravel())
     marker = jp.full((treat_idxs.shape[0],), -7.5)
@@ -643,9 +643,7 @@ def test_proprioception_ignores_the_treat_slide_joints(env):
     poisoned = poisoned.replace(qvel=poisoned.qvel.at[: 3 * env.n_treats].set(-7.5))
 
     np.testing.assert_array_equal(np.asarray(env._get_joint_angles(poisoned)), baseline)
-    np.testing.assert_array_equal(
-        np.asarray(env._get_joint_ang_vels(poisoned)), baseline_v
-    )
+    np.testing.assert_array_equal(np.asarray(env._get_joint_ang_vels(poisoned)), ref_v)
     assert -7.5 not in set(baseline.tolist())
 
 
@@ -1004,10 +1002,10 @@ def test_vision_render_smoke():
 
 
 # ===========================================================================
-# 9. ADVERSARIAL-REVIEW REGRESSIONS (2026-08-21)
+# 9. ADVERSARIAL-REVIEW REGRESSIONS
 # ===========================================================================
-# Everything below pins a defect that three independent reviewers found in the
-# first cut of this task.  The two critical ones both come from
+# Everything below pins a defect that independent reviewers found in the
+# first cut of this environment.  The two critical ones both come from
 # ``BraxAutoResetWrapper(full_reset=False)``, which the entry point used to
 # hardcode: it restores ``data``/``obs`` from the FIRST reset and never clears
 # ``state.info``, so ``env.reset`` ran exactly once per env index for a whole
@@ -1364,7 +1362,7 @@ def test_wall_boxes_are_exactly_the_centre_to_centre_lattice(cells, thickness):
 def test_border_corner_faces_are_flush():
     """The two border walls meeting at a corner end on the same two planes.
 
-    The user-visible symptom of the old rule was here: each border wall ran to
+    The visible symptom of the old rule was here: each border wall ran to
     the grid-cell boundary on its long axis, so it overhung the perpendicular
     border wall's outer face by ``(cell_size - wall_thickness) / 2`` -- 78.8 mm,
     half a wall thickness, at every one of the four corners.
@@ -1669,11 +1667,11 @@ def test_highlvl_wrapper_drops_privileged_state_in_vision_mode(env):
 
 
 # ===========================================================================
-# 10. SIZING: fixed 6.46 m x 6.46 m arena, derived cell_size (2026-08-21)
+# 10. SIZING: fixed 6.46 m x 6.46 m arena, derived cell_size
 # ===========================================================================
 # `maze_extent` is now what stays fixed and `cell_size` is derived from it, so
 # turning `maze_cells` up narrows the corridors instead of growing the arena.
-# The renders in the next phase pick between maze_cells 4 / 5 / 6, so all three
+# Renders pick between maze_cells 4 / 5 / 6, so all three
 # have to build, be fully connected and admit the rat.
 
 

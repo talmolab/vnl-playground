@@ -1,6 +1,6 @@
 """InfoResetOnDoneWrapper clears per-episode info keys when an episode ends.
 
-The gap_crossing_bonus ratchet (BASELINE_w2) came from AutoResetWrapper
+The gap_crossing_bonus ratchet came from AutoResetWrapper
 carrying state.info across episodes; this wrapper resets info on done.
 """
 

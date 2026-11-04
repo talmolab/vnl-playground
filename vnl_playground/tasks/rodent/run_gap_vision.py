@@ -74,9 +74,9 @@ def default_config() -> config_dict.ConfigDict:
     # Stochastic eye dropout (for binocular training fairness)
     cfg.eye_dropout_rate = 0.0  # probability of masking one eye per step (0=disabled)
     cfg.eval_eye_mode = "binocular"  # eval mode: "binocular", "left_only", "right_only"
-    # E3 degraded vision: per-step i.i.d. Gaussian on the rendered grayscale,
+    # Degraded vision: per-step i.i.d. Gaussian on the rendered grayscale,
     # v + sigma*N(0,1) clipped to [0,1]. Continuous noise, as opposed to the
-    # intermittent blindness of eye_dropout_rate. 0 = disabled (pre-E3 default).
+    # intermittent blindness of eye_dropout_rate. 0 = disabled (the default).
     cfg.vision_noise_std = 0.0
     # Photoreceptor integration time in MILLISECONDS -> first-order temporal
     # low-pass on the rendered image (motion blur). The warp renderer samples
@@ -137,7 +137,7 @@ class RunGapVision(run_gap.RunGap):
         self._n_eye_actuators = 0
 
         # Apply configurable eye camera angles when in binocular mode.
-        # This modifies the spec and triggers a second compile — the first
+        # This modifies the model spec and triggers a second compile — the first
         # compile happens in RunGap.__init__() before we get control here.
         # The double compilation is a one-time startup cost.
         if self._config.get("binocular", False):
