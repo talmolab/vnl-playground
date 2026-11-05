@@ -22,6 +22,7 @@ from mujoco_playground._src import mjx_env
 
 from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.reference_clips import ReferenceClips, prepare_reference_clips
+from vnl_playground.tasks.reference_motion import ReferenceMotionMixin
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from . import base as worm_base
@@ -86,7 +87,7 @@ def default_config() -> config_dict.ConfigDict:
 _registry = RewardRegistry()
 
 
-class Imitation(worm_base.CelegansEnv):
+class Imitation(ReferenceMotionMixin, worm_base.CelegansEnv):
     """Multi-clip imitation environment for C. elegans.
 
     This environment enables training agents to imitate reference motion clips
@@ -183,6 +184,7 @@ class Imitation(worm_base.CelegansEnv):
             body_names=self.body_names,
             root_body_name=self.root_name,
         )
+        self.initialize_reference_motion()
         max_n_clips = self.reference_clips.n_clips
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
@@ -267,6 +269,7 @@ class Imitation(worm_base.CelegansEnv):
         info: dict[str, Any] = {
             "start_frame": start_frame,
             "reference_clip": clip_idx,
+            "reference_step": jp.int32(0),
             "action_buffer": jp.zeros((self._config.var_window_size, self.action_size)),
             "buffer_index": 0,
         }
@@ -277,15 +280,15 @@ class Imitation(worm_base.CelegansEnv):
         ) * self._steps_for_cur_frame
 
         info["last_valid_frame"] = last_valid_frame
-        info["truncated"] = jp.astype(
-            self._get_cur_frame(data, info) > last_valid_frame, float
-        )
+        info["truncated"] = self.is_reference_truncated(data, info)
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
 
         obs = self._get_obs(data, info)
 
-        metrics = {"current_frame": jp.astype(self._get_cur_frame(data, info), float)}
+        metrics = {
+            "reference_frame_idx": self.get_reference_frame_idx(data, info),
+        }
 
         net_reward = self._get_reward(data, info, metrics)
         net_reward = jp.nan_to_num(net_reward)
@@ -310,14 +313,14 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Next environment state.
         """
+        # Preserve reference clocks in states saved for replay.
+        state = state.replace(info=state.info.copy(), metrics=state.metrics.copy())
         n_steps = self._n_steps
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
-        last_valid_frame = self.clip_length - self.reference_length - 1
-        info["truncated"] = jp.astype(
-            self._get_cur_frame(data, info) > last_valid_frame, float
-        )
+        info["reference_step"] = info["reference_step"] + 1
+        info["truncated"] = self.is_reference_truncated(data, info)
         info["prev_action"] = state.info["action"]
         info["action"] = action
 
@@ -330,7 +333,8 @@ class Imitation(worm_base.CelegansEnv):
 
         obs = self._get_obs(data, info)
 
-        done = self._is_done(data, info, state.metrics)
+        terminated = self._is_done(data, info, state.metrics)
+        done = jp.logical_or(terminated, info["truncated"])
 
         net_reward = self._get_reward(data, info, state.metrics)
         net_reward = jp.nan_to_num(net_reward)
@@ -342,8 +346,7 @@ class Imitation(worm_base.CelegansEnv):
             reward=net_reward,
             done=done.astype(float),
         )
-        current_frame = self._get_cur_frame(data, info)
-        state.metrics["current_frame"] = jp.astype(current_frame, float)
+        state.metrics["reference_frame_idx"] = self.get_reference_frame_idx(data, info)
 
         return state
 
@@ -422,7 +425,7 @@ class Imitation(worm_base.CelegansEnv):
             naconmax=self._config.contacts_per_world * self._num_worlds,
             njmax=self._config.constraints_per_world,
         )
-        reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
+        reference = self._reference_motion.sample(clip_idx, start_frame)
         data = data.replace(qpos=reference.qpos)
         if self._config.qvel_init == "default":
             pass
@@ -443,36 +446,6 @@ class Imitation(worm_base.CelegansEnv):
         """
         return jp.zeros(self.action_size)
 
-    def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
-        """Get the current frame index in the reference clip.
-
-        Args:
-            data: MuJoCo simulation data.
-            info: Environment info dictionary.
-
-        Returns:
-            Current frame index.
-        """
-        return jp.floor(data.time * self._config.mocap_hz + info["start_frame"]).astype(
-            int
-        )
-
-    def _get_current_target(
-        self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> ReferenceClips:
-        """Get reference data for the current timestep.
-
-        Args:
-            data: MuJoCo simulation data.
-            info: Environment info dictionary.
-
-        Returns:
-            Reference clips data for the current frame.
-        """
-        return self.reference_clips.at(
-            clip=info["reference_clip"], frame=self._get_cur_frame(data, info)
-        )
-
     def _get_reference_clip(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> ReferenceClips:
@@ -489,24 +462,6 @@ class Imitation(worm_base.CelegansEnv):
             clip=info["reference_clip"], start_frame=0, length=self.clip_length
         )
 
-    def _get_imitation_reference(
-        self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> ReferenceClips:
-        """Get future reference frames for imitation target.
-
-        Args:
-            data: MuJoCo simulation data.
-            info: Environment info dictionary.
-
-        Returns:
-            Reference clips data for future frames used as imitation target.
-        """
-        return self.reference_clips.slice(
-            clip=info["reference_clip"],
-            start_frame=self._get_cur_frame(data, info) + 1,
-            length=self.reference_length,
-        )  # TODO: Use reference_clips.slice instead
-
     def _get_imitation_target(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Mapping[str, jp.ndarray]:
@@ -520,7 +475,7 @@ class Imitation(worm_base.CelegansEnv):
             Dictionary containing target positions, orientations, and joint angles
             in the agent's egocentric coordinate frame.
         """
-        reference = self._get_imitation_reference(data, info)
+        reference = self.get_future_reference_states(data, info)
 
         root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
@@ -572,7 +527,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Tuple of (reward_value, distance_to_target).
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
 
         target_pos = target.body_xpos(self.root_name)[: self.config.dim]
         root_pos = self._get_root_pos(data)[: self.config.dim]
@@ -596,7 +551,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Tuple of (reward_value, angular_distance_in_degrees).
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
 
         target_quat = target.body_xquat(self.root_name)
         root_quat = self._get_root_quat(data)
@@ -623,7 +578,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Tuple of (reward_value, joint_space_l2_distance).
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         joints = self._get_joint_angles(data)
 
         error = target.joints - joints
@@ -651,7 +606,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Tuple of (reward_value, joint_velocity_l2_distance).
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
@@ -680,7 +635,7 @@ class Imitation(worm_base.CelegansEnv):
         """
         if bodies is None:
             bodies = self.body_names
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         body_pos = self._get_bodies_pos(data, flatten=False)
         total_dist_sqr = 0.0
         for body_name in bodies:
@@ -898,7 +853,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Boolean indicating if root is too far from reference.
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         target_pos = target.body_xpos(self.root_name)[: self.config.dim]
         root_pos = self._get_root_pos(data)[: self.config.dim]
         distance = jp.linalg.norm(target_pos - root_pos)
@@ -916,7 +871,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Boolean indicating if root is too rotated from reference.
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         target_quat = target.body_xquat(self.root_name)
         root_quat = self._get_root_quat(data)
         ang_dist = math_utils.quaternion_angle(root_quat, target_quat)
@@ -934,7 +889,7 @@ class Imitation(worm_base.CelegansEnv):
         Returns:
             Boolean indicating if pose error is too large.
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
@@ -1118,6 +1073,8 @@ class Imitation(worm_base.CelegansEnv):
         """
         if add_labels:
             import cv2
+        if render_ghost:
+            qposes_ref, qvels_ref = self.get_render_reference(trajectory)
         # Create a new spec with a ghost, without modifying the existing one
         pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.05})
         pos = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.05)]
@@ -1159,12 +1116,9 @@ class Imitation(worm_base.CelegansEnv):
             qpos = state.data.qpos
             qvel = state.data.qvel
             if render_ghost:
-                time_in_frames = state.data.time * self._config.mocap_hz
-                frame = jp.floor(time_in_frames + state.info["start_frame"]).astype(int)
                 clip = state.info["reference_clip"]
-                ref = self.reference_clips.at(clip=clip, frame=frame)
-                qpos = jp.concatenate((qpos, ref.qpos))
-                qvel = jp.concatenate((qvel, ref.qvel))
+                qpos = np.concatenate((qpos, qposes_ref[i]))
+                qvel = np.concatenate((qvel, qvels_ref[i]))
 
             mj_data_with_ghost.qpos = qpos
             mj_data_with_ghost.qvel = qvel
@@ -1252,16 +1206,7 @@ class Imitation(worm_base.CelegansEnv):
             qposes_rollout = np.asarray(rollout_source.data.qpos)
             qposes_ref = None
             if render_ghost:
-                clip_idx = int(
-                    np.asarray(rollout_source.info["reference_clip"]).reshape(-1)[0]
-                )
-                start_frame = np.asarray(rollout_source.info["start_frame"])
-                times = np.asarray(rollout_source.data.time)
-                frame_indices = np.floor(
-                    times * float(self._config.mocap_hz) + start_frame
-                ).astype(np.int32)
-                ref_qpos = np.asarray(self.reference_clips.qpos[clip_idx])
-                qposes_ref = ref_qpos[frame_indices]
+                qposes_ref, _ = self.get_render_reference(rollout_source)
 
         if render_ghost:
             pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.05})

@@ -15,6 +15,7 @@ from mujoco_playground._src import mjx_env
 
 from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.reference_clips import ReferenceClips, prepare_reference_clips
+from vnl_playground.tasks.reference_motion import ReferenceMotionMixin
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
@@ -82,7 +83,7 @@ def default_config() -> config_dict.ConfigDict:
     )
 
 
-class Imitation(fruitfly_base.FruitflyEnv):
+class Imitation(ReferenceMotionMixin, fruitfly_base.FruitflyEnv):
     """Multi-clip imitation environment for fruitfly."""
 
     _registry = _registry
@@ -120,6 +121,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
             root_body_name=self._config.root_body,
         )
 
+        self.initialize_reference_motion()
         max_n_clips = self.reference_clips.joints.shape[0]
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
@@ -160,15 +162,14 @@ class Imitation(fruitfly_base.FruitflyEnv):
         info: dict[str, Any] = {
             "start_frame": start_frame,
             "reference_clip": clip_idx,
+            "reference_step": jp.int32(0),
         }
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        truncated = self._get_cur_frame(data, info) > last_valid_frame
-        info["truncated"] = jp.astype(truncated, float)
+        info["truncated"] = self.is_reference_truncated(data, info)
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
 
         metrics = {
-            "current_frame": jp.astype(self._get_cur_frame(data, info), float),
+            "reference_frame_idx": self.get_reference_frame_idx(data, info),
         }
         obs = self._get_obs(data, info)
         reward = self._get_reward(data, info, metrics)
@@ -190,13 +191,14 @@ class Imitation(fruitfly_base.FruitflyEnv):
         Returns:
             mjx_env.State: The new state of the environment.
         """
+        # Preserve reference clocks in states saved for replay.
+        state = state.replace(info=state.info.copy(), metrics=state.metrics.copy())
         n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        truncated = self._get_cur_frame(data, info) > last_valid_frame
-        info["truncated"] = jp.astype(truncated, float)
+        info["reference_step"] = info["reference_step"] + 1
+        info["truncated"] = self.is_reference_truncated(data, info)
         info["prev_action"] = state.info["action"]
         info["action"] = action
 
@@ -215,8 +217,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
             reward=reward,
             done=done.astype(float),
         )
-        current_frame = self._get_cur_frame(data, info)
-        state.metrics["current_frame"] = jp.astype(current_frame, float)
+        state.metrics["reference_frame_idx"] = self.get_reference_frame_idx(data, info)
         return state
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -233,7 +234,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
             naconmax=self._config.contacts_per_world * self._num_worlds,
             njmax=self._config.constraints_per_world,
         )
-        reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
+        reference = self._reference_motion.sample(clip_idx, start_frame)
 
         data = data.replace(qpos=reference.qpos)
         if self._config.qvel_init == "default":
@@ -252,33 +253,11 @@ class Imitation(fruitfly_base.FruitflyEnv):
     def _clip_length(self):
         return self.reference_clips.joints.shape[1]
 
-    def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
-        time_in_frames = data.time * self._config.mocap_hz
-        return jp.floor(time_in_frames + info["start_frame"]).astype(int)
-
-    def _get_current_target(
-        self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> ReferenceClips:
-        """Get the reference data at the current frame."""
-        return self.reference_clips.at(
-            clip=info["reference_clip"], frame=self._get_cur_frame(data, info)
-        )
-
-    def _get_imitation_reference(
-        self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> ReferenceClips:
-        """Get the reference slice for observation."""
-        return self.reference_clips.slice(
-            clip=info["reference_clip"],
-            start_frame=self._get_cur_frame(data, info) + 1,
-            length=self._config.reference_length,
-        )
-
     def _get_imitation_target(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Mapping[str, jp.ndarray]:
         """Get the imitation target in egocentric coordinates."""
-        reference = self._get_imitation_reference(data, info)
+        reference = self.get_future_reference_states(data, info)
 
         root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
@@ -312,7 +291,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
     # Rewards
     @_registry.reward("root_pos")
     def _root_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         root_pos = self.root_body(data).xpos
         distance = jp.linalg.norm(target.root_position - root_pos)
         metrics["root_pos_distance"] = distance
@@ -322,7 +301,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
 
     @_registry.reward("root_quat")
     def _root_quat_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         root_quat = self.root_body(data).xquat
         ang_dist_degrees = math_utils.quaternion_angle(
             root_quat, target.root_quaternion, degrees=True
@@ -336,7 +315,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
 
     @_registry.reward("joints")
     def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         joints = self._get_joint_angles(data)
         distance = jp.linalg.norm(target.joints - joints)
         metrics["joint_l2_error"] = distance
@@ -346,7 +325,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
 
     @_registry.reward("joints_vel")
     def _joint_vels_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         metrics["joint_vel_l2_error"] = distance
@@ -355,7 +334,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
         return reward
 
     def _get_bodies_dist(self, data, info, metrics, bodies=consts.BODIES) -> float:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         body_pos = self._get_bodies_pos(data, flatten=False)
         total_dist_sqr = 0.0
         for body_name in bodies:
@@ -419,21 +398,21 @@ class Imitation(fruitfly_base.FruitflyEnv):
     # Termination
     @_registry.termination("root_too_far")
     def _root_too_far(self, data, info, max_distance) -> bool:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         root_pos = self.root_body(data).xpos
         distance = jp.linalg.norm(target.root_position - root_pos)
         return distance > max_distance
 
     @_registry.termination("root_too_rotated")
     def _root_too_rotated(self, data, info, max_degrees) -> bool:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         root_quat = self.root_body(data).xquat
         ang_dist = math_utils.quaternion_angle(root_quat, target.root_quaternion)
         return ang_dist > jp.deg2rad(max_degrees)
 
     @_registry.termination("pose_error")
     def _bad_pose(self, data, info, max_l2_error) -> bool:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
@@ -469,6 +448,7 @@ class Imitation(fruitfly_base.FruitflyEnv):
         Returns:
             Sequence[np.ndarray]: List of rendered frames.
         """
+        qposes_ref, qvels_ref = self.get_render_reference(trajectory)
         # Create a new spec with a ghost fly
         spec = self._spec.copy()
         ghost_fly = mujoco.MjSpec.from_file(self._walker_xml_path)
@@ -510,13 +490,9 @@ class Imitation(fruitfly_base.FruitflyEnv):
 
         rendered_frames = []
         for i, state in enumerate(trajectory):
-            time_in_frames = state.data.time * self._config.mocap_hz
-            frame = jp.floor(time_in_frames + state.info["start_frame"]).astype(int)
             clip = state.info["reference_clip"]
-            ref = self.reference_clips.at(clip=clip, frame=frame)
-
-            mj_data_with_ghost.qpos = jp.concatenate((state.data.qpos, ref.qpos))
-            mj_data_with_ghost.qvel = jp.concatenate((state.data.qvel, ref.qvel))
+            mj_data_with_ghost.qpos = np.concatenate((state.data.qpos, qposes_ref[i]))
+            mj_data_with_ghost.qvel = np.concatenate((state.data.qvel, qvels_ref[i]))
             mujoco.mj_forward(mj_model_with_ghost, mj_data_with_ghost)
             renderer.update_scene(
                 mj_data_with_ghost, camera=camera, scene_option=scene_option

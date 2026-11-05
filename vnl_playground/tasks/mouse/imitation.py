@@ -24,6 +24,7 @@ from vnl_playground.tasks.reference_clips import (
     ReferenceClips,
     prepare_reference_clips,
 )
+from vnl_playground.tasks.reference_motion import ReferenceMotionMixin
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 
@@ -71,7 +72,7 @@ def default_config() -> config_dict.ConfigDict:
 _registry = RewardRegistry()
 
 
-class MouseImitation(MouseBaseEnv):
+class MouseImitation(ReferenceMotionMixin, MouseBaseEnv):
     """Multi-clip imitation environment for mouse arm."""
 
     _registry = _registry
@@ -107,6 +108,7 @@ class MouseImitation(MouseBaseEnv):
         )
 
         # Setup clip set
+        self.initialize_reference_motion()
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
@@ -159,17 +161,16 @@ class MouseImitation(MouseBaseEnv):
         info: dict[str, Any] = {
             "start_frame": start_frame,
             "reference_clip": clip_idx,
+            "reference_step": jp.int32(0),
         }
 
         # Check if we've reached the end of the clip
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        truncated = self._get_cur_frame(data, info) > last_valid_frame
-        info["truncated"] = jp.astype(truncated, float)
+        info["truncated"] = self.is_reference_truncated(data, info)
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
 
         metrics = {
-            "current_frame": jp.astype(self._get_cur_frame(data, info), float),
+            "reference_frame_idx": self.get_reference_frame_idx(data, info),
         }
 
         obs = self._get_obs(data, info)
@@ -192,13 +193,14 @@ class MouseImitation(MouseBaseEnv):
         Returns:
             New environment state.
         """
+        # Preserve reference clocks in states saved for replay.
+        state = state.replace(info=state.info.copy(), metrics=state.metrics.copy())
         n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
-        last_valid_frame = self._clip_length() - self._config.reference_length - 1
-        truncated = self._get_cur_frame(data, info) > last_valid_frame
-        info["truncated"] = jp.astype(truncated, float)
+        info["reference_step"] = info["reference_step"] + 1
+        info["truncated"] = self.is_reference_truncated(data, info)
         info["prev_action"] = state.info["action"]
         info["action"] = action
 
@@ -217,8 +219,7 @@ class MouseImitation(MouseBaseEnv):
             reward=reward,
             done=done.astype(float),
         )
-        current_frame = self._get_cur_frame(data, info)
-        state.metrics["current_frame"] = jp.astype(current_frame, float)
+        state.metrics["reference_frame_idx"] = self.get_reference_frame_idx(data, info)
         return state
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -274,7 +275,7 @@ class MouseImitation(MouseBaseEnv):
             njmax=self._config.constraints_per_world,
         )
 
-        reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
+        reference = self._reference_motion.sample(clip_idx, start_frame)
         data = data.replace(qpos=reference.qpos)
 
         if self._config.qvel_init == "zeros":
@@ -301,54 +302,6 @@ class MouseImitation(MouseBaseEnv):
         """
         return self.reference_clips.qpos.shape[1]
 
-    def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
-        """Get current frame index based on simulation time.
-
-        Args:
-            data: MJX simulation data (uses data.time).
-            info: Episode info dict containing 'start_frame'.
-
-        Returns:
-            int: Current frame index in the reference clip.
-        """
-        time_in_frames = data.time * self._config.mocap_hz
-        return jp.floor(time_in_frames + info["start_frame"]).astype(int)
-
-    def _get_current_target(
-        self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> ReferenceClips:
-        """Get reference data at the current frame.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict containing 'reference_clip' and 'start_frame'.
-
-        Returns:
-            Reference clip sliced to the current frame.
-        """
-        return self.reference_clips.at(
-            clip=info["reference_clip"], frame=self._get_cur_frame(data, info)
-        )
-
-    def _get_imitation_reference(
-        self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> ReferenceClips:
-        """Get future reference frames for observation.
-
-        Args:
-            data: MJX simulation data.
-            info: Episode info dict containing 'reference_clip' and 'start_frame'.
-
-        Returns:
-            Slice of ``reference_length`` future frames starting
-                from current_frame + 1.
-        """
-        return self.reference_clips.slice(
-            clip=info["reference_clip"],
-            start_frame=self._get_cur_frame(data, info) + 1,
-            length=self._config.reference_length,
-        )
-
     def _get_imitation_target(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Mapping[str, jp.ndarray]:
@@ -362,7 +315,7 @@ class MouseImitation(MouseBaseEnv):
             Mapping[str, jp.ndarray]: OrderedDict with 'joint' (joint angle deltas)
                 and 'wrist' (wrist position deltas) targets.
         """
-        reference = self._get_imitation_reference(data, info)
+        reference = self.get_future_reference_states(data, info)
 
         # Joint angle targets (difference from current)
         joint_targets = reference.joints - data.qpos
@@ -392,7 +345,7 @@ class MouseImitation(MouseBaseEnv):
         Returns:
             float: Weighted Gaussian reward based on joint angle L2 error.
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         distance = jp.linalg.norm(target.joints - data.qpos)
         metrics["joint_l2_error"] = distance
         reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
@@ -413,7 +366,7 @@ class MouseImitation(MouseBaseEnv):
         Returns:
             float: Weighted Gaussian reward based on joint velocity L2 error.
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         distance = jp.linalg.norm(target.joints_velocity - data.qvel)
         metrics["joint_vel_l2_error"] = distance
         reward = math_utils.gaussian_reward(distance, weight=weight, scale=exp_scale)
@@ -434,7 +387,7 @@ class MouseImitation(MouseBaseEnv):
         Returns:
             float: Weighted Gaussian reward based on wrist position L2 error.
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         wrist_pos = data.xpos[self._wrist_body_id]
         target_wrist = target.body_xpos("wrist_body")
         distance = jp.linalg.norm(wrist_pos - target_wrist)
@@ -457,7 +410,7 @@ class MouseImitation(MouseBaseEnv):
         Returns:
             float: Weighted Gaussian reward based on total body position L2 error.
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         total_dist_sqr = 0.0
         for body_name, body_id in self._body_ids.items():
             body_pos = data.xpos[body_id]
@@ -521,7 +474,7 @@ class MouseImitation(MouseBaseEnv):
         Returns:
             bool: True if joint L2 error exceeds max_l2_error.
         """
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         pose_error = jp.linalg.norm(target.joints - data.qpos)
         return pose_error > max_l2_error
 
@@ -548,6 +501,7 @@ class MouseImitation(MouseBaseEnv):
         camera: str | None = None,
         scene_option: mujoco.MjvOption | None = None,
         modify_scene_fns: Sequence[Callable[[mujoco.MjvScene], None]] | None = None,
+        *,
         render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """Render a trajectory with optional ghost showing reference motion.
@@ -558,14 +512,14 @@ class MouseImitation(MouseBaseEnv):
             width: Rendered frame width.
             camera: Camera name or None for default.
             scene_option: MuJoCo scene options.
-            modify_scene_fns: Optional per-frame functions applied to the scene
-                before rendering.
+            modify_scene_fns: Functions to modify the scene before rendering each frame.
             render_ghost: Whether to render ghost showing reference pose.
 
         Returns:
             List of rendered frames as numpy arrays.
         """
         if render_ghost:
+            qposes_ref, qvels_ref = self.get_render_reference(trajectory)
             # Create model with ghost mouse for visualization
             spec = self._spec.copy()
 
@@ -600,13 +554,9 @@ class MouseImitation(MouseBaseEnv):
 
         rendered_frames = []
         for i, state in enumerate(trajectory):
-            frame_idx = self._get_cur_frame(state.data, state.info)
-            clip_idx = state.info["reference_clip"]
-            ref = self.reference_clips.at(clip=clip_idx, frame=frame_idx)
-
             if render_ghost:
-                mj_data.qpos = jp.concatenate([state.data.qpos, ref.qpos])
-                mj_data.qvel = jp.concatenate([state.data.qvel, ref.qvel])
+                mj_data.qpos = np.concatenate([state.data.qpos, qposes_ref[i]])
+                mj_data.qvel = np.concatenate([state.data.qvel, qvels_ref[i]])
             else:
                 mj_data.qpos = state.data.qpos
                 mj_data.qvel = state.data.qvel

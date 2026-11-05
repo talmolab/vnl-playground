@@ -107,6 +107,9 @@ ignore = [
 "vnl_playground/tasks/reference_clips.py" = [
     "F722",  # jaxtyping variadic dimensions such as "*batch nq"
 ]
+"vnl_playground/tasks/reference_motion.py" = [
+    "F722",  # jaxtyping array shape annotations
+]
 "vnl_playground/train_*.py" = [
     "E402",  # entrypoints configure rendering/JAX before accelerator imports
 ]
