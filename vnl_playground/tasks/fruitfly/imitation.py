@@ -448,6 +448,7 @@ class Imitation(ReferenceMotionMixin, fruitfly_base.FruitflyEnv):
         Returns:
             Sequence[np.ndarray]: List of rendered frames.
         """
+        qposes_ref, qvels_ref = self.get_render_reference(trajectory)
         # Create a new spec with a ghost fly
         spec = self._spec.copy()
         ghost_fly = mujoco.MjSpec.from_file(self._walker_xml_path)
@@ -490,10 +491,8 @@ class Imitation(ReferenceMotionMixin, fruitfly_base.FruitflyEnv):
         rendered_frames = []
         for i, state in enumerate(trajectory):
             clip = state.info["reference_clip"]
-            ref = self.get_current_reference_state(state.data, state.info)
-
-            mj_data_with_ghost.qpos = jp.concatenate((state.data.qpos, ref.qpos))
-            mj_data_with_ghost.qvel = jp.concatenate((state.data.qvel, ref.qvel))
+            mj_data_with_ghost.qpos = np.concatenate((state.data.qpos, qposes_ref[i]))
+            mj_data_with_ghost.qvel = np.concatenate((state.data.qvel, qvels_ref[i]))
             mujoco.mj_forward(mj_model_with_ghost, mj_data_with_ghost)
             renderer.update_scene(
                 mj_data_with_ghost, camera=camera, scene_option=scene_option

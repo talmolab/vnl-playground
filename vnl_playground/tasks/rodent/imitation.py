@@ -516,6 +516,8 @@ class Imitation(ReferenceMotionMixin, rodent_base.RodentEnv):
         Returns:
             Sequence[np.ndarray]: List of rendered frames as numpy arrays.
         """
+        if render_ghost:
+            qposes_ref, qvels_ref = self.get_render_reference(trajectory)
         mj_model = self._compile_with_ghost() if render_ghost else self.mj_model
         mj_data = mujoco.MjData(mj_model)
 
@@ -526,11 +528,9 @@ class Imitation(ReferenceMotionMixin, rodent_base.RodentEnv):
         rendered_frames = []
         for i, state in enumerate(trajectory):
             clip = state.info["reference_clip"]
-            ref = self.get_current_reference_state(state.data, state.info)
-
             if render_ghost:
-                mj_data.qpos = jp.concatenate((state.data.qpos, ref.qpos))
-                mj_data.qvel = jp.concatenate((state.data.qvel, ref.qvel))
+                mj_data.qpos = np.concatenate((state.data.qpos, qposes_ref[i]))
+                mj_data.qvel = np.concatenate((state.data.qvel, qvels_ref[i]))
             else:
                 mj_data.qpos = state.data.qpos
                 mj_data.qvel = state.data.qvel
@@ -615,11 +615,7 @@ class Imitation(ReferenceMotionMixin, rodent_base.RodentEnv):
             qposes_rollout = np.asarray(rollout_source.data.qpos)
             qposes_ref = None
             if render_ghost:
-                qposes_ref = np.asarray(
-                    self.get_current_reference_state(
-                        rollout_source.data, rollout_source.info
-                    ).qpos
-                )
+                qposes_ref, _ = self.get_render_reference(rollout_source)
 
         if render_ghost:
             mj_model = self._compile_with_ghost()

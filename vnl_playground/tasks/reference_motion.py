@@ -1,12 +1,14 @@
 """Shared continuous reference poses and clocks for dense imitation tasks."""
 
 import math
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
 import jax
 import jax.numpy as jp
 import mujoco
+import numpy as np
 from jaxtyping import Array, Bool, Float, Integer
 from mujoco import mjx
 
@@ -168,15 +170,35 @@ class ReferenceMotionMixin:
             raise ValueError("reference_length and reference_stride must be positive.")
         self._reference_frame_offsets = 1 + jp.arange(length) * stride
 
+        @jax.jit
+        def render_targets(info):
+            reference = self.get_current_reference_state(None, info)
+            # Returning only joint state lets XLA discard reference FK.
+            return reference.qpos, reference.qvel
+
+        self._render_targets = render_targets
+
+    def get_render_reference(self, trajectory: Any) -> tuple[np.ndarray, np.ndarray]:
+        """Prepare host qpos/qvel for a sequence of states or stacked states."""
+        keys = ("reference_clip", "start_frame", "reference_step")
+        if isinstance(trajectory, Sequence):
+            info = {
+                key: jp.asarray([state.info[key] for state in trajectory])
+                for key in keys
+            }
+        else:
+            info = {key: trajectory.info[key] for key in keys}
+        return jax.device_get(self._render_targets(info))
+
     def get_reference_frame_idx(
-        self, data: mjx.Data, info: dict[str, Any]
+        self, data: mjx.Data | None, info: dict[str, Any]
     ) -> Float[Array, "..."]:
         """Continuous frame position; integer steps avoid accumulated clock drift."""
         elapsed = info["reference_step"] * self._reference_control_dt
         return elapsed * self._reference_motion.mocap_hz + info["start_frame"]
 
     def get_current_reference_state(
-        self, data: mjx.Data, info: dict[str, Any]
+        self, data: mjx.Data | None, info: dict[str, Any]
     ) -> ReferenceClips:
         """The exact reference used by rewards, termination, export and rendering."""
         return self._reference_motion.sample(

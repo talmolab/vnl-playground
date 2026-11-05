@@ -519,6 +519,7 @@ class MouseImitation(ReferenceMotionMixin, MouseBaseEnv):
             List of rendered frames as numpy arrays.
         """
         if render_ghost:
+            qposes_ref, qvels_ref = self.get_render_reference(trajectory)
             # Create model with ghost mouse for visualization
             spec = self._spec.copy()
 
@@ -553,11 +554,9 @@ class MouseImitation(ReferenceMotionMixin, MouseBaseEnv):
 
         rendered_frames = []
         for i, state in enumerate(trajectory):
-            ref = self.get_current_reference_state(state.data, state.info)
-
             if render_ghost:
-                mj_data.qpos = jp.concatenate([state.data.qpos, ref.qpos])
-                mj_data.qvel = jp.concatenate([state.data.qvel, ref.qvel])
+                mj_data.qpos = np.concatenate([state.data.qpos, qposes_ref[i]])
+                mj_data.qvel = np.concatenate([state.data.qvel, qvels_ref[i]])
             else:
                 mj_data.qpos = state.data.qpos
                 mj_data.qvel = state.data.qvel

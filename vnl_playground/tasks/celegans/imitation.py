@@ -1073,6 +1073,8 @@ class Imitation(ReferenceMotionMixin, worm_base.CelegansEnv):
         """
         if add_labels:
             import cv2
+        if render_ghost:
+            qposes_ref, qvels_ref = self.get_render_reference(trajectory)
         # Create a new spec with a ghost, without modifying the existing one
         pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.05})
         pos = [pos.get("x", 0.0), pos.get("y", 0.0), pos.get("z", 0.05)]
@@ -1115,9 +1117,8 @@ class Imitation(ReferenceMotionMixin, worm_base.CelegansEnv):
             qvel = state.data.qvel
             if render_ghost:
                 clip = state.info["reference_clip"]
-                ref = self.get_current_reference_state(state.data, state.info)
-                qpos = jp.concatenate((qpos, ref.qpos))
-                qvel = jp.concatenate((qvel, ref.qvel))
+                qpos = np.concatenate((qpos, qposes_ref[i]))
+                qvel = np.concatenate((qvel, qvels_ref[i]))
 
             mj_data_with_ghost.qpos = qpos
             mj_data_with_ghost.qvel = qvel
@@ -1205,11 +1206,7 @@ class Imitation(ReferenceMotionMixin, worm_base.CelegansEnv):
             qposes_rollout = np.asarray(rollout_source.data.qpos)
             qposes_ref = None
             if render_ghost:
-                qposes_ref = np.asarray(
-                    self.get_current_reference_state(
-                        rollout_source.data, rollout_source.info
-                    ).qpos
-                )
+                qposes_ref, _ = self.get_render_reference(rollout_source)
 
         if render_ghost:
             pos = self.config.get("init_pos", {"x": 0.0, "y": 0.0, "z": 0.05})

@@ -495,6 +495,8 @@ class Imitation(ReferenceMotionMixin, stick_base.StickBugEnv):
         render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """Renders a sequence of states with optional ghost stick bug."""
+        if render_ghost:
+            qposes_ref, qvels_ref = self.get_render_reference(trajectory)
         mj_model = self._compile_with_ghost() if render_ghost else self.mj_model
         mj_model.vis.global_.offwidth = width
         mj_model.vis.global_.offheight = height
@@ -506,11 +508,9 @@ class Imitation(ReferenceMotionMixin, stick_base.StickBugEnv):
 
         rendered_frames = []
         for i, state in enumerate(trajectory):
-            ref = self.get_current_reference_state(state.data, state.info)
-
             if render_ghost:
-                mj_data.qpos = jp.concatenate((state.data.qpos, ref.qpos))
-                mj_data.qvel = jp.concatenate((state.data.qvel, ref.qvel))
+                mj_data.qpos = np.concatenate((state.data.qpos, qposes_ref[i]))
+                mj_data.qvel = np.concatenate((state.data.qvel, qvels_ref[i]))
             else:
                 mj_data.qpos = state.data.qpos
                 mj_data.qvel = state.data.qvel
@@ -549,11 +549,7 @@ class Imitation(ReferenceMotionMixin, stick_base.StickBugEnv):
             qposes_rollout = np.asarray(rollout_source.data.qpos)
             qposes_ref = None
             if render_ghost:
-                qposes_ref = np.asarray(
-                    self.get_current_reference_state(
-                        rollout_source.data, rollout_source.info
-                    ).qpos
-                )
+                qposes_ref, _ = self.get_render_reference(rollout_source)
 
         if render_ghost and qposes_ref is None:
             warnings.warn(
