@@ -11,6 +11,12 @@ jobs:
   checks:
     name: Lint and test
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    env:
+      JAX_PLATFORMS: cpu
+      MUJOCO_GL: disable  # CPU tests do not render images or need EGL.
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -18,11 +24,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install check dependencies
+      - name: Install project and check dependencies
         run: |
-          pip install ruff jax h5py pyyaml jaxtyping pytest
+          pip install -e ".[dev]"
+          pip check
 
       - name: Run Ruff format check
         run: |
@@ -32,10 +39,6 @@ jobs:
         run: |
           ruff check vnl_playground/ tests/
 
-      # NOTE: only the reference-clip tests run here. The stick tests
-      # (tests/test_stick_*.py) need mujoco + mujoco-mjx and an EGL-capable
-      # runner, which this job does not install, so they are lint-checked
-      # above but executed locally only. See issue on wiring them into CI.
-      - name: Test reference data loading
+      - name: Run tests
         run: |
-          pytest -q tests/test_reference_clips.py
+          pytest -q tests/
