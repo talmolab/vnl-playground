@@ -16,7 +16,7 @@ jobs:
         python-version: ["3.11", "3.12"]
     env:
       JAX_PLATFORMS: cpu
-      MUJOCO_GL: egl
+      MUJOCO_GL: disable  # CPU tests do not render images or need EGL.
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
