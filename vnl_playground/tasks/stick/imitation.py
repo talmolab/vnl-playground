@@ -22,6 +22,7 @@ from mujoco_playground._src import mjx_env
 
 from vnl_playground.tasks import math_utils
 from vnl_playground.tasks.reference_clips import ReferenceClips, prepare_reference_clips
+from vnl_playground.tasks.reference_motion import ReferenceMotionMixin
 from vnl_playground.tasks.reward_registry import RewardRegistry
 
 from .. import utils
@@ -86,7 +87,7 @@ def default_config() -> config_dict.ConfigDict:
 _registry = RewardRegistry()
 
 
-class Imitation(stick_base.StickBugEnv):
+class Imitation(ReferenceMotionMixin, stick_base.StickBugEnv):
     """Multi-clip imitation environment for stick bug."""
 
     _registry = _registry
@@ -132,6 +133,7 @@ class Imitation(stick_base.StickBugEnv):
             body_names=self._config.bodies,
             root_body_name=self._config.root_body,
         )
+        self.initialize_reference_motion()
         max_n_clips = self.reference_clips.qpos.shape[0]
         if self._config.clip_set == "all":
             self._clip_set = max_n_clips
@@ -171,14 +173,14 @@ class Imitation(stick_base.StickBugEnv):
         info: dict[str, Any] = {
             "start_frame": start_frame,
             "reference_clip": clip_idx,
+            "reference_step": jp.int32(0),
         }
-        truncated = self._get_cur_frame(data, info) > self._last_valid_frame()
-        info["truncated"] = jp.astype(truncated, float)
+        info["truncated"] = self.is_reference_truncated(data, info)
         info["prev_action"] = self.null_action()
         info["action"] = self.null_action()
 
         metrics = {
-            "current_frame": jp.astype(self._get_cur_frame(data, info), float),
+            "reference_frame_idx": self.get_reference_frame_idx(data, info),
         }
         obs = self._get_obs(data, info)
         reward = self._get_reward(data, info, metrics)
@@ -191,12 +193,14 @@ class Imitation(stick_base.StickBugEnv):
         state: mjx_env.State,
         action: jax.Array,
     ) -> mjx_env.State:
+        # Preserve reference clocks in states saved for replay.
+        state = state.replace(info=state.info.copy(), metrics=state.metrics.copy())
         n_steps = int(self._config.ctrl_dt / self._config.sim_dt)
         data = mjx_env.step(self.mjx_model, state.data, action, n_steps)
 
         info = state.info
-        truncated = self._get_cur_frame(data, info) > self._last_valid_frame()
-        info["truncated"] = jp.astype(truncated, float)
+        info["reference_step"] = info["reference_step"] + 1
+        info["truncated"] = self.is_reference_truncated(data, info)
         info["prev_action"] = state.info["action"]
         info["action"] = action
 
@@ -213,8 +217,7 @@ class Imitation(stick_base.StickBugEnv):
             reward=reward,
             done=done.astype(float),
         )
-        current_frame = self._get_cur_frame(data, info)
-        state.metrics["current_frame"] = jp.astype(current_frame, float)
+        state.metrics["reference_frame_idx"] = self.get_reference_frame_idx(data, info)
         return state
 
     def _get_obs(self, data: mjx.Data, info: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -231,7 +234,7 @@ class Imitation(stick_base.StickBugEnv):
             naconmax=self._config.contacts_per_world * self._num_worlds,
             njmax=self._config.constraints_per_world,
         )
-        reference = self.reference_clips.at(clip=clip_idx, frame=start_frame)
+        reference = self._reference_motion.sample(clip_idx, start_frame)
         _assert_all_are_prefix(
             reference.joint_names,
             self.get_joint_names(),
@@ -261,31 +264,10 @@ class Imitation(stick_base.StickBugEnv):
             - 2
         )
 
-    def _get_cur_frame(self, data: mjx.Data, info: Mapping[str, Any]) -> int:
-        time_in_frames = data.time * self._config.mocap_hz
-        return jp.floor(time_in_frames + info["start_frame"]).astype(int)
-
-    def _get_current_target(
-        self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> ReferenceClips:
-        return self.reference_clips.at(
-            clip=info["reference_clip"], frame=self._get_cur_frame(data, info)
-        )
-
-    def _get_imitation_reference(
-        self, data: mjx.Data, info: Mapping[str, Any]
-    ) -> ReferenceClips:
-        return self.reference_clips.slice(
-            clip=info["reference_clip"],
-            start_frame=self._get_cur_frame(data, info) + 1,
-            length=self._config.reference_length,
-            stride=self._config.reference_stride,
-        )
-
     def _get_imitation_target(
         self, data: mjx.Data, info: Mapping[str, Any]
     ) -> Mapping[str, jp.ndarray]:
-        reference = self._get_imitation_reference(data, info)
+        reference = self.get_future_reference_states(data, info)
 
         root_pos = self.root_body(data).xpos
         root_quat = self.root_body(data).xquat
@@ -325,7 +307,7 @@ class Imitation(stick_base.StickBugEnv):
     # Rewards
     @_registry.reward("root_pos")
     def _root_pos_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         root_pos = self.root_body(data).xpos
         distance = jp.linalg.norm(target.root_position - root_pos)
         metrics["root_pos_distance"] = distance
@@ -335,7 +317,7 @@ class Imitation(stick_base.StickBugEnv):
 
     @_registry.reward("root_quat")
     def _root_quat_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         root_quat = self.root_body(data).xquat
         ang_dist_degrees = math_utils.quaternion_angle(
             root_quat, target.root_quaternion, degrees=True
@@ -349,7 +331,7 @@ class Imitation(stick_base.StickBugEnv):
 
     @_registry.reward("joints")
     def _joints_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         joints = self._get_joint_angles(data)
         distance = jp.linalg.norm(target.joints - joints)
         metrics["joint_l2_error"] = distance
@@ -359,7 +341,7 @@ class Imitation(stick_base.StickBugEnv):
 
     @_registry.reward("joints_vel")
     def _joint_vels_reward(self, data, info, metrics, weight, exp_scale) -> float:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         joint_vels = self._get_joint_ang_vels(data)
         distance = jp.linalg.norm(target.joints_velocity - joint_vels)
         metrics["joint_vel_l2_error"] = distance
@@ -368,7 +350,7 @@ class Imitation(stick_base.StickBugEnv):
         return reward
 
     def _get_bodies_dist(self, data, info, metrics, bodies=consts.BODIES) -> float:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         body_pos = self._get_bodies_pos(data, flatten=False)
         total_dist_sqr = 0.0
         for body_name in bodies:
@@ -456,7 +438,7 @@ class Imitation(stick_base.StickBugEnv):
         in ~2 control steps before PPO can learn anything. Horizontal
         drift is the actually-meaningful signal for "policy lost track
         of the reference location"."""
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         root_pos = self.root_body(data).xpos
         # x, y components only — z drift (falling) is allowed.
         distance = jp.linalg.norm((target.root_position - root_pos)[:2])
@@ -464,14 +446,14 @@ class Imitation(stick_base.StickBugEnv):
 
     @_registry.termination("root_too_rotated")
     def _root_too_rotated(self, data, info, max_degrees) -> bool:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         root_quat = self.root_body(data).xquat
         ang_dist = math_utils.quaternion_angle(root_quat, target.root_quaternion)
         return ang_dist > jp.deg2rad(max_degrees)
 
     @_registry.termination("pose_error")
     def _bad_pose(self, data, info, max_l2_error) -> bool:
-        target = self._get_current_target(data, info)
+        target = self.get_current_reference_state(data, info)
         joints = self._get_joint_angles(data)
         pose_error = jp.linalg.norm(target.joints - joints)
         return pose_error > max_l2_error
@@ -484,9 +466,7 @@ class Imitation(stick_base.StickBugEnv):
         """Compile a new MjModel with an attached transparent ghost stick."""
         spec = self._spec.copy()
         ghost_stick = mujoco.MjSpec.from_file(self._walker_xml_path)
-        ghost_rescale = self.reference_clips.scale_factor
-        if ghost_rescale is None:
-            ghost_rescale = self._config.rescale_factor
+        ghost_rescale = self._config.rescale_factor
         if ghost_rescale != 1.0:
             ghost_stick = utils.scale_spec(
                 ghost_stick, ghost_rescale, root_body="reference_base"
@@ -515,6 +495,8 @@ class Imitation(stick_base.StickBugEnv):
         render_ghost: bool = True,
     ) -> Sequence[np.ndarray]:
         """Renders a sequence of states with optional ghost stick bug."""
+        if render_ghost:
+            qposes_ref, qvels_ref = self.get_render_reference(trajectory)
         mj_model = self._compile_with_ghost() if render_ghost else self.mj_model
         mj_model.vis.global_.offwidth = width
         mj_model.vis.global_.offheight = height
@@ -526,14 +508,9 @@ class Imitation(stick_base.StickBugEnv):
 
         rendered_frames = []
         for i, state in enumerate(trajectory):
-            time_in_frames = state.data.time * self._config.mocap_hz
-            frame = jp.floor(time_in_frames + state.info["start_frame"]).astype(int)
-            clip = state.info["reference_clip"]
-            ref = self.reference_clips.at(clip=clip, frame=frame)
-
             if render_ghost:
-                mj_data.qpos = jp.concatenate((state.data.qpos, ref.qpos))
-                mj_data.qvel = jp.concatenate((state.data.qvel, ref.qvel))
+                mj_data.qpos = np.concatenate((state.data.qpos, qposes_ref[i]))
+                mj_data.qvel = np.concatenate((state.data.qvel, qvels_ref[i]))
             else:
                 mj_data.qpos = state.data.qpos
                 mj_data.qvel = state.data.qvel
@@ -572,16 +549,7 @@ class Imitation(stick_base.StickBugEnv):
             qposes_rollout = np.asarray(rollout_source.data.qpos)
             qposes_ref = None
             if render_ghost:
-                clip_idx = int(
-                    np.asarray(rollout_source.info["reference_clip"]).reshape(-1)[0]
-                )
-                start_frame = np.asarray(rollout_source.info["start_frame"])
-                times = np.asarray(rollout_source.data.time)
-                frame_indices = np.floor(
-                    times * float(self._config.mocap_hz) + start_frame
-                ).astype(np.int32)
-                ref_qpos = np.asarray(self.reference_clips.qpos[clip_idx])
-                qposes_ref = ref_qpos[frame_indices]
+                qposes_ref, _ = self.get_render_reference(rollout_source)
 
         if render_ghost and qposes_ref is None:
             warnings.warn(
