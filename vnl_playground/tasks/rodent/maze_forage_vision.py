@@ -34,7 +34,8 @@ torso has been nearest to this episode), ``info["critic_priv"]``
 + 5``: visited map, collected mask, yaw-frame planar treat vectors, torso xy,
 heading cos / sin, step fraction -- see ``_write_critic_priv``) and the metric
 ``maze/visited_cells``, at reset and at the end of ``step`` (post-step state).
-The DMPO entry point stores ``critic_priv`` per step
+The vector is float32 unless ``config.maze_critic_priv_dtype`` is
+``"float16"``.  The DMPO entry point stores ``critic_priv`` per step
 (``network_config.critic_privileged_dim``); only the critic reads it, so the
 policy's observation is unchanged.  ``privileged_state`` above is a different,
 unrelated channel and still reaches nothing.
@@ -305,6 +306,11 @@ def default_config() -> config_dict.ConfigDict:
         # critic_privileged_dim``); it is not in the policy's observation.
         # RodentSpoutMazeVision has its own critic_priv and refuses True.
         maze_critic_priv=False,
+        # Dtype of ``info["critic_priv"]`` (and so of its replay field):
+        # "float32" or "float16".  float16 halves the field (264 dims: 1056 ->
+        # 528 B/step) and the transient full-buffer copy XLA makes of it in the
+        # fused step; the critic promotes it back to float32 on concatenation.
+        maze_critic_priv_dtype="float32",
         # --- Vision (rendered by VisionRenderWrapper, not by this env) ---
         vision=True,
         vision_width=64,
@@ -448,6 +454,13 @@ class MazeForageVision(rodent_base.RodentEnv):
         self._include_origin = bool(self._config.get("include_origin", False))
         # .get: configs saved before this key existed do not have it.
         self._maze_critic_priv = bool(self._config.get("maze_critic_priv", False))
+        _priv_dtype = str(self._config.get("maze_critic_priv_dtype", "float32"))
+        if _priv_dtype not in ("float32", "float16"):
+            raise ValueError(
+                "maze_critic_priv_dtype must be 'float32' or 'float16', got "
+                f"{_priv_dtype!r}."
+            )
+        self._critic_priv_dtype = jp.dtype(_priv_dtype)
 
         # --- Host-side maze construction (runs once, never under trace) ---
         self._maze_grid = maze_utils.generate_maze(
@@ -1608,7 +1621,8 @@ class MazeForageVision(rodent_base.RodentEnv):
     ) -> None:
         """Writes ``info["visited"]``, ``info["critic_priv"]`` and ``maze/visited_cells``.
 
-        ``critic_priv`` layout (``float32[critic_priv_dim]``, in this order):
+        ``critic_priv`` layout (``critic_priv_dim`` entries of
+        ``maze_critic_priv_dtype``, float32 by default, in this order):
 
         * ``visited`` as 0/1 (``n_free_cells``);
         * ``collected`` as 0/1 (``n_treats``), from ``info["collected"]``;
@@ -1660,7 +1674,7 @@ class MazeForageVision(rodent_base.RodentEnv):
                 jp.stack([cos_yaw, sin_yaw]),
                 step_frac[None],
             ]
-        ).astype(jp.float32)
+        ).astype(self._critic_priv_dtype)
         metrics["maze/visited_cells"] = jp.sum(visited).astype(jp.float32)
 
     def _park_collected_treats(self, data: mjx.Data, collected: jp.ndarray) -> mjx.Data:

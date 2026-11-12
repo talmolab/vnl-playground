@@ -508,8 +508,8 @@ _DEFAULT_ENVS = [
 _ENV_IDS = [e[0] for e in _DEFAULT_ENVS]
 _ENV_PARAMS = [e[1:] for e in _DEFAULT_ENVS]
 
-# Config keys this file's feature adds; each is off by default.
-_NEW_KEYS = {"maze_critic_priv": False}
+# Config keys this file's feature adds, at their default (off) values.
+_NEW_KEYS = {"maze_critic_priv": False, "maze_critic_priv_dtype": "float32"}
 
 
 def _configs(ref_modules, cls_name, overrides):
@@ -619,3 +619,73 @@ def test_default_off_runs_identically_to_the_reference(
             ".info",
         ):
             assert any(leaf in c for c in compared), (i, leaf)
+
+
+# ---------------------------------------------------------------------------
+# Storage dtype (maze_critic_priv_dtype)
+# ---------------------------------------------------------------------------
+
+
+def test_critic_priv_dtype_defaults_to_float32():
+    assert mfv.default_config().maze_critic_priv_dtype == "float32"
+
+
+def test_critic_priv_dtype_rejects_unknown():
+    with pytest.raises(ValueError, match="maze_critic_priv_dtype"):
+        _build_env(
+            maze_critic_priv=True,
+            episode_length=EPISODE_LENGTH,
+            maze_critic_priv_dtype="bfloat16",
+        )
+
+
+@pytest.fixture(scope="module")
+def env16():
+    return _build_env(
+        maze_critic_priv=True,
+        episode_length=EPISODE_LENGTH,
+        maze_critic_priv_dtype="float16",
+    )
+
+
+def test_float16_changes_only_the_vector_dtype(env, env16):
+    """Same structure as the float32 env; only ``info["critic_priv"]`` is float16."""
+    key = jax.random.PRNGKey(0)
+    action = jax.ShapeDtypeStruct((env.action_size,), jp.float32)
+    for fn in ("reset", "step"):
+        s32 = jax.eval_shape(env.reset, key)
+        s16 = jax.eval_shape(env16.reset, key)
+        if fn == "step":
+            s32 = jax.eval_shape(env.step, s32, action)
+            s16 = jax.eval_shape(env16.step, s16, action)
+        t32, t16 = ref_tools.shape_tree(s32), ref_tools.shape_tree(s16)
+        diff = {k for k in t32 if t32[k] != t16[k]}
+        assert diff == {".info['critic_priv']"}, (fn, diff)
+        assert s16.info["critic_priv"].dtype == jp.float16
+        assert s16.info["critic_priv"].shape == (env.critic_priv_dim,)
+
+
+@needs_gpu
+def test_float16_critic_priv_matches_float32(env, env16):
+    """``maze_critic_priv_dtype="float16"`` stores the same vector, rounded to f16."""
+    rng = jax.random.PRNGKey(3)
+    s32 = jax.jit(env.reset)(rng)
+    s16 = jax.jit(env16.reset)(rng)
+    assert s32.info["critic_priv"].dtype == jp.float32
+    assert s16.info["critic_priv"].dtype == jp.float16
+    np.testing.assert_allclose(
+        np.asarray(s16.info["critic_priv"], np.float32),
+        np.asarray(s32.info["critic_priv"]),
+        rtol=1e-3,
+        atol=1e-3,
+    )
+    a = jp.zeros(env16.action_size)
+    t32 = jax.jit(env.step)(s32, a)
+    t16 = jax.jit(env16.step)(s16, a)
+    assert t16.info["critic_priv"].dtype == jp.float16
+    np.testing.assert_allclose(
+        np.asarray(t16.info["critic_priv"], np.float32),
+        np.asarray(t32.info["critic_priv"]),
+        rtol=1e-3,
+        atol=1e-3,
+    )
