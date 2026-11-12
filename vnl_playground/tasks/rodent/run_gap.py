@@ -205,6 +205,8 @@ class RunGap(rodent_base.RodentEnv):
 
     def _apply_outdoor_natural_aesthetic(self) -> None:
         """Apply outdoor natural aesthetic: grass platforms, blue sky, better lighting."""
+        # The sky and grass textures are dm_control's `outdoor_natural` arena
+        # assets (Apache-2.0); see xmls/assets/README.md.
         assets_dir = pathlib.Path(__file__).parent / "xmls" / "assets"
 
         # Point MjSpec compiler at the assets directory so file= paths resolve
