@@ -68,6 +68,7 @@ _PARENT_TERMINATIONS = {
     "fallen",
     "timeout",
     "nan_termination",
+    "contact_termination",
 }
 
 

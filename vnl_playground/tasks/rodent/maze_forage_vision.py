@@ -206,7 +206,7 @@ from mujoco_playground._src import mjx_env
 
 from vnl_playground.tasks.reward_registry import RewardRegistry
 from vnl_playground.tasks.rodent import base as rodent_base
-from vnl_playground.tasks.rodent import consts, maze_utils
+from vnl_playground.tasks.rodent import consts, floor_contact, maze_utils
 
 _registry = RewardRegistry()
 
@@ -369,6 +369,10 @@ def default_config() -> config_dict.ConfigDict:
         # motion spends 8% of its frames past 85 deg (see _belly_up_termination
         # for the measured distribution). Both new criteria are rate-limited by
         # `patience` consecutive steps, which is what encodes "cannot recover".
+        # OPT-IN, deliberately absent here: `contact_termination: {}` (optional
+        # `allowed_bodies`, `margin`) adds dm_control's rule -- any walker geom
+        # outside foot_L/foot_R/hand_L/hand_R/vertebra_C1 touching the floor ends
+        # the episode at once, no patience (see _contact_termination).
         termination_criteria={
             "belly_up": {
                 "max_tilt_angle": 140.0,
@@ -545,6 +549,13 @@ class MazeForageVision(rodent_base.RodentEnv):
         # --- Post-compile index caching (host-side, never under trace) ---
         self._cache_treat_indices()
         self._cache_rodent_qpos_layout()
+        # Opt-in: only an env whose config lists `contact_termination` builds the
+        # floor-contact constants; every other env is untouched by it.
+        self._contact_plan: floor_contact.ContactPlan | None = None
+        if "contact_termination" in self._config.termination_criteria:
+            self._build_contact_termination(
+                self._config.termination_criteria["contact_termination"]
+            )
 
     # ------------------------------------------------------------------
     # Sizing (host-side, before anything geometric is built)
@@ -1355,6 +1366,36 @@ class MazeForageVision(rodent_base.RodentEnv):
         # the root's 6 dofs, matching the base class's full qfrc_actuator).
         self._rodent_root_dof = int(self._mj_model.jnt_dofadr[root_jnt_id])
 
+    def _build_contact_termination(self, cfg) -> None:
+        """Resolves the ``contact_termination`` candidate geoms (host side, once).
+
+        Args:
+            cfg: The criterion's config entry; ``allowed_bodies`` and ``margin``
+                (both optional) are read here, at build time, because the
+                per-geom constants are baked in as arrays.
+
+        Raises:
+            ValueError: See :func:`floor_contact.plan_contact_termination` -- an
+                allowed body that matches nothing, an unsupported candidate geom
+                type, a missing or tilted floor, or no candidate at all.
+        """
+        if cfg is None:
+            raise ValueError(
+                "termination_criteria.contact_termination is empty: write "
+                "`contact_termination: {}` for the defaults."
+            )
+        allowed = tuple(
+            str(b)
+            for b in cfg.get("allowed_bodies", floor_contact.DEFAULT_ALLOWED_BODIES)
+        )
+        self._contact_plan = floor_contact.plan_contact_termination(
+            self._mj_model,
+            walker_body=f"walker{self._suffix}",
+            allowed_bodies=allowed,
+            margin=float(cfg.get("margin", 0.0)),
+            suffix=self._suffix,
+        )
+
     # ------------------------------------------------------------------
     # Core environment interface
     # ------------------------------------------------------------------
@@ -2163,6 +2204,70 @@ class MazeForageVision(rodent_base.RodentEnv):
         """
         del info
         return jp.any(jp.isnan(data.qpos)) | jp.any(jp.isnan(data.qvel))
+
+    def contact_clearance(self, data: mjx.Data) -> jp.ndarray:
+        """Height of every ``contact_termination`` candidate geom above its trigger.
+
+        ``(n_candidates,)`` metres, in ``self._contact_plan.geom_names`` order;
+        negative means that geom touches the floor.  With ``margin = 0`` and no
+        geom margins it is the distance from the geom's lowest point to the
+        floor, so ``clearance.min()`` is how close the body gets to failing.
+
+        Args:
+            data: Simulation data (reads ``geom_xpos`` / ``geom_xmat`` only).
+
+        Raises:
+            RuntimeError: If the env was built without ``contact_termination``.
+        """
+        # getattr: the spout subclass skips this __init__ (and has no such criterion).
+        contact_plan = getattr(self, "_contact_plan", None)
+        if contact_plan is None:
+            raise RuntimeError(
+                "contact_clearance: this env was built without "
+                "termination_criteria.contact_termination."
+            )
+        return floor_contact.clearance(contact_plan, data.geom_xpos, data.geom_xmat, jp)
+
+    @_registry.termination("contact_termination")
+    def _contact_termination(
+        self,
+        data,
+        info,
+        allowed_bodies=floor_contact.DEFAULT_ALLOWED_BODIES,
+        margin: float = 0.0,
+    ) -> bool:
+        """dm_control's ``contact_termination``: any non-foot geom touching the floor.
+
+        Ends the episode on the step any walker geom OUTSIDE ``allowed_bodies``
+        touches the arena floor -- ``RandomGoalMaze.after_step`` /
+        ``_is_disallowed_contact`` with the rodent's ``ground_contact_geoms``.
+        Opt-in (dm_control's own ``rodent_maze_forage`` sets
+        ``contact_termination=False``): the default config does not list it.
+
+        There is no ``patience``: ``belly_up`` / ``torso_too_low`` wait 50 steps
+        so a rat that rights itself is not penalised; this one is dm_control's
+        zero-tolerance rule.  Walls and treats are not ground.
+
+        It is an exact geometric test against the floor plane, not a read of
+        ``data.contact``: under warp the contact list is one ``naconmax`` buffer
+        shared by all worlds, which a per-world function cannot slice without
+        the per-world copy :meth:`_nan_termination` documents.  See
+        :mod:`floor_contact` for the contact rule it reproduces and its
+        validation against MuJoCo's own contact list.
+
+        Args:
+            data: Simulation data (reads ``geom_xpos`` / ``geom_xmat``).
+            info: State info (unused).
+            allowed_bodies: Walker body names whose geoms -- and their
+                descendants' -- may touch the floor.  Read at build time.
+            margin: Extra distance in metres added to each geom's own margin.
+                Read at build time.
+
+        Returns:
+            Whether any candidate geom touches the floor.
+        """
+        del info, allowed_bodies, margin
+        return jp.any(self.contact_clearance(data) < 0.0)
 
     # ------------------------------------------------------------------
     # Utility methods and observation-size contract
