@@ -26,6 +26,19 @@ the MLP arch's ``privileged_state['task_obs']`` path still needs the key to
 exist.  If you want a genuinely asymmetric critic you have to teach the network
 factory to consume ``privileged_state`` first -- do not assume it already does.
 
+An asymmetric critic is opt-in, through ``config.maze_critic_priv`` (default
+**off**; the env is then bit-identical to the one without the flag).  When on,
+the env writes ``info["visited"]`` (``bool[n_free_cells]``, the free cells the
+torso has been nearest to this episode), ``info["critic_priv"]``
+(``float32[critic_priv_dim]``, ``critic_priv_dim = n_free_cells + 3 * n_treats
++ 5``: visited map, collected mask, yaw-frame planar treat vectors, torso xy,
+heading cos / sin, step fraction -- see ``_write_critic_priv``) and the metric
+``maze/visited_cells``, at reset and at the end of ``step`` (post-step state).
+The DMPO entry point stores ``critic_priv`` per step
+(``network_config.critic_privileged_dim``); only the critic reads it, so the
+policy's observation is unchanged.  ``privileged_state`` above is a different,
+unrelated channel and still reaches nothing.
+
 What is randomised, and what is not:
 
 * **Fixed for the whole run:** the maze layout.  It is generated once, host-side,
@@ -281,6 +294,17 @@ def default_config() -> config_dict.ConfigDict:
         # go_to_target_vision's task_obs contract (DESIGN.md 3e) includes it;
         # set this true to recover that contract exactly.
         include_origin=False,
+        # --- Privileged critic (default off; the env is bit-identical to the
+        # pre-flag one when False) ---
+        # True makes the env write ``info["visited"]`` (``bool[n_free_cells]``:
+        # the free cells the torso has been nearest to this episode) and
+        # ``info["critic_priv"]`` (``float32[critic_priv_dim]``: visited map,
+        # collected mask, yaw-frame planar treat vectors, torso xy, heading,
+        # step fraction), plus the metric ``maze/visited_cells``.  Only a
+        # privileged CRITIC may read the vector (``network_config.
+        # critic_privileged_dim``); it is not in the policy's observation.
+        # RodentSpoutMazeVision has its own critic_priv and refuses True.
+        maze_critic_priv=False,
         # --- Vision (rendered by VisionRenderWrapper, not by this env) ---
         vision=True,
         vision_width=64,
@@ -422,6 +446,8 @@ class MazeForageVision(rodent_base.RodentEnv):
         self._treat_reach_threshold = float(self._config.treat_reach_threshold)
         self._spawn_height = float(self._config.spawn_height)
         self._include_origin = bool(self._config.get("include_origin", False))
+        # .get: configs saved before this key existed do not have it.
+        self._maze_critic_priv = bool(self._config.get("maze_critic_priv", False))
 
         # --- Host-side maze construction (runs once, never under trace) ---
         self._maze_grid = maze_utils.generate_maze(
@@ -443,6 +469,18 @@ class MazeForageVision(rodent_base.RodentEnv):
         self._free_cell_xy_np = free_xy
         self._free_cell_xy = jp.array(free_xy, dtype=jp.float32)
         self._n_free_cells = int(free_xy.shape[0])
+        if self._maze_critic_priv:
+            if float(self._config.episode_length) <= 0.0:
+                raise ValueError(
+                    "maze_critic_priv=True needs episode_length > 0 (the vector "
+                    f"carries step_count / episode_length), got "
+                    f"{self._config.episode_length}."
+                )
+            # visited + collected + 2 * ego + torso xy + (cos, sin) + step frac.
+            self._critic_priv_dim = self._n_free_cells + 3 * self._n_treats + 2 + 2 + 1
+            # Instance attribute: the module constant INFO_RESET_KEYS and every
+            # flag-off env keep the old tuple.
+            self.info_reset_keys = (*INFO_RESET_KEYS, "visited", "critic_priv")
 
         half_x, half_y = maze_utils.maze_extent(self._cell_size, self._maze_grid.shape)
         self._maze_half_extent = (float(half_x), float(half_y))
@@ -1380,6 +1418,9 @@ class MazeForageVision(rodent_base.RodentEnv):
         data = mjx.forward(self.mjx_model, data)
 
         metrics = {}
+        if self._maze_critic_priv:
+            # Post-reset state: only the spawn cell is visited.
+            self._write_critic_priv(data, info, metrics, self._current_cell_mask(data))
         obs = self._get_obs(data, info)
         reward = self._get_reward(data, info, metrics)
         done = self._is_done(data, info, metrics)
@@ -1432,6 +1473,17 @@ class MazeForageVision(rodent_base.RodentEnv):
         # treat is gone from `data` (and therefore from the render) on the same
         # step it stops paying.
         data = self._park_collected_treats(data, collected)
+
+        if self._maze_critic_priv:
+            # Post-step state, after this step's collected update and step_count
+            # increment; the trainer stores it from the PRE-step state, so
+            # it lines up with the observation the policy acted on.
+            self._write_critic_priv(
+                data,
+                info,
+                state.metrics,
+                jp.logical_or(info["visited"], self._current_cell_mask(data)),
+            )
 
         obs = self._get_obs(data, info)
 
@@ -1534,6 +1586,82 @@ class MazeForageVision(rodent_base.RodentEnv):
         """Treat positions in the torso frame, shape ``(n_treats, 3)``."""
         torso = self._torso(data)
         return jp.dot(data.xpos[self._treat_body_ids] - torso.xpos, torso.xmat)
+
+    # ------------------------------------------------------------------
+    # Privileged critic vector (maze_critic_priv)
+    # ------------------------------------------------------------------
+
+    def _current_cell_mask(self, data: mjx.Data) -> jp.ndarray:
+        """Bool ``(n_free_cells,)``: True at the free cell nearest the torso xy.
+
+        Nearest by squared xy distance to the cell centres of
+        :attr:`free_cell_positions`, which are world xy in the same frame as
+        the torso ``xpos`` the rest of this env reads (``reset`` writes them
+        straight into the root / treat qpos).
+        """
+        torso_xy = self._torso(data).xpos[:2]
+        d2 = jp.sum((self._free_cell_xy - torso_xy) ** 2, axis=-1)
+        return jp.arange(self._n_free_cells) == jp.argmin(d2)
+
+    def _write_critic_priv(
+        self, data: mjx.Data, info: dict, metrics: dict, visited: jp.ndarray
+    ) -> None:
+        """Writes ``info["visited"]``, ``info["critic_priv"]`` and ``maze/visited_cells``.
+
+        ``critic_priv`` layout (``float32[critic_priv_dim]``, in this order):
+
+        * ``visited`` as 0/1 (``n_free_cells``);
+        * ``collected`` as 0/1 (``n_treats``), from ``info["collected"]``;
+        * the treats' PLANAR (x, y) vectors in the YAW-ONLY torso frame: the
+          world-frame difference ``treat xy - torso xy`` rotated by ``-yaw``
+          (the yaw of the heading entries below), divided by ``maze_extent / 2``
+          and zeroed for collected treats (``2 * n_treats``, treat-major: t0x,
+          t0y, t1x, ...).  Unlike :meth:`_egocentric_treat_vectors` (the
+          full-body-frame 3-D vectors the policy-side ``privileged_state``
+          uses, which this does NOT call) a pitched or rolled torso does not
+          mix z into these, so ``torso xy + R(yaw) @ ego * maze_extent / 2``
+          recovers the treat's world xy exactly;
+        * the torso world xy divided by ``maze_extent / 2`` (2);
+        * ``cos, sin`` of the torso yaw, the angle of its x axis projected on the
+          world plane (2; ``arctan2`` keeps it finite when that axis is vertical);
+        * ``step_count / episode_length`` (1), the count AFTER this step's
+          increment (0 at reset).
+
+        Mutates ``info`` and ``metrics``.
+        """
+        torso = self._torso(data)
+        half = float(self._config.maze_extent) / 2.0
+        collected = info["collected"]
+        yaw = jp.arctan2(torso.xmat[1, 0], torso.xmat[0, 0])
+        cos_yaw, sin_yaw = jp.cos(yaw), jp.sin(yaw)
+        # World-frame planar difference rotated by -yaw (yaw-only frame).
+        d_xy = data.xpos[self._treat_body_ids, :2] - torso.xpos[:2]
+        ego = (
+            jp.stack(
+                [
+                    cos_yaw * d_xy[:, 0] + sin_yaw * d_xy[:, 1],
+                    -sin_yaw * d_xy[:, 0] + cos_yaw * d_xy[:, 1],
+                ],
+                axis=-1,
+            )
+            / half
+        )
+        ego = jp.where(collected[:, None], 0.0, ego)
+        step_frac = info["step_count"].astype(jp.float32) / float(
+            self._config.episode_length
+        )
+        info["visited"] = visited
+        info["critic_priv"] = jp.concatenate(
+            [
+                visited.astype(jp.float32),
+                collected.astype(jp.float32),
+                ego.ravel(),
+                torso.xpos[:2] / half,
+                jp.stack([cos_yaw, sin_yaw]),
+                step_frac[None],
+            ]
+        ).astype(jp.float32)
+        metrics["maze/visited_cells"] = jp.sum(visited).astype(jp.float32)
 
     def _park_collected_treats(self, data: mjx.Data, collected: jp.ndarray) -> mjx.Data:
         """Hides every collected treat, in ``qpos`` *and* in the derived pose.
@@ -2114,6 +2242,24 @@ class MazeForageVision(rodent_base.RodentEnv):
     def n_treats(self) -> int:
         """Number of treats in the maze."""
         return self._n_treats
+
+    @property
+    def critic_priv_dim(self) -> int:
+        """Width of ``info["critic_priv"]``: ``n_free_cells + 3 * n_treats + 5``.
+
+        264 for the production maze (199 free cells, 20 treats).  This is the
+        ``network_config.critic_privileged_dim`` an arm on this env must set.
+
+        Raises:
+            AttributeError: If the env was built with ``maze_critic_priv=False``
+                (or is the spout subclass, which has its own ``critic_priv``).
+        """
+        if not getattr(self, "_maze_critic_priv", False):
+            raise AttributeError(
+                "critic_priv_dim: this env was built with maze_critic_priv=False "
+                "(RodentSpoutMazeVision has its own critic_priv, not this one)."
+            )
+        return self._critic_priv_dim
 
     @property
     def vision_shape(self) -> tuple[int, int, int]:

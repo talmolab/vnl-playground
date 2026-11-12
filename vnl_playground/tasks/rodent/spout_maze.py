@@ -317,6 +317,13 @@ class RodentSpoutMazeVision(mfv.MazeForageVision):
         self._rng = rng
         cfg = self._config
 
+        # .get: configs saved before the parent's flag existed have no such key.
+        if bool(cfg.get("maze_critic_priv", False)):
+            raise ValueError(
+                "maze_critic_priv=True is for the full maze-forage env; "
+                "RodentSpoutMazeVision always writes its own info['critic_priv'] "
+                "(spout_logic.critic_privileged_vector). Drop the flag."
+            )
         if cfg.mujoco_impl != "warp":
             raise ValueError(
                 "RodentSpoutMazeVision requires mujoco_impl='warp' for rendering"
