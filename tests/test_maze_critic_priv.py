@@ -25,8 +25,8 @@ import numpy as np
 import pytest
 from mujoco import mjx
 
+from vnl_playground.tasks.rodent import maze_eval, spout_maze
 from vnl_playground.tasks.rodent import maze_forage_vision as mfv
-from vnl_playground.tasks.rodent import spout_maze
 
 _HAS_GPU = any(d.platform == "gpu" for d in jax.devices())
 _skip_without_gpu = pytest.mark.skipif(
@@ -689,3 +689,78 @@ def test_float16_critic_priv_matches_float32(env, env16):
         rtol=1e-3,
         atol=1e-3,
     )
+
+
+# ---------------------------------------------------------------------------
+# The eval path: DMPO eval rollout -> allenv -> maze_eval_summary
+# ---------------------------------------------------------------------------
+
+
+def _eval_allenv(base_env, shim, n_envs=3, t_len=60):
+    """``allenv`` of track-mjx's DMPO eval rollout on the training wrapper stack
+    (brax, ``full_reset``, ``episode_length=EPISODE_LENGTH``), zero actions."""
+    from mujoco_playground._src import wrapper as mp_wrapper
+
+    train_dmpo_eval = pytest.importorskip("track_mjx.agent.dmpo.train_dmpo_eval")
+
+    stacked = mp_wrapper.wrap_for_brax_training(
+        base_env, episode_length=EPISODE_LENGTH, action_repeat=1, full_reset=True
+    )
+    if shim:
+        stacked = maze_eval.MazeEvalMetricAlias(stacked, ("visited_cells",))
+    zeros = jp.zeros(base_env.action_size)
+    *_, allenv = train_dmpo_eval.run_eval_rollout_envzero(
+        env=stacked,
+        policy_apply=lambda params, obs: types.SimpleNamespace(mode=lambda: zeros),
+        params=None,
+        rng=jax.random.PRNGKey(0),
+        episode_length=t_len,
+        num_envs=n_envs,
+    )
+    return allenv
+
+
+@needs_gpu
+def test_eval_shim_carries_visited_cells_into_allenv_and_the_summary(env):
+    allenv = _eval_allenv(env, shim=True)
+    assert maze_eval.MAZE_ALIAS + "visited_cells" in allenv
+    assert (
+        "maze/visited_cells" not in allenv
+    )  # the rollout does not carry `maze/` itself
+    for key in (
+        "rewards/treat_collected",
+        "terminations/belly_up",
+        "terminations/torso_too_low",
+        "terminations/all_treats_collected",
+        "terminations/any",
+        "done",
+    ):
+        assert key in allenv, f"allenv is missing {key}"
+    vis = np.asarray(allenv[maze_eval.MAZE_ALIAS + "visited_cells"])
+    assert vis.shape == (60, 3) and np.all(vis >= 1.0)
+    sm = maze_eval.maze_eval_summary(allenv, 0.01)
+    print(maze_eval.maze_eval_log_line(1000, sm))
+    # Zero actions for 60 steps: every env is truncated at step EPISODE_LENGTH - 1 (no
+    # fall yet, patience 50), so episode 1 is EPISODE_LENGTH steps long and ends on the
+    # time limit.
+    done = np.asarray(allenv["done"])
+    assert np.all(done[EPISODE_LENGTH - 1] > 0.5)
+    assert not np.any(done[: EPISODE_LENGTH - 1] > 0.5)
+    assert sm["envs"] == 3
+    assert sm["timeout_frac"] == 1.0 and sm["fall_frac"] == 0.0
+    assert sm["alltreats_frac"] == 0.0
+    assert sm["len_ep1_s"] == pytest.approx(EPISODE_LENGTH * 0.01)
+    assert sm["treats_ep1"] == 0.0 and sm["treats_ep1_sd"] == 0.0
+    # visited_ep1 = the metric at the last step of episode 1 (index EPISODE_LENGTH - 1).
+    np.testing.assert_allclose(sm["visited_ep1"], vis[EPISODE_LENGTH - 1].mean())
+    assert sm["visited_ep1"] >= 1.0
+
+
+@needs_gpu
+def test_eval_without_the_flag_has_no_visited_signal(off_env):
+    allenv = _eval_allenv(off_env, shim=False)
+    assert not [k for k in allenv if "visited" in k]
+    sm = maze_eval.maze_eval_summary(allenv, 0.01)
+    assert np.isnan(sm["visited_ep1"])
+    assert sm["timeout_frac"] == 1.0
+    assert sm["len_ep1_s"] == pytest.approx(EPISODE_LENGTH * 0.01)
