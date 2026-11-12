@@ -233,6 +233,18 @@ class HighLevelWrapper(wrapper.Wrapper):
     For asymmetric actor-critic, set value_obs_key to a different top-level key
     (e.g. 'privileged_state') so the critic sees privileged information.
 
+    When ``pass_vision=True``, the wrapper instead produces vision-only
+    observations for the high-level policy: ``{"proprioception": empty[0],
+    "vision": ...}``. The agent must derive all task-relevant information from
+    egocentric pixels. Body proprioception is routed exclusively to the frozen
+    decoder in this mode (the ``policy_obs_key``/``value_obs_key`` asymmetric
+    actor-critic split does not apply).
+
+    When ``pass_vision=True`` AND ``pass_task_obs=True``, the wrapper includes
+    both vision pixels and the flattened task_obs (keyed as
+    ``"imitation_target"``) in the observation dict, giving the high-level
+    network both modalities.
+
     Args:
         env: The base environment to wrap.
         decoder_inference_fn: Function that maps (latent + proprioception) -> ctrl.
@@ -241,6 +253,17 @@ class HighLevelWrapper(wrapper.Wrapper):
         value_obs_key: Top-level obs key for the value/critic (default: 'state').
         highlvl_obs_key: Key for high-level policy observations (default: 'task_obs').
         lowlvl_obs_key: Key for decoder observations (default: 'proprioception').
+        pass_vision: If True, expose only vision to the high-level policy
+            (no task obs, no proprioception). Requires env to have a
+            ``vision`` key nested under ``policy_obs_key``.
+        pass_task_obs: If True (requires ``pass_vision=True``), also include the
+            flattened ``highlvl_obs_key`` as ``"imitation_target"`` alongside
+            vision in the observation dict.
+        n_eye_actuators: Number of eye actuators whose controls bypass the
+            decoder. When > 0, the policy action is split into
+            ``[latent, eye_ctrl]``; only ``latent`` is decoded, and
+            ``eye_ctrl`` is concatenated directly onto the body controls.
+            The ``action_size`` property increases accordingly.
     """
 
     def __init__(
@@ -252,14 +275,25 @@ class HighLevelWrapper(wrapper.Wrapper):
         value_obs_key: str = "state",
         highlvl_obs_key: str = "task_obs",
         lowlvl_obs_key: str = "proprioception",
+        pass_vision: bool = False,
+        pass_task_obs: bool = False,
+        n_eye_actuators: int = 0,
     ):
         super().__init__(env)
+        if pass_task_obs and not pass_vision:
+            raise ValueError(
+                "pass_task_obs=True requires pass_vision=True. "
+                "Task obs passthrough is only supported in vision mode."
+            )
         self._decoder_inference_fn = decoder_inference_fn
         self._latent_size = latent_size
         self._policy_obs_key = policy_obs_key
         self._value_obs_key = value_obs_key
         self._highlvl_obs_key = highlvl_obs_key
         self._lowlvl_obs_key = lowlvl_obs_key
+        self._pass_vision = pass_vision
+        self._pass_task_obs = pass_task_obs
+        self._n_eye_actuators = n_eye_actuators
         self._proprioceptive_obs_size = int(env.proprioceptive_obs_size)
 
         sample_state = env.reset(jax.random.PRNGKey(0))
@@ -279,6 +313,15 @@ class HighLevelWrapper(wrapper.Wrapper):
             )[0].shape[0]
         )
 
+        if pass_vision and "vision" not in sample_state.obs.get(policy_obs_key, {}):
+            raise ValueError(
+                "pass_vision=True requires env observations to contain a 'vision' "
+                f"key inside '{policy_obs_key}'. Use a vision-enabled environment "
+                "(e.g. RunGapVision)."
+            )
+        if pass_vision:
+            self._vision_shape = sample_state.obs[policy_obs_key]["vision"].shape
+
         _, self._dummy_decoder_extras = decoder_inference_fn(
             jp.zeros(latent_size + self._proprioceptive_obs_size)
         )
@@ -286,6 +329,32 @@ class HighLevelWrapper(wrapper.Wrapper):
     def _process_state(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
         """Process state to extract task obs for high-level policy."""
         state.info["_full_obs"] = state.obs
+
+        if self._pass_vision and self._pass_task_obs:
+            # Vision + task_obs mode: high-level policy sees pixels AND
+            # flattened task observations (e.g. imitation targets). Body
+            # proprioception is routed to the frozen decoder in step().
+            flat_task_obs = jp.nan_to_num(
+                jax.flatten_util.ravel_pytree(
+                    state.obs[self._policy_obs_key][self._highlvl_obs_key]
+                )[0]
+            )
+            new_obs = {
+                "imitation_target": flat_task_obs,
+                "proprioception": jp.zeros(0),
+                "vision": state.obs[self._policy_obs_key]["vision"],
+            }
+            return state.replace(obs=new_obs)
+        if self._pass_vision:
+            # Vision-only mode: high-level policy sees ONLY pixels. No task
+            # obs, no proprioception -- the agent must derive all
+            # task-relevant information from the egocentric camera. Body
+            # proprioception is routed to the frozen decoder in step().
+            new_obs = {
+                "proprioception": jp.zeros(0),
+                "vision": state.obs[self._policy_obs_key]["vision"],
+            }
+            return state.replace(obs=new_obs)
 
         policy_obs = jp.nan_to_num(
             jax.flatten_util.ravel_pytree(
@@ -317,6 +386,18 @@ class HighLevelWrapper(wrapper.Wrapper):
                 state.info["_full_obs"][self._policy_obs_key][self._lowlvl_obs_key]
             )[0]
         )
+
+        if self._n_eye_actuators > 0:
+            latent = action[: self._latent_size]
+            eye_ctrl = action[self._latent_size :]
+            body_ctrl, extras = self._decoder_inference_fn(
+                jp.concatenate([latent, decoder_obs], axis=-1)
+            )
+            ctrl = jp.concatenate([body_ctrl, eye_ctrl], axis=-1)
+            next_state = self.env.step(state, ctrl)
+            next_state.info["decoder_extras"] = extras
+            return self._process_state(next_state)
+
         ctrl, extras = self._decoder_inference_fn(
             jp.concatenate([action, decoder_obs], axis=-1)
         )
@@ -326,12 +407,403 @@ class HighLevelWrapper(wrapper.Wrapper):
 
     @property
     def action_size(self) -> int:
+        if self._n_eye_actuators > 0:
+            return self._latent_size + self._n_eye_actuators
         return self._latent_size
 
     @property
     def observation_size(self):
         """Return observation sizes for the high-level policy."""
+        if self._pass_vision and self._pass_task_obs:
+            return {
+                "imitation_target": self._policy_obs_size,
+                "proprioception": 0,
+            }
+        if self._pass_vision:
+            return {"proprioception": 0}
         sizes = {self._policy_obs_key: self._policy_obs_size}
         if self._value_obs_key != self._policy_obs_key:
             sizes[self._value_obs_key] = self._value_obs_size
         return sizes
+
+    @property
+    def vision_shape(self):
+        """Shape of the vision observation (H, W, C). Only valid when pass_vision=True."""
+        if not self._pass_vision:
+            raise AttributeError("vision_shape is only available when pass_vision=True")
+        return self._vision_shape
+
+
+class PriorHighLevelWrapper(wrapper.Wrapper):
+    """Wrapper that combines a prior network with a decoder for latent action control.
+
+    The high-level policy outputs a residual vector which is added to the prior
+    network's predicted mean to form the final latent. This latent (concatenated
+    with proprioception) is then decoded into low-level control signals.
+
+    The final latent is: ``residual + prior_mean + optional_noise``
+
+    This allows the policy to learn task-specific corrections while leveraging
+    the pretrained prior's knowledge of natural movements.
+
+    Observations are routed to the high-level policy using the same three modes
+    as ``HighLevelWrapper``:
+
+    - **MLP mode** (default): flat obs from ``highlvl_obs_key``, keyed by
+      ``policy_obs_key`` (and ``value_obs_key`` for asymmetric actor-critic).
+    - **Vision-only mode** (``pass_vision=True``): egocentric pixels only.
+    - **Vision + task_obs mode** (``pass_vision=True, pass_task_obs=True``):
+      pixels plus flattened task observations as ``"imitation_target"``.
+
+    In all modes, body proprioception is routed exclusively to the frozen prior
+    and decoder networks.
+
+    Args:
+        env: The base environment to wrap.
+        prior_inference_fn: Function (proprioception) -> (mean, logvar).
+        decoder_inference_fn: Function (latent + proprioception) -> (ctrl, extras).
+        latent_size: Size of the latent action space.
+        policy_obs_key: Top-level obs key for the policy/actor (default: 'state').
+        value_obs_key: Top-level obs key for the value/critic (default: 'state').
+        highlvl_obs_key: Key for high-level policy observations (default: 'task_obs').
+        lowlvl_obs_key: Key for prior/decoder observations (default: 'proprioception').
+        pass_vision: If True, expose only vision to the high-level policy.
+            Requires env to have a ``vision`` key nested under ``policy_obs_key``.
+        pass_task_obs: If True (requires ``pass_vision=True``), also include the
+            flattened ``highlvl_obs_key`` as ``"imitation_target"`` alongside
+            vision in the observation dict.
+        deterministic_prior: If True, use prior mean only (no noise).
+        noise_logvar: Fixed log-variance for noise sampling (used when
+            deterministic_prior=False).
+        n_eye_actuators: Number of eye actuators whose controls bypass the
+            decoder. When > 0, the policy action is split into
+            ``[residual, eye_ctrl]``; only ``residual`` is used for the
+            prior+decoder pathway, and ``eye_ctrl`` is concatenated directly
+            onto the body controls. The ``action_size`` property increases
+            accordingly.
+    """
+
+    def __init__(
+        self,
+        env: wrapper.mjx_env.MjxEnv,
+        prior_inference_fn: Callable,
+        decoder_inference_fn: Callable,
+        latent_size: int,
+        policy_obs_key: str = "state",
+        value_obs_key: str = "state",
+        highlvl_obs_key: str = "task_obs",
+        lowlvl_obs_key: str = "proprioception",
+        pass_vision: bool = False,
+        pass_task_obs: bool = False,
+        deterministic_prior: bool = True,
+        noise_logvar: float = -2.0,
+        n_eye_actuators: int = 0,
+    ):
+        super().__init__(env)
+        if pass_task_obs and not pass_vision:
+            raise ValueError(
+                "pass_task_obs=True requires pass_vision=True. "
+                "Task obs passthrough is only supported in vision mode."
+            )
+        self._prior_fn = prior_inference_fn
+        self._decoder_fn = decoder_inference_fn
+        self._latent_size = latent_size
+        self._policy_obs_key = policy_obs_key
+        self._value_obs_key = value_obs_key
+        self._highlvl_obs_key = highlvl_obs_key
+        self._lowlvl_obs_key = lowlvl_obs_key
+        self._pass_vision = pass_vision
+        self._pass_task_obs = pass_task_obs
+        self._deterministic = deterministic_prior
+        self._noise_logvar = noise_logvar
+        self._n_eye_actuators = n_eye_actuators
+        self._proprioceptive_obs_size = int(env.proprioceptive_obs_size)
+
+        sample_state = env.reset(jax.random.PRNGKey(0))
+        if not isinstance(sample_state.obs, Mapping):
+            raise ValueError(
+                f"PriorHighLevelWrapper requires dict observations. "
+                f"Got {type(sample_state.obs).__name__}."
+            )
+
+        self._policy_obs_size = int(
+            jax.flatten_util.ravel_pytree(
+                sample_state.obs[policy_obs_key][highlvl_obs_key]
+            )[0].shape[0]
+        )
+        self._value_obs_size = int(
+            jax.flatten_util.ravel_pytree(
+                sample_state.obs[value_obs_key][highlvl_obs_key]
+            )[0].shape[0]
+        )
+
+        if pass_vision and "vision" not in sample_state.obs.get(policy_obs_key, {}):
+            raise ValueError(
+                "pass_vision=True requires env observations to contain a 'vision' "
+                f"key inside '{policy_obs_key}'. Use a vision-enabled environment "
+                "(e.g. RunGapVision)."
+            )
+        if pass_vision:
+            self._vision_shape = sample_state.obs[policy_obs_key]["vision"].shape
+
+        _, self._dummy_decoder_extras = decoder_inference_fn(
+            jp.zeros(latent_size + self._proprioceptive_obs_size)
+        )
+
+    def _process_state(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
+        """Process state to extract obs for the high-level policy."""
+        # Store full dict obs in info for decoder/prior access.
+        state.info["_full_obs"] = state.obs
+
+        if self._pass_vision and self._pass_task_obs:
+            # Vision + task_obs mode: high-level policy sees pixels AND
+            # flattened task observations (e.g. imitation targets). Body
+            # proprioception is routed to the frozen prior/decoder in step().
+            flat_task_obs = jp.nan_to_num(
+                jax.flatten_util.ravel_pytree(
+                    state.obs[self._policy_obs_key][self._highlvl_obs_key]
+                )[0]
+            )
+            new_obs = {
+                "imitation_target": flat_task_obs,
+                "proprioception": jp.zeros(0),
+                "vision": state.obs[self._policy_obs_key]["vision"],
+            }
+        elif self._pass_vision:
+            # Vision-only mode: high-level policy sees ONLY pixels. Body
+            # proprioception is routed to the frozen prior/decoder in step().
+            new_obs = {
+                "proprioception": jp.zeros(0),
+                "vision": state.obs[self._policy_obs_key]["vision"],
+            }
+        else:
+            policy_obs = jp.nan_to_num(
+                jax.flatten_util.ravel_pytree(
+                    state.obs[self._policy_obs_key][self._highlvl_obs_key]
+                )[0]
+            )
+            value_obs = jp.nan_to_num(
+                jax.flatten_util.ravel_pytree(
+                    state.obs[self._value_obs_key][self._highlvl_obs_key]
+                )[0]
+            )
+            new_obs = {self._policy_obs_key: policy_obs}
+            if self._value_obs_key != self._policy_obs_key:
+                new_obs[self._value_obs_key] = value_obs
+        return state.replace(obs=new_obs)
+
+    def reset(
+        self,
+        rng: jax.Array,
+        **kwargs: Any,
+    ) -> wrapper.mjx_env.State:
+        state = self.env.reset(rng, **kwargs)
+        state.info["decoder_extras"] = self._dummy_decoder_extras
+        state.info["prior_mean"] = jp.zeros(self._latent_size)
+        state.info["prior_logvar"] = jp.zeros(self._latent_size)
+        state.info["final_latent"] = jp.zeros(self._latent_size)
+        state.info["rng"] = rng
+        # Initialize prior diagnostic metrics so step() doesn't change pytree structure.
+        metrics = dict(state.metrics) if state.metrics else {}
+        metrics["prior/mean_norm"] = jp.float32(0.0)
+        metrics["prior/logvar_mean"] = jp.float32(0.0)
+        metrics["prior/residual_norm"] = jp.float32(0.0)
+        metrics["prior/final_latent_norm"] = jp.float32(0.0)
+        state = state.replace(metrics=metrics)
+        return self._process_state(state)
+
+    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        # Get proprioception for the prior and decoder.
+        decoder_obs = jp.nan_to_num(
+            jax.flatten_util.ravel_pytree(
+                state.info["_full_obs"][self._policy_obs_key][self._lowlvl_obs_key]
+            )[0]
+        )
+
+        # Split action into residual (for prior+decoder) and eye controls.
+        if self._n_eye_actuators > 0:
+            residual = action[: self._latent_size]
+            eye_ctrl = action[self._latent_size :]
+        else:
+            residual = action
+
+        # Compute prior from proprioception.
+        prior_mean, prior_logvar = self._prior_fn(decoder_obs)
+
+        # Combine residual action with prior.
+        if self._deterministic:
+            latent = residual + prior_mean
+        else:
+            rng = state.info.get("rng", jax.random.PRNGKey(0))
+            rng, noise_rng = jax.random.split(rng)
+            std = jp.exp(0.5 * self._noise_logvar)
+            noise = jax.random.normal(noise_rng, shape=prior_mean.shape) * std
+            latent = residual + prior_mean + noise
+            state.info["rng"] = rng
+
+        # Decode latent + proprioception into control.
+        body_ctrl, decoder_extras = self._decoder_fn(
+            jp.concatenate([latent, decoder_obs], axis=-1)
+        )
+
+        # Concatenate eye controls if present.
+        if self._n_eye_actuators > 0:
+            ctrl = jp.concatenate([body_ctrl, eye_ctrl], axis=-1)
+        else:
+            ctrl = body_ctrl
+
+        # Step the base environment.
+        next_state = self.env.step(state, ctrl)
+
+        # Store extras in info.
+        next_state.info["decoder_extras"] = decoder_extras
+        next_state.info["prior_mean"] = prior_mean
+        next_state.info["prior_logvar"] = prior_logvar
+        next_state.info["final_latent"] = latent
+
+        # Prior diagnostic metrics (scalars for wandb).
+        metrics = dict(next_state.metrics) if next_state.metrics else {}
+        metrics["prior/mean_norm"] = jp.linalg.norm(prior_mean)
+        metrics["prior/logvar_mean"] = jp.mean(prior_logvar)
+        metrics["prior/residual_norm"] = jp.linalg.norm(residual)
+        metrics["prior/final_latent_norm"] = jp.linalg.norm(latent)
+        next_state = next_state.replace(metrics=metrics)
+
+        return self._process_state(next_state)
+
+    @property
+    def action_size(self) -> int:
+        return self._latent_size + self._n_eye_actuators
+
+    @property
+    def observation_size(self):
+        """Return observation sizes for the high-level policy."""
+        if self._pass_vision and self._pass_task_obs:
+            return {
+                "imitation_target": self._policy_obs_size,
+                "proprioception": 0,
+            }
+        if self._pass_vision:
+            return {"proprioception": 0}
+        sizes = {self._policy_obs_key: self._policy_obs_size}
+        if self._value_obs_key != self._policy_obs_key:
+            sizes[self._value_obs_key] = self._value_obs_size
+        return sizes
+
+    @property
+    def vision_shape(self):
+        """Shape of the vision observation (H, W, C). Only valid when pass_vision=True."""
+        if not self._pass_vision:
+            raise AttributeError("vision_shape is only available when pass_vision=True")
+        return self._vision_shape
+
+
+class EndToEndWrapper(wrapper.Wrapper):
+    """Wrapper for end-to-end training with NO frozen decoder.
+
+    Mirrors ``HighLevelWrapper(pass_vision=True, pass_task_obs=True)`` but
+    without routing proprioception to a frozen decoder. Instead, the
+    policy outputs the full joint action directly; proprioception is
+    exposed to the policy as a real observation key so the network's
+    internal decoder can condition on body state.
+
+    Intended for the ``transfer.mode: from_scratch`` path where no
+    pretrained prior/decoder weights are loaded.
+
+    The policy observation dict is::
+
+        {
+            "imitation_target": flat_task_obs,
+            "proprioception": real_proprioception,
+            "vision": egocentric_pixels,
+        }
+
+    ``action_size`` equals the underlying env's native action size (the
+    full joint control space), so PPO/DMPO trains the same binocular shared-
+    vision architecture, with the ``intention`` bottleneck still present
+    inside the network, but without any frozen body motor decoder.
+
+    Args:
+        env: The base environment to wrap.
+        policy_obs_key: Top-level obs key to read from (default: 'state').
+        highlvl_obs_key: Key for high-level task observations (default: 'task_obs').
+        lowlvl_obs_key: Key for proprioceptive observations (default: 'proprioception').
+    """
+
+    def __init__(
+        self,
+        env: wrapper.mjx_env.MjxEnv,
+        policy_obs_key: str = "state",
+        highlvl_obs_key: str = "task_obs",
+        lowlvl_obs_key: str = "proprioception",
+    ):
+        super().__init__(env)
+        self._policy_obs_key = policy_obs_key
+        self._highlvl_obs_key = highlvl_obs_key
+        self._lowlvl_obs_key = lowlvl_obs_key
+        self._proprioceptive_obs_size = int(env.proprioceptive_obs_size)
+
+        sample_state = env.reset(jax.random.PRNGKey(0))
+        if not isinstance(sample_state.obs, Mapping):
+            raise ValueError(
+                f"EndToEndWrapper requires dict observations. "
+                f"Got {type(sample_state.obs).__name__}."
+            )
+
+        self._policy_obs_size = int(
+            jax.flatten_util.ravel_pytree(
+                sample_state.obs[policy_obs_key][highlvl_obs_key]
+            )[0].shape[0]
+        )
+        if "vision" not in sample_state.obs.get(policy_obs_key, {}):
+            raise ValueError(
+                "EndToEndWrapper requires env observations to contain a "
+                f"'vision' key inside '{policy_obs_key}'. Use a vision-enabled env."
+            )
+        self._vision_shape = sample_state.obs[policy_obs_key]["vision"].shape
+
+    def _process_state(self, state: wrapper.mjx_env.State) -> wrapper.mjx_env.State:
+        state.info["_full_obs"] = state.obs
+        flat_task_obs = jp.nan_to_num(
+            jax.flatten_util.ravel_pytree(
+                state.obs[self._policy_obs_key][self._highlvl_obs_key]
+            )[0]
+        )
+        proprioception = jp.nan_to_num(
+            jax.flatten_util.ravel_pytree(
+                state.obs[self._policy_obs_key][self._lowlvl_obs_key]
+            )[0]
+        )
+        new_obs = {
+            "imitation_target": flat_task_obs,
+            "proprioception": proprioception,
+            "vision": state.obs[self._policy_obs_key]["vision"],
+        }
+        return state.replace(obs=new_obs)
+
+    def reset(
+        self,
+        rng: jax.Array,
+        **kwargs: Any,
+    ) -> wrapper.mjx_env.State:
+        state = self.env.reset(rng, **kwargs)
+        return self._process_state(state)
+
+    def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
+        next_state = self.env.step(state, action)
+        return self._process_state(next_state)
+
+    @property
+    def action_size(self) -> int:
+        return int(self.env.action_size)
+
+    @property
+    def observation_size(self):
+        return {
+            "imitation_target": self._policy_obs_size,
+            "proprioception": self._proprioceptive_obs_size,
+        }
+
+    @property
+    def vision_shape(self):
+        return self._vision_shape

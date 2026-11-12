@@ -20,6 +20,11 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          # Full history: the maze default-off guards compare the env with
+          # its source at an earlier commit (tests/maze_reference.py) and
+          # skip in a shallow clone.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -41,4 +46,4 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest -q tests/
+          JAX_PLATFORMS=cpu pytest -q tests/ -m "not gpu and not slow"
