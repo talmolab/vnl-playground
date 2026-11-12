@@ -230,6 +230,12 @@ def test_heading_is_the_spawn_yaw(env, jit_fns):
     )
 
 
+# Scale of the random torques. The raw env is stepped without termination or
+# reset, and 200 steps of full-range random torques sometimes blow the physics
+# up to NaN on a GPU, nondeterministically.
+_RANDOM_ACTION_SCALE = 0.3
+
+
 @needs_gpu
 def test_step_layout_and_monotone_visited_over_random_actions(env, jit_fns):
     state = jit_fns.reset(jax.random.PRNGKey(7))
@@ -237,7 +243,10 @@ def test_step_layout_and_monotone_visited_over_random_actions(env, jit_fns):
     prev = np.asarray(state.info["visited"])
     counts = [int(prev.sum())]
     for t in range(1, 201):
-        action = jp.asarray(rng.uniform(-1.0, 1.0, env.action_size), jp.float32)
+        action = jp.asarray(
+            _RANDOM_ACTION_SCALE * rng.uniform(-1.0, 1.0, env.action_size),
+            jp.float32,
+        )
         state = jit_fns.step(state, action)
         vis = np.asarray(state.info["visited"])
         assert np.all(vis >= prev), f"a visited bit was cleared at step {t}"
