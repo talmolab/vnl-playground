@@ -135,8 +135,8 @@ def _fixed_input():
     return _allenv(done, te, hit, timeout=timeout, treat=treat, fell=fell)
 
 
-# Captured from the implementation BEFORE the per-trial-index keys were added
-# (HEAD 6a42d98) on `_fixed_input()`; the legacy keys must never move.
+# Captured from the implementation before the per-trial-index keys were added,
+# on `_fixed_input()`; the legacy keys must never move.
 LEGACY_GOLDEN = {
     "episodes": 37,
     "trials_per_ep": 99 / 37,
