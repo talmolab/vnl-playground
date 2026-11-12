@@ -261,8 +261,10 @@ class JaxVisionRenderer:
         # Refit BVH for current pose (returns updated data)
         data = mjx.refit_bvh(mx, data, ctx)
 
-        # Render -- always returns (rgb_packed, depth_packed) tuple
-        rgb_packed, depth_packed = mjx.render(mx, data, ctx)
+        # Render. MuJoCo <= 3.11 returns (rgb_packed, depth_packed); MuJoCo 4.0
+        # returns (rgb_packed, depth_packed, data). Only the first two are used.
+        rendered = mjx.render(mx, data, ctx)
+        rgb_packed, depth_packed = rendered[0], rendered[1]
 
         # Unpack pixels
         if self._grayscale:
