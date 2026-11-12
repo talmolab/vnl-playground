@@ -36,8 +36,9 @@ MAZE_MODULE = "vnl_playground.tasks.rodent.maze_forage_vision"
 MAZE_PATH = "vnl_playground/tasks/rodent/maze_forage_vision.py"
 SPOUT_PATH = "vnl_playground/tasks/rodent/spout_maze.py"
 
-# Warp solver internals that differ between two runs of the SAME code on the
-# same inputs; nothing in the obs, reward or render reads them.
+# Public ``Data`` fields that differ between two runs of the SAME code on the
+# same inputs (warp solver scratch); nothing in the obs, reward or render reads
+# them.
 NONDETERMINISTIC_LEAVES = (
     "qacc_smooth",
     "moment_colind",
@@ -47,6 +48,11 @@ NONDETERMINISTIC_LEAVES = (
     "efc__",
     "solver_niter",
 )
+
+# Warp-internal buffers.  ``make_data`` leaves some of them uninitialised
+# (island maps, sparse moment storage), so two instances of the same code differ
+# there; the trace comparison covers how they are computed.
+WARP_INTERNALS = ".data._impl."
 
 
 def _git(*args: str) -> str:
@@ -212,19 +218,17 @@ def state_mismatches(new, ref, exact: bool = True) -> tuple[list[str], list[str]
     by more than ``1e-4 + 1e-3 * max|ref leaf|``.  The warp solver is not
     bitwise reproducible from run to run, so only reset states are compared
     exactly; integer and bool leaves are always compared exactly.
+    `NONDETERMINISTIC_LEAVES` and `WARP_INTERNALS` are not compared.
     """
-    from mujoco.mjx.warp import types as warp_types
-
     assert jax.tree.structure(new) == jax.tree.structure(ref)
-    skip = NONDETERMINISTIC_LEAVES + tuple(
-        f"._impl.{f}" for f in warp_types.DATA_NON_VMAP
-    )
     compared, bad = [], []
     for (path, n), r in zip(
         jax.tree_util.tree_leaves_with_path(new), jax.tree.leaves(ref)
     ):
         name = jax.tree_util.keystr(path)
-        if any(token in name for token in skip):
+        if name.startswith(WARP_INTERNALS) or any(
+            token in name for token in NONDETERMINISTIC_LEAVES
+        ):
             continue
         compared.append(name)
         n, r = np.asarray(n), np.asarray(r)
@@ -242,3 +246,25 @@ def state_mismatches(new, ref, exact: bool = True) -> tuple[list[str], list[str]
         ):
             bad.append(name)
     return compared, bad
+
+
+def rollout(env, key, actions) -> list:
+    """``[reset(key), step, step, ...]`` of ``env`` under ``actions``, jitted."""
+    reset, step = jax.jit(env.reset), jax.jit(env.step)
+    states = [reset(key)]
+    for action in actions:
+        states.append(step(states[-1], action))
+    return states
+
+
+def run_mismatches(new_env, ref_env, key, actions) -> list[tuple[list, list]]:
+    """``[(compared, bad), ...]`` per state of a rollout of both envs.
+
+    The reset state is compared bitwise, the step states to the solver's
+    run-to-run noise (`state_mismatches`).
+    """
+    runs = [rollout(e, key, actions) for e in (new_env, ref_env)]
+    return [
+        state_mismatches(s_new, s_ref, exact=(i == 0))
+        for i, (s_new, s_ref) in enumerate(zip(*runs))
+    ]

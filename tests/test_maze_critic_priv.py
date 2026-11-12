@@ -590,21 +590,13 @@ def test_default_off_runs_identically_to_the_reference(
     """Default config: the same reset data bitwise, and the same step data to the warp
     solver's run-to-run noise, leaf for leaf, over five random actions."""
     new_env, ref_env = _env_pair(ref_modules, cls_name, overrides)
-    key = jax.random.PRNGKey(0)
     rng = np.random.default_rng(1)
     actions = [
         jp.asarray(rng.uniform(-1, 1, new_env.action_size), jp.float32)
         for _ in range(5)
     ]
-    runs = []
-    for e in (new_env, ref_env):
-        reset, step = jax.jit(e.reset), jax.jit(e.step)
-        states = [reset(key)]
-        for a in actions:
-            states.append(step(states[-1], a))
-        runs.append(states)
-    for i, (s_new, s_ref) in enumerate(zip(*runs)):
-        compared, bad = ref_tools.state_mismatches(s_new, s_ref, exact=(i == 0))
+    results = ref_tools.run_mismatches(new_env, ref_env, jax.random.PRNGKey(0), actions)
+    for i, (compared, bad) in enumerate(results):
         print(
             f"state {i} vs {_REF_REV}: {len(compared)} leaves compared "
             f"({'bitwise' if i == 0 else 'to solver noise'}), {len(bad)} differ"
