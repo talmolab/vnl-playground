@@ -35,10 +35,13 @@ __all__ = [
 MAZE_ALIAS = "anchor/_maze_eval/"
 
 #: Termination flags that count as a fall, whichever of them the config carries.
+#: ``contact_termination`` is the opt-in dm_control-style floor contact of a
+#: non-foot geom (`MazeForageVision._contact_termination`).
 FALL_TERMINATIONS = (
     "terminations/belly_up",
     "terminations/torso_too_low",
     "terminations/fallen",
+    "terminations/contact_termination",
 )
 
 

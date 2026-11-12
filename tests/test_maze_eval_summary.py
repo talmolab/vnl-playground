@@ -50,9 +50,10 @@ def _allenv(t_len, scripts, visited=True, terms=True):
       ``treats``: steps whose ``rewards/treat_collected`` is paid (weight 1);
       ``ends``: ``[(step, cause), ...]`` -- a ``done`` is written at ``step``
         with cause ``"belly_up"`` / ``"torso_too_low"`` / ``"fallen"`` /
-        ``"all_treats"`` / ``"truncation"`` (done with no termination flag,
-        EpisodeWrapper's); the ``terminations/fallen`` key exists only when a
-        script uses that cause (the default config does not carry it);
+        ``"all_treats"`` / ``"contact_termination"`` / ``"truncation"`` (done with
+        no termination flag, EpisodeWrapper's); the ``terminations/fallen`` and
+        ``terminations/contact_termination`` keys exist only when a script uses
+        that cause (the default config carries neither);
       ``visited``: callable ``t -> visited-cell count`` of the step.
     """
     n = len(scripts)
@@ -68,6 +69,10 @@ def _allenv(t_len, scripts, visited=True, terms=True):
         out[MAZE_ALIAS + "visited_cells"] = np.zeros((t_len, n), np.float32)
     if terms and any(c == "fallen" for sc in scripts for _, c in sc.get("ends", ())):
         out["terminations/fallen"] = np.zeros((t_len, n), np.float32)
+    if terms and any(
+        c == "contact_termination" for sc in scripts for _, c in sc.get("ends", ())
+    ):
+        out["terminations/contact_termination"] = np.zeros((t_len, n), np.float32)
     for e, sc in enumerate(scripts):
         for t in sc.get("treats", ()):
             out["rewards/treat_collected"][t, e] = 1.0
@@ -78,6 +83,7 @@ def _allenv(t_len, scripts, visited=True, terms=True):
                     "belly_up": "belly_up",
                     "torso_too_low": "torso_too_low",
                     "fallen": "fallen",
+                    "contact_termination": "contact_termination",
                     "all_treats": "all_treats_collected",
                 }[cause]
                 out[f"terminations/{flag}"][step, e] = 1.0
@@ -256,12 +262,55 @@ def test_accepts_jax_arrays():
     assert sm["treats_ep1"] == pytest.approx(5.6)
 
 
-def test_fall_terminations_are_the_posture_criteria():
+def test_fall_terminations_are_the_posture_and_contact_criteria():
     assert FALL_TERMINATIONS == (
         "terminations/belly_up",
         "terminations/torso_too_low",
         "terminations/fallen",
+        "terminations/contact_termination",
     )
+
+
+def test_contact_termination_counts_as_a_fall_when_the_env_emits_it():
+    """A config listing ``contact_termination``: a floor contact of a non-foot geom is
+    a fall, so ``fall_frac + alltreats_frac + timeout_frac`` still sums to 1; and the
+    same summary on a config without the key is unchanged (the key is optional)."""
+    sc = [
+        dict(treats=[1], ends=[(20, "contact_termination")]),
+        dict(treats=[], ends=[(30, "belly_up")]),
+        dict(treats=[2], ends=[(40, "all_treats")]),
+        dict(treats=[], ends=[(50, "torso_too_low")]),
+        dict(treats=[], ends=[(25, "truncation")]),
+        dict(treats=[], ends=[]),
+    ]
+    allenv = _allenv(60, sc)
+    assert "terminations/contact_termination" in allenv
+    sm = maze_eval_summary(allenv, DT)
+    assert sm["fall_frac"] == pytest.approx(3 / 6)  # contact, belly_up, torso_too_low
+    assert sm["alltreats_frac"] == pytest.approx(1 / 6)
+    assert sm["timeout_frac"] == pytest.approx(2 / 6)  # truncation + window end
+    assert sm["fall_frac"] + sm["alltreats_frac"] + sm["timeout_frac"] == pytest.approx(
+        1.0
+    )
+    # Only the new cause: 1 of 2 falls in that env mix.
+    only = maze_eval_summary(
+        _allenv(60, [dict(ends=[(20, "contact_termination")]), dict(ends=[])]), DT
+    )
+    assert only["fall_frac"] == pytest.approx(1 / 2)
+    assert only["timeout_frac"] == pytest.approx(1 / 2)
+    # Without the key in allenv the other causes are read as before.
+    assert "terminations/contact_termination" not in _allenv(100, _five_envs())
+    plain = maze_eval_summary(_allenv(100, _five_envs()), DT)
+    assert plain["fall_frac"] == pytest.approx(2 / 5)
+
+
+def test_contact_termination_in_a_later_episode_is_not_counted():
+    """Only episode 1's cause counts: a contact termination that ends episode 2 is
+    ignored."""
+    sc = [dict(treats=[], ends=[(10, "all_treats"), (30, "contact_termination")])]
+    sm = maze_eval_summary(_allenv(60, sc), DT)
+    assert sm["fall_frac"] == pytest.approx(0.0)
+    assert sm["alltreats_frac"] == pytest.approx(1.0)
 
 
 class _StubEnv:
